@@ -114,7 +114,7 @@ async function main() {
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.company_id = ${CO}
       AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
-  const poRows = await sql`SELECT i.id, p.po_number AS "docNo", i.material_code, i.description2, i.variants
+  const poRows = await sql`SELECT i.id, p.po_number AS "docNo", i.item_code, i.description2, i.variants
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO} AND i.company_id = ${CO}
       AND i.item_group = 'sofa' AND p.linked_ac_docno IS NOT NULL`;

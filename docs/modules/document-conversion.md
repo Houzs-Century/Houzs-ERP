@@ -302,6 +302,34 @@ Planning bulk convert, and MRP → PO. **Mobile-only pairs: none.**
 
 ---
 
+## 6a. Every picker row shows its VARIANTS (owner rule, 2026-08-19)
+
+*"只要有 variants 的，你就应该要显示 variants"*. A sofa model decomposes into
+modules — `9028-1A(LHF)`, `9028-1A(RHF)`, `9028-1NA` — that share a name, so a
+row printing only the name identifies nothing. Every line-picker in this module
+therefore renders the shared `buildVariantSummary` string for its row.
+
+Two things have to be true, and **only checking the first is how this defect
+hides**: the component has to be on the row, AND the row's endpoint has to have
+SELECTED `variants`. `<VariantDescription>` over a row whose read never selected
+them renders empty and is indistinguishable from a missing component.
+
+| Surface | How it renders the summary |
+|---|---|
+| The ten desktop `*From*.tsx` pickers | `vendor/scm/components/VariantDescription.tsx` |
+| `MobileConvertWizard` (all four targets) | `variantLineOf()` → `buildVariantSummary`, one muted line under the name; omitted when empty (no `Standard` filler on a phone) |
+| `SalesOrderNewFromProducts`, `SoFromProducts` | **Deliberately none.** These pick CATALOGUE SKUs, not document lines. A catalogue row has no per-line variants (`default_variants` is SKU-master admin data, `pages/scm-v2/products/VariantsTab.tsx`), and the SO line they create carries none either — so a summary here could only ever print `Standard`. |
+
+The reads that feed them all select `variants` — `routes/delivery-orders-mfg.ts`
+(`soDeliverableRemaining`), `lib/do-line-remaining.ts`,
+`routes/mfg-purchase-orders.ts` (`/outstanding-so-items`),
+`lib/outstanding-po-lines.ts`, `routes/consignment-notes.ts`,
+`routes/consignment-returns.ts`, `routes/purchase-consignment-receives.ts`,
+`routes/purchase-consignment-returns.ts`. **Adding a picker means checking its
+read, not copying the JSX.**
+
+---
+
 ## 7. Backend converters with no live frontend caller
 
 Worth knowing before building anything: several converters already exist
@@ -1054,7 +1082,7 @@ full account is in `docs/unlinked-line-duplicate-coe.md` §5a; in brief:
 | what | where |
 |---|---|
 | the predicate — refuse only when the material is already on a receipt this invoice covers | `lib/return-unlinked-lines.ts` `findUnlinkedPiLines` |
-| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `material_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
+| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `item_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
 | **every** receipt the invoice covers, not the header ref | `coveredGrnIds`: header `grn_id` UNION the receipts behind the invoice's own linked lines. A PI is line-level multi-receipt (mig 0267), so a set of one let a SECONDARY note's material through |
 | FAILS CLOSED | the guard's read binds its error; every call site answers 500 `unlinked_check_failed`. An empty parent-code set is an unconditional pass, so a swallowed error opened the door in silence |
 
@@ -1422,3 +1450,26 @@ treat as impossible.**
   `migrations-pg` tree, so the `ON DELETE SET NULL` claim rests on a source
   comment. LIKELY, not PROVEN, and settled by one query against the live
   catalog.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

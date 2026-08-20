@@ -148,10 +148,10 @@ const product = (over: Partial<Row> = {}): Row => ({
 const soLine = (over: Partial<Row> = {}): Row => ({
   id: 'L1', doc_no: DOC, company_id: 1, line_no: 1,
   item_code: 'ACC-1', item_group: 'accessory', description: 'Side Table',
-  qty: 1, unit_price_centi: CATALOGUE_SEN, discount_centi: 0,
-  total_centi: CATALOGUE_SEN, total_inc_centi: CATALOGUE_SEN, balance_centi: CATALOGUE_SEN,
+  qty: 1, unit_price_sen: CATALOGUE_SEN, discount_sen: 0,
+  total_sen: CATALOGUE_SEN, total_inc_sen: CATALOGUE_SEN, balance_sen: CATALOGUE_SEN,
   variants: null, remark: null, cancelled: false, warehouse_id: 'WH1',
-  unit_cost_centi: 3000, line_cost_centi: 3000, ...over,
+  unit_cost_sen: 3000, line_cost_sen: 3000, ...over,
 });
 
 /** `linked_ac_docno` is the ONLY marker of an AutoCount-migrated order on the SO
@@ -210,9 +210,9 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     await apply(store);
 
     const line = lineOf(store);
-    expect(line.unit_price_centi).toBe(5000);   // NOT the RM100 catalogue price
-    expect(line.total_centi).toBe(5000);
-    expect(line.balance_centi).toBe(5000);
+    expect(line.unit_price_sen).toBe(5000);   // NOT the RM100 catalogue price
+    expect(line.total_sen).toBe(5000);
+    expect(line.balance_sen).toBe(5000);
   });
 
   it('a price RISE above the catalogue survives too', async () => {
@@ -221,8 +221,8 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
 
     await apply(store);
 
-    expect(lineOf(store).unit_price_centi).toBe(12500);
-    expect(lineOf(store).total_centi).toBe(25000);
+    expect(lineOf(store).unit_price_sen).toBe(12500);
+    expect(lineOf(store).total_sen).toBe(25000);
   });
 
   it('a QTY-only amendment does not silently RE-PRICE a hand-priced line', async () => {
@@ -232,7 +232,7 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
        the RM 100 catalogue — money moving on an amendment that never asked to
        move it, and which the approver's diff showed as a quantity change. */
     const store = baseStore();
-    store.mfg_sales_order_items = [soLine({ unit_price_centi: 8000, total_centi: 8000 })];
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 8000, total_sen: 8000 })];
     store.so_amendment_lines = [specLine({
       change_type: 'QTY', new_qty: 3, new_unit_price_sen: 8000,
       old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 8000 },
@@ -240,8 +240,8 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
 
     await apply(store);
 
-    expect(lineOf(store).unit_price_centi).toBe(8000);
-    expect(lineOf(store).total_centi).toBe(24000);
+    expect(lineOf(store).unit_price_sen).toBe(8000);
+    expect(lineOf(store).total_sen).toBe(24000);
   });
 
   it('an ADDED line lands at the approved price, not the catalogue price', async () => {
@@ -254,8 +254,8 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     await apply(store);
 
     const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
-    expect(added.unit_price_centi).toBe(4500);
-    expect(added.total_centi).toBe(9000);
+    expect(added.unit_price_sen).toBe(4500);
+    expect(added.total_sen).toBe(9000);
   });
 
   it('the audit trail records the price that actually landed', async () => {
@@ -276,6 +276,93 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
    the amendment into a second unguarded way to do that: the trust is a REQUIRED
    argument naming the approval gate the caller passed, so a caller with no
    approval gets the authoritative catalogue price exactly as before. */
+/* ── RM 0, the value the suite above stops one short of ─────────────────────
+   Every case above signs for a NON-ZERO price, and each one passes under plain
+   `trustOperatorSelling: true`, because that flag reads `manualUnitSelling > 0`.
+   Zero is the one amount it cannot carry: `true` reads a 0 as "no price was
+   entered" and fills the catalogue figure back in.
+
+   That was correct until 2026-08-18. #2425 gave the UNLOCKED road an authored
+   RM 0 via 'operator-zero', so from then on a salesperson could set a line to
+   RM 0 on an open SO but NOT through the sanctioned road for a locked one —
+   an approver signed RM 0 and RM 100 landed, silently. These pin the value. */
+describe('applySoAmendment — an approved RM 0 is a price, not a missing price', () => {
+  it('a line an approver signed down to RM 0 stays at 0', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.unit_price_sen).toBe(0);      // NOT the RM100 catalogue price
+    expect(line.total_sen).toBe(0);
+    expect(line.balance_sen).toBe(0);
+  });
+
+  it('a QTY-only amendment leaves a line already at 0 alone', async () => {
+    /* A free gift / PWP reward sits at 0. The editor sends newUnitPriceSen on
+       EVERY changed line, so approving a pure quantity change used to hand that
+       line the catalogue price and bill the customer for the giveaway — the
+       same defect as the RM 80 -> RM 100 case above, at the value that case
+       did not cover. */
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 0, total_sen: 0, balance_sen: 0 })];
+    store.so_amendment_lines = [specLine({
+      change_type: 'QTY', new_qty: 4, new_unit_price_sen: 0,
+      old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 0 },
+    })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+    expect(lineOf(store).total_sen).toBe(0);
+  });
+
+  it('an amendment that requests NO price still takes the catalogue figure', async () => {
+    /* The guard that keeps 'operator-zero' honest. `new_unit_price_sen: null`
+       is "not requested", NOT "requested zero" — it must not be read as an
+       authored 0, or every QTY change on a normally-priced line would zero it.
+       specLine's default is null, so this is the untouched-price case. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_qty: 2 })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+
+  it('an ADDED line at 0 still takes the catalogue price — Add and Edit differ here on purpose', async () => {
+    /* addLineTrust stays plain `true` while amendTrust became 'operator-zero'.
+       An ADD line names a SKU and nothing else about it is established, so a 0
+       reads as an unfilled field; editing an EXISTING line moves a price that
+       is already known, which is a deliberate act. The migrated-order sibling
+       of this assertion (below) predates 'operator-zero' and is the protection
+       this one keeps honest — if either moves, both must. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_item_code: 'ACC-1', new_qty: 1, new_unit_price_sen: 0, old_snapshot: null,
+    })];
+
+    await apply(store);
+
+    const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
+    expect(added.unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+
+  it('RM 0 WITHOUT the approval authority is still refused', async () => {
+    /* The ceiling. 'operator-zero' rides on `approval`, which only the
+       approve-so gate constructs — so an unapproved apply cannot author a 0
+       any more than it could author RM 50. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+
+    await apply(store, null);
+
+    expect(lineOf(store).unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+});
+
 describe('applySoAmendment — no approval, no authored price', () => {
   it('an apply run WITHOUT the approval authority re-prices to the catalogue', async () => {
     const store = baseStore();
@@ -283,7 +370,7 @@ describe('applySoAmendment — no approval, no authored price', () => {
 
     await apply(store, null);
 
-    expect(lineOf(store).unit_price_centi).toBe(CATALOGUE_SEN);
+    expect(lineOf(store).unit_price_sen).toBe(CATALOGUE_SEN);
   });
 
   it('an ADD line with no approval authority is priced from the catalogue too', async () => {
@@ -296,7 +383,7 @@ describe('applySoAmendment — no approval, no authored price', () => {
     await apply(store, null);
 
     const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
-    expect(added.unit_price_centi).toBe(CATALOGUE_SEN);
+    expect(added.unit_price_sen).toBe(CATALOGUE_SEN);
   });
 });
 
@@ -306,7 +393,7 @@ describe('applySoAmendment — no approval, no authored price', () => {
 describe('applySoAmendment — the MIGRATED-order protections still hold', () => {
   it('a migrated line keeps its stored AutoCount price when the amendment asks for none', async () => {
     const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
-    store.mfg_sales_order_items = [soLine({ unit_price_centi: 7300, total_centi: 7300 })];
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 7300, total_sen: 7300 })];
     store.so_amendment_lines = [specLine({
       change_type: 'QTY', new_qty: 4, new_unit_price_sen: null,
       old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 7300 },
@@ -314,13 +401,13 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
 
     await apply(store);
 
-    expect(lineOf(store).unit_price_centi).toBe(7300);   // never the RM100 catalogue
-    expect(lineOf(store).total_centi).toBe(29200);
+    expect(lineOf(store).unit_price_sen).toBe(7300);   // never the RM100 catalogue
+    expect(lineOf(store).total_sen).toBe(29200);
   });
 
   it("a migrated line stored at 0 stays 0 — 'including-zero', not a catalogue fill", async () => {
     const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
-    store.mfg_sales_order_items = [soLine({ unit_price_centi: 0, total_centi: 0 })];
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 0, total_sen: 0 })];
     store.so_amendment_lines = [specLine({
       change_type: 'QTY', new_qty: 2, new_unit_price_sen: null,
       old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 0 },
@@ -328,7 +415,7 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
 
     await apply(store);
 
-    expect(lineOf(store).unit_price_centi).toBe(0);
+    expect(lineOf(store).unit_price_sen).toBe(0);
   });
 
   it('a line ADDED to a migrated order treats 0 as "not provided" — the operator is authoring it NOW', async () => {
@@ -345,7 +432,7 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
     await apply(store);
 
     const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
-    expect(added.unit_price_centi).toBe(CATALOGUE_SEN);
+    expect(added.unit_price_sen).toBe(CATALOGUE_SEN);
   });
 });
 
@@ -356,17 +443,17 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
    requested, approved, or applied. The apply COPIES the line's existing discount
    forward; it never moves it. Reducing an amount on a locked SO is therefore a
    unit-price change, never a discount. */
-describe('applySoAmendment — discount_centi has no amendment channel (documented gap)', () => {
+describe('applySoAmendment — discount_sen has no amendment channel (documented gap)', () => {
   it('the existing discount is carried forward untouched and still reduces the line total', async () => {
     const store = baseStore();
-    store.mfg_sales_order_items = [soLine({ discount_centi: 1500, total_centi: 8500 })];
+    store.mfg_sales_order_items = [soLine({ discount_sen: 1500, total_sen: 8500 })];
     store.so_amendment_lines = [specLine({ new_unit_price_sen: 5000 })];
 
     await apply(store);
 
-    expect(lineOf(store).discount_centi).toBe(1500);       // unchanged — no channel
-    expect(lineOf(store).unit_price_centi).toBe(5000);
-    expect(lineOf(store).total_centi).toBe(5000 - 1500);   // discount still applied
+    expect(lineOf(store).discount_sen).toBe(1500);       // unchanged — no channel
+    expect(lineOf(store).unit_price_sen).toBe(5000);
+    expect(lineOf(store).total_sen).toBe(5000 - 1500);   // discount still applied
   });
 
   it('an ADDED line always lands with zero discount', async () => {
@@ -378,6 +465,6 @@ describe('applySoAmendment — discount_centi has no amendment channel (document
 
     await apply(store);
 
-    expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.discount_centi).toBe(0);
+    expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.discount_sen).toBe(0);
   });
 });

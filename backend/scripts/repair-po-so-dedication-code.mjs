@@ -26,13 +26,13 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 const MISPAIRED = (db) => db`
-  SELECT i.id po_id, p.po_number po_doc, i.material_code po_code,
+  SELECT i.id po_id, p.po_number po_doc, i.item_code po_code,
          s.doc_no so_doc, s.item_code so_code
     FROM scm.purchase_order_items i
     JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
    WHERE p.company_id = 1 AND i.item_group IN ('sofa','bedframe')
-     AND upper(btrim(i.material_code)) <> upper(btrim(s.item_code))`;
+     AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
 
 async function main() {
   const rows = await MISPAIRED(sql);

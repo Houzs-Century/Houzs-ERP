@@ -101,12 +101,12 @@ class FakeQuery {
 function tablesFor(): Record<string, Row[]> {
   return {
     purchase_returns: [{
-      id: PR_ID, company_id: CO, return_number: PR_NO, status: 'POSTED', grn_id: 'grn-1', refund_centi: 5000,
+      id: PR_ID, company_id: CO, return_number: PR_NO, status: 'POSTED', grn_id: 'grn-1', refund_sen: 5000,
     }],
     purchase_return_items: [{
       id: 'pri-1', company_id: CO, purchase_return_id: PR_ID, grn_item_id: null,
-      material_code: 'AKEMI-Q', material_name: 'AKEMI Queen', qty_returned: 5,
-      unit_price_centi: 1000, line_refund_centi: 5000, item_group: null, variants: null,
+      item_code: 'AKEMI-Q', material_name: 'AKEMI Queen', qty_returned: 5,
+      unit_price_sen: 1000, line_refund_sen: 5000, item_group: null, variants: null,
     }],
     grns: [{ id: 'grn-1', company_id: CO, warehouse_id: WH }],
     grn_items: [],
@@ -156,7 +156,7 @@ describe('Purchase Return line verbs — a refused movement reaches the operator
   test('POST /:id/items — 201 WITH the line and the movement error', async () => {
     const tables = tablesFor();
     const res = await send(harness(tables, ['inventory_movements']), 'POST', `/purchase-returns/${PR_ID}/items`, {
-      materialCode: 'AKEMI-K', materialName: 'AKEMI King', qty: 3, unitPriceCenti: 2000,
+      itemCode: 'AKEMI-K', materialName: 'AKEMI King', qty: 3, unitPriceSen: 2000,
     });
     expect(res.status).toBe(201);
     const body = await res.json() as any;

@@ -52,7 +52,7 @@ async function migrationSql(): Promise<string> {
       `expected exactly one *_scm_si_items_do_item_id.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 /** Replay exactly as pg-migrate.mjs does: split, then one transaction. */

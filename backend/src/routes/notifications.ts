@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { getProjectScope } from "../services/projectAcl";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import { getDb } from "../db/client";
 import {
@@ -44,14 +43,12 @@ const app = new Hono<{ Bindings: Env }>();
  *                see history.
  *
  * Access: ANY authenticated user. The notification bell/badge is
- * personal data (the caller's own scoped project activity + their
- * own Houzs Points snapshot) and must never 403 — a Sales user who
- * lacks the `projects.read` matrix permission still has a bell. The
- * result stays scoped per-user via getProjectScope below (a scoped
- * rep only sees activity on projects where they/their manager is the
- * PIC and whose brand is in their allow-list), so widening the gate
- * does not leak anything the caller can't already see. This is a
- * deliberate WIDEN (drop the matrix-perm gate, keep the scoping).
+ * personal data (the caller's own company project activity + their own
+ * Houzs Points snapshot) and must never 403 — a Sales user who lacks the
+ * `projects.read` matrix permission still has a bell. The PIC/brand
+ * row-level ACL was removed (owner decision 2026-08-19), so the feed now
+ * covers every project in the caller's allowed companies; company scope
+ * (below) is the only remaining boundary.
  */
 app.get("/", async (c) => {
   const user = c.get("user");
@@ -60,21 +57,10 @@ app.get("/", async (c) => {
   const since = c.req.query("since") || null;
   const unreadOnly = c.req.query("unread") === "1";
 
-  const scope = getProjectScope(user);
-  if (scope && (scope.pic_ids.length === 0 || scope.brands.length === 0)) {
-    return c.json({
-      feed: [],
-      unread_by_project: {},
-      total_unread: 0,
-      has_more: false,
-    });
-  }
-
   const db = getDb(c.env);
 
-  // Reusable scope predicate — same for the feed query and the
-  // per-project unread counts. COALESCE(pic_id, created_by) keeps
-  // legacy projects (pre-039) attached to their creator's team.
+  // Reusable scope predicate — same for the feed query and the per-project
+  // unread counts. Company scope only (PIC/brand ACL removed 2026-08-19).
   const scopeConds = [];
   // Multi-company: the activity feed is PROJECT-derived, so it follows the
   // caller's ALLOWED companies via projects.company_id (mig-pg 0093). No-op
@@ -89,15 +75,6 @@ app.get("/", async (c) => {
     scopeConds.push(
       allowedCo.length > 0 ? inArray(projects.company_id, allowedCo) : sql`1=0`,
     );
-  }
-  if (scope) {
-    scopeConds.push(
-      inArray(
-        sql<number>`COALESCE(${projects.pic_id}, ${projects.created_by})`,
-        scope.pic_ids
-      )
-    );
-    scopeConds.push(inArray(projects.brand, scope.brands));
   }
 
   // Feed conditions — exclude the user's own rows so your own posts

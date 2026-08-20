@@ -249,6 +249,30 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   always move together. Unreachable commitments surface as
   `unmatchedCommitments` (0 is the healthy reading).
 
+### The supplier each row offers — one reader, chunked and paged
+
+The MRP row's supplier list and its `mainByCode` pick come from
+`supplier_material_bindings`, read through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) in `computeMrp`
+(`backend/src/scm/routes/mrp.ts`). It is not a plain `.in()`: the code list is
+chunked by URL bytes, the result is paged past PostgREST's 1,000-row response
+cap, and the order is total (`is_main_supplier DESC, item_code, id`).
+
+Two ceilings were being crossed here before 2026-08-16 and only one of them was
+loud. The IN-list was the whole demand code list in one URL, and the response
+was 2,660 rows in production against the 1,000-row cap — so roughly two thirds
+of the bindings never arrived and the SKUs they belonged to rendered
+**"— none —"**, which is the difference between a row staff can convert to a
+purchase order and a row they cannot. The fix was applied at this call site
+alone; since 2026-08-19 the rule lives in the shared reader, so the five other
+places that ask the same question inherit it instead of re-deriving it.
+
+`suppliers` is deliberately NOT on `ModelGroup` in
+`frontend/src/pages/scm-v2/Mrp.tsx`: a Model or a Sales Order does not have
+suppliers, each VARIANT does. All three groupers used to copy it off whichever
+child happened to be first, nothing read it, and the next renderer to want a
+supplier on a parent row would have shown one module's binding against all three.
+
 ## 4. Buckets and allocation
 
 - Bucket key = `(warehouse | item_code | variant_key)` (`composite()`;
@@ -469,3 +493,31 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
   `tests/soTerminalStatesMirror.test.ts`), so there is no longer a sibling copy
   to grep for — which is the point: "grep for its siblings" is advice that only
   works on the days someone remembers to follow it.
+
+## 9. Stored planning snapshot — MRP is a "planning run" (option B, owner 2026-08-19)
+
+`GET /mrp` used to run the whole `computeMrp` engine live on every open (~4s).
+Owner decision 2026-08-19: MRP becomes a **stored planning run** — the industry
+norm (SAP / Oracle / NetSuite run MRP on a schedule / on demand and the screen
+reads the stored result), refreshed on a schedule + a manual **Regenerate**, with
+the page showing "as of &lt;time&gt;".
+
+- **Table** `scm.mrp_snapshots(company_id, result jsonb, computed_at, updated_at)`
+  — one row per company, migration `0313`. A **cache, not a book of record**:
+  when a company has no row, `GET /mrp` falls back to live compute (so the feature
+  is inert until first populated, and `DROP TABLE` reverses it).
+- **Served ONLY for the DEFAULT view** (no category/warehouse filter, undated
+  hidden — `isDefaultMrpView`). `catFilter`/`whFilter` change the ALLOCATION
+  inputs (mrp.ts `549` / `863` / `991` / `1203`), not just the output rows, so a
+  stored full result cannot be safely post-filtered; a filtered or undated view,
+  or an unpopulated company, computes **live** exactly as before. The response
+  carries `stored` + `computedAt` for the "as of" indicator.
+- **Regenerate:** `POST /mrp/regenerate` recomputes the default view + upserts,
+  returns it fresh (gated `edit` on `scm.procurement.mrp` by the area guard).
+- **Auto-refresh:** the Worker `scheduled()` handler's new `*/15` cron calls
+  `refreshAllMrpSnapshots(env, nowIso)` for `MRP_REFRESH_COMPANY_IDS = [1, 2]`.
+- Files: `scm/lib/mrp-snapshot.ts` (`readMrpSnapshot` / `refreshMrpSnapshot` /
+  `refreshAllMrpSnapshots` / `isDefaultMrpView`), `mrp.ts` (`GET /` snapshot read
+  + `POST /regenerate`), `src/index.ts` (cron branch), `wrangler.toml` (cron),
+  `frontend/src/vendor/scm/lib/mrp-queries.ts` (`useRegenerateMrp` + `stored` /
+  `computedAt`), `frontend/src/pages/scm-v2/Mrp.tsx` (Regenerate button + "as of").

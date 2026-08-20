@@ -1,0 +1,53 @@
+name: Reload PostgREST schema (SO-list restore)
+
+# Restores the Sales Orders list after the 2026-08-18 money-rename batch (0305)
+# left hosted PostgREST serving the recreated views stale. See
+# backend/scripts/reload-postgrest-schema.mjs for the full diagnosis.
+#
+# DEFAULT IS PLAN (no-op): it prints PostgREST's connection state and stops.
+# To act, run with mode=apply and confirm=RELOAD-PGRST. recycle=true additionally
+# recycles PostgREST's stale connections (only if the NOTIFY reload alone did not
+# restore the list). Manual trigger only; own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, no-op) or apply"
+        type: choice
+        options: [plan, apply]
+        default: plan
+      confirm:
+        description: "type RELOAD-PGRST to apply"
+        type: string
+        default: ""
+      recycle:
+        description: "also recycle PostgREST connections (escalation)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: reload-postgrest-schema
+  cancel-in-progress: false
+
+jobs:
+  reload:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/reload-postgrest-schema.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          RECYCLE: ${{ inputs.recycle && '1' || '0' }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -57,14 +57,14 @@ type DraftLine = {
   rid:              string;
   description:      string;
   debitAccountCode: string;
-  amountCenti:      number;
+  amountSen:      number;
 };
 
 const newLine = (): DraftLine => ({
   rid:              `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   description:      '',
   debitAccountCode: '',
-  amountCenti:      0,
+  amountSen:      0,
 });
 
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
@@ -73,8 +73,8 @@ type PiAlloc = {
   piId:               string;
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
-  outstandingCenti:   number;
-  amountCenti:        number;
+  outstandingSen:   number;
+  amountSen:        number;
 };
 
 export const PaymentVoucherNew = () => {
@@ -152,7 +152,7 @@ export const PaymentVoucherNew = () => {
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const totalCenti = useMemo(() => lines.reduce((s, l) => s + l.amountCenti, 0), [lines]);
+  const totalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
 
   /* RINGGIT IN, RATE OUT. The rate is derived from the MYR actually paid divided by
      the foreign face total, and RE-derived when either side moves — editing a line
@@ -161,8 +161,8 @@ export const PaymentVoucherNew = () => {
      EITHER side (the divide-by-zero included), and null leaves the rate alone rather
      than blanking it to something resolveFxRate would fold back to 1. */
   const derivedRate = useMemo(
-    () => (isForeign ? deriveRateFromMyrPaid(myrPaidSen, totalCenti) : null),
-    [isForeign, myrPaidSen, totalCenti],
+    () => (isForeign ? deriveRateFromMyrPaid(myrPaidSen, totalSen) : null),
+    [isForeign, myrPaidSen, totalSen],
   );
   useEffect(() => {
     if (rateSource !== 'myr' || derivedRate === null) return;
@@ -183,7 +183,7 @@ export const PaymentVoucherNew = () => {
       if (sid !== supplierId) return false;
       const st = String(r.status ?? '').toUpperCase();
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') return false;
-      const outstanding = Number(r.total_centi ?? 0) - Number(r.paid_centi ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       return outstanding > 0;
     });
   }, [applyToPi, piListQ.data, supplierId]);
@@ -196,28 +196,28 @@ export const PaymentVoucherNew = () => {
 
   // Default an unentered row to min(remaining PV total, this PI's outstanding).
   const allocations: PiAlloc[] = useMemo(() => {
-    let remaining = totalCenti;
+    let remaining = totalSen;
     return outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
-      const outstanding = Number(r.total_centi ?? 0) - Number(r.paid_centi ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       const entered = allocAmounts[piId];
       const dflt = Math.max(0, Math.min(remaining, outstanding));
-      const amountCenti = entered != null ? entered : dflt;
-      remaining = Math.max(0, remaining - amountCenti);
+      const amountSen = entered != null ? entered : dflt;
+      remaining = Math.max(0, remaining - amountSen);
       return {
         piId,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
-        outstandingCenti:   outstanding,
-        amountCenti,
+        outstandingSen:   outstanding,
+        amountSen,
       };
     });
-  }, [outstandingPiRows, allocAmounts, totalCenti]);
+  }, [outstandingPiRows, allocAmounts, totalSen]);
 
-  const allocatedCenti = useMemo(() => allocations.reduce((s, a) => s + a.amountCenti, 0), [allocations]);
-  const overAllocated  = applyToPi && allocatedCenti > totalCenti;
+  const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
+  const overAllocated  = applyToPi && allocatedSen > totalSen;
 
-  const realLines = lines.filter((l) => l.debitAccountCode && l.amountCenti > 0);
+  const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
   const canSave = !!payeeName.trim() && !!creditAccountCode && realLines.length > 0 && !overAllocated;
 
   const onSave = async () => {
@@ -225,13 +225,13 @@ export const PaymentVoucherNew = () => {
     if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account the money leaves.' }); return; }
     if (realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
     if (overAllocated) {
-      setDialog({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(allocatedCenti)} to PIs but the voucher total is only ${fmtRm(totalCenti)}. Reduce the applied amounts or raise the voucher total.` });
+      setDialog({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(allocatedSen)} to PIs but the voucher total is only ${fmtRm(totalSen)}. Reduce the applied amounts or raise the voucher total.` });
       return;
     }
     // Only send allocations for a SUPPLIER_PAYMENT voucher, and only rows the
     // operator actually applied (amount > 0). FREIGHT / OTHER send none.
     const sendAllocations = applyToPi
-      ? allocations.filter((a) => a.amountCenti > 0).map((a) => ({ piId: a.piId, amountCenti: a.amountCenti }))
+      ? allocations.filter((a) => a.amountSen > 0).map((a) => ({ piId: a.piId, amountSen: a.amountSen }))
       : [];
     try {
       const res = await create.mutateAsync({
@@ -251,7 +251,7 @@ export const PaymentVoucherNew = () => {
         lines: realLines.map((l) => ({
           description:      l.description || undefined,
           debitAccountCode: l.debitAccountCode,
-          amountCenti:      l.amountCenti,
+          amountSen:      l.amountSen,
         })),
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
       });
@@ -347,7 +347,7 @@ export const PaymentVoucherNew = () => {
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateSource('rate'); setMyrPaidSen(null); setExchangeRate(v); }}
-              rateHint={<>≈ {fmtRm(Math.round(totalCenti * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
+              rateHint={<>≈ {fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
             />
 
@@ -382,7 +382,7 @@ export const PaymentVoucherNew = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {lines.length} line{lines.length === 1 ? '' : 's'} · total {fmtRm(totalCenti)}
+            {lines.length} line{lines.length === 1 ? '' : 's'} · total {fmtRm(totalSen)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -395,7 +395,7 @@ export const PaymentVoucherNew = () => {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                 <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                  <span className={styles.previewPrice}>{fmtRm(l.amountCenti)}</span>
+                  <span className={styles.previewPrice}>{fmtRm(l.amountSen)}</span>
                   {lines.length > 1 && (
                     <button type="button" onClick={() => dropLine(l.rid)} title="Remove line"
                       style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, #B8331F)', padding: 4, display: 'inline-flex' }}>
@@ -426,8 +426,8 @@ export const PaymentVoucherNew = () => {
               <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Amount (MYR)</span>
-                  <MoneyInput bare valueSen={l.amountCenti}
-                    onCommit={(sen) => setLine(l.rid, { amountCenti: sen ?? 0 })}
+                  <MoneyInput bare valueSen={l.amountSen}
+                    onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                     inputClassName={styles.fieldInput} selectOnFocus />
                 </label>
               </div>
@@ -451,7 +451,7 @@ export const PaymentVoucherNew = () => {
             <h2 className={styles.cardTitle}>Apply to PI</h2>
             <span style={{ fontSize: 'var(--fs-12)', color: overAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
               {applyToPi
-                ? `Allocated ${fmtRm(allocatedCenti)} / PV total ${fmtRm(totalCenti)}`
+                ? `Allocated ${fmtRm(allocatedSen)} / PV total ${fmtRm(totalSen)}`
                 : 'Pick a supplier above to list outstanding invoices'}
             </span>
           </div>
@@ -485,11 +485,11 @@ export const PaymentVoucherNew = () => {
                       <tr key={a.piId} style={{ borderTop: '1px solid var(--line)' }}>
                         <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingCenti)}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                          <MoneyInput bare valueSen={a.amountCenti}
+                          <MoneyInput bare valueSen={a.amountSen}
                             onCommit={(sen) => {
-                              const v = Math.max(0, Math.min(a.outstandingCenti, sen ?? 0));
+                              const v = Math.max(0, Math.min(a.outstandingSen, sen ?? 0));
                               setAllocAmounts((prev) => ({ ...prev, [a.piId]: v }));
                             }}
                             inputClassName={styles.fieldInput} selectOnFocus />
@@ -509,13 +509,13 @@ export const PaymentVoucherNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700 }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(totalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(totalSen, currency)}</span>
             </div>
             {/* Multi-currency (Phase 1-A) — MYR posted to GL for a foreign PV. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>≈ posted to GL</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(totalCenti * resolveFxRate(exchangeRate)), 'MYR')}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')}</span>
               </div>
             )}
           </div>

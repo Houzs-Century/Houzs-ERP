@@ -65,7 +65,7 @@ async function main() {
       WHERE h.company_id = ${CO} AND upper(i.item_code) LIKE ${"%" + suffix.toUpperCase()}`;
     const [{ n: nPo }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-      WHERE p.company_id = ${CO} AND upper(i.material_code) LIKE ${"%" + suffix.toUpperCase()}`;
+      WHERE p.company_id = ${CO} AND upper(i.item_code) LIKE ${"%" + suffix.toUpperCase()}`;
     const [{ n: nMod }] = await sql`SELECT COUNT(*)::int n FROM scm.product_models
       WHERE company_id = ${CO} AND allowed_options::text ILIKE ${'%"' + code + '"%'}`;
     used.set(code, { nSku, nSo, nPo, nMod });

@@ -48,7 +48,7 @@ export async function attachPiAssignedSos(
     }
     const poIds = [...poByGrn.values()];
     /* Each PI's OWN line codes (header ≡ ∪(drill lines), 2026-08-02): the drill
-       matches assignments into the PI's lines by material_code, so the header
+       matches assignments into the PI's lines by item_code, so the header
        cells roll up ONLY those SKUs — a partial-billing PI must not inherit
        its parent PO's whole assignment history. */
     const piIds = rows.map((r) => r.id).filter(Boolean);
@@ -57,14 +57,14 @@ export async function attachPiAssignedSos(
       const chunk = piIds.slice(k, k + 300);
       if (chunk.length === 0) continue;
       const { data: piLines, error: lineErr } = await sb.from('purchase_invoice_items')
-        .select('purchase_invoice_id, material_code')
+        .select('purchase_invoice_id, item_code')
         .in('purchase_invoice_id', chunk);
       if (lineErr) {
         /* eslint-disable-next-line no-console */
         console.error('[pi-assigned-sos] PI line-code read failed — Assigned SO column will be short:', lineErr.message);
       }
-      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; material_code: string | null }>) {
-        const code = (l.material_code ?? '').trim();
+      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; item_code: string | null }>) {
+        const code = (l.item_code ?? '').trim();
         if (!code) continue;
         const set = codesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
         set.add(code);
@@ -109,4 +109,27 @@ export async function attachPiAssignedSos(
   } catch {
     return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, assigned_so_provenance: [], delivered_dos: [] }));
   }
+}
+
+/* The MRP-DERIVED PI-list row fields. attachPiAssignedSos runs a company-wide
+   computeMrp (via resolvePoSoCoveragePerSkuForPos) to fill exactly these, which
+   is why the PI list used to pay the full MRP cost on its critical path. The
+   list no longer computes them inline; the deferred endpoint
+   (routes/purchase-invoices-list-enrichment.ts) heals them a beat after render.
+   C16 TWIN: frontend/src/lib/piListEnrichment.ts's PI_MRP_DERIVED_LIST_FIELDS
+   pins the SAME set, and a parity test fails if a new MRP-derived list field is
+   added on only one side. */
+export const PI_LIST_MRP_ENRICHMENT_KEYS = [
+  'assigned_sos',
+  'assigned_so_linked',
+  'assigned_so_provenance',
+  'delivered_dos',
+] as const;
+
+/** Project just the MRP-derived enrichment fields out of an attachPiAssignedSos
+    row, for the deferred-enrichment endpoint's per-PI payload. */
+export function pickPiListMrpEnrichment(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of PI_LIST_MRP_ENRICHMENT_KEYS) out[k] = row[k];
+  return out;
 }

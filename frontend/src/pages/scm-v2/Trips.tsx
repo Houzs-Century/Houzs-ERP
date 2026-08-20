@@ -594,7 +594,7 @@ export function Trips() {
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                 {assign.overflow.map((o) => (
                   <li key={o.key}>
-                    <strong>{o.date}</strong> · {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group} · {o.orders.join(', ')} — {o.sets} sets · {fmtRm(o.revenueCenti)}
+                    <strong>{o.date}</strong> · {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group} · {o.orders.join(', ')} — {o.sets} sets · {fmtRm(o.revenueSen)}
                   </li>
                 ))}
                 {assign.unassigned.map((u, i) => (
@@ -850,7 +850,7 @@ const RunCard = ({ run, onApply, applyBusy, onFocus, focused = false }: {
         {run.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : run.group}
       </span>
       <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        {run.stops.length} stop(s) · {run.sets} sets · {fmtRm(run.revenueCenti)}
+        {run.stops.length} stop(s) · {run.sets} sets · {fmtRm(run.revenueSen)}
       </span>
       {run.overCapacity && <MiniBadge tone="danger">Over capacity</MiniBadge>}
       {run.windowViolations > 0 && <MiniBadge tone="warn">{run.windowViolations} window issue(s)</MiniBadge>}

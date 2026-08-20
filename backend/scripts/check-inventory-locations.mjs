@@ -74,7 +74,7 @@ async function main() {
 
     /* ── (D) STOCK by warehouse, OWNED vs CONSIGNMENT ────────────────────── */
     const lots = await sql`
-      SELECT warehouse_id, product_code, batch_no, source_doc_type,
+      SELECT warehouse_id, item_code, batch_no, source_doc_type,
              SUM(qty_remaining)::numeric AS qty
         FROM scm.inventory_lots
        WHERE company_id = ${companyId} AND qty_remaining > 0
@@ -103,7 +103,7 @@ async function main() {
         if (consign) continue;
         const label = whLabel(l.warehouse_id);
         if (OWNED_OK.has(label)) continue;
-        notice(`      OWNED ${pad(l.product_code, 26)} ${pad(label, 14)} qty ${l.qty} <- ${l.batch_no ?? "(no batch)"} (${l.source_doc_type ?? "?"})`);
+        notice(`      OWNED ${pad(l.item_code, 26)} ${pad(label, 14)} qty ${l.qty} <- ${l.batch_no ?? "(no batch)"} (${l.source_doc_type ?? "?"})`);
       }
     }
   }

@@ -97,8 +97,8 @@ async function loadGrnSources() {
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true
     ORDER BY g.grn_number`;
   const items = await sql`
-    SELECT i.id, i.grn_id, i.material_kind, i.material_code, i.material_name, i.item_group,
-           i.description, i.description2, i.uom, i.unit_price_centi, i.discount_centi,
+    SELECT i.id, i.grn_id, i.material_kind, i.item_code, i.material_name, i.item_group,
+           i.description, i.description2, i.uom, i.unit_price_sen, i.discount_sen,
            i.qty_accepted, i.invoiced_qty, i.returned_qty, i.purchase_order_item_id,
            i.variants, i.gap_inches, i.divan_height_inches, i.divan_price_sen,
            i.leg_height_inches, i.leg_price_sen, i.custom_specials, i.line_suffix,
@@ -119,12 +119,12 @@ async function loadGrnSources() {
     const raw = REFS.grToPi[acGr] ?? [];
     const lines = (byDoc.get(g.id) ?? []).map((i) => ({
       lineId: i.id,
-      itemCode: i.material_code,
+      itemCode: i.item_code,
       /* Remaining, not accepted: a receipt can be invoiced across several
          invoices, and anything returned to the supplier is not billable. */
       qty: n(i.qty_accepted) - n(i.invoiced_qty) - n(i.returned_qty),
-      unitPriceCenti: n(i.unit_price_centi),
-      discountCenti: n(i.discount_centi),
+      unitPriceSen: n(i.unit_price_sen),
+      discountSen: n(i.discount_sen),
       sourceLineKey: i.purchase_order_item_id,
       _row: i,
     }));
@@ -154,9 +154,9 @@ async function loadDoSources() {
     FROM scm.delivery_orders d
     WHERE d.company_id = ${CO} AND d.migrated_no_stock = true
     ORDER BY d.do_number`;
-  /* s.unit_price_centi is the RECOVERY source for a price the cutover dropped.
+  /* s.unit_price_sen is the RECOVERY source for a price the cutover dropped.
      create-migrated-documents.mjs inserts a delivery-order line with seven
-     columns and unit_price_centi is not one of them, so all 59 migrated DO lines
+     columns and unit_price_sen is not one of them, so all 59 migrated DO lines
      read RM 0.00 — a stored zero, not a null, so nothing downstream can tell it
      from a genuinely free line. Every one of those lines does carry so_item_id,
      and the DO line price is by definition a snapshot of that order line's
@@ -168,11 +168,11 @@ async function loadDoSources() {
      which belongs to the order's full quantity and not to a partial delivery. */
   const items = await sql`
     SELECT i.id, i.delivery_order_id, i.item_code, i.item_group, i.description, i.description2,
-           i.uom, i.qty, i.unit_price_centi, i.discount_centi, i.unit_cost_centi, i.so_item_id,
+           i.uom, i.qty, i.unit_price_sen, i.discount_sen, i.unit_cost_sen, i.so_item_id,
            i.variants, i.gap_inches, i.divan_height_inches, i.divan_price_sen,
            i.leg_height_inches, i.leg_price_sen, i.custom_specials, i.line_suffix,
            i.special_order_price_sen,
-           s.unit_price_centi AS so_unit_price_centi
+           s.unit_price_sen AS so_unit_price_sen
     FROM scm.delivery_order_items i
     JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
     LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
@@ -185,13 +185,13 @@ async function loadDoSources() {
   return rows.map((d) => {
     const raw = REFS.doToIv[d.linked_ac_docno] ?? [];
     const lines = (byDoc.get(d.id) ?? []).map((i) => {
-      const recovered = n(i.unit_price_centi) === 0 && n(i.so_unit_price_centi) > 0;
+      const recovered = n(i.unit_price_sen) === 0 && n(i.so_unit_price_sen) > 0;
       return {
         lineId: i.id,
         itemCode: i.item_code,
         qty: n(i.qty),
-        unitPriceCenti: recovered ? n(i.so_unit_price_centi) : n(i.unit_price_centi),
-        discountCenti: n(i.discount_centi),
+        unitPriceSen: recovered ? n(i.so_unit_price_sen) : n(i.unit_price_sen),
+        discountSen: n(i.discount_sen),
         sourceLineKey: i.so_item_id,
         _row: i,
         _priceRecovered: recovered,
@@ -231,12 +231,12 @@ function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) 
        sides agree, not because both are missing. */
     const folded = [...new Set(p.sourceDocNos.flatMap((d) => extraAcDocs?.get(d) ?? []))];
     const notes = [
-      p.valueCenti === 0 ? "ZERO-VALUE — AutoCount billed RM 0.00 on this invoice too" : null,
+      p.valueSen === 0 ? "ZERO-VALUE — AutoCount billed RM 0.00 on this invoice too" : null,
       recovered ? `${recovered} line price(s) recovered from the sales order` : null,
       folded.length ? `folds AutoCount receipts ${folded.join(" + ")} into one ERP receipt — the total still reconciles` : null,
     ].filter(Boolean);
     log(`  ${APPLY ? "CREATE" : "WOULD CREATE"} ${p.invoiceNumber}  (AutoCount ${p.acInvoiceNo})  `
-      + `${rm(p.valueCenti)}  ${p.lineCount} line(s), ${p.qty} unit(s)  from ${p.sourceDocNos.join(" + ")}`
+      + `${rm(p.valueSen)}  ${p.lineCount} line(s), ${p.qty} unit(s)  from ${p.sourceDocNos.join(" + ")}`
       + (notes.length ? `  [${notes.join("; ")}]` : ""));
   }
   if (done.length) {
@@ -251,8 +251,8 @@ function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) 
   for (const [reason, list] of [...byReason.entries()].sort((a, b) => b[1].length - a[1].length)) {
     log(`  ${reason}: ${list.length}`);
     for (const b of list.slice(0, reason === "total_disagrees_with_autocount" ? 25 : 8)) {
-      const both = b.acValueCenti === undefined ? ""
-        : `  ours ${rm(b.valueCenti)} vs AutoCount ${b.acValueCenti < 0 ? "(no total)" : rm(b.acValueCenti)}`;
+      const both = b.acValueSen === undefined ? ""
+        : `  ours ${rm(b.valueSen)} vs AutoCount ${b.acValueSen < 0 ? "(no total)" : rm(b.acValueSen)}`;
       log(`     ${b.docNo}${b.acDocNo ? ` (AutoCount ${b.acDocNo})` : ""}`
         + `${b.acInvoiceNos.length ? ` -> ${b.acInvoiceNos.join(", ")}` : ""}${both}`);
     }
@@ -270,14 +270,14 @@ function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) 
      real disagreement and needs a human. Reported apart so nobody reads the
      first number as work that is stuck. */
   const mismatches = blocked.filter((b) => b.reason === "total_disagrees_with_autocount");
-  const awaitingPrice = mismatches.filter((b) => (b.valueCenti ?? 0) === 0);
-  const genuinelyDiffer = mismatches.filter((b) => (b.valueCenti ?? 0) !== 0);
+  const awaitingPrice = mismatches.filter((b) => (b.valueSen ?? 0) === 0);
+  const genuinelyDiffer = mismatches.filter((b) => (b.valueSen ?? 0) !== 0);
   if (mismatches.length) {
     log(`  of the ${mismatches.length} total mismatches: ${awaitingPrice.length} are ours RM 0.00 `
       + `(a price the cutover dropped — writable once the AutoCount invoice price is stamped on the source lines), `
       + `${genuinelyDiffer.length} have both sides priced and genuinely differ (needs a human):`);
     for (const b of genuinelyDiffer.slice(0, 25)) {
-      log(`     DIFFERS ${b.docNo} -> ${b.acInvoiceNos.join(", ")}  ours ${rm(b.valueCenti)} vs AutoCount ${rm(b.acValueCenti)}`);
+      log(`     DIFFERS ${b.docNo} -> ${b.acInvoiceNos.join(", ")}  ours ${rm(b.valueSen)} vs AutoCount ${rm(b.acValueSen)}`);
     }
     if (genuinelyDiffer.length > 25) log(`     ... and ${genuinelyDiffer.length - 25} more`);
   }
@@ -326,23 +326,23 @@ async function writePi(plan, lineIndex, headIndex) {
     const [h] = await tx`
       INSERT INTO scm.purchase_invoices
         (invoice_number, invoice_date, supplier_id, purchase_order_id, grn_id, status,
-         currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi,
+         currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen,
          company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
       VALUES (${plan.invoiceNumber}, ${meta.date || head.received_at || new Date().toISOString().slice(0, 10)},
               ${head.supplier_id}, ${head.purchase_order_id}, ${head.id}, 'POSTED',
               ${head.currency || 'MYR'}, ${head.exchange_rate ?? 1},
-              ${plan.valueCenti}, 0, ${plan.valueCenti}, 0,
+              ${plan.valueSen}, 0, ${plan.valueSen}, 0,
               ${CO}, ${SYS_USER},
               ${`Carried over from AutoCount ${plan.acInvoiceNo}`}, true, ${plan.acInvoiceNo})
       RETURNING id`;
     const rows = lines.map((l) => ({
       purchase_invoice_id: h.id, grn_item_id: l._row.id, company_id: CO,
-      material_kind: l._row.material_kind, material_code: l._row.material_code,
+      material_kind: l._row.material_kind, item_code: l._row.item_code,
       material_name: l._row.material_name, item_group: l._row.item_group,
       description: l._row.description, description2: l._row.description2,
-      uom: l._row.uom ?? 'UNIT', qty: l.qty, unit_price_centi: l.unitPriceCenti,
-      discount_centi: l.discountCenti ?? 0,
-      line_total_centi: Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0)),
+      uom: l._row.uom ?? 'UNIT', qty: l.qty, unit_price_sen: l.unitPriceSen,
+      discount_sen: l.discountSen ?? 0,
+      line_total_sen: Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0)),
       variants: l._row.variants, gap_inches: l._row.gap_inches,
       divan_height_inches: l._row.divan_height_inches, divan_price_sen: l._row.divan_price_sen ?? 0,
       leg_height_inches: l._row.leg_height_inches, leg_price_sen: l._row.leg_price_sen ?? 0,
@@ -366,24 +366,24 @@ async function writeSi(plan, lineIndex, headIndex) {
     const [h] = await tx`
       INSERT INTO scm.sales_invoices
         (invoice_number, invoice_date, delivery_order_id, so_doc_no, debtor_code, debtor_name,
-         status, currency, subtotal_centi, discount_centi, tax_centi, total_centi,
-         local_total_centi, paid_centi, line_count, company_id, created_by, note,
+         status, currency, subtotal_sen, discount_sen, tax_sen, total_sen,
+         local_total_sen, paid_sen, line_count, company_id, created_by, note,
          migrated_no_stock, linked_ac_docno)
       VALUES (${plan.invoiceNumber}, ${meta.date || head.do_date || new Date().toISOString().slice(0, 10)},
               ${head.id}, ${head.so_doc_no}, ${head.debtor_code}, ${head.debtor_name ?? head.debtor_code ?? '(unknown)'},
-              'SENT', ${head.currency || 'MYR'}, ${plan.valueCenti}, 0, 0, ${plan.valueCenti},
-              ${plan.valueCenti}, 0, ${lines.length}, ${CO}, ${SYS_USER},
+              'SENT', ${head.currency || 'MYR'}, ${plan.valueSen}, 0, 0, ${plan.valueSen},
+              ${plan.valueSen}, 0, ${lines.length}, ${CO}, ${SYS_USER},
               ${`Carried over from AutoCount ${plan.acInvoiceNo}`}, true, ${plan.acInvoiceNo})
       RETURNING id`;
     const rows = lines.map((l, i) => ({
       sales_invoice_id: h.id, do_item_id: l._row.id, company_id: CO, line_no: i + 1,
       item_code: l._row.item_code, item_group: l._row.item_group,
       description: l._row.description, description2: l._row.description2,
-      uom: l._row.uom ?? 'UNIT', qty: l.qty, unit_price_centi: l.unitPriceCenti,
-      discount_centi: l.discountCenti ?? 0,
-      line_total_centi: Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0)),
-      unit_cost_centi: n(l._row.unit_cost_centi),
-      line_cost_centi: n(l._row.unit_cost_centi) * l.qty,
+      uom: l._row.uom ?? 'UNIT', qty: l.qty, unit_price_sen: l.unitPriceSen,
+      discount_sen: l.discountSen ?? 0,
+      line_total_sen: Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0)),
+      unit_cost_sen: n(l._row.unit_cost_sen),
+      line_cost_sen: n(l._row.unit_cost_sen) * l.qty,
       variants: l._row.variants, gap_inches: l._row.gap_inches,
       divan_height_inches: l._row.divan_height_inches, divan_price_sen: l._row.divan_price_sen ?? 0,
       leg_height_inches: l._row.leg_height_inches, leg_price_sen: l._row.leg_price_sen ?? 0,

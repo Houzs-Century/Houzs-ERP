@@ -19,7 +19,7 @@ import {
 
 const line = (over: Partial<ReceiptCostLine> = {}): ReceiptCostLine => ({
   id: 'gi-1',
-  materialCode: 'TRION (A) (HB STR)-(K)',
+  itemCode: 'TRION (A) (HB STR)-(K)',
   qtyAccepted: 1,
   unitCostSen: 0,
   itemGroup: 'bedframe',
@@ -33,16 +33,16 @@ describe('findUncostedReceiptLines — the rule', () => {
       new Map([['TRION (A) (HB STR)-(K)', 87000]]),
     );
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ materialCode: 'TRION (A) (HB STR)-(K)', knownUnitCostSen: 87000 });
+    expect(out[0]).toMatchObject({ itemCode: 'TRION (A) (HB STR)-(K)', knownUnitCostSen: 87000 });
   });
 
   test('allows a zero-priced line whose SKU has never been bought at a price — GWP / demo / display', () => {
     // The discriminator the owner confirmed and backfill-zero-cost-lots.mjs
     // uses: no purchase price anywhere means zero really is the cost.
-    expect(findUncostedReceiptLines([line({ materialCode: 'GN-VM PILLOW-DEMO' })], new Map())).toEqual([]);
+    expect(findUncostedReceiptLines([line({ itemCode: 'GN-VM PILLOW-DEMO' })], new Map())).toEqual([]);
     expect(
       findUncostedReceiptLines(
-        [line({ materialCode: 'GN-VM PILLOW-DEMO' })],
+        [line({ itemCode: 'GN-VM PILLOW-DEMO' })],
         new Map([['GN-VM PILLOW-DEMO', 0]]),
       ),
     ).toEqual([]);
@@ -71,7 +71,7 @@ describe('findUncostedReceiptLines — the rule', () => {
   test('a SERVICE line is never an offender — it creates no inventory movement', () => {
     expect(
       findUncostedReceiptLines(
-        [line({ materialCode: 'SVC-DELIVERY', itemGroup: 'service' })],
+        [line({ itemCode: 'SVC-DELIVERY', itemGroup: 'service' })],
         new Map([['SVC-DELIVERY', 5000]]),
       ),
     ).toEqual([]);
@@ -85,7 +85,7 @@ describe('findUncostedReceiptLines — the rule', () => {
 
   test('matches the known-cost map case- and whitespace-insensitively', () => {
     const out = findUncostedReceiptLines(
-      [line({ materialCode: '  trion (a)  (hb str)-(k) ' })],
+      [line({ itemCode: '  trion (a)  (hb str)-(k) ' })],
       new Map([['TRION (A) (HB STR)-(K)', 87000]]),
     );
     expect(out).toHaveLength(1);
@@ -93,7 +93,7 @@ describe('findUncostedReceiptLines — the rule', () => {
 
   test('reports every offending line, not just the first', () => {
     const out = findUncostedReceiptLines(
-      [line({ id: 'a' }), line({ id: 'b', materialCode: 'REGAL (A)-(Q)' }), line({ id: 'c', unitCostSen: 500 })],
+      [line({ id: 'a' }), line({ id: 'b', itemCode: 'REGAL (A)-(Q)' }), line({ id: 'c', unitCostSen: 500 })],
       new Map([['TRION (A) (HB STR)-(K)', 87000], ['REGAL (A)-(Q)', 70000]]),
     );
     expect(out.map((o) => o.id)).toEqual(['a', 'b']);
@@ -103,7 +103,7 @@ describe('findUncostedReceiptLines — the rule', () => {
 describe('zeroCostReceiptResponse', () => {
   test('names the error and carries the offending lines', () => {
     const body = zeroCostReceiptResponse([
-      { id: 'a', materialCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
+      { id: 'a', itemCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
     ]);
     expect(body.error).toBe(ZERO_COST_RECEIPT_ERROR);
     expect(body.lines).toHaveLength(1);
@@ -113,7 +113,7 @@ describe('zeroCostReceiptResponse', () => {
     // A refusal with no route out is what trains people to type a fake price,
     // which is the one outcome strictly worse than the recorded zero.
     const body = zeroCostReceiptResponse([
-      { id: 'a', materialCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
+      { id: 'a', itemCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
     ]);
     expect(body.remedy).toHaveLength(2);
     expect(body.remedy.join(' ')).toMatch(/unit price/i);
@@ -194,10 +194,10 @@ function fakeSb(lots: Array<Record<string, unknown>>, opts: { throwOnRead?: bool
 }
 
 const LOTS = [
-  { product_code: 'TRION (A) (HB STR)-(K)', unit_cost_sen: 87000, received_at: '2026-06-01', company_id: 1 },
-  { product_code: 'TRION (A) (HB STR)-(K)', unit_cost_sen: 99000, received_at: '2025-01-01', company_id: 1 },
-  { product_code: 'REGAL (A)-(Q)', unit_cost_sen: 70000, received_at: '2026-05-01', company_id: 1 },
-  { product_code: 'OTHERCO ONLY', unit_cost_sen: 55000, received_at: '2026-05-01', company_id: 2 },
+  { item_code: 'TRION (A) (HB STR)-(K)', unit_cost_sen: 87000, received_at: '2026-06-01', company_id: 1 },
+  { item_code: 'TRION (A) (HB STR)-(K)', unit_cost_sen: 99000, received_at: '2025-01-01', company_id: 1 },
+  { item_code: 'REGAL (A)-(Q)', unit_cost_sen: 70000, received_at: '2026-05-01', company_id: 1 },
+  { item_code: 'OTHERCO ONLY', unit_cost_sen: 55000, received_at: '2026-05-01', company_id: 2 },
 ];
 
 describe('loadKnownPurchaseCostSen', () => {
@@ -228,7 +228,7 @@ describe('checkReceiptCosts — the chokepoint helper', () => {
   });
 
   test('lets a genuinely free SKU through', async () => {
-    expect(await checkReceiptCosts(fakeSb(LOTS), [line({ materialCode: 'GN-VM PILLOW-DEMO' })], 1)).toBeNull();
+    expect(await checkReceiptCosts(fakeSb(LOTS), [line({ itemCode: 'GN-VM PILLOW-DEMO' })], 1)).toBeNull();
   });
 
   test('lets a fully priced receipt through without reading the ledger', async () => {

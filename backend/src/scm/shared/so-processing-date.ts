@@ -644,7 +644,7 @@ export function readSoProcessingDateFromBody(
  *    proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
  *    shared gate on both manual paths so create + manual + client can't drift.
  *    `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
- *    the SO's local_total_centi — no new threshold invented (the per-company
+ *    the SO's local_total_sen — no new threshold invented (the per-company
  *    fraction is processingDateThresholdFor, inside meetsProceedGate).
  *
  * Σ collected vs the header total, both centi — the deposit facts every

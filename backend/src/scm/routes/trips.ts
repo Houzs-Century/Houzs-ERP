@@ -4,8 +4,8 @@
 // A trip is a scheduled lorry-day: one lorry + a primary driver (+ up to 2
 // helpers) leaving an origin warehouse on a date, carrying an ordered list of
 // trip_stops. Each stop links a DO (or an SO before a DO is cut) with a
-// stop_type and the delivery value attributable to that stop (revenue_centi).
-// Σ revenue_centi per trip = the trip revenue the Stage 5B "Lorry Capacity"
+// stop_type and the delivery value attributable to that stop (revenue_sen).
+// Σ revenue_sen per trip = the trip revenue the Stage 5B "Lorry Capacity"
 // dashboard aggregates; the dashboard route itself is NOT built here.
 //
 // is_outsourced is DERIVED from the lorry's is_internal at create time
@@ -13,8 +13,8 @@
 // master flip doesn't rewrite history. trip_no is a human doc number
 // (TRIP-YYMM-NNN) minted server-side via mintMonthlyDocNo (max+1, never count+1).
 //
-// Money: DO/SO grand totals are local_total_centi (integer cents); a stop's
-// revenue_centi is sourced from that. Dual-read camelCase ?? snake_case on every
+// Money: DO/SO grand totals are local_total_sen (integer cents); a stop's
+// revenue_sen is sourced from that. Dual-read camelCase ?? snake_case on every
 // result column (the pg driver camelCases result columns).
 //
 // COMPANY SCOPE — CROSS-COMPANY, which is NOT the same as unscoped. Trips is a
@@ -66,7 +66,7 @@ const TRIP_COLS =
   'created_at, created_by, updated_at';
 
 const STOP_COLS =
-  'id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_centi, notes, created_at, ' +
+  'id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_sen, notes, created_at, ' +
   /* Mig 0134 — what the route optimiser worked out. NULL = never optimised, which
      is honestly "not computed" rather than a fabricated zero. */
   'leg_distance_m, leg_duration_s, eta_offset_s, route_optimised_at';
@@ -261,7 +261,7 @@ trips.get('/day', async (c) => {
   // Stops for those trips.
   const tripIds = rawTrips.map((t) => t.id);
   const { data: stopData } = await sb.from('trip_stops')
-    .select('id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_centi, eta_offset_s, leg_distance_m')
+    .select('id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_sen, eta_offset_s, leg_distance_m')
     .in('trip_id', tripIds);
   const rawStops: RawStopRow[] = ((stopData ?? []) as Array<Record<string, unknown>>).map((s) => ({
     id: String(dual<string>(s, 'id')),
@@ -272,7 +272,7 @@ trips.get('/day', async (c) => {
     so_id: dual<string | null>(s, 'so_id'),
     customer_name: dual<string | null>(s, 'customer_name'),
     address: dual<string | null>(s, 'address'),
-    revenue_centi: toNumericOrNull(dual(s, 'revenue_centi')),
+    revenue_sen: toNumericOrNull(dual(s, 'revenue_sen')),
     eta_offset_s: toNumericOrNull(dual(s, 'eta_offset_s')),
     leg_distance_m: toNumericOrNull(dual(s, 'leg_distance_m')),
   }));
@@ -636,8 +636,8 @@ trips.patch('/:id/status', patchTripStatusHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    POST /trips/:id/stops — add a stop linking a DO/SO, with stop_type + revenue.
-   If revenueCenti is omitted and a do_id/so_id is given, the stop's revenue is
-   sourced from the DO/SO local_total_centi. customer_name/address default from
+   If revenueSen is omitted and a do_id/so_id is given, the stop's revenue is
+   sourced from the DO/SO local_total_sen. customer_name/address default from
    the DO/SO header when not supplied.
    ─────────────────────────────────────────────────────────────────────────*/
 const stopCreateSchema = z.object({
@@ -648,7 +648,7 @@ const stopCreateSchema = z.object({
   soDocNo: z.string().nullable().optional(),       // resolve a stop to an SO by its doc_no
   customerName: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
-  revenueCenti: z.number().int().nullable().optional(),
+  revenueSen: z.number().int().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -666,29 +666,29 @@ trips.post('/:id/stops', async (c) => {
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
 
   // Resolve revenue + customer/address snapshots from the linked DO / SO when
-  // not supplied. local_total_centi is the grand total on both headers.
-  let revenue = p.revenueCenti ?? null;
+  // not supplied. local_total_sen is the grand total on both headers.
+  let revenue = p.revenueSen ?? null;
   let customerName = p.customerName ?? null;
   let address = p.address ?? null;
   let soId = p.soId ?? null;
 
   if (p.doId) {
     const { data: doRow } = await sb.from('delivery_orders')
-      .select('local_total_centi, debtor_name, address1, address2').eq('id', p.doId).maybeSingle();
+      .select('local_total_sen, debtor_name, address1, address2').eq('id', p.doId).maybeSingle();
     if (doRow) {
       const r = doRow as Record<string, unknown>;
-      if (revenue == null) revenue = Number(dual(r, 'local_total_centi') ?? 0);
+      if (revenue == null) revenue = Number(dual(r, 'local_total_sen') ?? 0);
       if (customerName == null) customerName = (dual<string>(r, 'debtor_name') ?? null);
       if (address == null) address = [dual<string>(r, 'address1'), dual<string>(r, 'address2')].filter(Boolean).join(', ') || null;
     }
   } else if (p.soDocNo) {
     // SO lookup by doc_no → its uuid id + snapshots + grand total.
     const { data: soRow } = await sb.from('mfg_sales_orders')
-      .select('id, local_total_centi, debtor_name, address1, address2').eq('doc_no', p.soDocNo).maybeSingle();
+      .select('id, local_total_sen, debtor_name, address1, address2').eq('doc_no', p.soDocNo).maybeSingle();
     if (soRow) {
       const r = soRow as Record<string, unknown>;
       if (soId == null) soId = dual<string>(r, 'id') ?? null;
-      if (revenue == null) revenue = Number(dual(r, 'local_total_centi') ?? 0);
+      if (revenue == null) revenue = Number(dual(r, 'local_total_sen') ?? 0);
       if (customerName == null) customerName = (dual<string>(r, 'debtor_name') ?? null);
       if (address == null) address = [dual<string>(r, 'address1'), dual<string>(r, 'address2')].filter(Boolean).join(', ') || null;
     }
@@ -714,7 +714,7 @@ trips.post('/:id/stops', async (c) => {
     so_id:         soId,
     customer_name: customerName,
     address,
-    revenue_centi: Math.max(0, Math.round(Number(revenue ?? 0)) || 0),
+    revenue_sen: Math.max(0, Math.round(Number(revenue ?? 0)) || 0),
     notes:         p.notes ?? null,
   }).select(STOP_COLS).single();
   if (error) {

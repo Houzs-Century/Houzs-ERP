@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import { useQueryClient } from "@tanstack/react-query";
-import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
+import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
-import { SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
+import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
@@ -203,8 +203,8 @@ type SoItem = {
   item_code: string | null;
   item_group: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  discount_centi: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
   line_delivery_date: string | null;
   remark: string | null;
   variants: Record<string, unknown> | null;
@@ -235,7 +235,7 @@ type SoPayment = {
   id: string;
   paid_at: string | null;
   method: string | null;
-  amount_centi: number | null;
+  amount_sen: number | null;
   approval_code: string | null;
   account_sheet: string | null;
   collected_by_name: string | null;
@@ -289,11 +289,11 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
-const toCenti = (s: string) => Math.round(num(s) * 100);
+const toSen = (s: string) => Math.round(num(s) * 100);
 // centi → a BARE editable ringgit string ("1,234.56") for seeding the price/amount
-// form fields. NOT a display formatter — it must stay prefix-free so num()/toCenti
-// can parse it back. Display money uses the shared fmtCenti() instead.
-const fromCenti = (c: number | null | undefined) =>
+// form fields. NOT a display formatter — it must stay prefix-free so num()/toSen
+// can parse it back. Display money uses the shared fmtSen() instead.
+const fromSen = (c: number | null | undefined) =>
   ((c ?? 0) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /* Fabric-identity variant keys a colour pick writes (FabricPicker.onPick /
@@ -372,7 +372,7 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
        headless scan-draft path. */
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
-    unitPriceCenti: toCenti(l.price),
+    unitPriceSen: toSen(l.price),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -487,7 +487,7 @@ function lineFromItem(it: SoItem): LineItem {
     itemGroup: (it.item_group ?? "").toLowerCase(),
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
-    price: fromCenti(it.unit_price_centi),
+    price: fromSen(it.unit_price_sen),
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -1213,7 +1213,7 @@ export function MobileNewSO({
 
   // ---- Totals ---------------------------------------------------------------
   const subtotal = useMemo(
-    () => lines.reduce((a, l) => a + toCenti(l.price) * num(l.qty), 0),
+    () => lines.reduce((a, l) => a + toSen(l.price) * num(l.qty), 0),
     [lines],
   );
 
@@ -1415,7 +1415,7 @@ export function MobileNewSO({
         return {
           rawText: meta?.rawText || l.name,
           qtyGuess: num(l.qty) || 1,
-          priceRmGuess: toCenti(l.price) > 0 ? toCenti(l.price) / 100 : null,
+          priceRmGuess: toSen(l.price) > 0 ? toSen(l.price) / 100 : null,
           skuMatch: null,
           fabricMatch: null,
           specialsMatch: [],
@@ -1448,7 +1448,7 @@ export function MobileNewSO({
      again. The route accepts a null uploadSessionId and records the row
      slip-less. */
   async function recordNewPayments(createdDocNo: string) {
-    const rows = pays.filter((p) => toCenti(p.amount) > 0);
+    const rows = pays.filter((p) => toSen(p.amount) > 0);
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
@@ -1457,7 +1457,7 @@ export function MobileNewSO({
       const body: Record<string, unknown> = {
         paidAt: p.date,
         method: code,
-        amountCenti: toCenti(p.amount),
+        amountSen: toSen(p.amount),
         accountSheet: p.account.trim() || null,
         approvalCode: p.approval.trim() || null,
         collectedBy: p.collectedBy || null,
@@ -1542,7 +1542,7 @@ export function MobileNewSO({
     itemGroup: l.itemGroup || "others",
     description: l.name.trim(),
     qty: num(l.qty) || 1,
-    unitPriceCenti: toCenti(l.price),
+    unitPriceSen: toSen(l.price),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -1559,7 +1559,7 @@ export function MobileNewSO({
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((l.itemGroup || "others") !== ((snap.item_group ?? "others").toLowerCase())) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
+    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (l.name.trim() !== (snap.description ?? "").trim()) return true;
     if ((l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
@@ -1578,7 +1578,7 @@ export function MobileNewSO({
   const amendmentLineChanged = (l: LineItem, snap: SoItem): boolean => {
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
+    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
     /* mig 0280 — the remark is a carryable field now, so a remark-only edit IS
        a request. Stated explicitly rather than relying on the variants compare
@@ -1646,7 +1646,7 @@ export function MobileNewSO({
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
       const variantsSame = canonJson(buildVariants(l)) === canonJson(snap.variants ?? {});
-      const priceSame = toCenti(l.price) === (snap.unit_price_centi ?? 0);
+      const priceSame = toSen(l.price) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
       out.push({
@@ -1655,7 +1655,7 @@ export function MobileNewSO({
         newItemCode: l.itemCode || undefined,
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toCenti(l.price),
+        newUnitPriceSen: toSen(l.price),
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
@@ -1666,7 +1666,7 @@ export function MobileNewSO({
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
           qty: snap.qty,
-          unitPriceSen: snap.unit_price_centi,
+          unitPriceSen: snap.unit_price_sen,
           description2: (snap as { description2?: string | null }).description2 ?? null,
         },
       });
@@ -1681,7 +1681,7 @@ export function MobileNewSO({
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
           qty: snap.qty,
-          unitPriceSen: snap.unit_price_centi,
+          unitPriceSen: snap.unit_price_sen,
           description2: (snap as { description2?: string | null }).description2 ?? null,
         },
       });
@@ -1695,7 +1695,7 @@ export function MobileNewSO({
         newItemCode: l.itemCode,
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toCenti(l.price),
+        newUnitPriceSen: toSen(l.price),
         /* mig 0280 — desktop parity: an added line carries its typed remark to
            the mfg_sales_order_items.remark COLUMN, not only inside the variants
            blob. A service line added purely to carry an instruction is the case
@@ -1826,7 +1826,7 @@ export function MobileNewSO({
       .map((p, i) => ({
         row: i + 1,
         method: p.method,
-        missing: toCenti(p.amount) > 0
+        missing: toSen(p.amount) > 0
           ? missingMethodSubField({
               methodLabel: p.method,
               merchantProvider: p.bank,
@@ -2058,10 +2058,10 @@ export function MobileNewSO({
            money it is not about to record. It used to also demand a
            slipSession; once the slip became optional (Owner 2026-08-13) that
            would have re-opened this very deadlock for a slip-less deposit. */
-        pendingDepositCenti: (() => {
+        pendingDepositSen: (() => {
           const c = pays
-            .filter((p) => toCenti(p.amount) > 0)
-            .reduce((sum, p) => sum + toCenti(p.amount), 0);
+            .filter((p) => toSen(p.amount) > 0)
+            .reduce((sum, p) => sum + toSen(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
         items,
@@ -2098,16 +2098,7 @@ export function MobileNewSO({
       /* Aggregated save-gate failure (validation_failed) — show EVERY reason at
          once, same popup + list as desktop (owner 2026-07-18). Anything else
          keeps the inline error line. */
-      const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-      if (problems && problems.length > 0) {
-        void notify({
-          title: saveProblemsTitle(problems.length),
-          body: <SaveProblemsList problems={problems} />,
-          tone: "error",
-        });
-      } else {
-        setError(e instanceof Error ? e.message : "Couldn't save the sales order. Please try again.");
-      }
+      void notifySaveProblems(notify, e, setError, "Couldn't save the sales order. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -2482,7 +2473,7 @@ export function MobileNewSO({
                               because it was copied. minWidth:0 lets a long name
                               wrap instead of shouldering the price off the row. */}
                           <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#11140f", overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "#9aa093" }}>{"×"}{num(l.qty)}</span></span>
-                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "#0c3f39" }}>RM {fmt((toCenti(l.price) * num(l.qty)) / 100)}</span>
+                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "#0c3f39" }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span>
                         </div>
                       </div>
                     )) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "8px 0" }}>No items.</div>}
@@ -2663,7 +2654,7 @@ export function MobileNewSO({
             itemGroup: group,
             name: (sku.name ?? "").trim() || code,
             cat: nextCat,
-            price: fromCenti(sku.unitPriceCenti),
+            price: fromSen(sku.unitPriceSen),
             variants: seededVariants,
             overriddenKeys: [],
           };

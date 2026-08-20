@@ -1,0 +1,54 @@
+name: Reverse cancelled DO-2607-005 movements (PLAN-default gated)
+
+# One-shot repair for the duplicate delivery on 2990-SO-2606-019: the CANCELLED
+# 2990-DO-2607-005 never reversed its three OUT inventory_movements, so stock is
+# still double-deducted (KETTA 1, NTYR 2, TRION 1 at warehouse 41d544bc...).
+# The script calls the CANONICAL cancel-path reversal scm.fn_reverse_do_out for
+# this ONE document; the genuine 2990-DO-2607-017 is left untouched.
+# See backend/scripts/reverse-cancelled-do-005-movements.mjs.
+#
+# Manual trigger only — never scheduled. PLAN by default (writes nothing); APPLY
+# requires BOTH mode=apply AND the confirm phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: false
+        default: "plan"
+        type: string
+      confirm:
+        description: 'apply only: must equal REVERSE DO-2607-005 OUT MOVEMENTS'
+        required: false
+        default: ""
+        type: string
+
+# Own group, never the deploy's: a repair must not queue behind or displace a
+# release.
+concurrency:
+  group: reverse-do-005
+  cancel-in-progress: false
+
+jobs:
+  reverse:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/reverse-cancelled-do-005-movements.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; mirror so-do-drill/deploy so
+          # an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

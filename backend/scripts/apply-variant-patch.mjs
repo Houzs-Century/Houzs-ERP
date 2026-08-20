@@ -102,7 +102,7 @@ async function main() {
     const [row] = await sql`SELECT i.id FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
       WHERE h.company_id = 1 AND (h.po_number = ${p.po_number} OR h.linked_ac_docno = ${p.po_number})
-        AND upper(i.material_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
+        AND upper(i.item_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
     if (!row) { log(`  !! po item ${p.po_number} ${p.code} not found, skipped`); continue; }
     const n = await mergeReviewedVariantPatch(sql, {
       table: "purchase_order_items", id: row.id, patch: p.variants || {},

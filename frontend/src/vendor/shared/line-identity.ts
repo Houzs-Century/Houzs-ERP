@@ -18,7 +18,7 @@
 // lived in four hand-copied comments and nowhere a fifth surface could find it.
 // FIXING THE SCREEN HE POINTS AT IS WHAT CAUSED THE FOURTH REPORT. This module
 // is the same move `finance-keys.ts` made on the backend ("the list used to be
-// re-declared per route, and every copy drifted") and `fmtMoneyCenti` made on
+// re-declared per route, and every copy drifted") and `fmtMoneySen` made on
 // the frontend (#647 — one shape, 16 page-local copies).
 //
 // THE RULE (owner, standing, restated many times — precedent quote, Commander

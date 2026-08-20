@@ -77,8 +77,16 @@
 // salesperson may never take is noise and leaks org structure.
 // ----------------------------------------------------------------------------
 
-/** Statuses a Sales Invoice can be raised from. */
-export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
+/* Statuses a Sales Invoice can be raised from. Owner decision 2026-08-19: a DO
+   no longer has to be marked signed/delivered before its Sales Invoice — every
+   CONFIRMED delivery order (anything past DRAFT that is not CANCELLED) may be
+   invoiced directly. This matches what the server has always permitted: the
+   SI-from-DO create (routes/sales-invoices.ts) refuses ONLY a CANCELLED source,
+   never an un-signed one, so the "mark signed first" step was a front-end gate
+   with no backend rule behind it. DRAFT still needs Confirm first (no committed
+   lines/stock yet); CANCELLED stays blocked. "Mark signed" survives as an
+   OPTIONAL delivery-tracking action (doAdvanceStep), no longer a prerequisite. */
+export const SI_TRANSFERABLE_DO_STATUSES = ['loaded', 'dispatched', 'in_transit', 'signed', 'delivered'] as const;
 
 /** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
@@ -114,10 +122,7 @@ export function siTransferBlockReason(status: string | null | undefined): string
     return 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.';
   }
   if (s === 'draft') {
-    return 'This delivery order is still a draft — confirm it, then mark it signed, before raising a Sales Invoice.';
-  }
-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return 'Mark this delivery order signed first — a Sales Invoice can only be raised once it is signed or delivered.';
+    return 'This delivery order is still a draft — confirm it before raising a Sales Invoice.';
   }
   /* INVOICED deliberately falls through to the generic sentence rather than
      getting an "already invoiced" one. routes/unbilled-deliveries.ts:13 records
@@ -126,8 +131,9 @@ export function siTransferBlockReason(status: string | null | undefined): string
      not advance the DO — so the label means "somebody clicked it", not "this was
      billed", and it is unreliable in both directions. Saying "already invoiced"
      here would state as fact the exact thing that file proves the flag cannot
-     tell us. The generic sentence states the gate, which is true. */
-  return 'A Sales Invoice can only be raised from a signed or delivered delivery order.';
+     tell us. The generic sentence states the gate, which is true. An unrecognised
+     status also lands here rather than a guess (COMPLETED once did — see header). */
+  return 'A Sales Invoice can only be raised from a confirmed delivery order.';
 }
 
 /**

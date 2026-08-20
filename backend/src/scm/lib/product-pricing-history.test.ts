@@ -12,7 +12,7 @@ import {
 
 type Row = {
   company_id: number;
-  product_code: string;
+  item_code: string;
   sell_price_sen: number | null;
   effective_from: string; // YYYY-MM-DD (lexicographic == chronological)
   created_at: string;      // ISO
@@ -61,9 +61,9 @@ function fakeSb(rows: Row[]) {
 }
 
 const OWNER_EXAMPLE: Row[] = [
-  { company_id: 1, product_code: 'SOFA-X', sell_price_sen: 10000, effective_from: '2026-01-01', created_at: '2026-01-01T00:00:00Z' },
-  { company_id: 1, product_code: 'SOFA-X', sell_price_sen: 20000, effective_from: '2026-03-01', created_at: '2026-03-01T00:00:00Z' },
-  { company_id: 1, product_code: 'SOFA-X', sell_price_sen: 50000, effective_from: '2026-05-01', created_at: '2026-05-01T00:00:00Z' },
+  { company_id: 1, item_code: 'SOFA-X', sell_price_sen: 10000, effective_from: '2026-01-01', created_at: '2026-01-01T00:00:00Z' },
+  { company_id: 1, item_code: 'SOFA-X', sell_price_sen: 20000, effective_from: '2026-03-01', created_at: '2026-03-01T00:00:00Z' },
+  { company_id: 1, item_code: 'SOFA-X', sell_price_sen: 50000, effective_from: '2026-05-01', created_at: '2026-05-01T00:00:00Z' },
 ];
 
 describe('resolveSellPriceSenAsOf', () => {
@@ -87,7 +87,7 @@ describe('resolveSellPriceSenAsOf', () => {
   test('company-scoped: company 1 never sees company 2\'s schedule for the same code', async () => {
     const sb = fakeSb([
       ...OWNER_EXAMPLE,
-      { company_id: 2, product_code: 'SOFA-X', sell_price_sen: 99900, effective_from: '2026-01-01', created_at: '2026-01-01T00:00:00Z' },
+      { company_id: 2, item_code: 'SOFA-X', sell_price_sen: 99900, effective_from: '2026-01-01', created_at: '2026-01-01T00:00:00Z' },
     ]);
     expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-06-01')).toBe(50000);
     expect(await resolveSellPriceSenAsOf(sb, 2, 'SOFA-X', '2026-06-01')).toBe(99900);
@@ -95,8 +95,8 @@ describe('resolveSellPriceSenAsOf', () => {
 
   test('same effective_from → newest created_at wins (a same-day correction)', async () => {
     const sb = fakeSb([
-      { company_id: 1, product_code: 'A', sell_price_sen: 30000, effective_from: '2026-03-01', created_at: '2026-02-01T09:00:00Z' },
-      { company_id: 1, product_code: 'A', sell_price_sen: 31000, effective_from: '2026-03-01', created_at: '2026-02-01T15:00:00Z' },
+      { company_id: 1, item_code: 'A', sell_price_sen: 30000, effective_from: '2026-03-01', created_at: '2026-02-01T09:00:00Z' },
+      { company_id: 1, item_code: 'A', sell_price_sen: 31000, effective_from: '2026-03-01', created_at: '2026-02-01T15:00:00Z' },
     ]);
     expect(await resolveSellPriceSenAsOf(sb, 1, 'A', '2026-03-02')).toBe(31000);
   });

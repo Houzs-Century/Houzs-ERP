@@ -93,7 +93,7 @@ export async function recordPiCreate(
        Same outcome, no longer silent. */
     const { data, error } = await sb.from('purchase_invoices')
       .select('id, invoice_number, status, company_id, supplier_id, supplier_invoice_ref, ' +
-        'purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, total_centi')
+        'purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, total_sen')
       .eq('id', piId).maybeSingle();
     if (error) {
       /* eslint-disable-next-line no-console */
@@ -122,7 +122,7 @@ export async function recordPiCreate(
       fieldChange('currency', null, row.currency ?? null),
       fieldChange('exchangeRate', null, row.exchange_rate ?? null),
       /* INTEGER SEN, straight off the column. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
+      fieldChange('totalSen', null, row.total_sen ?? null),
       fieldChange('lineCount', null, lineCount),
     ]),
   });

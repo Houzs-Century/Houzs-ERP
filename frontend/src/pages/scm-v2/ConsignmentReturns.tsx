@@ -62,13 +62,13 @@ type CrnRow = {
   city: string | null;
   postcode: string | null;
   reason: string | null;
-  local_total_centi: number;
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  local_total_sen: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   status: string;
   currency: string;
   note: string | null;
@@ -123,11 +123,11 @@ type CrnItem = {
   uom: string | null;
   qty_returned: number | null;
   condition: string | null;
-  unit_price_centi: number | null;
-  unit_cost_centi: number | null;
-  line_cost_centi: number | null;
-  line_margin_centi: number | null;
-  line_total_centi: number | null;
+  unit_price_sen: number | null;
+  unit_cost_sen: number | null;
+  line_cost_sen: number | null;
+  line_margin_sen: number | null;
+  line_total_sen: number | null;
 };
 
 const CategoryPill = ({ group }: { group: string | null | undefined }) => {
@@ -143,14 +143,14 @@ const CategoryPill = ({ group }: { group: string | null | undefined }) => {
   );
 };
 
-const crnLineTotalOf = (it: CrnItem): number => Number(it.line_total_centi ?? 0);
+const crnLineTotalOf = (it: CrnItem): number => Number(it.line_total_sen ?? 0);
 const crnLineCostOf = (it: CrnItem): number =>
-  it.line_cost_centi != null
-    ? Number(it.line_cost_centi)
-    : Number(it.qty_returned ?? 0) * Number(it.unit_cost_centi ?? 0);
+  it.line_cost_sen != null
+    ? Number(it.line_cost_sen)
+    : Number(it.qty_returned ?? 0) * Number(it.unit_cost_sen ?? 0);
 const crnLineMarginOf = (it: CrnItem): number =>
-  it.line_margin_centi != null
-    ? Number(it.line_margin_centi)
+  it.line_margin_sen != null
+    ? Number(it.line_margin_sen)
     : crnLineTotalOf(it) - crnLineCostOf(it);
 
 /* canFinance — the finance-viewer gate (auth/me = isFinanceViewer, the same
@@ -206,9 +206,9 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_centi ?? 0)),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
@@ -220,9 +220,9 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_centi ?? 0)),
-          searchValue: (it) => String(it.unit_cost_centi ?? 0),
-          sortFn: (a, b) => Number(a.unit_cost_centi ?? 0) - Number(b.unit_cost_centi ?? 0),
+          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          searchValue: (it) => String(it.unit_cost_sen ?? 0),
+          sortFn: (a, b) => Number(a.unit_cost_sen ?? 0) - Number(b.unit_cost_sen ?? 0),
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
@@ -260,14 +260,14 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
   if (items.length === 0) {
     return <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>No line items.</div>;
   }
-  let totalCenti = 0, costCenti = 0;
+  let totalSen = 0, costSen = 0;
   for (const it of items) {
-    totalCenti += crnLineTotalOf(it);
-    costCenti  += Number(it.line_cost_centi ?? 0);
+    totalSen += crnLineTotalOf(it);
+    costSen  += Number(it.line_cost_sen ?? 0);
   }
-  const marginCenti = totalCenti - costCenti;
-  const marginColor = marginCenti > 0 ? 'var(--c-secondary-a, #2F5D4F)'
-    : marginCenti < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
+  const marginSen = totalSen - costSen;
+  const marginColor = marginSen > 0 ? 'var(--c-secondary-a, #2F5D4F)'
+    : marginSen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
 
   const columns = buildCrnDrilldownColumns(canFinance);
 
@@ -290,9 +290,9 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalCenti)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costCenti)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginCenti)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
       </div>
     </div>
   );
@@ -366,12 +366,12 @@ export const ConsignmentReturns = () => {
      the zeros never reach the page. */
   const kpis = useMemo(() => {
     const agg = data?.aggregates;
-    if (agg) return { revenue: agg.revenueCenti, cost: agg.costCenti ?? 0, margin: agg.marginCenti ?? 0, fullSet: true };
+    if (agg) return { revenue: agg.revenueSen, cost: agg.costSen ?? 0, margin: agg.marginSen ?? 0, fullSet: true };
     let revenue = 0, cost = 0, margin = 0;
     for (const r of rows) {
-      revenue += r.local_total_centi ?? 0;
-      cost += r.total_cost_centi ?? 0;
-      margin += r.total_margin_centi ?? 0;
+      revenue += r.local_total_sen ?? 0;
+      cost += r.total_cost_sen ?? 0;
+      margin += r.total_margin_sen ?? 0;
     }
     return { revenue, cost, margin, fullSet: false };
   }, [data?.aggregates, rows]);
@@ -427,7 +427,7 @@ export const ConsignmentReturns = () => {
 
       {/* SO StatCard family (owner 2026-07-26). Cost / Margin cards stay CUT
           for a non-finance viewer (off, not hidden); the server also omits
-          costCenti / marginCenti for such a caller. */}
+          costSen / marginSen for such a caller. */}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard pending={isLoading} label="Total Returns" value={fmtQty(total)} subtitle="All matching returns" rail="bg-primary" active />
         <StatCard pending={isLoading} label="Returned Value" value={`RM ${fmtRm(kpis.revenue)}`} subtitle="All matching returns" rail="bg-accent" />
@@ -603,15 +603,15 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     groupValue: (r) => r.venue ?? '(none)',
   },
   {
-    key: 'local_total_centi', label: 'Returned Value', width: 130, sortable: true, align: 'right',
+    key: 'local_total_sen', label: 'Returned Value', width: 130, sortable: true, align: 'right',
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(r.local_total_centi)}</span>
+      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_centi),
+    searchValue: (r) => fmtRm(r.local_total_sen),
     /* Export the NUMBER in ringgit so Excel can SUM the column. */
-    exportValue: (r) => (r.local_total_centi ?? 0) / 100,
-    sortFn: (a, b) => a.local_total_centi - b.local_total_centi,
-    filterType: 'number', numberValue: (r) => r.local_total_centi,
+    exportValue: (r) => (r.local_total_sen ?? 0) / 100,
+    sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
+    filterType: 'number', numberValue: (r) => r.local_total_sen,
   },
   {
     key: 'phone', label: 'Phone', width: 130, sortable: true,
@@ -684,23 +684,23 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   ...(canFinance
     ? ([
   {
-    key: 'total_cost_centi', label: 'Cost Total', width: 120, sortable: true, align: 'right', defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.total_cost_centi ?? 0),
-    exportValue: (r) => (r.total_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.total_cost_centi ?? 0) - (b.total_cost_centi ?? 0),
+    key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', defaultHidden: true,
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+    exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
   },
   {
-    key: 'total_margin_centi', label: 'Margin', width: 120, sortable: true, align: 'right', defaultHidden: true,
+    key: 'total_margin_sen', label: 'Margin', width: 120, sortable: true, align: 'right', defaultHidden: true,
     accessor: (r) => {
-      const m = r.total_margin_centi ?? 0;
-      if ((r.local_total_centi ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
+      const m = r.total_margin_sen ?? 0;
+      if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
       return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
     },
-    searchValue: (r) => fmtRm(r.total_margin_centi ?? 0),
-    exportValue: (r) => (r.total_margin_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.total_margin_centi ?? 0) - (b.total_margin_centi ?? 0),
+    searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+    exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
   },
       ] as DataGridColumn<CrnRow>[])
     : []),

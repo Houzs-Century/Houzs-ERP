@@ -75,7 +75,7 @@ type SoPaymentRow = {
   paid_at: string | null;
   method: string | null;
   approval_code: string | null;
-  amount_centi: number | null;
+  amount_sen: number | null;
 };
 const useSoPaymentsForDrilldown = (docNo: string | null) => useQuery({
   queryKey: ['mfg-sales-order-payments', docNo],
@@ -148,18 +148,18 @@ type SoRow = {
      payment_method field in that case. Computed server-side in the SO list GET. */
   payment_methods_summary?: string;
   note: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   /* Live balance + paid total come from mfg_sales_orders_with_payment_totals
-     view (migration 0076). Fall back to legacy balance_centi → (local_total
-     − paid_centi) when the view isn't surfaced. */
-  balance_centi: number;
-  balance_centi_live?: number | null;
-  paid_total_centi?: number | null;
-  paid_centi: number;
+     view (migration 0076). Fall back to legacy balance_sen → (local_total
+     − paid_sen) when the view isn't surfaced. */
+  balance_sen: number;
+  balance_sen_live?: number | null;
+  paid_total_sen?: number | null;
+  paid_sen: number;
   /* FINANCE-gated (in CO_FINANCE_KEYS server-side, mirroring the SO list where
      #574 ruled Deposit a finance column) — OMITTED for a non-finance caller,
      hence optional. Only the canFinance-gated Deposit column reads it. */
-  deposit_centi?: number | null;
+  deposit_sen?: number | null;
   status: string;
   currency: string;
   /* Task #114 — Per-category REVENUE + COST + overall cost/margin from the
@@ -168,16 +168,16 @@ type SoRow = {
      row type so the list still renders if the API hasn't been redeployed —
      AND because the server now strips them for a non-finance caller
      (CO_FINANCE_KEYS / canViewScmFinance). */
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
   /* PR — Commander 2026-05-28: Stock Status chip.
      Computed server-side from mfg_sales_order_items.stock_status grouped
@@ -251,13 +251,13 @@ const compactDate = (iso: string | null | undefined): string => {
 };
 
 /* Follow-up #83 — Balance column source-of-truth chain:
-   1. view's balance_centi_live (local_total − sum(payments))
-   2. header.balance_centi (legacy stored value)
-   3. local_total − header.paid_centi (last-resort derivation) */
+   1. view's balance_sen_live (local_total − sum(payments))
+   2. header.balance_sen (legacy stored value)
+   3. local_total − header.paid_sen (last-resort derivation) */
 const liveBalance = (r: SoRow): number => {
-  if (typeof r.balance_centi_live === 'number') return r.balance_centi_live;
-  if (typeof r.balance_centi === 'number') return r.balance_centi;
-  return r.local_total_centi - (r.paid_centi ?? 0);
+  if (typeof r.balance_sen_live === 'number') return r.balance_sen_live;
+  if (typeof r.balance_sen === 'number') return r.balance_sen;
+  return r.local_total_sen - (r.paid_sen ?? 0);
 };
 
 /* Branding auto-derive (Commander 2026-05-28, refined PR #266). The Branding
@@ -362,11 +362,11 @@ type SoItem = {
   variants: Record<string, unknown> | null;
   uom: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  unit_cost_centi: number | null;
-  line_cost_centi: number | null;
-  line_margin_centi: number | null;
-  total_centi: number | null;
+  unit_price_sen: number | null;
+  unit_cost_sen: number | null;
+  line_cost_sen: number | null;
+  line_margin_sen: number | null;
+  total_sen: number | null;
   stock_status: string | null;
   cancelled: boolean | null;
   /* Delivery breakdown stamped by the SO detail endpoint — which DO took how
@@ -408,13 +408,13 @@ const CategoryPill = ({ group }: { group: string | null | undefined }) => {
    value it sorted by. Mirror the SO detail page's fallbacks (older rows lack
    the stored line_cost/line_margin snapshots). */
 const lineCostOf = (it: SoItem): number =>
-  it.line_cost_centi != null
-    ? Number(it.line_cost_centi)
-    : Number(it.qty ?? 0) * Number(it.unit_cost_centi ?? 0);
+  it.line_cost_sen != null
+    ? Number(it.line_cost_sen)
+    : Number(it.qty ?? 0) * Number(it.unit_cost_sen ?? 0);
 const lineMarginOf = (it: SoItem): number =>
-  it.line_margin_centi != null
-    ? Number(it.line_margin_centi)
-    : Number(it.total_centi ?? 0) - lineCostOf(it);
+  it.line_margin_sen != null
+    ? Number(it.line_margin_sen)
+    : Number(it.total_sen ?? 0) - lineCostOf(it);
 /* Stock readiness label — STOCK (on hand) / PENDING (not yet) / DELIVERED
    (fully shipped). The incoming-PO + ETA coverage hint that used to sit here
    was removed (Wei Siang 2026-05-31): it's an MRP-side reminder, redundant in
@@ -517,23 +517,23 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_centi ?? 0)),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_centi ?? 0))}</span>,
-    searchValue: (it) => String(it.total_centi ?? 0),
-    sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_sen ?? 0))}</span>,
+    searchValue: (it) => String(it.total_sen ?? 0),
+    sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   ...(canFinance
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_centi ?? 0)),
-          searchValue: (it) => String(it.unit_cost_centi ?? 0),
-          sortFn: (a, b) => Number(a.unit_cost_centi ?? 0) - Number(b.unit_cost_centi ?? 0),
+          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          searchValue: (it) => String(it.unit_cost_sen ?? 0),
+          sortFn: (a, b) => Number(a.unit_cost_sen ?? 0) - Number(b.unit_cost_sen ?? 0),
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
@@ -647,16 +647,16 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
   /* Subtotal/margin/cost rollups — drive the Houzs Subtotal footer row.
      Mirrors the per-line accessors so the totals always agree with the
      visible cells (no rounding drift from sub-cent math). */
-  let totalCenti = 0;
-  let costCenti  = 0;
+  let totalSen = 0;
+  let costSen  = 0;
   for (const it of items) {
-    totalCenti += Number(it.total_centi ?? 0);
-    costCenti  += Number(it.line_cost_centi ?? 0);
+    totalSen += Number(it.total_sen ?? 0);
+    costSen  += Number(it.line_cost_sen ?? 0);
   }
-  const marginCenti = totalCenti - costCenti;
-  const marginColor = marginCenti > 0
+  const marginSen = totalSen - costSen;
+  const marginColor = marginSen > 0
     ? 'var(--c-secondary-a, #2F5D4F)'
-    : marginCenti < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
+    : marginSen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
 
   const columns = buildDrilldownColumns(paymentRefs, canFinance);
 
@@ -691,9 +691,9 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalCenti)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costCenti)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginCenti)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
       </div>
     </div>
   );
@@ -766,11 +766,11 @@ export const ConsignmentOrders = () => {
      the loaded page — labelled the same, the money is just page-scoped then. */
   const kpis = useMemo(() => {
     const agg = data?.aggregates;
-    if (agg) return { revenue: agg.revenueCenti, outstanding: agg.outstandingCenti, paid: agg.paidCenti };
+    if (agg) return { revenue: agg.revenueSen, outstanding: agg.outstandingSen, paid: agg.paidSen };
     let revenue = 0, outstanding = 0, paid = 0;
     for (const r of baseRows) {
-      revenue += r.local_total_centi ?? 0;
-      paid    += r.paid_total_centi ?? r.paid_centi ?? 0;
+      revenue += r.local_total_sen ?? 0;
+      paid    += r.paid_total_sen ?? r.paid_sen ?? 0;
       const bal = liveBalance(r);
       if (bal > 0) outstanding += bal;
     }
@@ -1169,9 +1169,9 @@ const STORAGE_KEY = 'pr-g.so-list.layout.v1';
    an always-empty finance column (off, not hidden). Keep in sync with
    CO_FINANCE_KEYS. */
 const CO_FINANCE_COL_KEYS = new Set<string>([
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis', 'deposit_centi',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis', 'deposit_sen',
 ]);
 
 const buildAllColumns = (
@@ -1279,18 +1279,18 @@ const buildAllColumns = (
   },
   {
     /* HOUZS Local Total — bold ink. */
-    key: 'local_total_centi', label: 'Local Total', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'local_total_sen', label: 'Local Total', width: 120, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
       <span style={{
         fontWeight: 700, color: 'var(--c-ink)',
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(r.local_total_centi)}</span>
+      }}>{fmtRm(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_centi),
+    searchValue: (r) => fmtRm(r.local_total_sen),
     /* Export the NUMBER in ringgit (not "1,234.00") so Excel can SUM it. */
-    exportValue: (r) => (r.local_total_centi ?? 0) / 100,
-    sortFn: (a, b) => a.local_total_centi - b.local_total_centi,
-    filterType: 'number', numberValue: (r) => r.local_total_centi,
+    exportValue: (r) => (r.local_total_sen ?? 0) / 100,
+    sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
+    filterType: 'number', numberValue: (r) => r.local_total_sen,
   },
   {
     /* Stock Status column. The label names what IS ready (owner 2026-08-16):
@@ -1318,67 +1318,67 @@ const buildAllColumns = (
   /* HOUZS category subtotals — Mattress/Sofa burnt, Bedframe green, Acc neutral.
      '—' when zero so commander's eye skims to filled cells. */
   {
-    key: 'mattress_sofa_centi', label: 'Mattress/Sofa', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'mattress_sofa_sen', label: 'Mattress/Sofa', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => {
-      const v = r.mattress_sofa_centi ?? 0;
+      const v = r.mattress_sofa_sen ?? 0;
       if (v === 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       return <span style={{
         fontWeight: 600, color: badgeFor('sofa').fg,
         fontVariantNumeric: 'tabular-nums',
       }}>{fmtRm(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.mattress_sofa_centi ?? 0),
-    exportValue: (r) => (r.mattress_sofa_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.mattress_sofa_centi ?? 0) - (b.mattress_sofa_centi ?? 0),
+    searchValue: (r) => fmtRm(r.mattress_sofa_sen ?? 0),
+    exportValue: (r) => (r.mattress_sofa_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.mattress_sofa_sen ?? 0) - (b.mattress_sofa_sen ?? 0),
   },
   {
-    key: 'bedframe_centi', label: 'Bedframe', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'bedframe_sen', label: 'Bedframe', width: 120, sortable: true, align: 'right', groupable: false,
     accessor: (r) => {
-      const v = r.bedframe_centi ?? 0;
+      const v = r.bedframe_sen ?? 0;
       if (v === 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       return <span style={{
         fontWeight: 600, color: badgeFor('bedframe').fg,
         fontVariantNumeric: 'tabular-nums',
       }}>{fmtRm(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.bedframe_centi ?? 0),
-    exportValue: (r) => (r.bedframe_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.bedframe_centi ?? 0) - (b.bedframe_centi ?? 0),
+    searchValue: (r) => fmtRm(r.bedframe_sen ?? 0),
+    exportValue: (r) => (r.bedframe_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.bedframe_sen ?? 0) - (b.bedframe_sen ?? 0),
   },
   {
-    key: 'accessories_centi', label: 'Accessories', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'accessories_sen', label: 'Accessories', width: 120, sortable: true, align: 'right', groupable: false,
     accessor: (r) => {
-      const v = r.accessories_centi ?? 0;
+      const v = r.accessories_sen ?? 0;
       if (v === 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       return <span style={{
         fontWeight: 600, color: badgeFor('accessory').fg,
         fontVariantNumeric: 'tabular-nums',
       }}>{fmtRm(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.accessories_centi ?? 0),
-    exportValue: (r) => (r.accessories_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.accessories_centi ?? 0) - (b.accessories_centi ?? 0),
+    searchValue: (r) => fmtRm(r.accessories_sen ?? 0),
+    exportValue: (r) => (r.accessories_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.accessories_sen ?? 0) - (b.accessories_sen ?? 0),
   },
   {
-    key: 'mattress_sofa_cost_centi', label: 'Mattress/Sofa Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.mattress_sofa_cost_centi ?? 0),
-    exportValue: (r) => (r.mattress_sofa_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.mattress_sofa_cost_centi ?? 0) - (b.mattress_sofa_cost_centi ?? 0),
+    key: 'mattress_sofa_cost_sen', label: 'Mattress/Sofa Cost', width: 140, sortable: true, align: 'right', groupable: false,
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.mattress_sofa_cost_sen ?? 0),
+    exportValue: (r) => (r.mattress_sofa_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.mattress_sofa_cost_sen ?? 0) - (b.mattress_sofa_cost_sen ?? 0),
   },
   {
-    key: 'bedframe_cost_centi', label: 'Bedframe Cost', width: 130, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.bedframe_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.bedframe_cost_centi ?? 0),
-    exportValue: (r) => (r.bedframe_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.bedframe_cost_centi ?? 0) - (b.bedframe_cost_centi ?? 0),
+    key: 'bedframe_cost_sen', label: 'Bedframe Cost', width: 130, sortable: true, align: 'right', groupable: false,
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.bedframe_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.bedframe_cost_sen ?? 0),
+    exportValue: (r) => (r.bedframe_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.bedframe_cost_sen ?? 0) - (b.bedframe_cost_sen ?? 0),
   },
   {
-    key: 'accessories_cost_centi', label: 'Accessories Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.accessories_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.accessories_cost_centi ?? 0),
-    exportValue: (r) => (r.accessories_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.accessories_cost_centi ?? 0) - (b.accessories_cost_centi ?? 0),
+    key: 'accessories_cost_sen', label: 'Accessories Cost', width: 140, sortable: true, align: 'right', groupable: false,
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.accessories_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.accessories_cost_sen ?? 0),
+    exportValue: (r) => (r.accessories_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.accessories_cost_sen ?? 0) - (b.accessories_cost_sen ?? 0),
   },
   {
     /* Task #91 — display the pretty Malaysian format. searchValue keeps the
@@ -1509,48 +1509,48 @@ const buildAllColumns = (
     searchValue: (r) => r.note ?? '',
   },
   {
-    key: 'others_centi', label: 'Others', width: 110, sortable: true, align: 'right', groupable: false,
+    key: 'others_sen', label: 'Others', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_centi ?? 0),
-    exportValue: (r) => (r.others_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.others_centi ?? 0) - (b.others_centi ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.others_sen ?? 0),
+    exportValue: (r) => (r.others_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.others_sen ?? 0) - (b.others_sen ?? 0),
   },
   {
-    key: 'others_cost_centi', label: 'Others Cost', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'others_cost_sen', label: 'Others Cost', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_cost_centi ?? 0),
-    exportValue: (r) => (r.others_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.others_cost_centi ?? 0) - (b.others_cost_centi ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.others_cost_sen ?? 0),
+    exportValue: (r) => (r.others_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.others_cost_sen ?? 0) - (b.others_cost_sen ?? 0),
   },
   /* Task #114 — Overall cost / margin / margin% on the SO header. */
   {
-    key: 'total_cost_centi', label: 'Cost Total', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.total_cost_centi ?? 0),
-    exportValue: (r) => (r.total_cost_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.total_cost_centi ?? 0) - (b.total_cost_centi ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+    exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
   },
   {
-    key: 'total_margin_centi', label: 'Margin', width: 120, sortable: true, align: 'right', groupable: false,
+    key: 'total_margin_sen', label: 'Margin', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
     accessor: (r) => {
-      const m = r.total_margin_centi ?? 0;
-      if ((r.local_total_centi ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
+      const m = r.total_margin_sen ?? 0;
+      if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
       return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
     },
-    searchValue: (r) => fmtRm(r.total_margin_centi ?? 0),
-    exportValue: (r) => (r.total_margin_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.total_margin_centi ?? 0) - (b.total_margin_centi ?? 0),
+    searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+    exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
   },
   {
     key: 'margin_pct_basis', label: 'Margin %', width: 100, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
     accessor: (r) => {
-      if ((r.local_total_centi ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
+      if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const pct = (r.margin_pct_basis ?? 0) / 100;
       const color = pct >= 50 ? 'var(--c-secondary-a, #2F5D4F)'
         : pct >= 30 ? 'var(--c-festive-a, #C77F3E)'
@@ -1566,24 +1566,24 @@ const buildAllColumns = (
     sortFn: (a, b) => (a.margin_pct_basis ?? 0) - (b.margin_pct_basis ?? 0),
   },
   {
-    key: 'deposit_centi', label: 'Deposit', width: 110, sortable: true, align: 'right', groupable: false,
+    key: 'deposit_sen', label: 'Deposit', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.deposit_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.deposit_centi ?? 0),
-    exportValue: (r) => (r.deposit_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.deposit_centi ?? 0) - (b.deposit_centi ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.deposit_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.deposit_sen ?? 0),
+    exportValue: (r) => (r.deposit_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.deposit_sen ?? 0) - (b.deposit_sen ?? 0),
   },
   {
-    key: 'paid_total_centi', label: 'Paid', width: 110, sortable: true, align: 'right', groupable: false,
+    key: 'paid_total_sen', label: 'Paid', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.paid_total_centi ?? r.paid_centi ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.paid_total_centi ?? r.paid_centi ?? 0),
-    exportValue: (r) => (r.paid_total_centi ?? r.paid_centi ?? 0) / 100,
-    sortFn: (a, b) => (a.paid_total_centi ?? a.paid_centi ?? 0) - (b.paid_total_centi ?? b.paid_centi ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
+    searchValue: (r) => fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0),
+    exportValue: (r) => (r.paid_total_sen ?? r.paid_sen ?? 0) / 100,
+    sortFn: (a, b) => (a.paid_total_sen ?? a.paid_sen ?? 0) - (b.paid_total_sen ?? b.paid_sen ?? 0),
   },
   {
     /* Follow-up #83 — prefer the view's live balance. */
-    key: 'balance_centi', label: 'Balance', width: 110, sortable: true, align: 'right', groupable: false,
+    key: 'balance_sen', label: 'Balance', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
     accessor: (r) => <span className={styles.money}>{fmtRm(liveBalance(r))}</span>,
     searchValue: (r) => fmtRm(liveBalance(r)),

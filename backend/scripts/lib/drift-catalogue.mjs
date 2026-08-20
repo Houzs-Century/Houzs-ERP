@@ -17,8 +17,8 @@ export const DRIFT_CATALOGUE = [
     concept: "Money minor unit (1/100 MYR)",
     canonical: "*_sen",
     severity: "high",
-    seen: ["*_centi (unit_price_centi, total_centi, balance_centi, amount_centi, deposit_centi)", "*_sen (unit_cost_sen, total_cost_sen, sell_price_sen, base_price_sen, divan_price_sen, leg_price_sen, special_order_price_sen)", "*_cents (amount_cents)", "amountSen / totalSen / senToRm / parseMoneyToSen / MAX_SEN"],
-    note: "Both words mean 1/100 MYR = sen. Same value spelled both ways within single files (pi-audit-trail labels the total_centi column 'INTEGER SEN'; delivery-orders-mfg:4804 does the same; recost converts with toMyrSen yet writes unit_cost_sen while cascading into *_centi documents). Rough de-facto split: documents/GL use _centi (~50 route files), inventory/costing/pricing use _sen (27 files), but there is NO rule. money.ts (the canonical parser) speaks sen; scm.ts speaks centi. Biggest single confusion source. DECIDED 2026-08-18: target is _sen (the Malaysian subunit, what AutoCount speaks and what the GL/inventory/pricing subsystems already use); _centi is the drift despite being the majority. Storage stays an INTEGER minor unit (not a decimal); display formats it as RM at the edge. Batch 2 migrates the _centi columns to _sen.",
+    seen: ["*_sen (unit_price_sen, total_sen, balance_sen, amount_sen, deposit_sen)", "*_sen (unit_cost_sen, total_cost_sen, sell_price_sen, base_price_sen, divan_price_sen, leg_price_sen, special_order_price_sen)", "*_cents (amount_cents)", "amountSen / totalSen / senToRm / parseMoneyToSen / MAX_SEN"],
+    note: "Both words mean 1/100 MYR = sen. Same value spelled both ways within single files (pi-audit-trail labels the total_sen column 'INTEGER SEN'; delivery-orders-mfg:4804 does the same; recost converts with toMyrSen yet writes unit_cost_sen while cascading into *_sen documents). Rough de-facto split: documents/GL use _sen (~50 route files), inventory/costing/pricing use _sen (27 files), but there is NO rule. money.ts (the canonical parser) speaks sen; scm.ts speaks centi. Biggest single confusion source. DECIDED 2026-08-18: target is _sen (the Malaysian subunit, what AutoCount speaks and what the GL/inventory/pricing subsystems already use); _sen is the drift despite being the majority. Storage stays an INTEGER minor unit (not a decimal); display formats it as RM at the edge. Batch 2 migrates the _sen columns to _sen.",
   },
   {
     concept: "Salesperson / sales rep",
@@ -52,8 +52,8 @@ export const DRIFT_CATALOGUE = [
     concept: "Product / item / material code (SKU)",
     canonical: "item_code",
     severity: "high",
-    seen: ["item_code (SO/DO/SI/IV lines)", "material_code (PO/GR/PI lines)", "product_code (inventory_movements/lots)", "code", "sku"],
-    note: "One SKU under three table-family names. LINE_CODE_COL and DocumentLinesExpansion exist solely to bridge them (code = material_code||item_code||product_code). itemCode/materialCode casing twins are not the drift.",
+    seen: ["item_code (SO/DO/SI/IV lines)", "item_code (PO/GR/PI lines)", "item_code (inventory_movements/lots)", "code", "sku"],
+    note: "One SKU under three table-family names. LINE_CODE_COL and DocumentLinesExpansion exist solely to bridge them (code = item_code||item_code||item_code). itemCode/itemCode casing twins are not the drift.",
   },
   {
     concept: "Warehouse / location an order ships from",
@@ -218,10 +218,10 @@ export const DRIFT_CATALOGUE = [
   },
   {
     concept: "Paid total (running paid figure)",
-    canonical: "paid_total_centi",
+    canonical: "paid_total_sen",
     severity: "low",
-    seen: ["paid_centi", "paid_total_centi", "paidCenti"],
-    note: "ConsignmentOrders reads paid_total_centi ?? paid_centi ?? 0 while the aggregate uses paidCenti — three spellings for one figure in a single file (on top of the system-wide sen/centi unit drift).",
+    seen: ["paid_sen", "paid_total_sen", "paidSen"],
+    note: "ConsignmentOrders reads paid_total_sen ?? paid_sen ?? 0 while the aggregate uses paidSen — three spellings for one figure in a single file (on top of the system-wide sen/centi unit drift).",
   },
   {
     concept: "Installment / online payment sub-fields",

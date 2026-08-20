@@ -33,8 +33,8 @@ const stop = (ref: string) => ({
 const trip = (over: Partial<AssignedTrip>): AssignedTrip => ({
   key: 'k1', date: '2026-08-10', group: 'KLANG_VALLEY',
   lorryId: 'lorry-a', plate: 'AAA', driverId: null, driverName: null,
-  helperId: null, helperName: null, sets: 1, revenueCenti: 100_00,
-  ceilingSets: 10, ceilingRevenueCenti: null, overCeiling: false,
+  helperId: null, helperName: null, sets: 1, revenueSen: 100_00,
+  ceilingSets: 10, ceilingRevenueSen: null, overCeiling: false,
   departTime: '09:00', stops: [stop('SO-1')], sequence: null,
   routeReason: null, ungeocoded: [],
   ...over,
@@ -116,9 +116,9 @@ describe('pinAssignToDate — the walk is constrained to the confirmed day', () 
     const r = response({
       trips: [
         trip({ key: 'a', date: '2026-08-10', stops: [stop('SO-1')] }),
-        trip({ key: 'b', date: '2026-08-11', stops: [stop('SO-2'), stop('SO-3')], sets: 4, revenueCenti: 900_00 }),
+        trip({ key: 'b', date: '2026-08-11', stops: [stop('SO-2'), stop('SO-3')], sets: 4, revenueSen: 900_00 }),
       ],
-      overflow: [{ key: 'o1', date: '2026-08-11', group: 'JOHOR', orders: ['SO-9'], sets: 2, revenueCenti: 300_00, reason: 'no slot' }],
+      overflow: [{ key: 'o1', date: '2026-08-11', group: 'JOHOR', orders: ['SO-9'], sets: 2, revenueSen: 300_00, reason: 'no slot' }],
       unassigned: [{ key: null, date: null, group: null, orders: ['SO-8'], reason: 'no crew' }],
     });
     const pinned = pinAssignToDate(r, '2026-08-10');
@@ -127,7 +127,7 @@ describe('pinAssignToDate — the walk is constrained to the confirmed day', () 
     /* The spilled trip keeps its orders and lands in overflow ON the date. */
     expect(pinned.overflow).toHaveLength(2);
     const spill = pinned.overflow.find((o) => o.orders.includes('SO-2'));
-    expect(spill).toMatchObject({ date: '2026-08-10', orders: ['SO-2', 'SO-3'], sets: 4, revenueCenti: 900_00 });
+    expect(spill).toMatchObject({ date: '2026-08-10', orders: ['SO-2', 'SO-3'], sets: 4, revenueSen: 900_00 });
     expect(spill?.reason).toContain('own fleet full on 2026-08-10');
     /* Existing overflow + unassigned are pinned to the confirmed date too. */
     expect(pinned.overflow.find((o) => o.orders.includes('SO-9'))?.date).toBe('2026-08-10');

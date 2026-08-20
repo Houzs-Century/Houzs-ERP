@@ -366,16 +366,22 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   const companyCol = companyId != null ? { company_id: companyId } : {};
   const prefix = await jePrefixForCompany(sb, companyId);
 
+  // The contra is dated when the void HAPPENS (today by default), so it must be
+  // NUMBERED in that same month's series — mirror postJournal, which mints from
+  // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
+  // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
+  const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt();
+
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
   for (let attempt = 0; attempt < 8 && !revJe; attempt += 1) {
-    const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), prefix);
+    const revJeNo = await nextJeNo(sb, new Date(contraEntryDate), prefix);
     const { data: inserted, error: revErr } = await sb
       .from('journal_entries')
       .insert({
         ...companyCol,
         je_no: revJeNo,
-        entry_date: dateOrNull(input.entryDate) ?? todayMyt(),
+        entry_date: contraEntryDate,
         source_type: revType,
         source_doc_no: input.sourceDocNo ?? orig.source_doc_no ?? null,
         narration: input.narration(orig),

@@ -41,6 +41,26 @@ const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
+    /* RUN ONCE PER REQUEST. This middleware can be reached TWICE on one request:
+       two routers are mounted at the SAME `/mfg-sales-orders` prefix
+       (scm/index.ts — the deferred list-enrichment router, then the main SO
+       router) and each declares its own `use('*', supabaseAuth)`. Hono runs the
+       first mount's middleware, finds no handler for the path there, then falls
+       through to the second mount and runs this again.
+
+       A second pass re-read `user` — which the first pass had ALREADY REPLACED
+       with the pinned scm.staff uuid below — so `Number(SCM_SYSTEM_STAFF_ID)`
+       produced NaN and `houzsUser` came back with no usable id and no
+       permissions. That emptied the Sales Orders list for EVERY caller in BOTH
+       companies (2026-08-18): canViewAllSales went false and
+       resolveSalesScopeIds fail-closed to the match-nothing staff uuid, so the
+       list read carried `salesperson_id=in.(00000000-0000-0000-0000-000000000000)`
+       and matched nothing. Enforce the once-per-request invariant HERE rather
+       than relying on no prefix ever being double-mounted again — the bridge is
+       idempotent by nature, and a second pass has nothing left to translate. */
+    if ((c.get("user") as { id?: unknown } | undefined)?.id === SCM_SYSTEM_STAFF_ID) {
+      return next();
+    }
     // Adapt the Houzs session user (set by the global /api/* auth) into the
     // Supabase-User shape the ported routes read. user.id is the scm.staff uuid
     // (system staff); email stays the real Houzs user's for display.

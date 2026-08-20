@@ -62,14 +62,14 @@ export type PlannedReceiptPayment = {
   // enqueue-time put succeeded, else the provenance receipt copy for the first
   // receipt, else null).
   slipKey: string | null;
-  amountCenti: number;
+  amountSen: number;
   approvalCode: string | null;
   method: LedgerMethod['method'];
   merchantProvider: string | null;
   installmentMonths: number | null;
   onlineType: string | null;
   // The header deposit IS the first receipt — is_deposit stops the paid-rollup
-  // adding header deposit_centi on top of this row (double count). Exactly one
+  // adding header deposit_sen on top of this row (double count). Exactly one
   // planned row (the first receipt) carries it, matching the pre-multi flow.
   isDeposit: boolean;
   // Payment date, already clamped to a plausible window (see resolvePaidAt).
@@ -178,10 +178,10 @@ export function planReceiptPayments(input: PlanReceiptPaymentsInput): PlannedRec
     const amountRm = entry
       ? entry.amountRm
       : (!hasPerReceipt && first ? input.legacy.depositRm : null);
-    const amountCenti = typeof amountRm === 'number' && amountRm > 0 ? Math.round(amountRm * 100) : 0;
+    const amountSen = typeof amountRm === 'number' && amountRm > 0 ? Math.round(amountRm * 100) : 0;
     // Owner: never book RM0.00 phantom rows — a receipt with no readable amount
     // books NOTHING (the operator adds it by hand; its slip is still on R2).
-    if (amountCenti <= 0) continue;
+    if (amountSen <= 0) continue;
 
     // Method / bank / plan / online come from the receipt's own matches, else
     // (first receipt, legacy) the slip singular fields.
@@ -214,7 +214,7 @@ export function planReceiptPayments(input: PlanReceiptPaymentsInput): PlannedRec
     rows.push({
       imageIndex,
       slipKey,
-      amountCenti,
+      amountSen,
       approvalCode: (approvalCode ?? '').trim() || null,
       method: m.method,
       merchantProvider: m.merchantProvider,

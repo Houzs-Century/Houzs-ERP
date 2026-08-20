@@ -40,7 +40,7 @@ const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const blankLine = (): LineDraft => ({
   _key: newKey(),
-  productCode: '',
+  itemCode: '',
   productName: '',
   qty: 1,
   notes: '',
@@ -75,7 +75,7 @@ function TransferLineRow({
   removeLine: (key: string) => void;
   canRemove: boolean;
 }) {
-  const bucketsQ = useInventoryBuckets(line.productCode || null, fromWarehouseId || null);
+  const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
   // The line stores only variant_key (the backend picks the batch FIFO), so sum
   // the (variant_key, batch) buckets up to one row per variant_key.
   const variantBuckets = useMemo(() => {
@@ -92,7 +92,7 @@ function TransferLineRow({
     ? undefined
     : variantBuckets.find((v) => v.variantKey === line.variantKey)?.qty;
   const isOverdrawn = avail != null && line.qty > avail;
-  const ready = Boolean(line.productCode && fromWarehouseId);
+  const ready = Boolean(line.itemCode && fromWarehouseId);
 
   return (
     <tr>
@@ -100,7 +100,7 @@ function TransferLineRow({
         <input
           type="text"
           list={`xfer-skus-${line._key}`}
-          value={line.productCode}
+          value={line.itemCode}
           onChange={(e) => onPickCode(line._key, e.target.value)}
           placeholder="Type code…"
           className={styles.fieldInput}
@@ -124,7 +124,7 @@ function TransferLineRow({
         >
           <option value={UNPICKED} disabled>
             {!fromWarehouseId ? 'Pick From warehouse first'
-              : !line.productCode ? 'Pick SKU first'
+              : !line.itemCode ? 'Pick SKU first'
               : bucketsQ.isLoading ? 'Loading…'
               : variantBuckets.length === 0 ? 'No stock at source'
               : 'Pick variant / bucket…'}
@@ -216,7 +216,7 @@ export const StockTransferNew = () => {
   const onPickCode = (key: string, code: string) => {
     const sku = skuByCode.get(code);
     setLine(key, {
-      productCode: code,
+      itemCode: code,
       productName: sku?.name ?? '',
       // A new SKU invalidates any previously picked variant bucket.
       variantKey: undefined,
@@ -233,8 +233,8 @@ export const StockTransferNew = () => {
   );
   // A line is valid only once its variant BUCKET is picked (variantKey set).
   // Transferring without it would move the unclassified bucket and desync stock.
-  const validLines = lines.filter((l) => l.productCode.trim() && l.qty > 0 && l.variantKey !== undefined);
-  const needsBucket = lines.some((l) => l.productCode.trim() && l.qty > 0 && l.variantKey === undefined);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey !== undefined);
+  const needsBucket = lines.some((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey === undefined);
 
   const canSave = Boolean(
     fromWarehouseId &&

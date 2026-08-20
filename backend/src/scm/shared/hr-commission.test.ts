@@ -4,11 +4,11 @@ import {
   computeChainCommission,
   computeChainOverride,
   computeShowroomCommission,
-  lineKpiCenti,
+  lineKpiSen,
   soEarnsCommission,
   firingFlags,
-  unitKpiCenti,
-  unitKpiExcludedCenti,
+  unitKpiSen,
+  unitKpiExcludedSen,
   type CommissionConfig,
   type ChainSalespersonInput,
   type ItemKpiFlag,
@@ -18,9 +18,9 @@ import {
 
 const cfg: CommissionConfig = {
   baseBps: 100,
-  personalKpiThresholdCenti: 10_000_000, // RM 100k
+  personalKpiThresholdSen: 10_000_000, // RM 100k
   personalKpiBonusBps: 50,
-  showroomKpiThresholdCenti: 40_000_000, // RM 400k
+  showroomKpiThresholdSen: 40_000_000, // RM 400k
   showroomKpiBonusBps: 50,
   overrideBaseBps: 50,
   overrideKpiBonusBps: 50,
@@ -37,129 +37,129 @@ describe('computeShowroomCommission', () => {
   it('base rate only when neither KPI threshold is met', () => {
     // personal RM 50k, showroom RM 50k → 1.0% of 50k = RM 500
     const row = only(computeShowroomCommission(cfg, 5_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 5_000_000, itemKpiCenti: 0 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 5_000_000, itemKpiSen: 0 },
     ]));
     expect(row.personalRateBps).toBe(100);
-    expect(row.personalCommissionCenti).toBe(50_000);
-    expect(row.overrideCommissionCenti).toBe(0);
-    expect(row.totalCenti).toBe(50_000);
+    expect(row.personalCommissionSen).toBe(50_000);
+    expect(row.overrideCommissionSen).toBe(0);
+    expect(row.totalSen).toBe(50_000);
   });
 
   it('adds personal KPI bonus when personal >= 100k', () => {
     // personal RM 120k, showroom RM 120k (<400k) → 1.5% of 120k = RM 1,800
     const row = only(computeShowroomCommission(cfg, 12_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 12_000_000, itemKpiCenti: 0 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 12_000_000, itemKpiSen: 0 },
     ]));
     expect(row.personalRateBps).toBe(150);
-    expect(row.personalCommissionCenti).toBe(180_000);
+    expect(row.personalCommissionSen).toBe(180_000);
   });
 
   it('adds showroom KPI bonus to every salesperson when showroom >= 400k', () => {
     // personal RM 50k (<100k), showroom RM 400k → 1.5% of 50k = RM 750
     const row = only(computeShowroomCommission(cfg, 40_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 5_000_000, itemKpiCenti: 0 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 5_000_000, itemKpiSen: 0 },
     ]));
     expect(row.personalRateBps).toBe(150);
-    expect(row.personalCommissionCenti).toBe(75_000);
+    expect(row.personalCommissionSen).toBe(75_000);
   });
 
   it('stacks both KPI bonuses → 2.0% max for tier 1', () => {
     // personal RM 150k, showroom RM 500k → 2.0% of 150k = RM 3,000
     const row = only(computeShowroomCommission(cfg, 50_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 15_000_000, itemKpiCenti: 0 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 15_000_000, itemKpiSen: 0 },
     ]));
     expect(row.personalRateBps).toBe(200);
-    expect(row.personalCommissionCenti).toBe(300_000);
+    expect(row.personalCommissionSen).toBe(300_000);
   });
 
   it('manager earns override on the WHOLE showroom (incl. own), 0.5% below 400k', () => {
     // showroom RM 300k (<400k); manager personal RM 80k.
     // personal: 1.0% of 80k = RM 800 ; override: 0.5% of 300k = RM 1,500
     const row = only(computeShowroomCommission(cfg, 30_000_000, [
-      { staffId: 'm', tier: 'manager', personalGoodsCenti: 8_000_000, itemKpiCenti: 0 },
+      { staffId: 'm', tier: 'manager', personalGoodsSen: 8_000_000, itemKpiSen: 0 },
     ]));
-    expect(row.personalCommissionCenti).toBe(80_000);
+    expect(row.personalCommissionSen).toBe(80_000);
     expect(row.overrideRateBps).toBe(50);
-    expect(row.overrideCommissionCenti).toBe(150_000);
-    expect(row.totalCenti).toBe(230_000);
+    expect(row.overrideCommissionSen).toBe(150_000);
+    expect(row.totalSen).toBe(230_000);
   });
 
   it('manager override rises to 1.0% when showroom >= 400k', () => {
     // showroom RM 400k; manager personal RM 120k.
     // personal: (1.0+0.5+0.5)=2.0% of 120k = RM 2,400 ; override: 1.0% of 400k = RM 4,000
     const row = only(computeShowroomCommission(cfg, 40_000_000, [
-      { staffId: 'm', tier: 'manager', personalGoodsCenti: 12_000_000, itemKpiCenti: 0 },
+      { staffId: 'm', tier: 'manager', personalGoodsSen: 12_000_000, itemKpiSen: 0 },
     ]));
-    expect(row.personalCommissionCenti).toBe(240_000);
+    expect(row.personalCommissionSen).toBe(240_000);
     expect(row.overrideRateBps).toBe(100);
-    expect(row.overrideCommissionCenti).toBe(400_000);
-    expect(row.totalCenti).toBe(640_000);
+    expect(row.overrideCommissionSen).toBe(400_000);
+    expect(row.totalSen).toBe(640_000);
   });
 
   it('adds item KPI bonus to the total', () => {
     const row = only(computeShowroomCommission(cfg, 5_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 5_000_000, itemKpiCenti: 15_000 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 5_000_000, itemKpiSen: 15_000 },
     ]));
-    expect(row.totalCenti).toBe(50_000 + 15_000);
+    expect(row.totalSen).toBe(50_000 + 15_000);
   });
 
   it('a tier-1 salesperson never earns an override', () => {
     const row = only(computeShowroomCommission(cfg, 50_000_000, [
-      { staffId: 'a', tier: 'sales', personalGoodsCenti: 15_000_000, itemKpiCenti: 0 },
+      { staffId: 'a', tier: 'sales', personalGoodsSen: 15_000_000, itemKpiSen: 0 },
     ]));
     expect(row.overrideRateBps).toBe(0);
-    expect(row.overrideCommissionCenti).toBe(0);
+    expect(row.overrideCommissionSen).toBe(0);
   });
 
   it('computes every member of a multi-person showroom against the shared showroom total', () => {
     // showroom RM 400k total (KPI hit for everyone); one manager + one sales.
     const rows = computeShowroomCommission(cfg, 40_000_000, [
-      { staffId: 'm', tier: 'manager', personalGoodsCenti: 25_000_000, itemKpiCenti: 0 },
-      { staffId: 's', tier: 'sales', personalGoodsCenti: 15_000_000, itemKpiCenti: 0 },
+      { staffId: 'm', tier: 'manager', personalGoodsSen: 25_000_000, itemKpiSen: 0 },
+      { staffId: 's', tier: 'sales', personalGoodsSen: 15_000_000, itemKpiSen: 0 },
     ]);
     expect(rows).toHaveLength(2);
     // sales: 2.0% of 150k = RM 3,000, no override
     const sales = rows.find((r) => r.staffId === 's');
-    expect(sales?.personalCommissionCenti).toBe(300_000);
-    expect(sales?.overrideCommissionCenti).toBe(0);
+    expect(sales?.personalCommissionSen).toBe(300_000);
+    expect(sales?.overrideCommissionSen).toBe(0);
   });
 });
 
-describe('lineKpiCenti', () => {
+describe('lineKpiSen', () => {
   const flags: ItemKpiFlag[] = [
-    { flagType: 'product', ref: 'MAT-001', bonusCenti: 5_000 },
-    { flagType: 'fabric', ref: 'fab-uuid-1', bonusCenti: 3_000 },
-    { flagType: 'special', ref: 'no_side_panel', bonusCenti: 2_000 },
+    { flagType: 'product', ref: 'MAT-001', bonusSen: 5_000 },
+    { flagType: 'fabric', ref: 'fab-uuid-1', bonusSen: 3_000 },
+    { flagType: 'special', ref: 'no_side_panel', bonusSen: 2_000 },
   ];
 
   it('matches a flagged product by item code × qty', () => {
-    expect(lineKpiCenti({ itemCode: 'MAT-001', qty: 3, fabricId: null, specialCodes: [] }, flags))
+    expect(lineKpiSen({ itemCode: 'MAT-001', qty: 3, fabricId: null, specialCodes: [] }, flags))
       .toBe(15_000);
   });
 
   it('matches a flagged fabric by fabricId × qty', () => {
-    expect(lineKpiCenti({ itemCode: 'SOF-9', qty: 2, fabricId: 'fab-uuid-1', specialCodes: [] }, flags))
+    expect(lineKpiSen({ itemCode: 'SOF-9', qty: 2, fabricId: 'fab-uuid-1', specialCodes: [] }, flags))
       .toBe(6_000);
   });
 
   it('matches a flagged special add-on code × qty', () => {
-    expect(lineKpiCenti({ itemCode: 'SOF-9', qty: 1, fabricId: null, specialCodes: ['no_side_panel'] }, flags))
+    expect(lineKpiSen({ itemCode: 'SOF-9', qty: 1, fabricId: null, specialCodes: ['no_side_panel'] }, flags))
       .toBe(2_000);
   });
 
   it('sums multiple matches on one line', () => {
-    expect(lineKpiCenti({ itemCode: 'MAT-001', qty: 1, fabricId: 'fab-uuid-1', specialCodes: [] }, flags))
+    expect(lineKpiSen({ itemCode: 'MAT-001', qty: 1, fabricId: 'fab-uuid-1', specialCodes: [] }, flags))
       .toBe(8_000);
   });
 
   it('returns 0 when nothing matches', () => {
-    expect(lineKpiCenti({ itemCode: 'X', qty: 9, fabricId: null, specialCodes: [] }, flags)).toBe(0);
+    expect(lineKpiSen({ itemCode: 'X', qty: 9, fabricId: null, specialCodes: [] }, flags)).toBe(0);
   });
 });
 
-describe('item-KPI as a goods exclusion (unitKpiCenti / unitKpiExcludedCenti)', () => {
+describe('item-KPI as a goods exclusion (unitKpiSen / unitKpiExcludedSen)', () => {
   // RM 50 fixed bonus on fabric 'fab-D'.
-  const fabricFlag: ItemKpiFlag[] = [{ flagType: 'fabric', ref: 'fab-D', bonusCenti: 5_000 }];
+  const fabricFlag: ItemKpiFlag[] = [{ flagType: 'fabric', ref: 'fab-D', bonusSen: 5_000 }];
 
   // Loo's worked example: a single-line sofa, base RM 3,000 + RM 125 fabric Δ.
   const sofa: KpiUnit = {
@@ -168,16 +168,16 @@ describe('item-KPI as a goods exclusion (unitKpiCenti / unitKpiExcludedCenti)', 
     category: 'SOFA',
     fabricId: 'fab-D',
     specialCodes: [],
-    lineTotalCenti: 312_500, // RM 3,125 (base + fabric Δ)
-    fabricAddonUnitCenti: 12_500, // RM 125
-    specialSurchargeUnitCenti: 0,
+    lineTotalSen: 312_500, // RM 3,125 (base + fabric Δ)
+    fabricAddonUnitSen: 12_500, // RM 125
+    specialSurchargeUnitSen: 0,
   };
 
   it('fabric flag: bonus is the fixed amount, exclusion is the fabric Δ only', () => {
-    expect(unitKpiCenti(sofa, fabricFlag)).toBe(5_000); // RM 50, once
-    expect(unitKpiExcludedCenti(sofa, fabricFlag)).toBe(12_500); // drop only the RM 125 Δ
+    expect(unitKpiSen(sofa, fabricFlag)).toBe(5_000); // RM 50, once
+    expect(unitKpiExcludedSen(sofa, fabricFlag)).toBe(12_500); // drop only the RM 125 Δ
     // → goods that count = 312,500 − 12,500 = 300,000 (RM 3,000), exactly Loo's case.
-    expect(sofa.lineTotalCenti - unitKpiExcludedCenti(sofa, fabricFlag)).toBe(300_000);
+    expect(sofa.lineTotalSen - unitKpiExcludedSen(sofa, fabricFlag)).toBe(300_000);
   });
 
   it('a split sofa (N module lines, one build) counts the bonus + exclusion ONCE', () => {
@@ -189,55 +189,55 @@ describe('item-KPI as a goods exclusion (unitKpiCenti / unitKpiExcludedCenti)', 
       category: 'SOFA',
       fabricId: 'fab-D',
       specialCodes: [],
-      lineTotalCenti: 800_000, // RM 8,000 build total
-      fabricAddonUnitCenti: 12_500, // RM 125 once, not 3×
-      specialSurchargeUnitCenti: 0,
+      lineTotalSen: 800_000, // RM 8,000 build total
+      fabricAddonUnitSen: 12_500, // RM 125 once, not 3×
+      specialSurchargeUnitSen: 0,
     };
-    expect(unitKpiCenti(splitSofa, fabricFlag)).toBe(5_000); // RM 50, not 3×50
-    expect(unitKpiExcludedCenti(splitSofa, fabricFlag)).toBe(12_500); // RM 125, not 3×125
+    expect(unitKpiSen(splitSofa, fabricFlag)).toBe(5_000); // RM 50, not 3×50
+    expect(unitKpiExcludedSen(splitSofa, fabricFlag)).toBe(12_500); // RM 125, not 3×125
   });
 
   it('qty multiplies both the bonus and the fabric exclusion', () => {
-    const two = { ...sofa, qty: 2, lineTotalCenti: 625_000 };
-    expect(unitKpiCenti(two, fabricFlag)).toBe(10_000); // 2 × RM 50
-    expect(unitKpiExcludedCenti(two, fabricFlag)).toBe(25_000); // 2 × RM 125
+    const two = { ...sofa, qty: 2, lineTotalSen: 625_000 };
+    expect(unitKpiSen(two, fabricFlag)).toBe(10_000); // 2 × RM 50
+    expect(unitKpiExcludedSen(two, fabricFlag)).toBe(25_000); // 2 × RM 125
   });
 
   it('product flag excludes the WHOLE unit total (the product is the KPI item)', () => {
-    const flags: ItemKpiFlag[] = [{ flagType: 'product', ref: 'MAT-001', bonusCenti: 8_000 }];
+    const flags: ItemKpiFlag[] = [{ flagType: 'product', ref: 'MAT-001', bonusSen: 8_000 }];
     const mattress: KpiUnit = {
       itemCodes: ['MAT-001'], qty: 1, category: null, fabricId: null, specialCodes: [],
-      lineTotalCenti: 150_000, fabricAddonUnitCenti: 0, specialSurchargeUnitCenti: 0,
+      lineTotalSen: 150_000, fabricAddonUnitSen: 0, specialSurchargeUnitSen: 0,
     };
-    expect(unitKpiCenti(mattress, flags)).toBe(8_000);
-    expect(unitKpiExcludedCenti(mattress, flags)).toBe(150_000); // whole line
+    expect(unitKpiSen(mattress, flags)).toBe(8_000);
+    expect(unitKpiExcludedSen(mattress, flags)).toBe(150_000); // whole line
   });
 
   it('special flag excludes the special-order surcharge (qty × per-item)', () => {
-    const flags: ItemKpiFlag[] = [{ flagType: 'special', ref: 'no_side_panel', bonusCenti: 2_000 }];
+    const flags: ItemKpiFlag[] = [{ flagType: 'special', ref: 'no_side_panel', bonusSen: 2_000 }];
     const unit: KpiUnit = {
       itemCodes: ['SOF-9'], qty: 2, category: null, fabricId: null, specialCodes: ['no_side_panel'],
-      lineTotalCenti: 400_000, fabricAddonUnitCenti: 0, specialSurchargeUnitCenti: 30_000,
+      lineTotalSen: 400_000, fabricAddonUnitSen: 0, specialSurchargeUnitSen: 30_000,
     };
-    expect(unitKpiCenti(unit, flags)).toBe(4_000); // 2 × RM 20
-    expect(unitKpiExcludedCenti(unit, flags)).toBe(60_000); // 2 × RM 300
+    expect(unitKpiSen(unit, flags)).toBe(4_000); // 2 × RM 20
+    expect(unitKpiExcludedSen(unit, flags)).toBe(60_000); // 2 × RM 300
   });
 
   it('exclusion is capped at the unit total (never drives goods negative)', () => {
     const tiny: KpiUnit = {
       itemCodes: ['BF-1'], qty: 1, category: null, fabricId: 'fab-D', specialCodes: [],
-      lineTotalCenti: 9_000, fabricAddonUnitCenti: 12_500, specialSurchargeUnitCenti: 0,
+      lineTotalSen: 9_000, fabricAddonUnitSen: 12_500, specialSurchargeUnitSen: 0,
     };
-    expect(unitKpiExcludedCenti(tiny, fabricFlag)).toBe(9_000); // capped, not 12,500
+    expect(unitKpiExcludedSen(tiny, fabricFlag)).toBe(9_000); // capped, not 12,500
   });
 
   it('no exclusion and no bonus when no flag fires', () => {
     const plain: KpiUnit = {
       itemCodes: ['ANNSA-3S'], qty: 1, category: null, fabricId: 'fab-OTHER', specialCodes: [],
-      lineTotalCenti: 300_000, fabricAddonUnitCenti: 12_500, specialSurchargeUnitCenti: 0,
+      lineTotalSen: 300_000, fabricAddonUnitSen: 12_500, specialSurchargeUnitSen: 0,
     };
-    expect(unitKpiCenti(plain, fabricFlag)).toBe(0);
-    expect(unitKpiExcludedCenti(plain, fabricFlag)).toBe(0); // non-flagged fabric Δ stays goods
+    expect(unitKpiSen(plain, fabricFlag)).toBe(0);
+    expect(unitKpiExcludedSen(plain, fabricFlag)).toBe(0); // non-flagged fabric Δ stays goods
   });
 });
 
@@ -247,88 +247,88 @@ describe('item-KPI as a goods exclusion (unitKpiCenti / unitKpiExcludedCenti)', 
 // place those two statements could contradict each other: an item that is both
 // named individually AND covered by its category.
 describe('category item-KPI rules', () => {
-  const catFlag: ItemKpiFlag[] = [{ flagType: 'category', ref: 'SOFA', bonusCenti: 3_000 }];
+  const catFlag: ItemKpiFlag[] = [{ flagType: 'category', ref: 'SOFA', bonusSen: 3_000 }];
 
   const sofaUnit: KpiUnit = {
     itemCodes: ['ANNSA-3S'], qty: 1, category: 'SOFA', fabricId: null, specialCodes: [],
-    lineTotalCenti: 300_000, fabricAddonUnitCenti: 0, specialSurchargeUnitCenti: 0,
+    lineTotalSen: 300_000, fabricAddonUnitSen: 0, specialSurchargeUnitSen: 0,
   };
 
   it('fires on every item in the category, and excludes the whole unit', () => {
-    expect(unitKpiCenti(sofaUnit, catFlag)).toBe(3_000);
+    expect(unitKpiSen(sofaUnit, catFlag)).toBe(3_000);
     // A category rule targets the ITEM, so like a product rule it replaces the
     // percentage commission on the whole unit rather than trimming an add-on.
-    expect(unitKpiExcludedCenti(sofaUnit, catFlag)).toBe(300_000);
+    expect(unitKpiExcludedSen(sofaUnit, catFlag)).toBe(300_000);
   });
 
   it('does not fire on an item in a different category', () => {
     const mattress = { ...sofaUnit, itemCodes: ['MAT-001'], category: 'MATTRESS' };
-    expect(unitKpiCenti(mattress, catFlag)).toBe(0);
-    expect(unitKpiExcludedCenti(mattress, catFlag)).toBe(0);
+    expect(unitKpiSen(mattress, catFlag)).toBe(0);
+    expect(unitKpiExcludedSen(mattress, catFlag)).toBe(0);
   });
 
   it('does not fire when the category could not be resolved (null is unpaid, not guessed)', () => {
     const unknown = { ...sofaUnit, category: null };
-    expect(unitKpiCenti(unknown, catFlag)).toBe(0);
-    expect(unitKpiExcludedCenti(unknown, catFlag)).toBe(0);
+    expect(unitKpiSen(unknown, catFlag)).toBe(0);
+    expect(unitKpiExcludedSen(unknown, catFlag)).toBe(0);
   });
 
   it('qty multiplies the category bonus', () => {
-    expect(unitKpiCenti({ ...sofaUnit, qty: 4 }, catFlag)).toBe(12_000);
+    expect(unitKpiSen({ ...sofaUnit, qty: 4 }, catFlag)).toBe(12_000);
   });
 
   // THE MONEY CASE: both rules cover this one sofa.
   it('a product rule BEATS a category rule on the same item — paid ONCE, at the product rate', () => {
     const both: ItemKpiFlag[] = [
-      { flagType: 'category', ref: 'SOFA', bonusCenti: 3_000 },
-      { flagType: 'product', ref: 'ANNSA-3S', bonusCenti: 8_000 },
+      { flagType: 'category', ref: 'SOFA', bonusSen: 3_000 },
+      { flagType: 'product', ref: 'ANNSA-3S', bonusSen: 8_000 },
     ];
     // NOT 11,000 (both) and NOT 3,000 (category) — the specific rule wins.
-    expect(unitKpiCenti(sofaUnit, both)).toBe(8_000);
+    expect(unitKpiSen(sofaUnit, both)).toBe(8_000);
     // And the unit is excluded from goods exactly ONCE, not twice.
-    expect(unitKpiExcludedCenti(sofaUnit, both)).toBe(300_000);
+    expect(unitKpiExcludedSen(sofaUnit, both)).toBe(300_000);
     expect(firingFlags(sofaUnit, both).map((f) => f.flagType)).toEqual(['product']);
   });
 
   it('the category rule still pays for a sibling the product rule does not name', () => {
     const both: ItemKpiFlag[] = [
-      { flagType: 'category', ref: 'SOFA', bonusCenti: 3_000 },
-      { flagType: 'product', ref: 'ANNSA-3S', bonusCenti: 8_000 },
+      { flagType: 'category', ref: 'SOFA', bonusSen: 3_000 },
+      { flagType: 'product', ref: 'ANNSA-3S', bonusSen: 8_000 },
     ];
     const otherSofa = { ...sofaUnit, itemCodes: ['BALI-2S'] };
-    expect(unitKpiCenti(otherSofa, both)).toBe(3_000);
+    expect(unitKpiSen(otherSofa, both)).toBe(3_000);
   });
 
   it('a product rule on a DIFFERENT item does not suppress this item\'s category rule', () => {
     const both: ItemKpiFlag[] = [
-      { flagType: 'category', ref: 'SOFA', bonusCenti: 3_000 },
-      { flagType: 'product', ref: 'SOMETHING-ELSE', bonusCenti: 8_000 },
+      { flagType: 'category', ref: 'SOFA', bonusSen: 3_000 },
+      { flagType: 'product', ref: 'SOMETHING-ELSE', bonusSen: 8_000 },
     ];
-    expect(unitKpiCenti(sofaUnit, both)).toBe(3_000);
+    expect(unitKpiSen(sofaUnit, both)).toBe(3_000);
   });
 
   // Suppression is product-vs-category ONLY: fabric and special target a
   // different dimension of the purchase and keep stacking as they always did.
   it('a category rule still stacks with a fabric rule (different dimensions)', () => {
     const mixed: ItemKpiFlag[] = [
-      { flagType: 'category', ref: 'SOFA', bonusCenti: 3_000 },
-      { flagType: 'fabric', ref: 'fab-D', bonusCenti: 5_000 },
+      { flagType: 'category', ref: 'SOFA', bonusSen: 3_000 },
+      { flagType: 'fabric', ref: 'fab-D', bonusSen: 5_000 },
     ];
-    const u = { ...sofaUnit, fabricId: 'fab-D', fabricAddonUnitCenti: 12_500 };
-    expect(unitKpiCenti(u, mixed)).toBe(8_000);
+    const u = { ...sofaUnit, fabricId: 'fab-D', fabricAddonUnitSen: 12_500 };
+    expect(unitKpiSen(u, mixed)).toBe(8_000);
     // Whole unit already excluded by the category rule; the fabric Δ is inside
     // it, so the exclusion is the unit total and is still capped there.
-    expect(unitKpiExcludedCenti(u, mixed)).toBe(300_000);
+    expect(unitKpiExcludedSen(u, mixed)).toBe(300_000);
   });
 
   it('a split build resolves its category once and pays once', () => {
     const splitSofa: KpiUnit = {
       itemCodes: ['ANNSA-1A(LHF)', 'ANNSA-CNR', 'ANNSA-1B(RHF)'],
       qty: 1, category: 'SOFA', fabricId: null, specialCodes: [],
-      lineTotalCenti: 800_000, fabricAddonUnitCenti: 0, specialSurchargeUnitCenti: 0,
+      lineTotalSen: 800_000, fabricAddonUnitSen: 0, specialSurchargeUnitSen: 0,
     };
-    expect(unitKpiCenti(splitSofa, catFlag)).toBe(3_000); // not 3× the modules
-    expect(unitKpiExcludedCenti(splitSofa, catFlag)).toBe(800_000);
+    expect(unitKpiSen(splitSofa, catFlag)).toBe(3_000); // not 3× the modules
+    expect(unitKpiExcludedSen(splitSofa, catFlag)).toBe(800_000);
   });
 
   // Multi-select in HR Settings creates N DISCRETE one-item rules (owner
@@ -337,13 +337,13 @@ describe('category item-KPI rules', () => {
   // series — so selecting three fabrics can never pay one item three times.
   it('N fabric rules from one multi-select: an item matches at most one of them', () => {
     const threeFabrics: ItemKpiFlag[] = [
-      { flagType: 'fabric', ref: 'BF', bonusCenti: 5_000 },
-      { flagType: 'fabric', ref: 'CG', bonusCenti: 6_000 },
-      { flagType: 'fabric', ref: 'DK', bonusCenti: 7_000 },
+      { flagType: 'fabric', ref: 'BF', bonusSen: 5_000 },
+      { flagType: 'fabric', ref: 'CG', bonusSen: 6_000 },
+      { flagType: 'fabric', ref: 'DK', bonusSen: 7_000 },
     ];
-    const u = { ...sofaUnit, fabricId: 'CG', fabricAddonUnitCenti: 12_500 };
+    const u = { ...sofaUnit, fabricId: 'CG', fabricAddonUnitSen: 12_500 };
     expect(firingFlags(u, threeFabrics)).toHaveLength(1);
-    expect(unitKpiCenti(u, threeFabrics)).toBe(6_000); // only CG, once
+    expect(unitKpiSen(u, threeFabrics)).toBe(6_000); // only CG, once
   });
 });
 
@@ -397,40 +397,40 @@ describe('computeChainOverride (recursive reporting-line override)', () => {
   it('pays each configured level its own rate on that level own goods', () => {
     // level 1: 0.5% of RM 100k = RM 500 ; level 2: 0.25% of RM 200k = RM 500
     const r = computeChainOverride(levels, new Map([[1, 10_000_000], [2, 20_000_000]]));
-    expect(r.overrideCommissionCenti).toBe(50_000 + 50_000);
+    expect(r.overrideCommissionSen).toBe(50_000 + 50_000);
     expect(r.overrideDetail).toEqual([
-      { level: 1, rateBps: 50, goodsCenti: 10_000_000, commissionCenti: 50_000 },
-      { level: 2, rateBps: 25, goodsCenti: 20_000_000, commissionCenti: 50_000 },
+      { level: 1, rateBps: 50, goodsSen: 10_000_000, commissionSen: 50_000 },
+      { level: 2, rateBps: 25, goodsSen: 20_000_000, commissionSen: 50_000 },
     ]);
   });
 
   it('a level with goods but NO configured rate earns nothing ("讓我們自己add")', () => {
     // RM 500k sits at level 3, but the owner never added a level 3.
     const r = computeChainOverride(levels, new Map([[1, 10_000_000], [3, 50_000_000]]));
-    expect(r.overrideCommissionCenti).toBe(50_000); // level 1 only
+    expect(r.overrideCommissionSen).toBe(50_000); // level 1 only
     expect(r.overrideDetail.map((d) => d.level)).toEqual([1]);
   });
 
   it('a configured level with no downline goods earns nothing and is not listed', () => {
     const r = computeChainOverride(levels, new Map([[1, 10_000_000]]));
-    expect(r.overrideCommissionCenti).toBe(50_000);
+    expect(r.overrideCommissionSen).toBe(50_000);
     expect(r.overrideDetail.map((d) => d.level)).toEqual([1]);
   });
 
   it('no downline at all → RM 0 override (not an error)', () => {
-    expect(computeChainOverride(levels, new Map()).overrideCommissionCenti).toBe(0);
+    expect(computeChainOverride(levels, new Map()).overrideCommissionSen).toBe(0);
   });
 
   it('"無限": a deep level earns exactly like a shallow one — no cap in the math', () => {
     const r = computeChainOverride([{ level: 25, rateBps: 10 }], new Map([[25, 10_000_000]]));
-    expect(r.overrideCommissionCenti).toBe(10_000); // 0.1% of RM 100k = RM 100
+    expect(r.overrideCommissionSen).toBe(10_000); // 0.1% of RM 100k = RM 100
   });
 
   it('rounds ONCE per level, on that level summed goods (money — mirrors 2990)', () => {
     // 3 bps of 3,333 centi = 0.9999 → 1. Rounding per-seller first (three
     // sellers of 1,111 each → round(0.3333) = 0 apiece) would pay 0 instead.
     // The rate hits the SUMMED base, exactly as showroom mode does.
-    expect(computeChainOverride([{ level: 1, rateBps: 3 }], new Map([[1, 3_333]])).overrideCommissionCenti).toBe(1);
+    expect(computeChainOverride([{ level: 1, rateBps: 3 }], new Map([[1, 3_333]])).overrideCommissionSen).toBe(1);
   });
 
   it('detail order is stable regardless of configured order (byte-stable snapshots)', () => {
@@ -448,9 +448,9 @@ describe('computeChainCommission (the double-pay guard)', () => {
   const chain = (
     staffId: string,
     tier: 'sales' | 'manager',
-    personalGoodsCenti: number,
+    personalGoodsSen: number,
     goodsByLevel: Map<number, number>,
-  ): ChainSalespersonInput => ({ staffId, tier, personalGoodsCenti, itemKpiCenti: 0, goodsByLevel });
+  ): ChainSalespersonInput => ({ staffId, tier, personalGoodsSen, itemKpiSen: 0, goodsByLevel });
 
   it('THE GUARD: two stacked managers each earn on the seller goods ONCE, at their own level', () => {
     // A (seller, RM 100k) → M1 → M2. M1 is 1 above A, M2 is 2 above.
@@ -464,10 +464,10 @@ describe('computeChainCommission (the double-pay guard)', () => {
     ]);
     const m1 = rows.find((r) => r.staffId === 'M1');
     const m2 = rows.find((r) => r.staffId === 'M2');
-    expect(m1?.overrideCommissionCenti).toBe(50_000); // 0.5% of 100k = RM 500
-    expect(m2?.overrideCommissionCenti).toBe(25_000); // 0.25% of 100k = RM 250
+    expect(m1?.overrideCommissionSen).toBe(50_000); // 0.5% of 100k = RM 500
+    expect(m2?.overrideCommissionSen).toBe(25_000); // 0.25% of 100k = RM 250
     // …and NOT 2990's answer, where both would take the identical full override.
-    expect(m1?.overrideCommissionCenti).not.toBe(m2?.overrideCommissionCenti);
+    expect(m1?.overrideCommissionSen).not.toBe(m2?.overrideCommissionSen);
   });
 
   it('THE GUARD: the seller earns personal commission and NO override on their own sale', () => {
@@ -478,8 +478,8 @@ describe('computeChainCommission (the double-pay guard)', () => {
     ]);
     // RM 100k personal HITS the 100k gate → 1.5%, showroom RM 100k misses 400k.
     expect(rows[0]?.personalRateBps).toBe(150);
-    expect(rows[0]?.personalCommissionCenti).toBe(150_000);
-    expect(rows[0]?.overrideCommissionCenti).toBe(0);
+    expect(rows[0]?.personalCommissionSen).toBe(150_000);
+    expect(rows[0]?.overrideCommissionSen).toBe(0);
   });
 
   it('a manager who also SELLS: personal on their own, override on the downline, never both on one sale', () => {
@@ -488,10 +488,10 @@ describe('computeChainCommission (the double-pay guard)', () => {
       chain('M', 'manager', 10_000_000, new Map([[1, 20_000_000]])),
     ]);
     expect(rows[0]?.personalRateBps).toBe(150); // 100k gate hit, 400k missed
-    expect(rows[0]?.personalCommissionCenti).toBe(150_000);
+    expect(rows[0]?.personalCommissionSen).toBe(150_000);
     // 0.5% of the RM 200k DOWNLINE only — his own RM 100k is not in the base.
-    expect(rows[0]?.overrideCommissionCenti).toBe(100_000);
-    expect(rows[0]?.totalCenti).toBe(250_000);
+    expect(rows[0]?.overrideCommissionSen).toBe(100_000);
+    expect(rows[0]?.totalSen).toBe(250_000);
   });
 
   it('tier is NOT consulted: a sales-tier person with a downline earns the override', () => {
@@ -501,8 +501,8 @@ describe('computeChainCommission (the double-pay guard)', () => {
       chain('S', 'sales', 0, new Map([[1, 10_000_000]])),
       chain('M', 'manager', 0, new Map()),
     ]);
-    expect(rows.find((r) => r.staffId === 'S')?.overrideCommissionCenti).toBe(50_000);
-    expect(rows.find((r) => r.staffId === 'M')?.overrideCommissionCenti).toBe(0);
+    expect(rows.find((r) => r.staffId === 'S')?.overrideCommissionSen).toBe(50_000);
+    expect(rows.find((r) => r.staffId === 'M')?.overrideCommissionSen).toBe(0);
   });
 
   it('reports overrideRateBps as NULL — there is no single rate in chain mode', () => {
@@ -518,19 +518,19 @@ describe('computeChainCommission (the double-pay guard)', () => {
   it('personal commission is IDENTICAL to showroom mode — only the override changes', () => {
     // Both modes share personalPart, so the 100k/400k gates behave the same and
     // flipping the mode is a change to exactly ONE column.
-    const person = { staffId: 'a', tier: 'sales' as const, personalGoodsCenti: 15_000_000, itemKpiCenti: 7_000 };
+    const person = { staffId: 'a', tier: 'sales' as const, personalGoodsSen: 15_000_000, itemKpiSen: 7_000 };
     const showroom = computeShowroomCommission(cfg, 50_000_000, [person]);
     const chained = computeChainCommission(cfg, 50_000_000, levels, [{ ...person, goodsByLevel: new Map() }]);
     expect(chained[0]?.personalRateBps).toBe(showroom[0]?.personalRateBps);
-    expect(chained[0]?.personalCommissionCenti).toBe(showroom[0]?.personalCommissionCenti);
-    expect(chained[0]?.itemKpiCenti).toBe(showroom[0]?.itemKpiCenti);
+    expect(chained[0]?.personalCommissionSen).toBe(showroom[0]?.personalCommissionSen);
+    expect(chained[0]?.itemKpiSen).toBe(showroom[0]?.itemKpiSen);
   });
 
   it('the item-KPI fixed bonus still lands in the total in chain mode', () => {
     const rows = computeChainCommission(cfg, 5_000_000, levels, [
-      { ...chain('a', 'sales', 5_000_000, new Map([[1, 10_000_000]])), itemKpiCenti: 15_000 },
+      { ...chain('a', 'sales', 5_000_000, new Map([[1, 10_000_000]])), itemKpiSen: 15_000 },
     ]);
     // 1.0% of 50k = RM 500, + 0.5% of 100k downline = RM 500, + RM 150 fixed
-    expect(rows[0]?.totalCenti).toBe(50_000 + 50_000 + 15_000);
+    expect(rows[0]?.totalSen).toBe(50_000 + 50_000 + 15_000);
   });
 });

@@ -11,7 +11,6 @@ import {
   HOUZS_COMPANY_CODE,
   letterheadLogoKey,
 } from "../services/branding";
-import { canSeeProject } from "../services/projectAcl";
 import { getPmsAccess, isFinanceViewer } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { hasPermission } from "../services/permissions";
@@ -310,22 +309,11 @@ app.get("/:id", async (c) => {
   const detail = await getProjectDetail(c.env, id, activeCompanyId(c));
   if (!detail) return c.text("Not found", 404);
 
-  // Row-level ACL — this debrief bypassed canSeeProject before, so any
-  // authenticated user could print any project id. Enforce the same gate the
-  // detail JSON uses.
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): the
+  // company-scoped getProjectDetail load above is the row-level gate (a
+  // cross-company id already printed "Not found"). Section-level finance /
+  // sensitive stripping below is a separate axis and still applies.
   const user = (c as any).get("user");
-  // Mirror the detail-GET read gate: PIC line + brand + grace (canSeeProject)
-  // OR a scoped rep on the project's Sales Attending list (attendee arm, mig
-  // 087). Keeps the printable debrief in lockstep with what the list surfaces
-  // and the detail JSON opens. Dual-read rep_user_id (pg driver camelCases).
-  const isPrintAttendee =
-    !!user?.id &&
-    ((detail as any).sales_attendees ?? []).some(
-      (a: any) => (a.rep_user_id ?? a.repUserId) === user.id
-    );
-  if (user && !canSeeProject(user, detail.project as any) && !isPrintAttendee) {
-    return c.text("Not found", 404);
-  }
   // Section-level finance/payment gate (Sales-department visibility, rules 3 &
   // 5). Non-director positions must not see money in the printable debrief
   // either — the JSON endpoint strips it, so must this. Gated on position_id

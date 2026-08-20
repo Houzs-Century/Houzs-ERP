@@ -27,7 +27,7 @@ export type SoPaymentRow = {
   paid_at: string | null;
   method: string;
   merchant_provider: string | null;
-  amount_centi: number;
+  amount_sen: number;
   company_id: number | null;
 };
 
@@ -73,7 +73,7 @@ const paymentDate = (paidAt: string | null): string | null => {
 
 export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
-  const amountSen = Number(p.amount_centi);
+  const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
   const entryDate = paymentDate(p.paid_at);
   if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `payment ${p.id} has no usable paid_at` };
@@ -134,13 +134,13 @@ export type SiPaymentRow = {
   paid_at: string | null;
   method: string;
   merchant_provider: string | null;
-  amount_centi: number;
+  amount_sen: number;
   company_id: number | null;
 };
 
 export async function postSiPayment(sb: any, p: SiPaymentRow): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
-  const amountSen = Number(p.amount_centi);
+  const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
   const entryDate = paymentDate(p.paid_at);
   if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `payment ${p.id} has no usable paid_at` };
@@ -202,6 +202,7 @@ export async function backfillSoPayments(
         .from('journal_entries')
         .select('source_doc_no, reversed')
         .eq('source_type', 'SOPAY')
+        .order('id')
         .range(from, from + page - 1);
       if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>;
@@ -219,7 +220,7 @@ export async function backfillSoPayments(
     for (;;) {
       const { data, error } = await sb
         .from('mfg_sales_order_payments')
-        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_centi, company_id')
+        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id')
         .neq('method', 'imported')
         .order('paid_at')
         .order('id')
@@ -276,7 +277,7 @@ export async function postUnpostedSiPayments(
 ): Promise<{ ok: boolean; posted: number; failed: number; reason?: string }> {
   const { data, error } = await sb
     .from('sales_invoice_payments')
-    .select('id, sales_invoice_id, paid_at, method, merchant_provider, amount_centi, company_id')
+    .select('id, sales_invoice_id, paid_at, method, merchant_provider, amount_sen, company_id')
     .eq('sales_invoice_id', salesInvoiceId);
   if (error) return { ok: false, posted: 0, failed: 0, reason: error.message };
   let posted = 0;

@@ -39,7 +39,7 @@
       "po_doc_no": "SOUDF_ToPONo",
       "remark2_stock_status": "Remark2",
       "line_delivery_date": "SOUDF_PDate",
-      "balance_centi": "SOUDF_BALANCE"
+      "balance_sen": "SOUDF_BALANCE"
     },
     "line": {
       "item_code": "ItemCode (via SKU mapping)",

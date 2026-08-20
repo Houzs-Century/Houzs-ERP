@@ -49,14 +49,14 @@ try {
     const prods = await tx`SELECT id, code, name, base_price_sen, price1_sen, seat_height_prices, model_id, base_model
                            FROM scm.mfg_products WHERE company_id = ${cid}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
-    const bindRows = await tx`SELECT b.id, b.supplier_id, b.material_code, s.code AS sup_code, b.is_main_supplier
+    const bindRows = await tx`SELECT b.id, b.supplier_id, b.item_code, s.code AS sup_code, b.is_main_supplier
                               FROM scm.supplier_material_bindings b JOIN scm.suppliers s ON s.id = b.supplier_id
                               WHERE b.company_id = ${cid} AND b.material_kind = 'mfg_product'`;
-    const bindBy = new Map(bindRows.map((b) => [`${b.sup_code}||${b.material_code}`, b]));
+    const bindBy = new Map(bindRows.map((b) => [`${b.sup_code}||${b.item_code}`, b]));
 
     const audit = async (code, field, oldV, newV) => {
       if (!APPLY) return;
-      await tx`INSERT INTO scm.master_price_history (product_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
+      await tx`INSERT INTO scm.master_price_history (item_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
                VALUES (${code}, ${field}, ${oldV ?? null}, ${newV}, ${REASON}, ${now}, ${cid})`;
     };
 
@@ -124,25 +124,25 @@ try {
         const b = bindBy.get(key);
         if (!b) {
           if (APPLY) await tx`INSERT INTO scm.supplier_material_bindings
-            (supplier_id, material_kind, material_code, material_name, supplier_sku,
-             unit_price_centi, price_matrix, is_main_supplier, notes, company_id, created_at, updated_at)
+            (supplier_id, material_kind, item_code, material_name, supplier_sku,
+             unit_price_sen, price_matrix, is_main_supplier, notes, company_id, created_at, updated_at)
             VALUES (${supBy[supCode]}, 'mfg_product', ${m.erp}, ${prodBy.get(m.erp).name}, ${m.sku},
                     ${m.flat}, ${tx.json(m.matrix)}, false, ${REASON}, ${cid}, ${now}, ${now})`;
           bindBy.set(key, { placeholder: true });
           bump("bind_insert");
         } else {
           if (APPLY) await tx`UPDATE scm.supplier_material_bindings
-            SET unit_price_centi = ${m.flat}, price_matrix = ${tx.json(m.matrix)}, updated_at = ${now}
-            WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND material_code = ${m.erp}
+            SET unit_price_sen = ${m.flat}, price_matrix = ${tx.json(m.matrix)}, updated_at = ${now}
+            WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND item_code = ${m.erp}
               AND supplier_id = ${supBy[supCode]}`;
           bump("bind_refresh");
         }
       }
       if (APPLY) {
         await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = false, updated_at = ${now}
-                 WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND material_code = ${m.erp} AND is_main_supplier = true`;
+                 WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND item_code = ${m.erp} AND is_main_supplier = true`;
         await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = true, updated_at = ${now}
-                 WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND material_code = ${m.erp}
+                 WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND item_code = ${m.erp}
                    AND supplier_id = ${supBy[MAIN_TO]}`;
       }
       bump("main_to_h004");

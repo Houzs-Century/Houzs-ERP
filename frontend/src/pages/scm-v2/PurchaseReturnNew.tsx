@@ -88,14 +88,14 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  materialCode:   string;
+  itemCode:   string;
   materialName:   string;
   /* Commander 2026-05-29 — carry the source GRN/PO line's category + variant
      selections so the return shows WHAT is going back (PO/GRN parity). */
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qtyReturned:    number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   reason:         string;
   notes:          string;
 };
@@ -104,12 +104,12 @@ const newLine = (): DraftLine => ({
   rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   grnItemId:      null,
   materialKind:   'mfg_product',
-  materialCode:   '',
+  itemCode:   '',
   materialName:   '',
   itemGroup:      null,
   variants:       null,
   qtyReturned:    1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   reason:         '',
   notes:          '',
 });
@@ -190,12 +190,12 @@ export const PurchaseReturnNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        materialCode:   it.material_code,
+        itemCode:   it.item_code,
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qtyReturned:    it.qty_rejected ?? 0,        // pre-fill with rejected qty if any
-        unitPriceCenti: it.unit_price_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
       }));
@@ -211,12 +211,12 @@ export const PurchaseReturnNew = () => {
       rid:            `r${it.id}`,
       grnItemId:      null,
       materialKind:   it.material_kind,
-      materialCode:   it.material_code,
+      itemCode:   it.item_code,
       materialName:   it.material_name,
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    0,                              // commander enters
-      unitPriceCenti: it.unit_price_centi ?? 0,
+      unitPriceSen: it.unit_price_sen ?? 0,
       reason:         '',
       notes:          '',
     }));
@@ -228,8 +228,8 @@ export const PurchaseReturnNew = () => {
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const subtotalCenti = useMemo(
-    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -252,7 +252,7 @@ export const PurchaseReturnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -275,7 +275,7 @@ export const PurchaseReturnNew = () => {
     return s ? `${s.code} · ${s.name}` : '';
   }, [grn, po, suppliersQ.data, supplierId]);
 
-  const validLines = lines.filter((l) => l.materialCode.trim() && l.qtyReturned > 0);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
   const canSave = !!supplierId && validLines.length > 0;
 
   const onSave = async () => {
@@ -292,11 +292,11 @@ export const PurchaseReturnNew = () => {
         items: validLines.map((l) => ({
           grnItemId:      l.grnItemId,
           materialKind:   l.materialKind,
-          materialCode:   l.materialCode,
+          itemCode:   l.itemCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
-          unitPriceCenti: l.unitPriceCenti,
-          lineRefundCenti: l.qtyReturned * l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
+          lineRefundSen: l.qtyReturned * l.unitPriceSen,
           reason:         l.reason || undefined,
           notes:          l.notes || undefined,
           // Commander 2026-05-29 — send the line's category + variant selections
@@ -399,7 +399,7 @@ export const PurchaseReturnNew = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalCenti)}
+            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalSen)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -413,7 +413,7 @@ export const PurchaseReturnNew = () => {
             </p>
           ) : (
             lines.map((l, idx) => {
-              const lineRefundCenti = l.qtyReturned * l.unitPriceCenti;
+              const lineRefundSen = l.qtyReturned * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               // Manual lines (no grn linkage AND free-form mode) get the inline
               // picker + editable variant block. Sourced lines stay read-only.
@@ -460,7 +460,7 @@ export const PurchaseReturnNew = () => {
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineRefundCenti)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineRefundSen)}</span>
                       <button
                         type="button"
                         onClick={() => dropLine(l.rid)}
@@ -488,7 +488,7 @@ export const PurchaseReturnNew = () => {
                           <input
                             type="text"
                             list={`pr-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
@@ -496,7 +496,7 @@ export const PurchaseReturnNew = () => {
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
                               // Free typing — keep what's typed so the field stays editable.
-                              setLine(l.rid, { materialCode: code });
+                              setLine(l.rid, { itemCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
                             className={styles.fieldInput}
@@ -512,7 +512,7 @@ export const PurchaseReturnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -610,8 +610,8 @@ export const PurchaseReturnNew = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price (MYR)</span>
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -626,7 +626,7 @@ export const PurchaseReturnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineRefundCenti)}
+                        value={fmtRm(lineRefundSen)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -672,11 +672,11 @@ export const PurchaseReturnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
           </div>
         </section>

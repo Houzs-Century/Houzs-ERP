@@ -170,12 +170,12 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   itemId:         it.id,
   bindingId:      it.binding_id ?? undefined,
   materialKind:   it.material_kind,
-  materialCode:   it.material_code,
+  itemCode:   it.item_code,
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? undefined,
   supplierDeliveryDate2: it.supplier_delivery_date_2 ?? undefined,
   supplierDeliveryDate3: it.supplier_delivery_date_3 ?? undefined,
@@ -299,19 +299,29 @@ export const PurchaseOrderDetail = () => {
      confirming), alongside SUBMITTED / PARTIALLY_RECEIVED. A DRAFT never has a
      GRN child, so hasChildren can't lock it. RECEIVED / CANCELLED stay locked. */
   const isEditableStatus = po ? (po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') : false;
+  /* Owner 2026-08-20 (§8 GAP-1) — a GRN no longer freezes the WHOLE PO. The
+     lock is now field-level (matching the backend po-identity-lock):
+       · hardLocked — RECEIVED / CANCELLED: everything read-only, no Edit at all.
+       · lockedDueToChildren — a live GRN exists: only the INHERITED header
+         fields (supplier / currency / purchase location) + the LINES freeze; the
+         PO's own dates + notes stay editable. To change an inherited field,
+         cancel the GRN and edit the PO.
+     `isLocked` (= hard OR children) still gates the LINE editor + inherited
+     fields; `hardLocked` gates the Edit button + the PO-own header fields. */
+  const hardLocked = po ? !isEditableStatus : true;
   const isLocked = po ? (!isEditableStatus || hasChildren) : true;
   const lockedDueToChildren = po ? (isEditableStatus && hasChildren) : false;
 
-  /* If a PO locks while we're in Edit mode (e.g. it's Received / Cancelled
-     after a status change), drop back to View and discard the draft so the
-     page can never present editable controls on a locked PO. */
+  /* Only a HARD lock (Received / Cancelled) drops us out of Edit — a PO with a
+     GRN stays editable for its own-stage fields, so children must NOT kick us
+     back to View. */
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setEditLines([]);
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
 
   /* Seed/clear the whole-line drafts (owner 2026-06-19) — entering Edit
      populates a PoLineCard draft for EVERY current line; leaving Edit wipes
@@ -341,18 +351,18 @@ export const PurchaseOrderDetail = () => {
   const recomputeLineCost = (line: EditLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+      : bindings.find((b) => b.item_code === line.itemCode);
+    if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
@@ -377,9 +387,9 @@ export const PurchaseOrderDetail = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
@@ -457,7 +467,7 @@ export const PurchaseOrderDetail = () => {
      shortage view — otherwise a controlled select would fall back to the
      placeholder and the operator would read a real binding as "none". */
   const soLinkOptionsFor = (l: EditLine): Array<{ value: string; label: string }> => {
-    const code = l.materialCode.trim().toUpperCase();
+    const code = l.itemCode.trim().toUpperCase();
     const opts: Array<{ value: string; label: string }> = [];
     if (code) {
       for (const s of outstandingSoQ.data ?? []) {
@@ -485,9 +495,9 @@ export const PurchaseOrderDetail = () => {
   /* Totals — in Edit, sum the live editLines (incl. unsaved variant/qty/price
      edits) so the rail can't drift; in View, the stored line totals. */
   const itemsSubtotal = isEditing
-    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceCenti - (d.discountCenti ?? 0)), 0)
-    : visibleItems.reduce((s, it) => s + (it.line_total_centi ?? 0), 0);
-  const grandTotal = itemsSubtotal + (po.tax_centi ?? 0);
+    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
+    : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? 0), 0);
+  const grandTotal = itemsSubtotal + (po.tax_sen ?? 0);
 
   /* Per-line "Received" cell (View only) — which Goods Receipt took how much off
      this line, plus the live balance still outstanding. Mirrors the SO
@@ -517,6 +527,13 @@ export const PurchaseOrderDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(po)), [k]: v }));
+    /* Owner 2026-08-20 (§8 GAP-1) — when a GRN exists the LINES are locked
+       (they were received), so a header date edit must NOT fan down into
+       editLines: doing so would mark a locked line "changed" and Save would
+       then 409 on the line PATCH. The header date still saves on its own; the
+       backend fills only still-NULL line slots server-side. So skip every
+       line cascade below while `lockedDueToChildren`. */
+    if (lockedDueToChildren) return;
     // Commander 2026-05-29 — header Expected Delivery cascades to every line's
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").
@@ -563,11 +580,11 @@ export const PurchaseOrderDetail = () => {
     patchLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
-      category:       categoryForCode(b.material_code),
+      unitPriceSen: b.unit_price_sen,
+      category:       categoryForCode(b.item_code),
       priceTouched:   false,
     });
 
@@ -622,14 +639,14 @@ export const PurchaseOrderDetail = () => {
   };
 
   /* Single Save (owner 2026-06-19) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / materialCode / SKU)
+       · no itemId → ADD (full payload incl. variants / itemCode / SKU)
        · itemId + changed any field → UPDATE (full payload)
      Deletes already fired server-side in removeLine. Then commit the header (if
      touched) and drop back to View. */
   const handleSave = async () => {
     if (savingDraft) return;
     // Guard: every line must reference a product before Save.
-    const blankLine = editLines.find((d) => !d.materialCode.trim());
+    const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
       return;
@@ -656,13 +673,13 @@ export const PurchaseOrderDetail = () => {
           await addItem.mutateAsync({
             poId: po.id,
             materialKind:   d.materialKind,
-            materialCode:   d.materialCode,
-            materialName:   d.materialName || d.materialCode,
+            itemCode:   d.itemCode,
+            materialName:   d.materialName || d.itemCode,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
-            unitPriceCenti: d.unitPriceCenti,
+            unitPriceSen: d.unitPriceSen,
             bindingId:      d.bindingId,
-            discountCenti:  d.discountCenti,
+            discountSen:  d.discountSen,
             deliveryDate:   d.deliveryDate || undefined,
             /* Mig 0026 — per-line supplier-revised delivery dates. */
             supplierDeliveryDate2: d.supplierDeliveryDate2 || undefined,
@@ -678,13 +695,13 @@ export const PurchaseOrderDetail = () => {
         const it = byId.get(d.itemId);
         if (!it) continue;
         const changed =
-          d.materialCode !== it.material_code ||
-          (d.materialName || d.materialCode) !== it.material_name ||
+          d.itemCode !== it.item_code ||
+          (d.materialName || d.itemCode) !== it.material_name ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          (d.discountCenti ?? 0) !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           (d.supplierDeliveryDate2 ?? null) !== (it.supplier_delivery_date_2 ?? null) ||
           (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
@@ -695,12 +712,12 @@ export const PurchaseOrderDetail = () => {
         if (!changed) continue;
         await updateItem.mutateAsync({
           poId: po.id, itemId: d.itemId,
-          materialCode:   d.materialCode,
-          materialName:   d.materialName || d.materialCode,
+          itemCode:   d.itemCode,
+          materialName:   d.materialName || d.itemCode,
           supplierSku:    d.supplierSku,
           qty:            d.qty,
-          unitPriceCenti: d.unitPriceCenti,
-          discountCenti:  d.discountCenti ?? 0,
+          unitPriceSen: d.unitPriceSen,
+          discountSen:  d.discountSen ?? 0,
           deliveryDate:   blankDateToNull(d.deliveryDate),
           /* Mig 0026 — per-line supplier-revised delivery dates. */
           supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
@@ -760,7 +777,7 @@ export const PurchaseOrderDetail = () => {
                somehow isn't among them, say "One PO line" rather than print
                the id. */
             const hit = items.find((it) => it.id === String(body.poItemId ?? ''));
-            const lineName = (hit?.material_name || hit?.material_code || '').trim();
+            const lineName = (hit?.material_name || hit?.item_code || '').trim();
             const revised = Number(body.revisedQty ?? 0);
             const received = Number(body.receivedQty ?? 0);
             notify({
@@ -1004,7 +1021,7 @@ export const PurchaseOrderDetail = () => {
               flips into draft mode; the button becomes the single "Save" that
               commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
-            <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+            <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
               <Pencil {...ICON} />
               <span>Edit</span>
             </Button>
@@ -1171,7 +1188,8 @@ export const PurchaseOrderDetail = () => {
         draft={headerView}
         onField={setHeaderField}
         onApplySupplierDateToAll={applySupplierDateToAll}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -1310,7 +1328,7 @@ export const PurchaseOrderDetail = () => {
                   <td>
                     {/* Commander 2026-05-29 — show the item CODE only; the
                         variant summary stays (that's WHAT was ordered). */}
-                    <div className={styles.codeCell}>{it.material_code}</div>
+                    <div className={styles.codeCell}>{it.item_code}</div>
                     {(() => {
                       const summary = buildVariantSummary(it.item_group, it.variants as Record<string, unknown> | null)
                         || it.description
@@ -1341,9 +1359,9 @@ export const PurchaseOrderDetail = () => {
                   <td className={styles.muted}>{it.item_group ?? it.material_kind}</td>
                   <td className={styles.tableRight}>{it.qty}</td>
                   <td>{renderReceived(it)}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, po.currency)}</td>
-                  <td className={styles.tableRight}>{(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, po.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi, po.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, po.currency)}</td>
+                  <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, po.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen, po.currency)}</td>
                   <td className={styles.tableRight}>{it.delivery_date ?? '—'}</td>
                 </tr>
               ))}
@@ -1368,7 +1386,7 @@ export const PurchaseOrderDetail = () => {
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Tax</span>
-              <span className={styles.totalValue}>{fmtRm(po.tax_centi, po.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(po.tax_sen, po.currency)}</span>
             </div>
             <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
               <span className={styles.totalLabel}>Total</span>
@@ -1388,7 +1406,7 @@ export const PurchaseOrderDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  po, draft, onField, onApplySupplierDateToAll, locked, isEditing = true,
+  po, draft, onField, onApplySupplierDateToAll, locked, identityLocked = false, isEditing = true,
 }: {
   po: any;
   /** Draft header values (page-owned). In View these mirror the saved PO. */
@@ -1397,10 +1415,18 @@ const SupplierCard = ({
   onField: (k: keyof HeaderDraft, v: string) => void;
   /** Overwrite this supplier-date slot on EVERY line. Returns the line count. */
   onApplySupplierDateToAll: (k: SupplierDateKey) => number;
+  /** Hard lock — Received / Cancelled: every field read-only. */
   locked: boolean;
+  /** A live GRN exists: the INHERITED fields (supplier / currency / purchase
+   *  location) freeze because a GRN was received against them, but the PO's own
+   *  dates + notes stay editable (owner 2026-08-20, §8 GAP-1). */
+  identityLocked?: boolean;
   /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
+  // Inherited fields freeze on EITHER a hard lock or a live GRN; own fields on
+  // the hard lock only.
+  const inheritedLocked = locked || identityLocked;
   /* "Applied to N lines" acknowledgement. Deliberately an inline flash and not
      a NotifyDialog: the dialog is modal with an OK button, which would turn a
      one-tap batch into two taps for something the line cards show anyway. */
@@ -1471,6 +1497,16 @@ const SupplierCard = ({
             </div>
           </div>
         ) : (
+        <>
+        {identityLocked && (
+          <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
+            <span>
+              This PO has a Goods Receipt, so its <strong>supplier, currency, purchase location</strong> and
+              line items are locked — a GRN was received against them. Its dates and notes are still editable.
+              To change a locked field, cancel the GRN first, then edit the PO.
+            </span>
+          </div>
+        )}
         <div className={styles.formGrid4}>
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
@@ -1478,7 +1514,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.supplierId}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('supplierId', v)}
                 placeholder="— Pick supplier —"
                 options={sortByText(suppliers).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
@@ -1492,7 +1528,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.currency}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('currency', v)}
                 options={[
                   { value: 'MYR', label: 'MYR' },
@@ -1530,7 +1566,10 @@ const SupplierCard = ({
             <label className={styles.field} key={k}>
               <span className={styles.fieldLabelRow}>
                 <span className={styles.fieldLabel}>{SUPPLIER_DATE_LABEL[k]}</span>
-                {!locked && (
+                {/* "Apply to all" overwrites every LINE, which is locked once a
+                    GRN exists — hide it then, though the header date field stays
+                    editable (own-stage). */}
+                {!inheritedLocked && (
                   appliedFlash?.key === k ? (
                     <span className={styles.applyAllDone} role="status">
                       Applied to {appliedFlash.count} {appliedFlash.count === 1 ? 'line' : 'lines'}
@@ -1565,7 +1604,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.purchaseLocationId}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('purchaseLocationId', v)}
                 options={[
                   { value: '', label: '— No default —' },
@@ -1581,6 +1620,7 @@ const SupplierCard = ({
               onChange={(e) => onField('notes', e.target.value)} />
           </label>
         </div>
+        </>
         )}
 
         {/* PR #75 — supplier-info auto-fill card. Read-only display sourced
@@ -1731,7 +1771,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
     }}>
       <div style={{ marginBottom: 'var(--space-2)' }}>
         <strong>Supplier:</strong> {str((header.supplier as { name?: string } | null)?.name ?? header.supplier_name ?? header.supplierName)}
-        {' · '}<strong>Total:</strong> {centi(header.total_centi ?? header.totalCenti)}
+        {' · '}<strong>Total:</strong> {centi(header.total_sen ?? header.totalSen)}
       </div>
       {lines.length > 0 ? (
         <table className={styles.table}>
@@ -1756,7 +1796,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
               return (
                 <tr key={i}>
                   <td>
-                    <div>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</div>
+                    <div>{str(l.item_code ?? l.itemCode ?? l.item_code ?? l.itemCode)}</div>
                     {spec && (
                       <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
                         {spec}
@@ -1764,7 +1804,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
                     )}
                   </td>
                   <td className={styles.tableRight}>{str(l.qty)}</td>
-                  <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
+                  <td className={styles.tableRight}>{centi(l.unit_price_sen ?? l.unitPriceSen)}</td>
                 </tr>
               );
             })}

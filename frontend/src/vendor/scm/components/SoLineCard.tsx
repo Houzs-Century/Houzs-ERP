@@ -35,7 +35,7 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
-import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneyCenti } from '@2990s/shared';
+import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   useMaintenanceConfig,
@@ -52,6 +52,7 @@ import {
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
+import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -64,7 +65,7 @@ import { DateField } from "./DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const isBlankVariant = (v: unknown): boolean =>
   v === undefined || v === null || String(v).trim() === '';
@@ -98,9 +99,9 @@ export type SoLineDraft = {
   description:    string;
   uom:            string;
   qty:            number;
-  unitPriceCenti: number;
-  discountCenti:  number;
-  unitCostCenti:  number;
+  unitPriceSen: number;
+  discountSen:  number;
+  unitCostSen:  number;
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
@@ -119,7 +120,7 @@ export type SoLineDraft = {
 /** Factory for a fresh empty SO line draft. */
 export const emptySoLine = (): SoLineDraft => ({
   itemCode: '', itemGroup: 'others', description: '', uom: 'UNIT',
-  qty: 1, unitPriceCenti: 0, discountCenti: 0, unitCostCenti: 0,
+  qty: 1, unitPriceSen: 0, discountSen: 0, unitCostSen: 0,
   variants: {}, remark: '',
   lineDeliveryDate: null,
   lineDeliveryDateOverridden: false,
@@ -243,6 +244,36 @@ const SoLineCardInner = ({
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
   const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
+     The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
+     typed unit price never survived: the next rebuild re-derived 250 over it
+     and the operator watched 250 -> 125 "nuke the line to 0". The sanctioned
+     reduction is the line DISCOUNT, which the PATCH has always accepted and
+     #2490 taught the rebuild to keep — but nothing on this screen could ever
+     enter one, so that road was reachable only from the POS voucher split.
+     So on a fee line this cell SHOWS the net and WRITES the difference as a
+     discount: type the amount you want charged. Gross stays derived, and the
+     printed SO reads unit 250 / discount 125 / total 125, exactly like every
+     other price reduction on an order. Raising a fee is NOT expressible this
+     way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
+     for — so a higher figure clamps to no discount rather than pretending. */
+  const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
+  /* ...and the fee-vs-price verdict is LOCKED per mounted line, never
+     re-derived per keystroke. Deriving it live from the gross shipped two
+     regressions in one day (the full account is on lockedFeeSemantics): first
+     a hand-added fee line at gross 0 read "250" as a target and booked
+     nothing, then the fix for THAT let the first keystroke flip the cell into
+     target mode and pin the price at the first digit typed ("stuck at RM 2").
+     A line that arrives priced edits as a fee; a line being authored from 0
+     stays a plain unit price until it is saved and re-mounted. */
+  const feeVerdictRef = useRef<boolean | null>(null);
+  feeVerdictRef.current = lockedFeeSemantics(
+    feeVerdictRef.current, isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen,
+  );
+  const isFeeLine = feeVerdictRef.current === true;
+  const amountCellSen = isFeeLine
+    ? feeAmountSen(feeGrossSen, draft.discountSen)
+    : draft.unitPriceSen;
   /* Special-order price DISPLAY is off for EVERYONE on the order-entry
      documents (owner 2026-07-17: costing leaves the SO/DO/SI/DR forms entirely
      and moves to the separate Finance "Fulfillment Costing" module — even
@@ -279,7 +310,7 @@ const SoLineCardInner = ({
      every keystroke (which jumps the cursor and blocks typing). Synced back
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
-  const [priceText, setPriceText] = useState((draft.unitPriceCenti / 100).toFixed(2));
+  const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
      this the product picker fired one /mfg-products?search=… request per
      keystroke even when the picker wasn't open (every render of an
@@ -370,13 +401,15 @@ const SoLineCardInner = ({
   // Sync picker search box to the description after picking.
   useEffect(() => { setSearch(draft.description ?? ''); }, [draft.description]);
 
-  // Reflect external Unit Price changes (e.g. product pick → 0) into the
-  // local text box, but leave the operator's in-progress typing untouched.
+  // Reflect external amount changes (e.g. product pick → 0, or a delivery fee
+  // re-derived by the server) into the local text box, but leave the
+  // operator's in-progress typing untouched. On a fee line the canonical value
+  // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
     const parsed = Math.round(Number(priceText) * 100) || 0;
-    if (parsed !== draft.unitPriceCenti) setPriceText((draft.unitPriceCenti / 100).toFixed(2));
+    if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.unitPriceCenti]);
+  }, [amountCellSen]);
 
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
@@ -397,7 +430,7 @@ const SoLineCardInner = ({
          predates the cost/sell split; base_price_sen remains COST and still
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
-      unitPriceCenti: p.sell_price_sen ?? 0,
+      unitPriceSen: p.sell_price_sen ?? 0,
       variants:       seedVariants,
       overriddenKeys: [],
     });
@@ -635,8 +668,8 @@ const SoLineCardInner = ({
     : 0;
 
   const lineTotal = useMemo(
-    () => Math.max(0, draft.qty * draft.unitPriceCenti - draft.discountCenti),
-    [draft.qty, draft.unitPriceCenti, draft.discountCenti],
+    () => Math.max(0, draft.qty * draft.unitPriceSen - draft.discountSen),
+    [draft.qty, draft.unitPriceSen, draft.discountSen],
   );
 
   /* Colour KIV (owner 2026-07-24, SO-2607-016) — the line committed to a
@@ -859,13 +892,27 @@ const SoLineCardInner = ({
           className={styles.priceInput}
           value={priceText}
           disabled={!isEditing || !canEditPrice}
-          title={!canEditPrice ? 'Price follows the SKU Master sell price — admin can override' : undefined}
+          title={
+            !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
+              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : undefined
+          }
           onChange={(e) => {
             const t = e.target.value;
             setPriceText(t);
-            onChange({ unitPriceCenti: Math.round(Number(t) * 100) || 0 });
+            if (isFeeLine) {
+              /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
+                 0, which would read as charge-nothing and discount the whole
+                 line on the way to retyping it — and a blur right then would
+                 save that. A real waiver is typed as 0, which still lands. */
+              const n = Number(t);
+              if (t.trim() === '' || !Number.isFinite(n)) return;
+              onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
+              return;
+            }
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0 });
           }}
-          onBlur={() => setPriceText((draft.unitPriceCenti / 100).toFixed(2))}
+          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
@@ -1088,12 +1135,12 @@ const SoLineCardInner = ({
                 <span className={styles.priceLabel}>
                   Unit × {draft.qty}
                 </span>
-                <span className={styles.priceValue}>{fmtRm(draft.unitPriceCenti)}</span>
+                <span className={styles.priceValue}>{fmtRm(draft.unitPriceSen)}</span>
               </div>
-              {draft.discountCenti > 0 && (
+              {draft.discountSen > 0 && (
                 <div className={styles.priceRow}>
                   <span className={styles.priceLabel}>− Discount</span>
-                  <span className={styles.priceValue}>{fmtRm(draft.discountCenti)}</span>
+                  <span className={styles.priceValue}>{fmtRm(draft.discountSen)}</span>
                 </div>
               )}
               <div className={styles.priceTotalRow}>
