@@ -50,6 +50,7 @@ import { NextStepNote } from "../../components/NextStepNote";
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
+  doCloseWithoutEvidenceWarning,
   siTransferBlockReason,
 } from "../../vendor/scm/lib/do-next-step";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -110,6 +111,8 @@ type DoRow = {
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
   ref: string | null;
+  /** POD, as stored — the list select is HEADER, which carries both. */
+  signature_data?: string | null; pod_r2_key?: string | null;
   branding: string | null;
   driver_name: string | null;
   vehicle: string | null;
@@ -977,6 +980,9 @@ export function MfgDeliveryOrdersListV2() {
   const doAdvance = (r: DoRow) => {
     const step = doAdvanceStep(r.status);
     if (!step) return;
+    /* Named, not refused — the reasoning lives with the sentence. */
+    const w = doCloseWithoutEvidenceWarning(step, r);
+    if (w && !window.confirm(`${w}\n\nMark ${r.do_number} delivered anyway?`)) return;
     updateStatus.mutate(
       { id: r.id, status: step.status },
       { onSuccess: () => setSelected(null) }
