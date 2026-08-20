@@ -1,6 +1,6 @@
 ## company-scope gate: two conflicting versions merged, reconciled onto one ratchet [minor]
 
-<!-- area: Auth, permissions, sessions -->
+<!-- area: Repo tooling: tests, ratchets, generators -->
 
 **Symptom.** `backend-typecheck` (required) HARD-FAILED. Round2 rewrote
 `check-company-scope.mjs` (the shape scan that found the leaks above) and wired
