@@ -14,17 +14,33 @@
 
 /**
  * Does the amount cell edit this line as a FEE (type the amount to charge), or
- * as a plain unit price?
+ * as a plain unit price? The verdict is LOCKED for the life of the mounted
+ * line: `prev` is the last verdict (null = none yet), and once made it never
+ * changes while the line stays a fee code.
  *
- * Only once there is a fee to reduce. A delivery-fee line added by hand on a
- * NEW Sales Order starts at 0, and there the operator is AUTHORING the fee, not
- * discounting it — reading "250" as a target computed a discount of
- * max(0 - 250, 0) = 0, never wrote a price, and the box snapped back to RM 0.
- * That shipped and was reported on a new SO within the hour. You cannot
- * discount a fee that does not exist yet.
+ * Two shipped regressions, one per unlocked half:
+ *  · gross-decides, evaluated live (#2516): a hand-added fee line on a NEW SO
+ *    starts at 0, so a typed 250 was read as "charge 250", booked a discount of
+ *    max(0 - 250, 0) = 0, never wrote a price, and snapped back to RM 0. You
+ *    cannot discount a fee that does not exist yet.
+ *  · gross-decides, still evaluated live (#2527): the first KEYSTROKE fixed
+ *    that and created the flip. Typing "250" writes RM 2 as a unit price, the
+ *    gross is now positive, the very next render flips the cell to
+ *    amount-to-charge, and "25…" reads as a target >= the RM 2 gross — no
+ *    discount, and the sync-back pins the box at 2.00 forever.
+ *
+ * So the decision is made ONCE, from the gross the line had when it became a
+ * fee line under this mount: a line that ARRIVES priced edits as a fee, a line
+ * being AUTHORED from 0 stays a plain price until it is saved and re-mounted.
+ * Leaving fee code (product pick over the line) resets the verdict.
  */
-export function editsFeeAsDiscount(isFeeCode: boolean, grossSen: number): boolean {
-  return isFeeCode && safe(grossSen) > 0;
+export function lockedFeeSemantics(
+  prev: boolean | null,
+  isFeeCode: boolean,
+  grossSen: number,
+): boolean | null {
+  if (!isFeeCode) return null;
+  return prev === null ? safe(grossSen) > 0 : prev;
 }
 
 /** What the amount cell SHOWS on a fee line: the line net, never below zero. */
