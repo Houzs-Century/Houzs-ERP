@@ -26,12 +26,16 @@ import { useBranding } from "../../hooks/useBranding";
 import { cn } from "../../lib/utils";
 import { pickDefaultFromAddress } from "./mail-from-default";
 import {
-  validateMailAttachments,
-  decodedBase64Bytes,
-  isAllowedMailAttachment,
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "./mail-attachments";
+// Shared with desktop Compose and the phone — one pick → read → validate rule.
+import {
+  pickMailAttachments,
+  attachmentPayload,
+  humanSize,
+  type OutboundAttachment,
+} from "./mail-attach-files";
 import {
   patchThreadStarred,
   patchThreadLabels,
@@ -145,12 +149,6 @@ function isImageAttachment(a: MailAttachment): boolean {
   return /^image\//i.test(a.contentType || "");
 }
 
-function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 // Strip HTML to readable text as a fallback when a message has no plain-text
 // part. Never rendered as HTML — output is escaped by React as a text node.
 function htmlToText(html: string): string {
@@ -165,26 +163,6 @@ function htmlToText(html: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-type OutboundAttachment = {
-  name: string;
-  type: string;
-  size: number;
-  contentBase64: string;
-};
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
-    reader.readAsDataURL(file);
-  });
 }
 
 export type MailThreadProps = {
@@ -382,51 +360,12 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
     e.target.value = "";
     if (picked.length === 0) return;
     setAttachError(null);
-
-    const rejected = picked.filter((f) => !isAllowedMailAttachment(f.name));
-    if (rejected.length > 0) {
-      setAttachError(
-        `"${rejected[0].name}" is not an allowed type. Only images and PDF files can be attached.`,
-      );
+    const result = await pickMailAttachments(picked, files);
+    if (!result.ok) {
+      setAttachError(result.error);
       return;
     }
-
-    const existingBytes = files.reduce((sum, f) => sum + f.size, 0);
-    const pickedRawBytes = picked.reduce((sum, f) => sum + f.size, 0);
-    if (existingBytes + pickedRawBytes > MAIL_ATTACH_MAX_TOTAL_BYTES) {
-      setAttachError(
-        `Attachments exceed the ${humanSize(MAIL_ATTACH_MAX_TOTAL_BYTES)} limit.`,
-      );
-      return;
-    }
-
-    let read: OutboundAttachment[];
-    try {
-      read = await Promise.all(
-        picked.map(async (f) => {
-          const contentBase64 = await readFileAsBase64(f);
-          return {
-            name: f.name,
-            type: f.type,
-            size: decodedBase64Bytes(contentBase64),
-            contentBase64,
-          };
-        }),
-      );
-    } catch {
-      setAttachError("Couldn't read one of the files. Please try again.");
-      return;
-    }
-
-    const next = [...files, ...read];
-    const check = validateMailAttachments(
-      next.map((f) => ({ filename: f.name, contentBase64: f.contentBase64 })),
-    );
-    if (!check.ok) {
-      setAttachError(check.error ?? "Invalid attachments.");
-      return;
-    }
-    setFiles(next);
+    setFiles(result.files);
   }
 
   function removeFile(index: number) {
@@ -446,14 +385,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
         text,
         ...(replyAll ? { replyAll: true } : {}),
         ...(replyFrom ? { fromAddress: replyFrom } : {}),
-        ...(files.length > 0
-          ? {
-              attachments: files.map((f) => ({
-                filename: f.name,
-                contentBase64: f.contentBase64,
-              })),
-            }
-          : {}),
+        ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
       setReplyText("");
       setReplyAll(false);
