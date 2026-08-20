@@ -47,6 +47,7 @@ import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -54,14 +55,6 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
-/* Commander 2026-05-29 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg +
-   Gap (mirrors GrnNew / SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* Commander 2026-05-29 — Purchase Return manual lines whose product is a
@@ -433,11 +426,8 @@ export const PurchaseReturnNew = () => {
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
                   // Auto-compute bedframe Total Height = Divan + Leg + Gap.
-                  if (l.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-                    const d = parseInches(variants.divanHeight);
-                    const lg = parseInches(variants.legHeight);
-                    const g = parseInches(variants.gap);
-                    variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+                  if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
+                    variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                   }
                   return variants;
                 })() });
