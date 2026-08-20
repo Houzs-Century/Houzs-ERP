@@ -42,9 +42,17 @@
      delete + the grand total; the document-number evidence; a KEEP sample with
      HC row counts (proving they survive); and the UNSURE list. WRITES NOTHING.
    MODE=apply: requires CONFIRM="WIPE HOUZS-CENTURY TRANSACTIONS". Dumps backup,
-     deletes children-before-parents in one transaction, then re-reads on a FRESH
-     connection and ASSERTS: every CLEAR table has 0 HC rows; 2990 row counts are
-     UNCHANGED (captured before + after); KEEP-sample tables are UNCHANGED.
+     then deletes in ONE transaction using an FK-CORRECT order computed at run time
+     — every FK among the CLEAR tables is read from pg_constraint and the tables
+     are TOPOLOGICALLY SORTED so each is deleted before anything it references
+     (children first). This is provably safe regardless of family grouping and
+     also deletes HC trip_stops before HC delivery_orders, so no ON DELETE SET NULL
+     orphans an HC stop. Still INSIDE the transaction it re-counts every CLEAR
+     table for 2990 and ROLLS BACK if any 2990 row count moved (a trip_stops->trips
+     CASCADE could otherwise delete a 2990 stop riding on an HC trip). After commit
+     it re-reads on a FRESH connection and ASSERTS: every CLEAR table has 0 HC
+     rows; 2990 row counts UNCHANGED (incl. the TMS tables); KEEP-sample UNCHANGED.
+     A true FK cycle among CLEAR tables makes apply REFUSE before any delete.
 
    RE-RUN: idempotent. A second plan run just re-counts. A second apply run finds
      0 HC rows on the CLEAR tables (already wiped) and is a no-op that still
@@ -82,6 +90,23 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
    delete set and FLAGGED rather than deleted unscoped). Schema is 'scm' unless
    noted. A table absent from the live DB is skipped with a note. */
 const CLEAR = [
+  // ── TMS / delivery-planning ────────────────────────────────────────────────
+  // The DELETE ORDER is NOT the order of this list — it is computed at run time by
+  // a topological sort of the live FK graph (section 3b). Because trip_stops has
+  // `do_id -> scm.delivery_orders(id)` (mig 0053:99) and trip_stops/trip_locations/
+  // delivery_legs reference scm.trips, the topo sort already deletes HC trip_stops
+  // before HC delivery_orders and before scm.trips — so no ON DELETE SET NULL
+  // orphans an HC stop and no HC orphan is created, without relying on hand order.
+  // (The unavoidable residual — a 2990-owned stop pointing at an HC DO getting its
+  // do_id SET NULL when the HC DO is deleted — is measured by the census below; it
+  // touches no 2990 ROW count, only a column, and the in-transaction 2990 guard
+  // rolls the whole wipe back if any 2990 row count moves.)
+  ['scm', 'trip_stops', 'tms'],           // child of trips; do_id -> DO SET NULL
+  ['scm', 'trip_locations', 'tms'],       // child of trips (CASCADE)
+  ['scm', 'delivery_legs', 'tms'],        // trip_id -> trips SET NULL; source_id bare
+  ['scm', 'dp_orders', 'tms'],            // no FK into DO/SO/trips (company_id nullable)
+  ['scm', 'delivery_day_locks', 'tms'],   // no FK; pure capacity lock
+  ['scm', 'trips', 'tms'],                // TMS parent — last of the TMS block
   // ── Sales Order family ──
   ['scm', 'mfg_so_status_changes', 'sales-order'],
   ['scm', 'mfg_so_price_overrides', 'sales-order'],
@@ -95,9 +120,9 @@ const CLEAR = [
   ['scm', 'scan_jobs', 'sales-order'],
   ['scm', 'mfg_sales_orders', 'sales-order'],       // header
   ['scm', 'quotes', 'quotation'],
-  // ── Delivery Order family ──
+  // ── Delivery Order family ── (delivery_legs is cleared in the TMS block above,
+  // before delivery_orders, so it is deliberately NOT repeated here)
   ['scm', 'delivery_order_crew', 'delivery-order'],
-  ['scm', 'delivery_legs', 'delivery-order'],
   ['scm', 'delivery_return_items', 'delivery-order'],
   ['scm', 'delivery_returns', 'delivery-order'],
   ['scm', 'delivery_order_items', 'delivery-order'],
@@ -236,6 +261,51 @@ const KEEP_SAMPLE = [
 
 const qi = (s) => { if (!ident.test(s)) throw new Error(`unsafe identifier: ${s}`); return s; };
 
+/* FK-correct delete order via topological sort. `nodes` are the tables to delete;
+   `edges` are [child, parent] meaning child has a FK REFERENCING parent, so child
+   must be deleted BEFORE parent. Produces a children-first order (a table with no
+   remaining referencing child comes out last). Self-edges are dropped by the
+   caller (a single company-scoped DELETE satisfies a NO ACTION self-FK at
+   statement end). Kahn's algorithm; `remaining` is non-empty ONLY if a true
+   multi-table cycle exists among `nodes` — the caller reports it and refuses. */
+function topoDeleteOrder(nodes, edges) {
+  const nodeSet = new Set(nodes);
+  const out = new Map(nodes.map((n) => [n, []]));   // child -> [parents]
+  const indeg = new Map(nodes.map((n) => [n, 0]));  // parent's indeg = # children referencing it
+  const seen = new Set();
+  for (const [child, parent] of edges) {
+    if (child === parent || !nodeSet.has(child) || !nodeSet.has(parent)) continue;
+    const ek = `${child}|${parent}`;
+    if (seen.has(ek)) continue;
+    seen.add(ek);
+    out.get(child).push(parent);
+    indeg.set(parent, indeg.get(parent) + 1);
+  }
+  const order = [];
+  const queue = nodes.filter((n) => indeg.get(n) === 0); // pure children first, stable in nodes order
+  while (queue.length) {
+    const n = queue.shift();
+    order.push(n);
+    for (const parent of out.get(n)) {
+      indeg.set(parent, indeg.get(parent) - 1);
+      if (indeg.get(parent) === 0) queue.push(parent);
+    }
+  }
+  const placed = new Set(order);
+  return { order, remaining: nodes.filter((n) => !placed.has(n)) };
+}
+
+// A duplicate CLEAR entry would double-count in the plan total and then make the
+// apply's `deletedTotal !== total` guard roll the whole wipe back — fail loud now.
+{
+  const seen = new Set();
+  for (const [s, t] of CLEAR) {
+    const k = `${s}.${t}`;
+    if (seen.has(k)) { console.error(`ERROR duplicate CLEAR entry: ${k}`); process.exit(2); }
+    seen.add(k);
+  }
+}
+
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (read-only, nothing is written)'}`);
   const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
@@ -309,6 +379,56 @@ async function main() {
     for (const k of unscopable) note(`     - ${k}`);
   }
 
+  // ── 3b. FK-CORRECT DELETE ORDER — topologically sorted from the LIVE graph ──
+  // The earlier family-grouped order was fragile and broke once: it deleted
+  // purchase_orders while grns (grns.purchase_order_id -> purchase_orders) still
+  // referenced them. Instead of a hand order, read EVERY foreign key among the
+  // resolved CLEAR tables from pg_constraint and topologically sort so each table
+  // is deleted BEFORE anything it references (children first, referenced parents
+  // last). Provably correct regardless of family grouping; self-heals on schema
+  // change. pg_constraint (not information_schema) = one clean row per FK.
+  const fkRows = await sql`
+    SELECT ns.nspname AS cs, cl.relname AS ct, fns.nspname AS ps, fcl.relname AS pt
+      FROM pg_constraint con
+      JOIN pg_class cl      ON cl.oid  = con.conrelid
+      JOIN pg_namespace ns  ON ns.oid  = cl.relnamespace
+      JOIN pg_class fcl     ON fcl.oid = con.confrelid
+      JOIN pg_namespace fns ON fns.oid = fcl.relnamespace
+     WHERE con.contype = 'f' AND ns.nspname IN ('scm','public')`;
+  const resolvedKeys = resolved.map((r) => `${r.schema}.${r.table}`);
+  const resolvedKeySet = new Set(resolvedKeys);
+  const clearKeySet = new Set(CLEAR.map(([s, t]) => `${s}.${t}`));
+  const intraEdges = [];       // [child, parent] both being deleted -> child first
+  const selfRefs = [];         // table with a FK to itself (handled by one DELETE)
+  const externalInbound = [];  // a table NOT on CLEAR references a table we DELETE
+  for (const r of fkRows) {
+    const child = `${r.cs}.${r.ct}`;
+    const parent = `${r.ps}.${r.pt}`;
+    if (child === parent) { if (resolvedKeySet.has(child)) selfRefs.push(child); continue; }
+    if (resolvedKeySet.has(child) && resolvedKeySet.has(parent)) intraEdges.push([child, parent]);
+    else if (resolvedKeySet.has(parent) && !clearKeySet.has(child)) externalInbound.push([child, parent]);
+  }
+  const { order: topoOrder, remaining: cycleMembers } = topoDeleteOrder(resolvedKeys, intraEdges);
+  const resolvedByKey = new Map(resolved.map((r) => [`${r.schema}.${r.table}`, r]));
+  // Delete order = topo order (children first). Any cycle members (should be none)
+  // are appended so nothing is silently dropped; apply REFUSES if the cycle is real.
+  const deleteOrder = [...topoOrder, ...cycleMembers].map((k) => resolvedByKey.get(k));
+
+  note(`\n=== FK-CORRECT DELETE ORDER (topological, children before parents) ===`);
+  note(`  ${new Set(intraEdges.map((e) => e.join('|'))).size} FK edge(s) among the ${resolvedKeys.length} resolved CLEAR tables; computed order:`);
+  topoOrder.forEach((k, i) => note(`  ${String(i + 1).padStart(2)}. ${k}`));
+  if (selfRefs.length) note(`  self-referencing (handled by one scoped DELETE, not ordered): ${[...new Set(selfRefs)].join(', ')}`);
+  if (cycleMembers.length) {
+    bad(`  CYCLE among CLEAR tables (${cycleMembers.length}): ${cycleMembers.join(', ')} — APPLY WILL REFUSE. Break the cycle (defer the FK, or NULL the linking column) before applying.`);
+  } else {
+    note(`  no cycles — order is provably FK-safe for a single-transaction delete.`);
+  }
+  if (externalInbound.length) {
+    const uniq = [...new Set(externalInbound.map(([c, p]) => `${c} -> ${p}`))].sort();
+    note(`\n  ⚠ ${uniq.length} FK edge(s) from a NON-CLEAR table INTO a table we delete — a potential apply blocker IF the non-CLEAR side holds HC rows referencing these (the in-transaction rollback would catch it safely):`);
+    for (const e of uniq) note(`     ${e}`);
+  }
+
   // ── 4. Document-number evidence (what resets to 001) ─────────────────────
   note(`\n=== DOCUMENT NUMBERS — highest HC number today (resets to 001 after wipe; there is NO counter table) ===`);
   for (const [schema, table, label, cands] of DOC_HEADERS) {
@@ -351,6 +471,46 @@ async function main() {
     note(`  2990 rows across the SAME ${resolved.length} CLEAR tables: ${tot2990} (must stay ${tot2990})`);
   }
 
+  // ── 6b. MIXED-TRIP CENSUS (read-only) — the pivotal cross-company safety fact ─
+  // TMS is a cross-company SHARED queue by design (scm/lib/companyScope.ts:16-23):
+  // a trip is created under whichever company you are in, and its stops can point
+  // at the OTHER company's deliveries. Two hazards follow, both measured here:
+  //   • trip_stops.trip_id -> scm.trips(id) ON DELETE CASCADE (mig 0053:96): if a
+  //     2990-owned stop sits on an HC-owned trip, deleting that HC trip would
+  //     CASCADE-DELETE a 2990 row. If this count is > 0, HC-only TMS clearing is
+  //     NOT safe as-is (the in-transaction 2990 guard would roll the wipe back).
+  //   • trip_stops.do_id -> scm.delivery_orders(id) ON DELETE SET NULL (0053:99):
+  //     a 2990-owned stop pointing at an HC delivery gets its do_id NULLed when we
+  //     delete the HC DO — the unavoidable core-wipe side-effect (a column change,
+  //     not a row delete).
+  if (OTHER_ID !== null && liveSet.has('scm.trip_stops') && liveSet.has('scm.trips')) {
+    note(`\n=== MIXED-TRIP CENSUS (read-only) — HC=${HC_ID}, 2990=${OTHER_ID} ===`);
+
+    const cross = await sql`
+      SELECT ts.company_id::text AS stop_co, t.company_id::text AS trip_co, count(*)::int AS n
+        FROM scm.trip_stops ts JOIN scm.trips t ON t.id = ts.trip_id
+       WHERE ts.company_id <> t.company_id
+       GROUP BY ts.company_id, t.company_id ORDER BY 1, 2`;
+    const crossN = (sc, tc) => Number(cross.find((r) => Number(r.stop_co) === sc && Number(r.trip_co) === tc)?.n ?? 0);
+    note(`  (a) HC stops sitting on a 2990 trip   (ts.company_id=${HC_ID} on trip.company_id=${OTHER_ID}): ${crossN(HC_ID, OTHER_ID)}`);
+    note(`  (a) 2990 stops sitting on an HC trip  (ts.company_id=${OTHER_ID} on trip.company_id=${HC_ID}): ${crossN(OTHER_ID, HC_ID)}   <- these would CASCADE-DELETE if we delete HC trips`);
+
+    const [{ n: mixedTrips }] = await sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT ts.trip_id FROM scm.trip_stops ts
+         GROUP BY ts.trip_id HAVING count(DISTINCT ts.company_id) > 1
+      ) x`;
+    note(`  (b) DISTINCT trips carrying stops from BOTH companies (genuinely shared): ${mixedTrips}`);
+
+    const sideEffect = await sql`
+      SELECT count(DISTINCT do_.id)::int AS hc_dos, count(*)::int AS stops
+        FROM scm.delivery_orders do_
+        JOIN scm.trip_stops ts ON ts.do_id = do_.id
+       WHERE do_.company_id = ${HC_ID} AND ts.company_id = ${OTHER_ID}`;
+    note(`  (c) HC delivery_orders referenced by a 2990-owned stop's do_id: ${sideEffect[0].hc_dos} HC DOs via ${sideEffect[0].stops} 2990 stops`);
+    note(`      -> those ${sideEffect[0].stops} 2990 stop(s) get do_id SET NULL when HC DOs are deleted (unavoidable; row count unchanged).`);
+  }
+
   // ── 7. UNSURE — every live scm/public table on NEITHER list (left alone) ──
   const clearKeys = new Set(CLEAR.map(([s, t]) => `${s}.${t}`));
   const unsure = [...liveSet].filter((k) => !clearKeys.has(k) && !KEEP.has(k)).sort();
@@ -367,6 +527,13 @@ async function main() {
   }
 
   // ── 9. APPLY: backup, then delete children->parents in ONE transaction ────
+  // Refuse if the FK graph among CLEAR tables has a real cycle — deleting in a
+  // wrong order would FK-fail (safe rollback), but refusing up front is honest.
+  if (cycleMembers.length) {
+    bad(`refusing to apply: FK cycle among CLEAR tables (${cycleMembers.join(', ')}). Break it first.`);
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   note(`\n=== BACKUP — dumping HC CLEAR rows to ${BACKUP_DIR} before deleting ===`);
   const manifest = { company: { id: HC_ID, code: hc[0].code, name: hc[0].name }, when: new Date().toISOString(), tables: {} };
@@ -384,7 +551,8 @@ async function main() {
   let deletedTotal = 0;
   const deletedByTable = new Map();
   await sql.begin(async (tx) => {
-    for (const r of resolved) {
+    // FK-correct order: children before the parents they reference (section 3b).
+    for (const r of deleteOrder) {
       // company_id predicate is the ONLY isolation (service-role bypasses RLS).
       const del = await tx`DELETE FROM ${tx(qi(r.schema))}.${tx(qi(r.table))} WHERE company_id = ${HC_ID}`;
       deletedByTable.set(`${r.schema}.${r.table}`, del.count);
@@ -395,6 +563,26 @@ async function main() {
       // The plan counted `total`; a mismatch means the world moved under us.
       // Roll the whole wipe back rather than commit a partial one.
       throw new Error(`expected to delete ${total}, deleted ${deletedTotal} — rolling back the entire wipe`);
+    }
+
+    // ── IN-TRANSACTION 2990 GUARD — the cascade safety net ─────────────────
+    // trip_stops.trip_id -> trips ON DELETE CASCADE means deleting an HC trip can
+    // cascade-delete a 2990-owned stop that rides on it. That is a 2990 ROW
+    // deletion, and it must NEVER commit. Re-count every CLEAR table for 2990
+    // INSIDE this transaction; if any moved from the captured baseline, THROW so
+    // the whole wipe rolls back BEFORE commit (the fresh-connection check below
+    // is post-commit and cannot undo). Row-count based: a do_id SET NULL on a
+    // surviving 2990 stop changes a column, not the count, and is allowed.
+    if (OTHER_ID !== null) {
+      for (const r of resolved) {
+        const key = `${r.schema}.${r.table}`;
+        const [{ n }] = await tx`SELECT count(*)::int AS n FROM ${tx(qi(r.schema))}.${tx(qi(r.table))} WHERE company_id = ${OTHER_ID}`;
+        const was = otherBefore.get(key) ?? 0;
+        if (n !== was) {
+          throw new Error(`2990 row count MOVED on ${key} (was ${was}, now ${n}) — a cross-company cascade would delete 2990 data; rolling back the entire wipe`);
+        }
+      }
+      note(`  in-transaction guard: all ${resolved.length} 2990 CLEAR-table counts unchanged — safe to commit.`);
     }
   }).catch((e) => { if (e !== ROLLBACK) throw e; });
 
