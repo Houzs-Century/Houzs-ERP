@@ -854,10 +854,19 @@ jobs:
       - run: npm ci
       - run: npm run check:test-focus
       - run: npm run typecheck
+      # Every raw `fetch` in src/ is one exact, named callsite; API traffic goes
+      # through correlatedFetch. This was a vitest test until 2026-08-21 and it
+      # TypeScript-parses the whole tree, which under the coverage provider took
+      # 17.4s against its own inline 15s budget and cost the local
+      # `vitest run --coverage` its report entirely. Uninstrumented, in a plain
+      # node process, the same scan is ~0.8s. Here rather than in
+      # frontend-checks so it stays off the instrumented suite's critical path.
+      - run: npm run check:raw-fetch
       # Zero-dependency node:test checks for the gate scripts' own logic.
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
+      - run: node --test scripts/check-raw-fetch-inventory.test.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.

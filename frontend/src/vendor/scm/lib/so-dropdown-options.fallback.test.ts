@@ -21,8 +21,9 @@ import { FALLBACK_OPTIONS } from './so-dropdown-options-queries';
 
 /* resolve(process.cwd(), ...) and not new URL(import.meta.url): the frontend
    suite runs in jsdom, where import.meta.url is an http URL and readFileSync
-   throws "The URL must be of scheme file". cwd is `frontend/`; the same pattern
-   is used by src/api/requestCorrelationInventory.test.ts. */
+   throws "The URL must be of scheme file". cwd is `frontend/`. (A script run by
+   plain node has no such constraint — frontend/scripts/*.mjs resolve from
+   import.meta.url, which is the more robust form when it is available.) */
 const MIG_0037 = resolve(
   process.cwd(),
   '../backend/src/db/migrations-pg/0037_scm_payment_three_methods.sql',

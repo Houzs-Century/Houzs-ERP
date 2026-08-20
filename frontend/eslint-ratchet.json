@@ -3,16 +3,13 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 537,
     "@typescript-eslint/no-floating-promises": 785,
-    "@typescript-eslint/no-unnecessary-condition": 1790,
+    "@typescript-eslint/no-unnecessary-condition": 1787,
     "no-restricted-syntax": 133
   },
   "files": {
     "src/api/client.ts": {
       "@typescript-eslint/no-explicit-any": 3,
       "@typescript-eslint/no-unnecessary-condition": 10
-    },
-    "src/api/requestCorrelationInventory.test.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 3
     },
     "src/auth/AuthContext.tsx": {
       "@typescript-eslint/no-floating-promises": 1,
