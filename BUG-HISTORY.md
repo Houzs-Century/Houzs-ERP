@@ -106,6 +106,226 @@ untested and unfixed here.
 **Ref.** fix/so-fee-lock-ordering, 2026-08-20. Fourth entry of the fee chain
 (#2516 -> #2527 -> #2529 -> here), and the first one that is about concurrency
 rather than about the cell.
+## Sixteen screens each decided a bedframe's Total Height, and two of them refused to clear it [high]
+
+<!-- area: Sofa, fabric, variants -->
+
+**The rule.** A bedframe line's Total Height is not typed by anyone — no form in
+the system has a Total Height input. It is derived from three pickers
+(Divan + Leg + Gap) by whichever screen is open, written into the line's
+`variants` blob, and sent to the server, which then prices and validates it.
+
+**Sixteen homes, zero imports, three answers.** `grep -rn 'const parseInches'
+frontend/src` returned 16 definitions and `grep -rn 'import.*parseInches'`
+returned 0. Fourteen of the sixteen — the purchasing screens (New/Detail PO, PI,
+PR, GRN, Goods Received, Stock Adjustment, and the four consignment pairs) —
+were byte-identical. The other two had drifted, and they drifted on the SECOND
+half of the question, which is the half nobody writes down: *what is written
+when divan, leg and gap are all blank?*
+
+| | behaviour when all three parts are blank |
+|---|---|
+| 14 purchasing screens | always assign; write `''` — the total is CLEARED |
+| `SoLineCard.tsx` (Sales Order) | computed `''`, then the writer effect bailed on `if (!computedTotalHeight) return;` — the OLD value stayed |
+| `MobileNewSO.tsx` (`buildVariants`) | `if (th > 0)` — the OLD value stayed, and on a fresh line the key was omitted entirely |
+
+**Why the two stragglers cost money.** Blanking divan/leg/gap on a Sales Order
+line that already carried a Total Height left the stale number in the draft, and
+the draft is what gets saved. Downstream that stale number is not cosmetic:
+`mfg-pricing.ts` prices a selling surcharge off it via `lookupSelling(
+maintenanceConfig.totalHeights, input.totalHeight)`, and
+`allowed-options-check.ts` refuses the whole line with `variant_not_allowed` /
+field `total_height` when it is not in the Model's pool. That refusal names a
+field the operator has no box to correct — the same shape as the curly-inch
+refusal recorded above, which the owner has already paid for once.
+
+**Behaviour was CHOSEN, not preserved, and the choice is the fourteen.** Two of
+the sixteen change behaviour here; that is the fix, not a side effect. Clearing
+is what keeps the stored value honest — a line reading `T.Heights 21"` with no
+divan, no leg and no gap is a number the paperwork cannot justify. `''` was
+verified safe against every consumer rather than assumed:
+
+- `mfg-pricing.ts` — `lookupSelling` / `lookupCost` both open `if (!pool ||
+  !value) return 0;`, so an empty height contributes no surcharge instead of
+  missing a lookup.
+- `allowed-options-check.ts` — short-circuits on `if (v.totalHeight && …)`, so
+  `''` SKIPS the gate rather than tripping `variant_not_allowed`.
+- `variant-key.ts` — `computeVariantKey` runs every axis through `norm()` then
+  `if (val) parts.push(…)`, so `''` and an ABSENT key produce byte-identical
+  stock-bucket keys. This is what makes MobileNewSO's old "omit the key" and the
+  new "write `''`" interchangeable, and it was the one place the two were not
+  obviously the same.
+- `variant-summary.ts` — guards `if (total)`, so the `T.Heights` segment simply
+  does not render.
+- `so-amendment-line-diff.ts` — `hasAxis` / `unrenderedVariantAxes` both test
+  `bag[k] != null && String(bag[k]).trim() !== ''`, so `''` reads as absent, and
+  `resolveVariantGroup` trusts the stamped `item_group` before it ever consults
+  those axes.
+
+**The fix.** `backend/src/scm/shared/total-height.ts`, mirrored byte-for-byte to
+`frontend/src/vendor/shared/total-height.ts`, exporting `parseInches`,
+`TOTAL_HEIGHT_PARTS`, `isTotalHeightPart`, `isTotalHeightCategory`,
+`computeTotalHeight` and `totalHeightPatch`. Sixteen call sites collapse to one
+import each; the fifteen surplus `parseInches` definitions are gone.
+
+`totalHeightPatch` exists because the arithmetic was never the bug — the WRITE
+decision was. It returns `null` only when the stored value already equals the
+computed one, and never merely because the computed one is empty. That is
+precisely the distinction `if (!computedTotalHeight) return;` got wrong, and
+keeping it inside the module means a caller cannot spell it wrong again.
+
+The shared layer is the right home even though the server never computes this
+value: the client must author it BEFORE the round-trip, because there is no
+input box, so a server-only home would be unreachable at the moment of need —
+which is exactly how sixteen copies were born. The frontend cannot import from
+`backend/src`, so the pair is a mirror, and the mirror is only safe because
+`total-height.canonical.test.ts` asserts byte-identity. `check-shared-mirrors`
+now reports the pair IDENTICAL (its module count went 48 → 49).
+
+**What stops it coming back.** `total-height.canonical.test.ts` (24 tests) pins
+the rule, the write decision, the byte-identical mirror, and the call sites: no
+file outside the module may define `parseInches`, none may re-derive
+divan + leg + gap inline, and all sixteen named screens must still call
+`computeTotalHeight`. Proven non-vacuous rather than asserted — four violations
+were planted and each was caught by name:
+
+- un-wiring `GrnNew.tsx` back to a private copy → 3 assertions fired, two naming
+  `src/pages/scm-v2/GrnNew.tsx`;
+- drifting the backend mirror by one token → the byte-identity test failed;
+- swapping in MobileNewSO's rejected `th > 0` rule → "parts that are set but sum
+  to zero are a REAL total" failed;
+- reintroducing `if (!next) return null;` — the original bug, exactly — → the two
+  `totalHeightPatch` clearing tests failed.
+
+Each plant was reverted and the tree confirmed byte-identical afterwards.
+
+**Also corrected.** `allowed-options-check.ts`'s comment cited
+`SoLineCard.tsx:439-445` as the writer; line-number citations into a file that
+moves are a stale reference by construction, so it now names the shared module
+and records why an empty height is safe to skip the gate.
+## The allocation gate quotes the owner's Processing-Date rule and then reads a different column [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** An order shows a Processing Date on screen, is locked for editing,
+sits on the Delivery Planning board and has been pushed to AutoCount as `PDate` —
+and never reaches READY_TO_SHIP. Every line stays PENDING with the stock
+physically on the floor. No error, no log line, nothing on screen says why. The
+module guide has been calling this "the single most common 'why is my order not
+READY'" and labelling it **intended**.
+
+**Root cause (traced, read-only, on `origin/main` `12322f31b`).**
+`backend/src/scm/lib/so-stock-allocation.ts:211-218` carries a comment titled
+*"Processing-date allocation gate"* quoting the owner verbatim (2026-08-10:
+*"有 processing date 才来分配"*). The predicate underneath it, at `:219`, is
+`orders.filter((o) => !o.proceeded_at)` — and the `.select()` at `:190` never
+fetches `processing_date`. Two different columns.
+
+They diverge on the ORDINARY path. Every surface that sets a Processing Date
+writes `processing_date` and leaves `proceeded_at` NULL: the SO Detail screen,
+both mobile surfaces, the amendment approve, the 2990 mirror. `proceeded_at` has
+exactly two writers left — create-time auto-proceed
+(`routes/mfg-sales-orders.ts:4984`) and `PATCH /:docNo/status` → IN_PRODUCTION
+(`:5838`) — and **no shipped client reaches either after create**:
+`grep -rn "proceededAt" frontend/` returns 0, and nothing in `frontend/src` POSTs
+`IN_PRODUCTION` (14 hits, all labels and constants). So an order created without a
+Processing Date — which is every AutoCount-imported order, since
+`backend/scripts/import-ac-outstanding-so.mjs` writes neither a processing nor a
+delivery date — and then given one on the detail screen is proceeded by the
+owner's rule, locked by `soProcessingLocked`, on the board, and invisible to
+allocation.
+
+This is the unfinished half of the 2026-08-13 unification, and the repo already
+said so: `backend/scripts/unify-processing-date.mjs` states in its own header that
+`so-stock-allocation.ts` gates on `proceeded_at`, that it does not touch or drop
+that column, and that **"the reader flip must wait until this reports zero
+remaining on EVERY company"**. Both companies reported zero on 2026-08-13; mig
+`0286` then renamed `internal_expected_dd` → `processing_date`. The reader flip
+was never done, and nothing re-manufactures the split as loudly as the ordinary
+UI path now does.
+
+Two more things kept it invisible. `backend/tests/soAllocationReadShape.test.ts`
+sets `proceeded_at` non-null in its fixture, so the gate never fires in test — it
+pins the read shape, not the rule. And no migration under
+`backend/src/db/migrations-pg` ever back-fills `proceeded_at` from
+`processing_date` (13 SQL hits on the name, all DDL, no `UPDATE`).
+
+**Fix.** NOT in this PR — this is a docs-only change and other workflows own the
+source files right now. The fix is one line plus one column: read
+`processing_date` at `:219` and add it to the select at `:190`. It is independent
+of every rename in `docs/modules/dates.md` and should land first and alone.
+Retiring `proceeded_at` afterwards must go the long way — stop accepting
+`['proceededAt','proceeded_at']` in the header PATCH map, keep stamping for one
+release, then stop reading, then drop the column in a LATER deploy, never the
+same one, for the reason mig `0189` records (migrations run before
+`wrangler deploy`, so the old Worker meets the new schema).
+
+**Doc corrections shipped with this entry.** `docs/modules/sales-order.md` §0.2
+no longer calls the current reading "intended"; the same file's claims that POS
+Proceed "never writes `processing_date`" (it does — `:5821`), that the allocator
+"sorts by" `proceeded_at` (it gates on it), and that *every* server write path
+runs the pair rule (`routes/so-mirror.ts` deliberately does not) are corrected in
+place, and a stale three-row table that had been left standing above its own
+corrections is deleted rather than appended to. The full census is the new
+`docs/modules/dates.md`.
+## Mobile PMS Floor Plans: the Display floor plan was a black banner with no preview, and every stock-transfer record showed a file name with no picture [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版「Floor Plans」卡里，Display 楼面图跟其他图不一样：它是一条黑色横幅，
+只写「几个档」，看不到图本身；3D、2D、Unfilled、Filled 四张都有缩图，就它没有。
+下面「Stock transfer record」那一排也一样，只有档名。现在 Display 变成一张正常的图砖
+（跨满一行、自带预览），顺序改成 Display -> 3D + 2D -> Unfilled + Filled，库存转移纪录
+每一列也加了可点的缩图。
+
+**Symptom.** In the mobile Floor Plans card, the Display floor plan alone showed
+no preview of what had been uploaded. It rendered as a dark full-width row
+(`background: "#15161a"`) carrying an icon, a title and the text
+`N files - tap to view / download`, while the four sibling tiles (Unfilled,
+Filled, 3D Design, 2D Design) each rendered an 80px `R2Thumb` of the actual file.
+The Display document is the one staff look at most, and it was the only one you
+had to open to see. The `Stock transfer record` rows below had the same gap:
+badge + file name + a View button, no image.
+
+**Root cause (traced in source, not guessed).** Not a regression — three
+independently-grown renderers inside `FloorPlans` in
+`frontend/src/mobile/MobilePMS.tsx`. Display was written as a standalone
+list-row (the banner) with its own `ReviewBadge` / `ReviewButtons` block beneath
+it, before the tile grid existed; the tile grid arrived later for
+Unfilled/Filled and gained the 3D/2D tiles on 2026-07-23. Nothing ever moved
+Display into the grid, so it never inherited the grid's preview. `stockOutAtts`
+is a third renderer again and never had one.
+
+**Fix.** Display becomes a normal tile in the same grid, spanning
+`gridColumn: "1 / -1"` with a 140px preview so the 3D + 2D pair keeps its own
+row; order is Display -> 3D + 2D -> Unfilled + Filled. The standalone banner and
+its separate review block are gone — Display now takes the same `ReviewBadge` /
+`checklistReviewVisible` -> `ReviewButtons` path the 3D/2D tiles already used.
+That fold is behaviour-preserving, and it was verified by reading both guards
+rather than assumed: `checklistReviewVisible` opens with
+`if (!item || !hasFiles) return false`, and `ReviewBadge` returns `null` when
+`review_status` is empty and `hasFiles` is false. Those are exactly the cases the
+old outer guard `displayItem && (displayItem.review_status ||
+displayPlanFiles.length > 0)` excluded, so neither badge nor button can appear
+anywhere it did not before. Each `stockOutAtts` row gains a 54x44 tappable
+thumbnail opening the same viewer as its View button; non-images keep the hatched
+placeholder.
+
+**Desktop twin: none needed, checked.** `frontend/src/pages/Projects.tsx` has no
+floor-plan card and no tile grid — it renders each checklist document as one
+uniform row of its `DocumentTable`. Grepped over `frontend/src`, the identifiers
+this change depends on — `R2Thumb`, `FloorPlans`, `stockOutAtts` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. "Display Floor
+Plan", "3D Design" and "2D Design" reach desktop only as `REVIEWABLE_TITLES`
+members. Tile width, tile order and previews are concepts the desktop surface
+does not express, so this is presentation-only and one-sided by construction,
+not by omission.
+
+**Also in this PR.** Two comments this change made false — the ones deciding
+`hideFilledPlan` and `hidePlanTiles` — still called Display a "banner" after the
+banner was deleted. Corrected in the same diff.
+
+**Ref.** `fix/floorplan-card`, PR #2349, 2026-08-20.
 ## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
 
 <!-- area: Database + schema -->

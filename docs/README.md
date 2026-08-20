@@ -94,15 +94,26 @@ permissions, locks, and the traps found while working in it:
 [`global-search.md`](modules/global-search.md) ·
 [`document-traceability.md`](modules/document-traceability.md) ·
 [`document-conversion.md`](modules/document-conversion.md) ·
-[`autocount-writeback.md`](modules/autocount-writeback.md)
+[`autocount-writeback.md`](modules/autocount-writeback.md) ·
+[`dates.md`](modules/dates.md)
 
-Three of these are the authority for a *mechanism* rather than a screen, and are
-easy to miss: **`autocount-writeback.md`** owns how to call the write-back
+Four of these are the authority for a *mechanism* rather than a screen, and are
+easy to miss: **`dates.md`** owns every date fact in the system — its one
+storage, the other names it answers to, which ones are aliases, and which pairs
+must NOT be merged (read it before adding, renaming or "unifying" any date);
+**`autocount-writeback.md`** owns how to call the write-back
 service, the master-data foreign-key chain and the payload shapes;
 **`document-traceability.md`** owns the read-time purchase→sales linkage display
 (no writes, no snapshot — do not add one); and **`document-conversion.md`** owns
 the doc→doc conversion grid — which pairs have a "Convert from", which have a
 "Convert to", and which support multi-select.
+
+**Looking for a DATE?** [`modules/dates.md`](modules/dates.md) is the index.
+Fourteen genuine date facts, thirteen date columns on the Sales Order alone, two
+of them with no writer at all, and one fact (the Processing Date) still living in
+two live columns. It also lists the four kinds of string-keyed read that make a
+date rename fail SILENTLY in this codebase, which is why every previous attempt
+produced a bug.
 
 **Looking for a STATUS?** There is more than one status system per document and
 they are routinely confused. `sales-order.md` §0 is the index: it enumerates the
