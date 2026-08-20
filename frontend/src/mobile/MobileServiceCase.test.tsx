@@ -38,7 +38,10 @@ vi.mock("../api/client", () => ({
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ user: authUser.current, can: () => true, pageAccess: {} }),
 }));
-vi.mock("../auth/salesAccess", () => ({ isSalesStaff: () => false }));
+vi.mock("../auth/salesAccess", () => ({
+  isSalesStaff: () => false,
+  isSalesNonDirector: () => false,
+}));
 vi.mock("../auth/capabilities", () => ({ capability: () => true }));
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => async () => {} }));
