@@ -1,3 +1,129 @@
+## A PC Receive header could change its supplier or currency after a PC Return existed, with no guard at all [low]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 寄售收货单（PC Receive）跟 GRN 一样，开了寄售退货之后还能改供应商和货币，系统
+完全没挡。这是收货单那个漏洞的寄售版。
+
+**Symptom.** `PATCH /purchase-consignment-receives/:id` (the header edit) had **no
+downstream-child guard** — the same shape as the GRN header hole. A PC Receive that
+already had a PC Return could change its `supplier_id` / `currency`, diverging from
+the return costed against it, with no error. (Its sibling PCO and CN had a
+whole-doc lock; only PC Receive was open.)
+
+**Root cause (traced).** `purchaseConsignmentReceives.patch('/:id')` built its
+`updates` and wrote them with no `pcReceiveHasDownstream` call (the cancel and
+line-CRUD handlers have one). Mirrors the GRN header hole.
+
+**Fix.** Field-level inherited lock (owner 2026-08-20, §8 GAP-1): `supplier_id` /
+`currency` freeze once `pcReceiveHasDownstream` is true (409
+`pc_receive_identity_locked`); received date / delivery-note ref / notes stay
+editable. Uses the shared `changedLockedCols` + `identityLockedRefusal`
+(`shared/header-inherited-lock.ts`). Test in `consignmentHeaderFieldLocks.test.ts`.
+Shipped alongside the PCO + CN whole->field split in the same PR.
+
+**Ref.** refactor/txn-consignment-locks, 2026-08-20.
+
+## The venue picker offered every company's showrooms — `GET /venues?includeShowrooms=1` read `scm.warehouses` with no company predicate [high]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** Houzs 的人开单、开 project 选 Venue 的时候，清单里会跑出 2990 的展厅
+「2990s PJ」。两家公司的 Venue、Warehouse、Showroom 本来就该各看各的。原因很单纯：
+这支 API 的 Venue 清单是两半拼起来的——上半截读 `project_venues`，早就有加公司条件；
+下半截读 `scm.warehouses` 里标成 Showroom 的仓，那一半漏了没加。同一份清单，
+Members 页那支 `/staff/showrooms` 早就修好了，这一半没跟上。
+
+**Symptom.** Owner, 2026-08-19: *"客人开单不能看到 2990 的展厅啊。分开的公司都不一
+样啊，收入单也不一样。venue 都不一样啊"* and *"我们的 Venue、我们的 Warehouse、我们的
+Showroom 等等，都是跟着看到自己公司的"*. A HOUZS user raising a project or an SO saw
+2990's showroom in the venue picker.
+
+**Root cause, traced.** `GET /api/projects/venues?includeShowrooms=1`
+(`backend/src/routes/projects.ts`) builds its list from two reads. The
+`project_venues` half carries `activeCompanySql(c)` (mig 0093). The SHOWROOM half
+ran `SELECT id, code, name, venue_name FROM scm.warehouses WHERE is_showroom =
+true AND is_active = true AND venue_name IS NOT NULL AND btrim(venue_name) <> ''`
+with **no `company_id`** — so it returned the same rows to every caller. The SCM
+client is service-role and bypasses RLS (mig 0061 enabled RLS with no policies),
+so the missing predicate was the entire tenant boundary. Measured against prod,
+not reasoned: `backend/scripts/check-showroom-venue-scope.mjs` via the
+**Venue showroom parking check (read-only)** workflow, run 32350415733 —
+one flagged showroom venue exists system-wide, `PJ SHOWROOM` / `"2990s PJ"`,
+owned by `company_id 2`, and HOUZS's picker listed it. Per company: HOUZS
+`BEFORE 1 -> AFTER 0` (the foreign row removed), 2990 `BEFORE 1 -> AFTER 1`
+(keeps its own). Rows with a NULL `company_id`, which the fix would have hidden
+from everyone: **0**.
+
+**Second, narrower hole found in the same sweep.** `GET
+/mfg-sales-orders/active-venue` maps the resolved venue TEXT onto a
+`project_venues` id with `WHERE lower(trim(name)) = lower(trim(?)) AND active = 1`
+and no company predicate, and that id is what the SO dropdown then selects.
+Scoped the same way. This one is PREVENTATIVE, stated plainly: the same run shows
+**0** venue names held by more than one company, and the single showroom venue is
+mastered by nobody (`owners [none]`, so `venueId` was already null). The exposure
+is real but currently unexercised — 2990 masters **0** of the 92 active
+`project_venues` rows, so any name a 2990 caller resolves can only match a HOUZS
+row.
+
+**Fix.** `activeCompanySql(c, "company_id")` on the showroom SELECT;
+`activeCompanySql(c)` on the active-venue id lookup. Guarded by
+`backend/tests/showroomVenueCompanyScope.test.ts`, which asserts the SQL SHAPE
+rather than the response: `scm.warehouses` exists in Postgres only, the D1 test
+mirror has no such table, and the route's own try/catch degrades to an empty list
+when that read throws — so a request-level test would pass with or without the
+predicate. The test locators THROW when they cannot find their statement, so a
+rename fails loudly instead of checking nothing. Proven red before trusting it:
+removing the predicate fails `it carries a company predicate`.
+
+**Left alone, and why — needs an owner decision.** `loadVenueNames` in
+`backend/src/scm/routes/scan-so.ts` reads `SELECT name FROM project_venues WHERE
+active = 1` with no company predicate, and its comment says that is deliberate:
+it feeds `buildCachedPrefix`, which must stay byte-identical across `/extract`,
+`/warm` and the headless cron + queue job, none of which carry a request scope.
+Scoping it is a cached-prefix redesign, not a predicate. It is an OCR
+allowed-values pool rather than a picker, but a HOUZS scan could still match a
+2990 venue name onto a HOUZS SO. Flagged, not changed.
+
+**Everything else in this class was already scoped**, checked one by one:
+`/staff/showrooms` and the parking write (`scm/routes/staff.ts`), `GET
+/warehouses` and the dead-stock warehouse read (`scm/routes/inventory.ts`), the
+`scm.showrooms` reads in `hr.ts`, `slips.ts` and `scan-payment.ts`, and every
+`project_venues` statement in `scm/routes/venues.ts` and the rest of
+`routes/projects.ts`. `venue-binding.ts`'s showroom resolve follows the caller's
+own `staff.showroom_warehouse_id`, whose write is company-checked.
+
+**Ref.** PR #2536, `fix/showroom-venue-company-scope`, 2026-08-20.
+## A GRN header could change its supplier or currency after it was invoiced, silently diverging from the Purchase Invoice billed against it [medium]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 一张收货单（GRN）已经开了采购发票之后，还可以在收货单上改供应商或货币 —— 系统
+完全没挡。发票是照着原本的供应商和货币开的，收货单一改，两张单就对不上了，而且没有任何提示。
+
+**Symptom.** `PATCH /grns/:id` (the header edit) had **no downstream-child guard at
+all** — unlike the PO header, whose `poHasDownstream` lock predates this. A GRN that
+already had a Purchase Invoice or Purchase Return could have its `supplier_id`,
+`currency`, `exchange_rate` or `allocation_method` changed, diverging from the
+PI/PR that was billed and cost-allocated against those exact values, with no error.
+
+**Root cause (traced).** `grns.patch('/:id')` carried a warehouse-relocation guard
+and a foreign-rate guard but never called `grnHasDownstream` (the four other GRN
+handlers — cancel, line add/edit/delete — do). So the header was field-open and
+unguarded; the PO's field-level pattern (`po-identity-lock.ts`) had no GRN twin.
+
+**Fix.** Added a field-level inherited-field lock (owner 2026-08-20, §8 GAP-1 of the
+workflow-unification spec): once `grnHasDownstream` is true, the four costing/party
+columns freeze (409 `grn_header_inherited_locked`); received date / delivery-note
+ref / warehouse / notes stay editable. `grn-inherited-lock.ts`
+(`grnHeaderInheritedChanges` + `GRN_HEADER_INHERITED_COLS`), wired before the
+stock-relocation block so a locked edit writes nothing; the FE
+`GoodsReceivedDetail.tsx` relaxes its previously over-strict whole-freeze to the
+same field-level split. Test: `grnHeaderFieldLock.test.ts` (own-stage saves with a
+PI present; supplier/currency change → 409, nothing written).
+
+**Ref.** refactor/txn-field-lock-siblings, 2026-08-20.
+
 ## The Sales Orders list served ZERO rows to every account in both companies — the auth bridge ran twice and permissions came back empty [high]
 
 <!-- area: Sales orders + pricing -->
