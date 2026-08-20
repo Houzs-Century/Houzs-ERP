@@ -220,9 +220,7 @@ jobs:
       # twice, and a check that can block a release is a check someone disables.
       #
       # --strict fails on the HEADLINE bucket only, on purpose:
-      #   company-scope   -> RATCHET: a NEW unscoped finding (write OR read) not
-      #                      in company-scope-baseline.json (grandfathered ones
-      #                      and set-reads are listed, not gated)
+      #   company-scope   -> WRITE findings (read-side ones are listed, not gated)
       #   silent-mutations-> SILENT (CAUGHT and UNRESOLVED are listed, not gated)
       #   shared-mirrors  -> DIVERGED (COSMETIC and NO-OVERLAP are listed)
       # Gating on the raw counts would fail on legitimate code and get switched
@@ -230,14 +228,13 @@ jobs:
       #
       # No `npm ci` needed for the frontend one: all three are dependency-free
       # (node:fs / node:path only) so they run before any install.
-      # company-scope --strict is the RATCHET now (reconciled 2026-08-20). It was
-      # round2's "handler WRITE findings must stay at ZERO" gate, which hard-failed
-      # on 32 write findings (natural-key / upsert-key / rpc) plus 21 unscoped read
-      # handlers. The owner shipped the real leak fixes and GRANDFATHERED those as
-      # tracked debt — the same posture #2484 introduced for the read side — so
-      # --strict and --check converge: the current unscoped set must be a SUBSET of
-      # company-scope-baseline.json, a NEW finding (write OR read) fails, and the
-      # set may only SHRINK. That is what stops the next one coming back.
+      # company-scope IS --strict now. It was report-only from 2026-08-13, when
+      # correcting the checker (it had counted a helper NAME appearing anywhere
+      # in a handler as scoping) took the honest count from 0 to 20 unscoped
+      # writes and gating would have failed every PR on a backlog nobody had
+      # judged yet. That backlog is judged: 0 WRITE findings over 1019 handlers,
+      # every one either fixed or read and annotated. Gating it now is what
+      # stops the twentieth from coming back.
       - run: node scripts/check-company-scope.mjs --strict
       - run: node scripts/check-shared-mirrors.mjs --strict
       - run: node ../frontend/scripts/check-silent-mutations.mjs --strict
@@ -960,18 +957,9 @@ jobs:
   #
   # NOT a required status check YET. It reports red but does not block a merge
   # until the owner adds `company-scope-ratchet` to the main-protection ruleset
-  # (the one owner step is in the PR body). The primary subset gate
-  # (`check-company-scope --strict`, reconciled 2026-08-20 to the SAME ratchet)
-  # already runs inside the required `backend-typecheck` job, so the merge is
-  # gated on NEW findings there; this job adds only the no-growth guard.
-  #
-  # EXPECTED RED on the reconciliation PR that reseeds the baseline. The owner
-  # grandfathered 32 write findings + 21 read handlers, so the baseline grows
-  # (17 -> 55) and the `--ratchet-against origin/main` step below fails BY DESIGN
-  # on that one PR — the guard exists to block SNEAKY per-PR growth, and this
-  # growth is the sanctioned reseed. It self-heals: once main carries the 55-entry
-  # baseline, the next PR's merge-base matches and the guard is green again. The
-  # required checks (backend-typecheck + frontend) are unaffected.
+  # (the one owner step is in the PR body). The sibling WRITE invariant
+  # (`check-company-scope --strict`, WRITE findings must stay 0) already runs
+  # inside the required `backend-typecheck` job.
   company-scope-ratchet:
     runs-on: ubuntu-latest
     steps:
