@@ -43,19 +43,19 @@ try {
     for (const s of sups) row("supplier", { company: c.code, code: s.code, name: s.name, status: s.status, currency: s.currency });
 
     const binds = await sql`
-      SELECT s.code AS supplier_code, b.material_kind, b.material_code, b.supplier_sku,
-             b.unit_price_centi, b.currency, b.is_main_supplier,
+      SELECT s.code AS supplier_code, b.material_kind, b.item_code, b.supplier_sku,
+             b.unit_price_sen, b.currency, b.is_main_supplier,
              (b.price_matrix IS NOT NULL) AS has_matrix, b.price_matrix
       FROM scm.supplier_material_bindings b
       JOIN scm.suppliers s ON s.id = b.supplier_id
       WHERE b.company_id = ${cid}
-      ORDER BY s.code, b.material_code`;
+      ORDER BY s.code, b.item_code`;
     if (binds.length === 0) note(`MISSING EVIDENCE: company ${c.code}: zero supplier_material_bindings`);
     for (const b of binds)
       row("binding", {
         company: c.code, sup: b.supplier_code, kind: b.material_kind,
-        erp: b.material_code, ac: b.supplier_sku,
-        cost: b.unit_price_centi, cur: b.currency,
+        erp: b.item_code, ac: b.supplier_sku,
+        cost: b.unit_price_sen, cur: b.currency,
         main: b.is_main_supplier, matrix: b.has_matrix ? b.price_matrix : null,
       });
 

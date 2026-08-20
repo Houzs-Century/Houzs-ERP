@@ -16,7 +16,6 @@ import {
   isSessionFallbackEnabled,
   sessionFallbackTtlMs,
 } from "./sessionCache";
-import { isScopedProjectUser } from "./projectAcl";
 import { applySalesJdOverride } from "./salesJdAccess";
 import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
@@ -425,32 +424,11 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     permissions.push("*");
     permissionsSet.add("*");
   }
-  // Owner 2026-07-15 — hydrate the brand allow-list not only for `scope_to_pic`
-  // roles but for the whole code-keyed project-scoped cohort (isScopedProjectUser
-  // = scope_to_pic OR a non-director Sales user). Some Sales positions lack the
-  // scope_to_pic flag; without brands the project list's PIC arm can't match and
-  // they'd fall back to attendee-only. Classify off the STABLE ORG FIELDS
-  // already on `row` (position_name / department_name) + the parsed permissions.
-  const brandScoped = isScopedProjectUser({
-    scope_to_pic: scoped,
-    permissions_set: permissionsSet,
-    position_name: row.position_name ?? null,
-    department_name: row.department_name ?? null,
-  } as AuthUser);
-  let brandScope: string[] | null = null;
-  if (brandScoped) {
-    const ids = managerId ? [row.id, managerId] : [row.id];
-    // env.DB (not getDb): auth must keep working on the D1 fallback used by
-    // the test suite and the rollback path, where no DATABASE_URL is bound.
-    // DISTINCT dedups brands listed on both the rep and the manager.
-    const placeholders = ids.map(() => "?").join(", ");
-    const res = await env.DB.prepare(
-      `SELECT DISTINCT brand FROM user_brands WHERE user_id IN (${placeholders})`
-    )
-      .bind(...ids)
-      .all<{ brand: string }>();
-    brandScope = (res.results ?? []).map((r) => r.brand);
-  }
+  // brand_scope was the per-user brand allow-list for the project row-level ACL.
+  // That ACL was removed (owner decision 2026-08-19), so nothing reads it any
+  // more; it is left on the envelope as a vestigial null rather than reshaping
+  // the signed-session claims contract in the same change.
+  const brandScope: string[] | null = null;
   // Page-access SOURCE (owner-directed 2026-07-18, services/positionPolicy.ts):
   // ONE authoritative policy for ALL 17 positions — the old matrix + a separate
   // sales rule are BOTH gone for a positioned user.

@@ -6,8 +6,10 @@
 // (auth now lives entirely in authed-fetch via localStorage). Everything else
 // is verbatim.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
@@ -81,7 +83,7 @@ export type SupplierRow = {
 /** PR — Commander 2026-05-27 ("跟着 Product Maintenance 的排版"):
  *  Per-category supplier cost matrix on supplier_material_bindings
  *  (migration 0089). Two concrete shapes the UI cares about; everything
- *  else (or null) → fall back to unit_price_centi.
+ *  else (or null) → fall back to unit_price_sen.
  *
  *  SOFA:     { [seatHeight]: { P1?: centi, P2?: centi, P3?: centi } }
  *  BEDFRAME: { P1?: centi, P2?: centi }
@@ -97,10 +99,10 @@ export type BindingRow = {
   id: string;
   supplier_id: string;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string;
-  unit_price_centi: number;
+  unit_price_sen: number;
   currency: Currency;
   lead_time_days: number;
   payment_terms_override: string | null;
@@ -111,13 +113,13 @@ export type BindingRow = {
   notes: string | null;
   /** PR — Commander 2026-05-27: per-category cost matrix mirroring the
    *  Products Maintenance page shape. NULL on existing rows + on categories
-   *  that use the single unit_price_centi (mattress / accessory / service). */
+   *  that use the single unit_price_sen (mattress / accessory / service). */
   price_matrix: PriceMatrix | null;
   /** Migration 0177 — cost anchor. When true, this binding is THE cost anchor
-   *  for its material_code: editing either side's cost (this binding's
-   *  unit_price_centi / price_matrix, or the linked mfg_products
+   *  for its item_code: editing either side's cost (this binding's
+   *  unit_price_sen / price_matrix, or the linked mfg_products
    *  base_price_sen / price1_sen) mirrors onto the other. At most one anchor
-   *  per material_code (enforced server-side). SOFA bindings can be anchored
+   *  per item_code (enforced server-side). SOFA bindings can be anchored
    *  but cost sync is skipped (per-height matrix vs single SKU cost). */
   is_cost_anchor: boolean;
   created_at: string;
@@ -136,9 +138,9 @@ export type PoHeaderRow = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency: Currency;
-  subtotal_centi: number;
-  tax_centi: number;
-  total_centi: number;
+  subtotal_sen: number;
+  tax_sen: number;
+  total_sen: number;
   notes: string | null;
   submitted_at: string | null;
   received_at: string | null;
@@ -166,7 +168,7 @@ export type PoHeaderRow = {
     address?: string | null;
   } | null;
   /** PR — Commander 2026-05-27: list endpoint embeds a tiny items summary
-      (material_code + qty per line) so the buyer can scan what's inside each
+      (item_code + qty per line) so the buyer can scan what's inside each
       PO row without drilling in. Detail endpoint returns full items[]
       separately, not on the header. Optional because not every consumer
       wants the join. */
@@ -204,7 +206,7 @@ export type PoHeaderRow = {
 };
 
 export type PoItemSummary = {
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty: number;
   /** Supplier's own SKU for this line (owner 2026-08-05) — the list's
@@ -217,12 +219,12 @@ export type PoItemRow = {
   purchase_order_id: string;
   binding_id: string | null;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string | null;
   qty: number;
-  unit_price_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  line_total_sen: number;
   received_qty: number;
   notes: string | null;
   /* PR #41 — variant fields (migration 0056) */
@@ -230,8 +232,8 @@ export type PoItemRow = {
   description?: string | null;
   description2?: string | null;
   uom?: string;
-  discount_centi?: number;
-  unit_cost_centi?: number;
+  discount_sen?: number;
+  unit_cost_sen?: number;
   gap_inches?: number | null;
   divan_height_inches?: number | null;
   divan_price_sen?: number;
@@ -385,7 +387,7 @@ export type SupplierScorecard = {
     poDate: string;
     expectedDate: string | null;
     receivedDate: string | null;
-    totalCenti: number;
+    totalSen: number;
     orderedQty: number;
     receivedQty: number;
   }>;
@@ -434,10 +436,10 @@ export function useUpdateSupplier() {
 
 export type NewBinding = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti?: number;
+  unitPriceSen?: number;
   currency?: Currency;
   leadTimeDays?: number;
   moq?: number;
@@ -513,7 +515,7 @@ export function useDeleteBinding() {
 }
 
 /** Migration 0177 — set/clear this binding as the cost anchor for its
- *  material_code. Setting clears the flag on any other binding for the same
+ *  item_code. Setting clears the flag on any other binding for the same
  *  product (one anchor per code) and pushes the binding's current cost onto the
  *  product (initial sync). We invalidate the supplier detail (flag changed) AND
  *  the mfg-products cache (the product's cost may have just been mirrored). */
@@ -616,6 +618,73 @@ export function usePurchaseOrdersPaged(params: { page: number; pageSize: number;
   });
 }
 
+/* Deferred PO-list enrichment — the MRP-derived columns (Assigned SO /
+   Delivered) the list no longer computes on its critical path (see
+   listMrpEnrichment.ts). Fired AFTER the list renders, for the POs it just
+   showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
+   request stays bounded; each chunk is cached independently. The backend runs
+   ONE company-wide computeMrp per request regardless of chunk size. */
+const PO_ENRICH_CHUNK = 100;
+
+export function usePoListMrpEnrichmentMap(
+  poIds: string[],
+  enabled: boolean,
+): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean } {
+  const chunks = useMemo(() => {
+    const uniq = [...new Set(poIds.filter(Boolean))].sort();
+    const out: string[][] = [];
+    for (let i = 0; i < uniq.length; i += PO_ENRICH_CHUNK) out.push(uniq.slice(i, i + PO_ENRICH_CHUNK));
+    return out;
+  }, [poIds]);
+
+  const results = useQueries({
+    queries: chunks.map((chunk) => ({
+      enabled: enabled && chunk.length > 0,
+      queryKey: ['mfg-purchase-orders-list-mrp-enrichment', chunk.join(',')],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
+          `/mfg-purchase-orders/list-mrp-enrichment?poIds=${encodeURIComponent(chunk.join(','))}`,
+          { signal },
+        ),
+      staleTime: 30_000,
+      retry: retryUnlessClientError,
+      retryDelay: 800,
+    })),
+  });
+
+  const sig = results.map((r) => r.dataUpdatedAt).join('|');
+  const isFetching = results.some((r) => r.isFetching);
+  const byId = useMemo(() => {
+    const map = new Map<string, ListMrpEnrichment>();
+    for (const r of results) {
+      const e = r.data?.enrichment;
+      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
+  }, [sig]);
+
+  return { byId, isFetching };
+}
+
+/* The overlay the PO list applies: take the rows the list endpoint returned
+   (without the MRP-derived columns), fetch the deferred enrichment for their
+   ids, and return the healed rows. */
+export function useEnrichedPoListRows<T extends EnrichableMrpRow>(
+  rows: T[],
+  enabled: boolean,
+): T[] {
+  const poIds = useMemo(
+    () => rows.map((r) => r.id).filter((x): x is string => !!x),
+    [rows],
+  );
+  const { byId } = usePoListMrpEnrichmentMap(poIds, enabled);
+  return useMemo(
+    () => rows.map((r) => applyListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
+    [rows, byId],
+  );
+}
+
 export function usePurchaseOrderDetail(id: string | null) {
   return useQuery({
     queryKey: ['mfg-purchase-order-detail', id],
@@ -634,11 +703,11 @@ export const fetchPurchaseOrderDetail = (id: string) =>
 
 export type NewPoItem = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   bindingId?: string;
   notes?: string;
   /* PR #41 — variant fields */
@@ -646,8 +715,8 @@ export type NewPoItem = {
   description?: string;
   description2?: string;
   uom?: string;
-  discountCenti?: number;
-  unitCostCenti?: number;
+  discountSen?: number;
+  unitCostSen?: number;
   gapInches?: number | null;
   divanHeightInches?: number | null;
   divanPriceSen?: number;
@@ -686,7 +755,7 @@ export type OutstandingSoItem = {
   qty:            number;
   poQtyPicked:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants:       unknown;
   lineSuffix:     string | null;
   /* Commander 2026-05-28 — PO-from-SO redesign extras. processingDate +
@@ -728,7 +797,7 @@ export type OutstandingPoItem = {
   qty:            number;
   receivedQty:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   warehouseId:    string | null;
   variants:       unknown;
   /* Delivery-carry — the PO line's delivery date, carried into the GRN line. */
@@ -819,7 +888,7 @@ export type OutstandingGrnItem = {
   itemGroup:       string;
   qtyAccepted:     number;
   remaining:       number;
-  unitPriceCenti:  number;
+  unitPriceSen:  number;
   variants:        unknown;
   /* Source note's currency + FX rate (owner 2026-08-06) — one invoice may bill
      several of a supplier's notes, but a PI header carries ONE currency + rate,

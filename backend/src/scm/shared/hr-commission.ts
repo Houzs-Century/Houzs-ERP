@@ -47,9 +47,9 @@ export const soEarnsCommission = (status: string | null | undefined): boolean =>
 
 export interface CommissionConfig {
   baseBps: number;
-  personalKpiThresholdCenti: number;
+  personalKpiThresholdSen: number;
   personalKpiBonusBps: number;
-  showroomKpiThresholdCenti: number;
+  showroomKpiThresholdSen: number;
   showroomKpiBonusBps: number;
   overrideBaseBps: number;
   overrideKpiBonusBps: number;
@@ -58,8 +58,8 @@ export interface CommissionConfig {
 export interface SalespersonInput {
   staffId: string;
   tier: HrTier;
-  personalGoodsCenti: number;
-  itemKpiCenti: number;
+  personalGoodsSen: number;
+  itemKpiSen: number;
 }
 
 /** One level's contribution to a chain-mode override (chain mode only). */
@@ -68,26 +68,26 @@ export interface OverrideLevelDetail {
   level: number;
   rateBps: number;
   /** Σ KPI-excluded goods of the earner's downline sellers at exactly this level. */
-  goodsCenti: number;
-  commissionCenti: number;
+  goodsSen: number;
+  commissionSen: number;
 }
 
 export interface CommissionRow {
   staffId: string;
   tier: HrTier;
-  personalGoodsCenti: number;
+  personalGoodsSen: number;
   personalRateBps: number;
-  personalCommissionCenti: number;
+  personalCommissionSen: number;
   /* One flat rate on one base in showroom mode. NULL in chain mode, where the
      override is Σ over levels of DIFFERENT rates on DIFFERENT bases — there is
      no single rate, and reporting a blended one would be a rounding-lossy figure
      nobody can reconcile against a payslip. Read overrideDetail instead. */
   overrideRateBps: number | null;
-  overrideCommissionCenti: number;
+  overrideCommissionSen: number;
   /** Per-level breakdown; chain mode only (undefined in showroom mode). */
   overrideDetail?: OverrideLevelDetail[];
-  itemKpiCenti: number;
-  totalCenti: number;
+  itemKpiSen: number;
+  totalSen: number;
 }
 
 const applyBps = (centi: number, bps: number): number => Math.round((centi * bps) / 10_000);
@@ -100,18 +100,18 @@ const personalPart = (
   config: CommissionConfig,
   showroomKpiHit: boolean,
   p: SalespersonInput,
-): { personalRateBps: number; personalCommissionCenti: number } => {
-  const personalKpiHit = p.personalGoodsCenti >= config.personalKpiThresholdCenti;
+): { personalRateBps: number; personalCommissionSen: number } => {
+  const personalKpiHit = p.personalGoodsSen >= config.personalKpiThresholdSen;
   const personalRateBps =
     config.baseBps +
     (personalKpiHit ? config.personalKpiBonusBps : 0) +
     (showroomKpiHit ? config.showroomKpiBonusBps : 0);
-  return { personalRateBps, personalCommissionCenti: applyBps(p.personalGoodsCenti, personalRateBps) };
+  return { personalRateBps, personalCommissionSen: applyBps(p.personalGoodsSen, personalRateBps) };
 };
 
 /**
  * SHOWROOM mode (2990's model, unchanged). Compute commission for every
- * salesperson in one showroom. `showroomGoodsCenti` is the WHOLE showroom's
+ * salesperson in one showroom. `showroomGoodsSen` is the WHOLE showroom's
  * goods value (used for both the 400k threshold and the manager override base —
  * managers override the entire showroom, including their own sales).
  *
@@ -122,29 +122,29 @@ const personalPart = (
  */
 export const computeShowroomCommission = (
   config: CommissionConfig,
-  showroomGoodsCenti: number,
+  showroomGoodsSen: number,
   salespeople: SalespersonInput[],
 ): CommissionRow[] => {
-  const showroomKpiHit = showroomGoodsCenti >= config.showroomKpiThresholdCenti;
+  const showroomKpiHit = showroomGoodsSen >= config.showroomKpiThresholdSen;
   return salespeople.map((p) => {
-    const { personalRateBps, personalCommissionCenti } = personalPart(config, showroomKpiHit, p);
+    const { personalRateBps, personalCommissionSen } = personalPart(config, showroomKpiHit, p);
 
     const isManager = p.tier === 'manager';
     const overrideRateBps = isManager
       ? config.overrideBaseBps + (showroomKpiHit ? config.overrideKpiBonusBps : 0)
       : 0;
-    const overrideCommissionCenti = isManager ? applyBps(showroomGoodsCenti, overrideRateBps) : 0;
+    const overrideCommissionSen = isManager ? applyBps(showroomGoodsSen, overrideRateBps) : 0;
 
     return {
       staffId: p.staffId,
       tier: p.tier,
-      personalGoodsCenti: p.personalGoodsCenti,
+      personalGoodsSen: p.personalGoodsSen,
       personalRateBps,
-      personalCommissionCenti,
+      personalCommissionSen,
       overrideRateBps,
-      overrideCommissionCenti,
-      itemKpiCenti: p.itemKpiCenti,
-      totalCenti: personalCommissionCenti + overrideCommissionCenti + p.itemKpiCenti,
+      overrideCommissionSen,
+      itemKpiSen: p.itemKpiSen,
+      totalSen: personalCommissionSen + overrideCommissionSen + p.itemKpiSen,
     };
   });
 };
@@ -186,7 +186,7 @@ export interface OverrideLevel {
  *
  * ROUNDING (this is money — read before changing): the rate is applied ONCE per
  * level, to that level's SUMMED goods, mirroring showroom mode's single
- * applyBps(showroomGoodsCenti, rate) on a summed base. Rounding per-seller and
+ * applyBps(showroomGoodsSen, rate) on a summed base. Rounding per-seller and
  * then summing would produce a different ringgit figure.
  *
  * A level present in `goodsByLevel` but ABSENT from `levels` earns nothing. That
@@ -200,19 +200,19 @@ export interface OverrideLevel {
 export const computeChainOverride = (
   levels: OverrideLevel[],
   goodsByLevel: ReadonlyMap<number, number>,
-): { overrideCommissionCenti: number; overrideDetail: OverrideLevelDetail[] } => {
+): { overrideCommissionSen: number; overrideDetail: OverrideLevelDetail[] } => {
   const overrideDetail: OverrideLevelDetail[] = [];
-  let overrideCommissionCenti = 0;
+  let overrideCommissionSen = 0;
   // Configured order is irrelevant to the total; sort so the detail (and the
   // frozen snapshot built from it) is byte-stable run to run.
   for (const l of [...levels].sort((a, b) => a.level - b.level)) {
-    const goodsCenti = goodsByLevel.get(l.level);
-    if (goodsCenti === undefined || goodsCenti <= 0) continue;
-    const commissionCenti = applyBps(goodsCenti, l.rateBps);
-    overrideDetail.push({ level: l.level, rateBps: l.rateBps, goodsCenti, commissionCenti });
-    overrideCommissionCenti += commissionCenti;
+    const goodsSen = goodsByLevel.get(l.level);
+    if (goodsSen === undefined || goodsSen <= 0) continue;
+    const commissionSen = applyBps(goodsSen, l.rateBps);
+    overrideDetail.push({ level: l.level, rateBps: l.rateBps, goodsSen, commissionSen });
+    overrideCommissionSen += commissionSen;
   }
-  return { overrideCommissionCenti, overrideDetail };
+  return { overrideCommissionSen, overrideDetail };
 };
 
 /** A salesperson plus the downline goods that roll up to them, by level. */
@@ -230,25 +230,25 @@ export interface ChainSalespersonInput extends SalespersonInput {
  */
 export const computeChainCommission = (
   config: CommissionConfig,
-  showroomGoodsCenti: number,
+  showroomGoodsSen: number,
   levels: OverrideLevel[],
   salespeople: ChainSalespersonInput[],
 ): CommissionRow[] => {
-  const showroomKpiHit = showroomGoodsCenti >= config.showroomKpiThresholdCenti;
+  const showroomKpiHit = showroomGoodsSen >= config.showroomKpiThresholdSen;
   return salespeople.map((p) => {
-    const { personalRateBps, personalCommissionCenti } = personalPart(config, showroomKpiHit, p);
-    const { overrideCommissionCenti, overrideDetail } = computeChainOverride(levels, p.goodsByLevel);
+    const { personalRateBps, personalCommissionSen } = personalPart(config, showroomKpiHit, p);
+    const { overrideCommissionSen, overrideDetail } = computeChainOverride(levels, p.goodsByLevel);
     return {
       staffId: p.staffId,
       tier: p.tier,
-      personalGoodsCenti: p.personalGoodsCenti,
+      personalGoodsSen: p.personalGoodsSen,
       personalRateBps,
-      personalCommissionCenti,
+      personalCommissionSen,
       overrideRateBps: null, // no single rate in chain mode — see overrideDetail
-      overrideCommissionCenti,
+      overrideCommissionSen,
       overrideDetail,
-      itemKpiCenti: p.itemKpiCenti,
-      totalCenti: personalCommissionCenti + overrideCommissionCenti + p.itemKpiCenti,
+      itemKpiSen: p.itemKpiSen,
+      totalSen: personalCommissionSen + overrideCommissionSen + p.itemKpiSen,
     };
   });
 };
@@ -259,7 +259,7 @@ export const computeChainCommission = (
  * Every type EXCEPT `category` names exactly ONE purchasable thing (owner
  * 2026-07-18: commission "是看 by item" — a rule is read per item). `category` is
  * the deliberate exception: it targets EVERY item in a product category with one
- * rule, which is why it needs the precedence rule in unitKpiCenti below.
+ * rule, which is why it needs the precedence rule in unitKpiSen below.
  *   · product  → mfg_products.code           (the SKU itself)
  *   · category → mfg_products.category       (the mfg_product_category enum,
  *                                             UPPERCASE: SOFA / BEDFRAME / ...)
@@ -272,7 +272,7 @@ export type HrFlagType = 'product' | 'category' | 'fabric' | 'special';
 export interface ItemKpiFlag {
   flagType: HrFlagType;
   ref: string;
-  bonusCenti: number;
+  bonusSen: number;
 }
 
 export interface KpiLine {
@@ -283,14 +283,14 @@ export interface KpiLine {
 }
 
 /** Bonus earned by one order line against the active flags (qty × amount, summed). */
-export const lineKpiCenti = (line: KpiLine, flags: ItemKpiFlag[]): number => {
+export const lineKpiSen = (line: KpiLine, flags: ItemKpiFlag[]): number => {
   let total = 0;
   for (const f of flags) {
     const matched =
       (f.flagType === 'product' && line.itemCode === f.ref) ||
       (f.flagType === 'fabric' && line.fabricId === f.ref) ||
       (f.flagType === 'special' && line.specialCodes.includes(f.ref));
-    if (matched) total += line.qty * f.bonusCenti;
+    if (matched) total += line.qty * f.bonusSen;
   }
   return total;
 };
@@ -329,11 +329,11 @@ export interface KpiUnit {
   fabricId: string | null;
   specialCodes: string[];
   /** Σ of the unit's line totals (goods, qty-inclusive, post-discount), centi. */
-  lineTotalCenti: number;
+  lineTotalSen: number;
   /** Per-ITEM fabric-tier add-on Δ charged on this unit (centi); 0 when none. */
-  fabricAddonUnitCenti: number;
+  fabricAddonUnitSen: number;
   /** Per-ITEM special-order surcharge on this unit (centi); 0 when none. */
-  specialSurchargeUnitCenti: number;
+  specialSurchargeUnitSen: number;
 }
 
 const flagMatchesUnit = (
@@ -363,7 +363,7 @@ const flagMatchesUnit = (
  * Only product-vs-category needs a rule. Every other pair targets a different
  * DIMENSION of the same purchase (the SKU, its fabric series, its special-order
  * surcharge) and those deliberately stack, exactly as they did before this file
- * knew what a category was — see unitKpiExcludedCenti, where each type removes
+ * knew what a category was — see unitKpiExcludedSen, where each type removes
  * its own slice of goods and nothing overlaps.
  */
 const categorySuppressed = (u: Pick<KpiUnit, 'itemCodes'>, flags: ItemKpiFlag[]): boolean =>
@@ -398,16 +398,16 @@ export const kpiFlagFiresOnUnit = (
 
 /** Fixed item-KPI bonus earned by one unit (qty × amount, summed over the flags
  *  that FIRE — so a category rule suppressed by a product rule pays nothing). */
-export const unitKpiCenti = (u: KpiUnit, flags: ItemKpiFlag[]): number => {
+export const unitKpiSen = (u: KpiUnit, flags: ItemKpiFlag[]): number => {
   let total = 0;
-  for (const f of firingFlags(u, flags)) total += u.qty * f.bonusCenti;
+  for (const f of firingFlags(u, flags)) total += u.qty * f.bonusSen;
   return total;
 };
 
 /** Goods centi to EXCLUDE from this unit because it earns the fixed item-KPI
  *  bonus instead of percentage commission. A product flag drops the whole unit;
  *  fabric / special flags drop only their add-on. Capped at the unit total. */
-export const unitKpiExcludedCenti = (u: KpiUnit, flags: ItemKpiFlag[]): number => {
+export const unitKpiExcludedSen = (u: KpiUnit, flags: ItemKpiFlag[]): number => {
   let excluded = 0;
   let wholeUnit = false;
   for (const f of firingFlags(u, flags)) {
@@ -417,9 +417,9 @@ export const unitKpiExcludedCenti = (u: KpiUnit, flags: ItemKpiFlag[]): number =
     // item, so they remove only that add-on.) Precedence already guaranteed at
     // most one of product/category is in this list, so this cannot double-count.
     if (f.flagType === 'product' || f.flagType === 'category') wholeUnit = true;
-    else if (f.flagType === 'fabric') excluded += u.qty * u.fabricAddonUnitCenti;
-    else if (f.flagType === 'special') excluded += u.qty * u.specialSurchargeUnitCenti;
+    else if (f.flagType === 'fabric') excluded += u.qty * u.fabricAddonUnitSen;
+    else if (f.flagType === 'special') excluded += u.qty * u.specialSurchargeUnitSen;
   }
-  if (wholeUnit) return Math.max(0, u.lineTotalCenti);
-  return Math.min(Math.max(0, excluded), Math.max(0, u.lineTotalCenti));
+  if (wholeUnit) return Math.max(0, u.lineTotalSen);
+  return Math.min(Math.max(0, excluded), Math.max(0, u.lineTotalSen));
 };

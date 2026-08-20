@@ -71,12 +71,12 @@ DECLARE
   v_paid integer;
   v_total integer;
 BEGIN
-  SELECT paid_centi, total_centi INTO v_paid, v_total
+  SELECT paid_sen, total_sen INTO v_paid, v_total
   FROM scm.purchase_invoices WHERE id = p_id FOR UPDATE;
   IF v_paid IS NULL THEN
     RAISE EXCEPTION 'not found';
   END IF;
-  UPDATE scm.purchase_invoices SET paid_centi = v_paid + 1 WHERE id = p_id;
+  UPDATE scm.purchase_invoices SET paid_sen = v_paid + 1 WHERE id = p_id;
   RETURN v_paid + 1;
 END;
 $$;`;
@@ -155,7 +155,7 @@ $$;`;
   it("mixes flat DDL and a function body in one file with the right count", () => {
     const sql = [
       "-- 0147_example.sql",
-      "ALTER TABLE scm.purchase_invoices ADD COLUMN IF NOT EXISTS paid_centi bigint;",
+      "ALTER TABLE scm.purchase_invoices ADD COLUMN IF NOT EXISTS paid_sen bigint;",
       "",
       PLPGSQL_FN,
       "",
@@ -166,7 +166,7 @@ $$;`;
     ].join("\n");
     const stmts = split(sql);
     expect(stmts).toHaveLength(4);
-    expect(stmts[0]).toContain("ADD COLUMN IF NOT EXISTS paid_centi");
+    expect(stmts[0]).toContain("ADD COLUMN IF NOT EXISTS paid_sen");
     expect(stmts[1]).toContain("CREATE OR REPLACE FUNCTION scm.bump");
     expect(stmts[1]).toContain("RETURN v_paid + 1;");
     expect(stmts[2]).toContain("GRANT EXECUTE");

@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
 import { poAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
-import { fmtDateTime, fmtMoneyCenti } from "@2990s/shared";
+import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
   DetailGrid,
@@ -74,7 +74,7 @@ import { cn, formatDate } from "../../lib/utils";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /* PO amendment prices are stored in centi (1/100 MYR). */
-const fmtCenti = (centi: number | null | undefined): string => fmtMoneyCenti(centi);
+const fmtSen = (centi: number | null | undefined): string => fmtMoneySen(centi);
 
 const changeTypeLabel = (t: string): string =>
   t === "SPEC" ? "Spec change" :
@@ -92,10 +92,10 @@ const asStr = (v: unknown): string | null => {
 
 /* Read the old_snapshot blob a PO amendment line records. */
 type PoOldSnapshot = {
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   qty?: number | null;
-  unit_price_centi?: number | null;
+  unit_price_sen?: number | null;
   delivery_date?: string | null;
 };
 const oldOf = (l: PoAmendmentLine): PoOldSnapshot =>
@@ -274,14 +274,14 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
   const isAdd = line.change_type === "ADD";
   const isRemove = line.change_type === "REMOVE";
 
-  const oldCode = old.material_code ?? null;
+  const oldCode = old.item_code ?? null;
   const oldName = old.material_name ?? null;
-  const newCode = line.new_material_code ?? oldCode;
+  const newCode = line.new_item_code ?? oldCode;
   const newName = line.new_material_name ?? oldName;
 
-  const codeChanged = !isAdd && !isRemove && line.new_material_code != null && line.new_material_code !== oldCode;
+  const codeChanged = !isAdd && !isRemove && line.new_item_code != null && line.new_item_code !== oldCode;
   const qtyChanged = !isAdd && !isRemove && line.new_qty != null && line.new_qty !== (old.qty ?? null);
-  const priceChanged = !isAdd && !isRemove && line.new_unit_price_centi != null && line.new_unit_price_centi !== (old.unit_price_centi ?? null);
+  const priceChanged = !isAdd && !isRemove && line.new_unit_price_sen != null && line.new_unit_price_sen !== (old.unit_price_sen ?? null);
   const deliveryChanged = !isAdd && !isRemove && line.new_delivery_date != null && line.new_delivery_date !== (old.delivery_date ?? null);
 
   const wasCls = (changed: boolean, base: string): string =>
@@ -315,10 +315,10 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
               )}
               <div className="mt-0.5 font-money text-[11.5px] text-ink-muted">
                 <span className={wasCls(qtyChanged, "")}>Qty {old.qty ?? "—"}</span>
-                {typeof old.unit_price_centi === "number" ? (
+                {typeof old.unit_price_sen === "number" ? (
                   <>
                     {" · "}
-                    <span className={wasCls(priceChanged, "")}>{fmtCenti(old.unit_price_centi)}</span>
+                    <span className={wasCls(priceChanged, "")}>{fmtSen(old.unit_price_sen)}</span>
                   </>
                 ) : ""}
               </div>
@@ -347,10 +347,10 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
               )}
               <div className="mt-0.5 font-money text-[11.5px]">
                 <span className={nowCls(qtyChanged, "")}>Qty {line.new_qty ?? old.qty ?? "—"}</span>
-                {typeof line.new_unit_price_centi === "number" ? (
+                {typeof line.new_unit_price_sen === "number" ? (
                   <>
                     <span className="text-ink-muted">{" · "}</span>
-                    <span className={nowCls(priceChanged, "")}>{fmtCenti(line.new_unit_price_centi)}</span>
+                    <span className={nowCls(priceChanged, "")}>{fmtSen(line.new_unit_price_sen)}</span>
                   </>
                 ) : ""}
               </div>
@@ -542,7 +542,7 @@ export function PoAmendmentDetailV2() {
       notify({
         title: "Amendment rejected",
         body: released.length > 0
-          ? `Supplier keeps the original spec — released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")}. MRP will re-show the corrected spec as shortage.`
+          ? `Supplier keeps the original spec — released to STOCK: ${released.map((x) => `${x.itemCode} ×${x.qty}`).join(", ")}. MRP will re-show the corrected spec as shortage.`
           : "The person who raised it can see your reason and raise a corrected request.",
       });
     } catch (e) {

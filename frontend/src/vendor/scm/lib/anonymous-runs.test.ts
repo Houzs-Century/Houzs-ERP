@@ -24,7 +24,7 @@ const trip = (over: Partial<AssignedTrip>): AssignedTrip => ({
   key: 'k1', date: '2026-08-10', group: 'KLANG_VALLEY',
   lorryId: 'lorry-uuid-a', plate: 'VNB9058',
   driverId: 'drv-1', driverName: 'Ali', helperId: 'hlp-1', helperName: 'Bob',
-  sets: 3, revenueCenti: 500_00, ceilingSets: 10, ceilingRevenueCenti: null,
+  sets: 3, revenueSen: 500_00, ceilingSets: 10, ceilingRevenueSen: null,
   overCeiling: false, departTime: '09:00',
   stops: [stop('SO-1'), stop('SO-2')], sequence: null,
   routeReason: null, ungeocoded: [],

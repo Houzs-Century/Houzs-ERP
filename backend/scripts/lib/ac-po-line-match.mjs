@@ -47,7 +47,7 @@ function bucketErpRows(erpRows, acCodes) {
   const unmatched = [];
   for (const row of erpRows) {
     const sku = norm(row.supplier_sku);
-    const mat = norm(row.material_code);
+    const mat = norm(row.item_code);
     let hit = codes.find((c) => sku === c || sku.startsWith(c + " "));
     // A row whose supplier_sku was never written falls back to the ERP code the
     // mapping CSV produced for that AutoCount item.
@@ -80,7 +80,7 @@ const writtenValues = (l) => `${l.fromSoKey ?? "-"}|${l.deliveryDate ?? "-"}`;
  *                 repair would write from this line; they decide whether two
  *                 otherwise-identical lines are genuinely interchangeable.
  * @param erpRows  ERP purchase_order_items rows for that document, each shaped
- *                 { id, supplier_sku, material_code, qty, description2 }.
+ *                 { id, supplier_sku, item_code, qty, description2 }.
  * @returns { pairs, unmatchedErp, unmatchedAc, refused }
  *          pairs: { row, ac, how } where how is "sole" | "split" | "indistinguishable"
  */

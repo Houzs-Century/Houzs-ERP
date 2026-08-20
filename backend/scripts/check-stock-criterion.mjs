@@ -19,7 +19,7 @@
 //   C  open sofa lots and how many carry a batch_no — findCoveringBatch matches
 //      on batch_no alone, so a lot without one can never cover a set (D6).
 //   D  ERP stock balance per warehouse — the dimension check-ac-vs-erp-reconcile
-//      folds away by grouping on product_code alone.
+//      folds away by grouping on item_code alone.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -190,10 +190,10 @@ async function main() {
      is the mistake that dropped AMN-SOFA PILLOW out of the old reconcile
      checker (docs/stock-reconciliation.md D7). */
   const lots = await sql`
-    SELECT l.id, l.product_code, l.warehouse_id, l.batch_no, l.qty_remaining,
+    SELECT l.id, l.item_code, l.warehouse_id, l.batch_no, l.qty_remaining,
            l.source_doc_type, l.source_doc_no, l.variant_key
       FROM scm.inventory_lots l
-      JOIN scm.mfg_products p ON p.code = l.product_code
+      JOIN scm.mfg_products p ON p.code = l.item_code
                             AND p.company_id = COALESCE(l.company_id, 1)
      WHERE l.qty_remaining > 0 AND COALESCE(l.company_id, 1) = 1
        AND UPPER(COALESCE(p.category::text, '')) = 'SOFA'`;

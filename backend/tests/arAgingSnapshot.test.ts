@@ -35,7 +35,7 @@ function summaryOf(
   for (const [m, tuple] of Object.entries(spec)) {
     if (!tuple) continue;
     const [count, total = 0, out = 0] = tuple;
-    s[m] = { count, total_centi: total, total_outstanding_centi: out };
+    s[m] = { count, total_sen: total, total_outstanding_sen: out };
   }
   return s;
 }
@@ -47,26 +47,26 @@ interface DocFixture {
   module: string;
   is_outstanding: boolean;
   status?: string; // si only — the DRAFT leak-guard
-  total_centi?: number; // po/pi/si amount
-  local_total_centi?: number; // so amount
-  outstanding_centi?: number; // pi/si net outstanding
+  total_sen?: number; // po/pi/si amount
+  local_total_sen?: number; // so amount
+  outstanding_sen?: number; // pi/si net outstanding
 }
 
 const FIXTURES: DocFixture[] = [
   // SI — DRAFT excluded by the leak-guard; PAID excluded by is_outstanding.
-  { company_id: A, module: "si", is_outstanding: true, status: "PARTIALLY_PAID", total_centi: 10000, outstanding_centi: 4000 },
-  { company_id: A, module: "si", is_outstanding: true, status: "POSTED", total_centi: 5000, outstanding_centi: 5000 },
-  { company_id: A, module: "si", is_outstanding: true, status: "DRAFT", total_centi: 9999, outstanding_centi: 9999 },
-  { company_id: A, module: "si", is_outstanding: false, status: "PAID", total_centi: 7000, outstanding_centi: 0 },
-  { company_id: B, module: "si", is_outstanding: true, status: "POSTED", total_centi: 8000, outstanding_centi: 8000 },
-  // SO — local_total_centi; one non-outstanding row excluded.
-  { company_id: A, module: "so", is_outstanding: true, local_total_centi: 20000 },
-  { company_id: A, module: "so", is_outstanding: true, local_total_centi: 30000 },
-  { company_id: B, module: "so", is_outstanding: false, local_total_centi: 99999 },
+  { company_id: A, module: "si", is_outstanding: true, status: "PARTIALLY_PAID", total_sen: 10000, outstanding_sen: 4000 },
+  { company_id: A, module: "si", is_outstanding: true, status: "POSTED", total_sen: 5000, outstanding_sen: 5000 },
+  { company_id: A, module: "si", is_outstanding: true, status: "DRAFT", total_sen: 9999, outstanding_sen: 9999 },
+  { company_id: A, module: "si", is_outstanding: false, status: "PAID", total_sen: 7000, outstanding_sen: 0 },
+  { company_id: B, module: "si", is_outstanding: true, status: "POSTED", total_sen: 8000, outstanding_sen: 8000 },
+  // SO — local_total_sen; one non-outstanding row excluded.
+  { company_id: A, module: "so", is_outstanding: true, local_total_sen: 20000 },
+  { company_id: A, module: "so", is_outstanding: true, local_total_sen: 30000 },
+  { company_id: B, module: "so", is_outstanding: false, local_total_sen: 99999 },
   // PR — count only. Present for A, ABSENT for B (drives the scoping-both-ways test).
   { company_id: A, module: "pr", is_outstanding: true },
   // PI — present for B, ABSENT for A (the other scoping direction).
-  { company_id: B, module: "pi", is_outstanding: true, total_centi: 12000, outstanding_centi: 3000 },
+  { company_id: B, module: "pi", is_outstanding: true, total_sen: 12000, outstanding_sen: 3000 },
 ];
 
 // Expected summaries, computed BY HAND from the fixtures above.
@@ -89,12 +89,12 @@ const EXPECT_ALL = summaryOf({
 // ── MV model: what the SQL materialized view produces, one row per (co, module).
 // The count/amount/outstanding column mapping mirrors the MV arms (== SUMMARY_AGG).
 const AMOUNT_FIELD: Record<string, keyof DocFixture | null> = {
-  po: "total_centi", grn: null, pi: "total_centi", pr: null,
-  so: "local_total_centi", do: null, si: "total_centi",
+  po: "total_sen", grn: null, pi: "total_sen", pr: null,
+  so: "local_total_sen", do: null, si: "total_sen",
 };
 const OUTSTANDING_FIELD: Record<string, keyof DocFixture | null> = {
-  po: null, grn: null, pi: "outstanding_centi", pr: null,
-  so: null, do: null, si: "outstanding_centi",
+  po: null, grn: null, pi: "outstanding_sen", pr: null,
+  so: null, do: null, si: "outstanding_sen",
 };
 
 interface MvRow extends AgingMvRow {
@@ -108,14 +108,14 @@ function buildMvRows(fixtures: DocFixture[]): MvRow[] {
     if (f.module === "si" && f.status === "DRAFT") continue; // SI DRAFT leak-guard
     const key = `${f.company_id}:${f.module}`;
     const row = groups.get(key) ?? {
-      company_id: f.company_id, module: f.module, cnt: 0, total_centi: 0, total_outstanding_centi: 0,
+      company_id: f.company_id, module: f.module, cnt: 0, total_sen: 0, total_outstanding_sen: 0,
     };
     const amtField = AMOUNT_FIELD[f.module];
     const outField = OUTSTANDING_FIELD[f.module];
     row.cnt = Number(row.cnt) + 1;
-    row.total_centi = Number(row.total_centi) + (amtField ? Number(f[amtField] ?? 0) : 0);
-    row.total_outstanding_centi =
-      Number(row.total_outstanding_centi) + (outField ? Number(f[outField] ?? 0) : 0);
+    row.total_sen = Number(row.total_sen) + (amtField ? Number(f[amtField] ?? 0) : 0);
+    row.total_outstanding_sen =
+      Number(row.total_outstanding_sen) + (outField ? Number(f[outField] ?? 0) : 0);
     groups.set(key, row);
   }
   return [...groups.values()];
@@ -134,24 +134,24 @@ describe("reduceAgingSnapshot", () => {
     const s = reduceAgingSnapshot([]);
     expect(Object.keys(s).sort()).toEqual([...OUTSTANDING_MODULES].sort());
     for (const m of OUTSTANDING_MODULES) {
-      expect(s[m]).toEqual({ count: 0, total_centi: 0, total_outstanding_centi: 0 });
+      expect(s[m]).toEqual({ count: 0, total_sen: 0, total_outstanding_sen: 0 });
     }
   });
 
   test("sums multiple company rows for the same module (the all-companies collapse)", () => {
     const s = reduceAgingSnapshot([
-      { module: "pi", cnt: 2, total_centi: 100, total_outstanding_centi: 40 },
-      { module: "pi", cnt: 3, total_centi: 200, total_outstanding_centi: 70 },
+      { module: "pi", cnt: 2, total_sen: 100, total_outstanding_sen: 40 },
+      { module: "pi", cnt: 3, total_sen: 200, total_outstanding_sen: 70 },
     ]);
-    expect(s.pi).toEqual({ count: 5, total_centi: 300, total_outstanding_centi: 110 });
+    expect(s.pi).toEqual({ count: 5, total_sen: 300, total_outstanding_sen: 110 });
   });
 
   test("tolerates PostgREST bigint-as-string and ignores unknown module labels", () => {
     const s = reduceAgingSnapshot([
-      { module: "si", cnt: "4", total_centi: "999", total_outstanding_centi: "5" },
-      { module: "xx", cnt: 9, total_centi: 9, total_outstanding_centi: 9 } as AgingMvRow,
+      { module: "si", cnt: "4", total_sen: "999", total_outstanding_sen: "5" },
+      { module: "xx", cnt: 9, total_sen: 9, total_outstanding_sen: 9 } as AgingMvRow,
     ]);
-    expect(s.si).toEqual({ count: 4, total_centi: 999, total_outstanding_centi: 5 });
+    expect(s.si).toEqual({ count: 4, total_sen: 999, total_outstanding_sen: 5 });
     expect(Object.keys(s)).not.toContain("xx");
   });
 });
@@ -182,13 +182,13 @@ describe("company scoping is isolated in BOTH directions", () => {
 
   test("B's PI (which A lacks) appears for B and is 0 for A", () => {
     const forB = reduceAgingSnapshot(scopeRows(mvAll, B)).pi;
-    expect(forB).toEqual<OutstandingSummaryEntry>({ count: 1, total_centi: 12000, total_outstanding_centi: 3000 });
-    expect(reduceAgingSnapshot(scopeRows(mvAll, A)).pi).toEqual({ count: 0, total_centi: 0, total_outstanding_centi: 0 });
+    expect(forB).toEqual<OutstandingSummaryEntry>({ count: 1, total_sen: 12000, total_outstanding_sen: 3000 });
+    expect(reduceAgingSnapshot(scopeRows(mvAll, A)).pi).toEqual({ count: 0, total_sen: 0, total_outstanding_sen: 0 });
   });
 
   test("neither company's SI outstanding leaks into the other", () => {
-    expect(reduceAgingSnapshot(scopeRows(mvAll, A)).si.total_outstanding_centi).toBe(9000);
-    expect(reduceAgingSnapshot(scopeRows(mvAll, B)).si.total_outstanding_centi).toBe(8000);
+    expect(reduceAgingSnapshot(scopeRows(mvAll, A)).si.total_outstanding_sen).toBe(9000);
+    expect(reduceAgingSnapshot(scopeRows(mvAll, B)).si.total_outstanding_sen).toBe(8000);
   });
 });
 

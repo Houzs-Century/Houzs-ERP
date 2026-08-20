@@ -33,7 +33,7 @@ interface SoRow {
   doc_no: string; status: string;
   debtor_name?: string | null; email?: string | null; address1?: string | null;
   postcode?: string | null; customer_delivery_date?: string | null;
-  local_total_centi?: number | null; paid_centi?: number | null;
+  local_total_sen?: number | null; paid_sen?: number | null;
 }
 interface ItemRow {
   doc_no: string; item_group: string; item_code: string;
@@ -60,7 +60,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   const soRes = await db
     .prepare(
       `SELECT doc_no, status, debtor_name, email, address1, postcode,
-              customer_delivery_date, local_total_centi, paid_centi
+              customer_delivery_date, local_total_sen, paid_sen
          FROM scm.mfg_sales_orders WHERE status IN ${PIPELINE} LIMIT 1000`,
     )
     .all<SoRow>();
@@ -97,8 +97,8 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   for (const so of sos) {
     const readiness = summariseReadiness(itemsByDoc.get(so.doc_no) ?? []);
     const gate = computeReleaseGate({
-      totalCenti: Number(so.local_total_centi ?? 0),
-      paidCenti: Number(so.paid_centi ?? 0),
+      totalSen: Number(so.local_total_sen ?? 0),
+      paidSen: Number(so.paid_sen ?? 0),
     });
     const input: FulfilmentInput = {
       status: so.status,

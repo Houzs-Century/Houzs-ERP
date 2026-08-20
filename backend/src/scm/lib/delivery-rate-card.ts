@@ -49,8 +49,8 @@ export interface RateCardSpec {
    */
   aggregation?: AggregationUnit;
   /** Optional envelope applied to the summed cost. */
-  minChargeCenti?: number | null;
-  capCenti?: number | null;
+  minChargeSen?: number | null;
+  capSen?: number | null;
   rounding?: 'NONE' | 'NEAREST_10C' | 'NEAREST_RM' | null;
   rules: readonly RateRuleSpec[];
 }
@@ -80,7 +80,7 @@ export interface RateRuleSpec {
   /** OUTSTATION: destination area zone this surcharge applies to. */
   zone?: string | null;
   /** The price, integer sen. */
-  amountCenti: number;
+  amountSen: number;
 }
 
 /** A drop/trip's delivery facts. The caller derives these; the tiers count over
@@ -123,15 +123,15 @@ export interface DeliveryFacts {
 export interface CostLine {
   ruleType: RateRuleType | 'MIN_CHARGE' | 'CAP' | 'ROUNDING';
   label: string;
-  amountCenti: number;
+  amountSen: number;
   /** Optional structured detail (unit index, zone, compartment band, count). */
   detail?: Record<string, unknown>;
 }
 
 export interface CostBreakdown {
-  totalCenti: number;
+  totalSen: number;
   /** The sum BEFORE the min/cap/rounding envelope — the raw priced lines. */
-  subtotalCenti: number;
+  subtotalSen: number;
   lines: CostLine[];
 }
 
@@ -227,7 +227,7 @@ export function farthestZone(
     const z = String(raw ?? '').trim().toUpperCase();
     if (!z) continue;
     const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z);
-    const amount = rule ? intOf(rule.amountCenti) : 0;
+    const amount = rule ? intOf(rule.amountSen) : 0;
     /* Ties keep the FIRST seen so the result is deterministic — the whole point
        is that the same trip must not reconcile differently on a re-run. */
     if (!best || amount > best.amount) best = { zone: z, amount };
@@ -258,8 +258,8 @@ export interface CostOptions {
  * Order of the itemised lines: charging-unit tiers (+ overage) → sofa brackets →
  * outstation → dispose → setup → dismantle → service/pickup/inspection/transfer
  * → the per-trip outstation fee when pricing a trip, then the min/cap/rounding
- * envelope. The returned `subtotalCenti` is the sum of the priced lines before
- * the envelope; `totalCenti` is after it.
+ * envelope. The returned `subtotalSen` is the sum of the priced lines before
+ * the envelope; `totalSen` is after it.
  */
 export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, opts: CostOptions = {}): CostBreakdown {
   const lines: CostLine[] = [];
@@ -279,7 +279,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       lines.push({
         ruleType: 'OVERAGE',
         label: `Overage ${ordinal(n)} ${unitLabel} (beyond cap ${cap})`,
-        amountCenti: intOf(overage!.amountCenti),
+        amountSen: intOf(overage!.amountSen),
         detail: { position: n, cap },
       });
       continue;
@@ -289,7 +289,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       lines.push({
         ruleType: 'POSITIONAL_TIER',
         label: `${ordinal(n)} ${unitLabel}`,
-        amountCenti: intOf(tier.amountCenti),
+        amountSen: intOf(tier.amountSen),
         detail: { position: n, tierPosition: intOf(tier.tierPosition) },
       });
     }
@@ -310,7 +310,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       lines.push({
         ruleType: 'SOFA_BRACKET',
         label: `Sofa ${c}-compartment (${intOf(bracket.bracketMin)}${hi} band)`,
-        amountCenti: intOf(bracket.amountCenti),
+        amountSen: intOf(bracket.amountSen),
         detail: { compartments: c, bracketMin: intOf(bracket.bracketMin), bracketMax: bracket.bracketMax ?? null },
       });
     }
@@ -328,7 +328,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       lines.push({
         ruleType: 'OUTSTATION',
         label: `Outstation ${farZone}`,
-        amountCenti: intOf(os.amountCenti),
+        amountSen: intOf(os.amountSen),
         detail: { zone: farZone, ...(facts.destinationZones ? { pickedFrom: [...facts.destinationZones] } : {}) },
       });
     }
@@ -348,43 +348,43 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     if (count <= 0) continue;
     const rule = rulesOf(type)[0];
     if (!rule) continue;
-    const each = intOf(rule.amountCenti);
+    const each = intOf(rule.amountSen);
     lines.push({
       ruleType: type,
       label: count > 1 ? `${label} x${count}` : label,
-      amountCenti: each * count,
-      detail: { count, eachCenti: each },
+      amountSen: each * count,
+      detail: { count, eachSen: each },
     });
   }
 
   // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
   if (opts.perTrip) {
     const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts);
-    const tripFee = tripOutstationFeeCenti(rules, tripZone);
+    const tripFee = tripOutstationFeeSen(rules, tripZone);
     if (tripFee > 0) {
       lines.push({
         ruleType: 'OUTSTATION_TRIP',
         label: `Outstation trip ${String(tripZone).toUpperCase()}`,
-        amountCenti: tripFee,
+        amountSen: tripFee,
         detail: { zone: tripZone, perTrip: true },
       });
     }
   }
 
   // ── Subtotal → min / cap / rounding envelope ──────────────────────────────
-  const subtotalCenti = lines.reduce((s, l) => s + l.amountCenti, 0);
-  let total = subtotalCenti;
+  const subtotalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  let total = subtotalSen;
 
-  const minCharge = card.minChargeCenti != null ? intOf(card.minChargeCenti) : null;
+  const minCharge = card.minChargeSen != null ? intOf(card.minChargeSen) : null;
   if (minCharge != null && total < minCharge) {
-    lines.push({ ruleType: 'MIN_CHARGE', label: `Minimum charge`, amountCenti: minCharge - total, detail: { minChargeCenti: minCharge } });
+    lines.push({ ruleType: 'MIN_CHARGE', label: `Minimum charge`, amountSen: minCharge - total, detail: { minChargeSen: minCharge } });
     total = minCharge;
   }
 
-  const capCenti = card.capCenti != null ? intOf(card.capCenti) : null;
-  if (capCenti != null && total > capCenti) {
-    lines.push({ ruleType: 'CAP', label: `Charge cap`, amountCenti: capCenti - total, detail: { capCenti } });
-    total = capCenti;
+  const capSen = card.capSen != null ? intOf(card.capSen) : null;
+  if (capSen != null && total > capSen) {
+    lines.push({ ruleType: 'CAP', label: `Charge cap`, amountSen: capSen - total, detail: { capSen } });
+    total = capSen;
   }
 
   const rounding = card.rounding ?? 'NONE';
@@ -398,14 +398,14 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
        RM495.00 and a cap of RM494.95 produced RM495.00 too: over the cap, on a
        line labelled "cap". A cap that a later step can exceed is not a cap.
        Round DOWN instead when up would breach it. */
-    if (capCenti != null && rounded > capCenti) rounded = Math.floor(total / step) * step;
+    if (capSen != null && rounded > capSen) rounded = Math.floor(total / step) * step;
     if (rounded !== total) {
-      lines.push({ ruleType: 'ROUNDING', label: `Rounding (${rounding === 'NEAREST_RM' ? 'nearest RM' : 'nearest 10 sen'})`, amountCenti: rounded - total, detail: { rounding } });
+      lines.push({ ruleType: 'ROUNDING', label: `Rounding (${rounding === 'NEAREST_RM' ? 'nearest RM' : 'nearest 10 sen'})`, amountSen: rounded - total, detail: { rounding } });
       total = rounded;
     }
   }
 
-  return { totalCenti: total, subtotalCenti, lines };
+  return { totalSen: total, subtotalSen, lines };
 }
 
 // ── WS4c: fixed per-TRIP outstation surcharge ────────────────────────────────
@@ -415,7 +415,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
 // trip regardless of drop count, so it lives OUTSIDE computeDeliveryCost — the
 // reconcile adds it once after summing the trip's expected cost. This is why
 // computeDeliveryCost never processes OUTSTATION_TRIP. Pure, unit-tested.
-export function tripOutstationFeeCenti(
+export function tripOutstationFeeSen(
   rules: readonly RateRuleSpec[],
   destinationZone: string | null | undefined,
 ): number {
@@ -423,6 +423,6 @@ export function tripOutstationFeeCenti(
   const z = String(destinationZone).toUpperCase();
   const r = rules.find((x) => x.ruleType === 'OUTSTATION_TRIP' && String(x.zone ?? '').toUpperCase() === z);
   if (!r) return 0;
-  const amt = Math.round(Number(r.amountCenti) || 0);
+  const amt = Math.round(Number(r.amountSen) || 0);
   return amt > 0 ? amt : 0;
 }

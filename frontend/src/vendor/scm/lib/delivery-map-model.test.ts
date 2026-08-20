@@ -29,7 +29,7 @@ import type { PlanningOrder } from './delivery-planning-queries';
 const point = (over: Partial<DeliveryGeoPoint>): DeliveryGeoPoint => ({
   ref: 'SO-1', so_doc_no: 'SO-1', lat: 3.1, lng: 101.6,
   zone: 'KL', region: 'KL', state: 'Kuala Lumpur', postcode: '50000',
-  sets: 2, revenueCenti: 100_000, customer: 'Ali', address: '1 Jalan A',
+  sets: 2, revenueSen: 100_000, customer: 'Ali', address: '1 Jalan A',
   ...over,
 });
 
@@ -52,15 +52,15 @@ describe('pinsFromGeoPoints + geoTotals — the geo point model', () => {
     const pins = pinsFromGeoPoints([point({}), point({ ref: 'SO-2', so_doc_no: 'SO-2', zone: null, region: 'SOUTHERN' })]);
     expect(pins).toHaveLength(2);
     expect(pins[0].card).toEqual({
-      soDocNo: 'SO-1', customer: 'Ali', sets: 2, revenueCenti: 100_000,
+      soDocNo: 'SO-1', customer: 'Ali', sets: 2, revenueSen: 100_000,
       address: '1 Jalan A', zone: 'KL',
     });
     // Unzoned pin colours by region, not by a phantom zone.
     expect(pins[1].color).toBe(zoneColorFor(null, 'SOUTHERN'));
   });
   it('totals fold orders / sets / revenue', () => {
-    expect(geoTotals([point({}), point({ sets: 3, revenueCenti: 50_000 })]))
-      .toEqual({ orders: 2, sets: 5, revenueCenti: 150_000 });
+    expect(geoTotals([point({}), point({ sets: 3, revenueSen: 50_000 })]))
+      .toEqual({ orders: 2, sets: 5, revenueSen: 150_000 });
   });
 });
 
@@ -73,7 +73,7 @@ const runStop = (ref: string, order: number, over: Partial<AnonymousRun['stops']
 
 const run = (over: Partial<AnonymousRun>): AnonymousRun => ({
   key: 'k1', date: '2026-08-12', group: 'KLANG_VALLEY', runNo: 1,
-  stops: [], sets: 0, revenueCenti: 0, overCapacity: false, windowViolations: 0,
+  stops: [], sets: 0, revenueSen: 0, overCapacity: false, windowViolations: 0,
   returnTime: null, totalDistanceMetres: null, routeReason: null, ungeocoded: [],
   vehicleSlotId: 'slot-1',
   ...over,
@@ -167,7 +167,7 @@ describe('focusFilterRows + toggleFocus — the trip-focus board filter', () => 
 
 const mapPin = (ref: string, lat: number, lng: number, color = '#2563eb'): MapPin => ({
   ref, lat, lng, color,
-  card: { soDocNo: ref, customer: null, sets: 1, revenueCenti: 0, address: null, zone: null },
+  card: { soDocNo: ref, customer: null, sets: 1, revenueSen: 0, address: null, zone: null },
 });
 
 describe('clusterPins — the low-zoom count bubbles', () => {

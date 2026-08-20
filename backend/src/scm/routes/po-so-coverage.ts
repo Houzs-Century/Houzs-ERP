@@ -130,7 +130,7 @@ export type OriginAssignment = {
        mrp       — a live MRP allocation and nothing more (no stored link) */
   source?: 'delivered' | 'linked' | 'mrp';
 };
-/* Per-SKU assignment: the covering PO line's material_code and every SO assigned
+/* Per-SKU assignment: the covering PO line's item_code and every SO assigned
    to it. Only SKUs WITH an assignment appear (a bare stock SKU is absent, and
    the UI shows a dash for it).
 
@@ -189,7 +189,7 @@ function sortAssignments(assignments: OriginAssignment[]): OriginAssignment[] {
 
 /* PURE core (linkage B): match the PO's SKUs to the STORED-ORIGIN SOs' lines by
    item_code and attach each origin SO's effective delivery date. No DB.
-   - poSkus: the PO's material_codes (may repeat / be blank).
+   - poSkus: the PO's item_codes (may repeat / be blank).
    - soHeaders: the validated, company-owned origin SO headers.
    - soLines: those SOs' item lines (doc_no + item_code).
    An origin SO appears under a SKU only when it actually has a line with that
@@ -239,13 +239,13 @@ export function buildStoredOrigins(
    2026-07-29 guess-vs-binding distinction rides on — an allocation IS a stored
    link, so an allocated SKU counts). */
 export function effectiveStoredLinks(
-  poLines: Array<{ id?: string | null; material_code: string | null; so_item_id: string | null }>,
+  poLines: Array<{ id?: string | null; item_code: string | null; so_item_id: string | null }>,
   allocationsByItem: Map<string, Array<{ so_item_id: string | null }>>,
 ): { soItemIds: string[]; linkedSkus: Set<string> } {
   const soItemIds = new Set<string>();
   const linkedSkus = new Set<string>();
   for (const l of poLines ?? []) {
-    const code = (l.material_code ?? '').trim();
+    const code = (l.item_code ?? '').trim();
     const allocs = l.id ? allocationsByItem.get(l.id) ?? [] : [];
     if (allocs.length > 0) {
       let linked = false;
@@ -395,7 +395,7 @@ async function resolveDeliveredSoLock(
   const empty = { bySku: new Map<string, OriginAssignment[]>(), docNos: [] as string[] };
   if (!poNumber) return empty;
   try {
-    // (do id, product_code, variant_key) buckets whose goods came from THIS PO —
+    // (do id, item_code, variant_key) buckets whose goods came from THIS PO —
     // batched OUT movements ∪ consumptions of this PO's lots, from the ONE
     // shared ledger resolver (lib/source-po-trace.ts) the Delivered column also
     // reads, so the two columns can never disagree.
@@ -480,13 +480,13 @@ poSoCoverage.get('/:type/:id', async (c) => {
       return c.json({ poNumber: null, poId: null, origins: [] as SkuOrigin[], delivered: [] as Array<{ itemCode: string; dos: DeliveredDo[] }> });
     }
 
-    // The covering PO's own lines: SKUs (matched by material_code) + the exact
+    // The covering PO's own lines: SKUs (matched by item_code) + the exact
     // raise-link (so_item_id) where present.
     const { data: poLines } = await scopeToCompany(
-      sb.from('purchase_order_items').select('id, material_code, so_item_id'), c,
+      sb.from('purchase_order_items').select('id, item_code, so_item_id'), c,
     ).eq('purchase_order_id', po.poId);
-    const lineRows = (poLines ?? []) as Array<{ id: string; material_code: string | null; so_item_id: string | null }>;
-    const poSkus = lineRows.map((l) => l.material_code);
+    const lineRows = (poLines ?? []) as Array<{ id: string; item_code: string | null; so_item_id: string | null }>;
+    const poSkus = lineRows.map((l) => l.item_code);
     /* mig 0235 — allocations, where present for a line, are the AUTHORITATIVE
        finer-grained links and replace that line's single so_item_id (a
        consolidated line can name several SOs; where both exist, allocations
@@ -581,7 +581,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
     const origins = mergeAssignments(poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus);
     /* "Delivered" per SKU — the DO(s) that shipped this PO's goods + qty (owner
        2026-07-31). The forward companion of the delivered-lock above; the drill-
-       down matches it into each line by material_code. */
+       down matches it into each line by item_code. */
     const deliveredBySku = await resolveDeliveredBySkuForPo(sb, c, po.poNumber);
     const delivered: Array<{ itemCode: string; dos: DeliveredDo[] }> = [...deliveredBySku.entries()]
       .map(([itemCode, dos]) => ({ itemCode, dos }))
@@ -724,18 +724,18 @@ export async function resolvePoSoCoveragePerSkuForPos(
   }))());
   const ledgerProm = eager(tracePoDeliveredLedger(sb, poNumbers));
 
-  type PoLineLinkRow = { id: string; purchase_order_id: string; material_code: string | null; so_item_id: string | null };
+  type PoLineLinkRow = { id: string; purchase_order_id: string; item_code: string | null; so_item_id: string | null };
   const { data: poLines } = await chunkIn<PoLineLinkRow>(
     validIds,
     (batch, from, to) => scopeToCompany(
-      sb.from('purchase_order_items').select('id, purchase_order_id, material_code, so_item_id'), c,
+      sb.from('purchase_order_items').select('id, purchase_order_id, item_code, so_item_id'), c,
     ).in('purchase_order_id', batch).order('id').range(from, to),
   );
   const lineRowsByPo = new Map<string, PoLineLinkRow[]>();
   const skusByPo = new Map<string, Array<string | null>>();
   for (const l of poLines) {
     const arr = skusByPo.get(l.purchase_order_id) ?? [];
-    arr.push(l.material_code);
+    arr.push(l.item_code);
     skusByPo.set(l.purchase_order_id, arr);
     const rows = lineRowsByPo.get(l.purchase_order_id) ?? [];
     rows.push(l);

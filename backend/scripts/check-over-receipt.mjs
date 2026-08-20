@@ -50,7 +50,7 @@ async function main() {
            po.linked_ac_docno            AS ac_po,
            po.status::text               AS po_status,
            poi.id                        AS poi_id,
-           poi.material_code,
+           poi.item_code,
            poi.qty::int                  AS ordered,
            COALESCE(poi.received_qty, 0)::int AS received,
            g.grn_number,
@@ -66,7 +66,7 @@ async function main() {
       LEFT JOIN scm.grn_items gi   ON gi.purchase_order_item_id = poi.id
       LEFT JOIN scm.grns g         ON g.id = gi.grn_id
      WHERE COALESCE(poi.received_qty, 0) > poi.qty
-     ORDER BY po.po_number, poi.material_code, g.grn_number`;
+     ORDER BY po.po_number, poi.item_code, g.grn_number`;
 
   const byLine = new Map();
   for (const r of lines) {
@@ -86,7 +86,7 @@ async function main() {
       ? l.grns.map((g) => `${g.grn_number}${g.migrated_no_stock ? "[M]" : "[LIVE]"}(${g.grn_status},acc=${g.gi_accepted})`).join(" ")
       : "(NO GRN LINE AT ALL)";
     log(
-      `  ${String(l.po_number).padEnd(13)} ${String(l.material_code).padEnd(24)} ` +
+      `  ${String(l.po_number).padEnd(13)} ${String(l.item_code).padEnd(24)} ` +
       `${String(l.ordered).padStart(3)} ${String(l.received).padStart(4)} ${String(excessOf(l)).padStart(4)}  ${grn}`,
     );
   }
@@ -102,16 +102,16 @@ async function main() {
     ? await db`
         SELECT m.source_doc_id AS grn_id,
                m.source_doc_no,
-               m.product_code,
+               m.item_code,
                SUM(CASE WHEN m.movement_type = 'IN'  THEN m.qty ELSE 0 END)::int AS in_qty,
                SUM(CASE WHEN m.movement_type = 'OUT' THEN m.qty ELSE 0 END)::int AS out_qty
           FROM scm.inventory_movements m
          WHERE m.source_doc_type = 'GRN'
            AND m.source_doc_id = ANY(${grnIds})
-         GROUP BY m.source_doc_id, m.source_doc_no, m.product_code`
+         GROUP BY m.source_doc_id, m.source_doc_no, m.item_code`
     : [];
   const moveBy = new Map();
-  for (const m of moves) moveBy.set(`${m.grn_id}|${m.product_code}`, n(m.in_qty) - n(m.out_qty));
+  for (const m of moves) moveBy.set(`${m.grn_id}|${m.item_code}`, n(m.in_qty) - n(m.out_qty));
 
   let excessMoved = 0, excessPaperOnly = 0;
   const movedRows = [];
@@ -119,7 +119,7 @@ async function main() {
     const exc = excessOf(l);
     /* Attribute the excess to the GRNs that carry it. A line's excess "moved"
        only to the extent the documents behind it actually wrote IN rows. */
-    const netIn = l.grns.reduce((s, g) => s + (moveBy.get(`${g.grn_id}|${l.material_code}`) ?? 0), 0);
+    const netIn = l.grns.reduce((s, g) => s + (moveBy.get(`${g.grn_id}|${l.item_code}`) ?? 0), 0);
     const movedExcess = Math.max(0, Math.min(exc, netIn - n(l.ordered)));
     if (movedExcess > 0) { excessMoved += movedExcess; movedRows.push({ l, netIn, movedExcess }); }
     excessPaperOnly += exc - movedExcess;
@@ -137,7 +137,7 @@ async function main() {
     log("");
     log("  lines whose excess reached the ledger:");
     for (const r of movedRows) {
-      log(`    ${r.l.po_number} ${r.l.material_code} ord=${r.l.ordered} rcv=${r.l.received} netIN=${r.netIn} movedExcess=${r.movedExcess}`);
+      log(`    ${r.l.po_number} ${r.l.item_code} ord=${r.l.ordered} rcv=${r.l.received} netIN=${r.netIn} movedExcess=${r.movedExcess}`);
     }
   }
 
@@ -210,7 +210,7 @@ async function main() {
     log(`  posted_at=${hdr.posted_at}  received_at=${hdr.received_at}  created_by=${hdr.created_by}`);
     log(`  notes: ${hdr.notes ?? "(none)"}`);
     const gl = await db`
-      SELECT gi.material_code, gi.material_name,
+      SELECT gi.item_code, gi.material_name,
              COALESCE(gi.qty_received, 0)::int AS qty_received,
              COALESCE(gi.qty_accepted, 0)::int AS qty_accepted,
              COALESCE(gi.qty_rejected, 0)::int AS qty_rejected,
@@ -218,31 +218,31 @@ async function main() {
              gi.purchase_order_item_id
         FROM scm.grn_items gi
        WHERE gi.grn_id = ${hdr.id}
-       ORDER BY gi.material_code`;
+       ORDER BY gi.item_code`;
     log("");
     log("  GRN LINES:   qty_received / qty_accepted / qty_rejected / returned_qty");
     for (const r of gl) {
-      log(`    ${String(r.material_code).padEnd(24)} recv=${r.qty_received}  acc=${r.qty_accepted}  rej=${r.qty_rejected}  ret=${r.returned_qty}`);
+      log(`    ${String(r.item_code).padEnd(24)} recv=${r.qty_received}  acc=${r.qty_accepted}  rej=${r.qty_rejected}  ret=${r.returned_qty}`);
     }
     const pl = await db`
-      SELECT poi.material_code, poi.qty::int AS ordered,
+      SELECT poi.item_code, poi.qty::int AS ordered,
              COALESCE(poi.received_qty, 0)::int AS received, poi.supplier_sku, poi.description2
         FROM scm.purchase_order_items poi
        WHERE poi.purchase_order_id = ${hdr.purchase_order_id}
-       ORDER BY poi.material_code`;
+       ORDER BY poi.item_code`;
     log("");
     log("  PO LINES on the same purchase order:");
     for (const r of pl) {
-      log(`    ${String(r.material_code).padEnd(24)} ordered=${r.ordered}  received_qty=${r.received}  sku=${r.supplier_sku ?? "-"}`);
+      log(`    ${String(r.item_code).padEnd(24)} ordered=${r.ordered}  received_qty=${r.received}  sku=${r.supplier_sku ?? "-"}`);
     }
     const mv = await db`
-      SELECT movement_type::text AS t, product_code, SUM(qty)::int AS qty
+      SELECT movement_type::text AS t, item_code, SUM(qty)::int AS qty
         FROM scm.inventory_movements
        WHERE source_doc_type = 'GRN' AND source_doc_id = ${hdr.id}
-       GROUP BY movement_type, product_code ORDER BY product_code`;
+       GROUP BY movement_type, item_code ORDER BY item_code`;
     log("");
     log(`  INVENTORY MOVEMENTS for this GRN: ${mv.length === 0 ? "NONE" : ""}`);
-    for (const r of mv) log(`    ${r.t} ${r.product_code} qty=${r.qty}`);
+    for (const r of mv) log(`    ${r.t} ${r.item_code} qty=${r.qty}`);
   }
 
   // ── §5 the same shape on the delivery side ───────────────────────────────

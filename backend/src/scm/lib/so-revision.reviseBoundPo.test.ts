@@ -16,7 +16,7 @@
 // No module mocks: this suite runs on the Cloudflare Workers vitest pool, where
 // vi.mock does not reliably intercept module imports. Instead it drives the REAL
 // modules against the fake client — deterministic pricing comes from seeding
-// supplier_material_bindings (a bedframe line + flat unit_price_centi + null
+// supplier_material_bindings (a bedframe line + flat unit_price_sen + null
 // price_matrix resolves to that flat cost), and each expected cost is computed by
 // calling the REAL deriveMfgPoUnitCost so the assertions never re-implement it.
 import { describe, it, expect } from 'vitest';
@@ -133,7 +133,7 @@ function baseStore(): Record<string, Row[]> {
     purchase_orders: [{
       id: 'POX', po_number: 'PO-2607-001', status: 'SUBMITTED', revision: 1,
       supplier_id: 'S1', purchase_location_id: 'WH1', company_id: 1,
-      subtotal_centi: 3500, total_centi: 3500, expected_at: null,
+      subtotal_sen: 3500, total_sen: 3500, expected_at: null,
     }],
     supplier_material_bindings: [
       binding('BF-1', 'S1', 1000), binding('BF-3', 'S1', 1500),
@@ -145,14 +145,14 @@ function baseStore(): Record<string, Row[]> {
   };
 }
 
-const binding = (material_code: string, supplier_id: string, unit_price_centi: number, sku = `SKU-${material_code}`): Row => ({
-  material_code, supplier_id, supplier_sku: sku, unit_price_centi, price_matrix: null,
+const binding = (item_code: string, supplier_id: string, unit_price_sen: number, sku = `SKU-${item_code}`): Row => ({
+  item_code, supplier_id, supplier_sku: sku, unit_price_sen, price_matrix: null,
   is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
 });
 const poLine = (over: Partial<Row>): Row => ({
   id: 'POI-x', purchase_order_id: 'POX', so_item_id: null, qty: 1, received_qty: 0,
-  material_code: 'BF', material_name: 'Bed', discount_centi: 0, line_total_centi: 0,
-  unit_price_centi: 0, delivery_date: null, warehouse_id: 'WH1', item_group: 'bedframe',
+  item_code: 'BF', material_name: 'Bed', discount_sen: 0, line_total_sen: 0,
+  unit_price_sen: 0, delivery_date: null, warehouse_id: 'WH1', item_group: 'bedframe',
   variants: null, from_mrp: false, company_id: 1, ...over,
 });
 const soLine = (over: Partial<Row>): Row => ({
@@ -168,8 +168,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_centi: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, line_total_centi: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
 
@@ -178,8 +178,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const items = store.purchase_order_items;
     expect(items.find((i) => i.id === 'POI-2')).toBeUndefined();   // orphan deleted
     expect(items.map((i) => i.id)).toEqual(['POI-1']);
-    expect(store.purchase_orders[0].subtotal_centi).toBe(c1 * 2);  // survivor only
-    expect(store.purchase_orders[0].total_centi).toBe(c1 * 2);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 2);  // survivor only
+    expect(store.purchase_orders[0].total_sen).toBe(c1 * 2);
     expect(store.purchase_orders[0].revision).toBe(2);
     expect(res.perPo[0]).toMatchObject({ linesRederived: 1, linesRemoved: 1, linesAdded: 0 });
     expect(res.warnings).toEqual([]);
@@ -189,36 +189,36 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_centi: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, received_qty: 1, line_total_centi: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, received_qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
 
     const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
 
     expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeDefined();  // preserved
-    expect(store.purchase_orders[0].subtotal_centi).toBe(c1 * 2 + 1500);             // still billed
+    expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 2 + 1500);             // still billed
     expect(res.perPo[0].linesRemoved).toBe(0);
     expect(res.warnings).toHaveLength(1);
     expect(res.warnings[0]).toContain('Bed Two');
     expect(res.warnings[0]).toContain('PO-2607-001');
     expect(res.warnings[0].toLowerCase()).toContain('already received');
     // Plain language: no codes / keys / jargon.
-    expect(res.warnings[0]).not.toMatch(/so_item_id|_centi|uuid|null/i);
+    expect(res.warnings[0]).not.toMatch(/so_item_id|_sen|uuid|null/i);
   });
 
   it('warns when every line of a PO is removed (PO left empty)', async () => {
     const store = baseStore();
     store.mfg_sales_order_items = [];   // both lines removed → SO empty, POX fully orphaned
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: null, material_code: 'BF-1', qty: 1, line_total_centi: 1000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', qty: 1, line_total_centi: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: null, item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
 
     const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
 
     expect(store.purchase_order_items).toHaveLength(0);
-    expect(store.purchase_orders[0].subtotal_centi).toBe(0);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(0);
     expect(res.perPo[0].linesRemoved).toBe(2);
     expect(res.warnings.some((w) => w.includes('no lines') && w.includes('PO-2607-001'))).toBe(true);
   });
@@ -227,8 +227,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_centi: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', qty: 1, line_total_centi: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
     const sb = fakeSb(store);
@@ -239,7 +239,7 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
 
     expect(store.purchase_order_items.map((i) => i.id)).toEqual(afterFirst);   // no change
     expect(res2.perPo[0].linesRemoved).toBe(0);            // nothing left to remove
-    expect(store.purchase_orders[0].subtotal_centi).toBe(c1 * 2);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 2);
   });
 });
 
@@ -255,7 +255,7 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
       soLine({ id: 'L3', item_code: 'BF-3', qty: 2, warehouse_id: 'WH1', line_delivery_date: '2026-08-01', description: 'Bed Three' }),
     ];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 1, line_total_centi: 1000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
     ];
     return store;
   }
@@ -270,15 +270,15 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     const added = store.purchase_order_items.find((i) => i.so_item_id === 'L3');
     expect(added).toBeDefined();
     expect(added).toMatchObject({
-      purchase_order_id: 'POX', material_code: 'BF-3', material_name: 'Bed Three',
+      purchase_order_id: 'POX', item_code: 'BF-3', material_name: 'Bed Three',
       supplier_sku: 'SKU-BF-3', qty: 2, warehouse_id: 'WH1', delivery_date: '2026-08-01',
       from_mrp: false, company_id: 1,
     });
     // Priced by the SAME rule the create path uses.
-    expect(added!.unit_price_centi).toBe(c3);
-    expect(added!.line_total_centi).toBe(c3 * 2);
+    expect(added!.unit_price_sen).toBe(c3);
+    expect(added!.line_total_sen).toBe(c3 * 2);
     expect(c3).toBeGreaterThan(0);                       // guard: the seed really priced it
-    expect(store.purchase_orders[0].subtotal_centi).toBe(c1 * 1 + c3 * 2);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 1 + c3 * 2);
     expect(res.perPo[0]).toMatchObject({ linesAdded: 1, linesRemoved: 0 });
     expect(res.warnings).toEqual([]);
   });
@@ -293,7 +293,7 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     await reviseBoundPo(sb, AMD, 'user-1');
 
     expect(store.purchase_order_items.filter((i) => i.so_item_id === 'L3')).toHaveLength(1);
-    expect(store.purchase_orders[0].subtotal_centi).toBe(c1 * 1 + c3 * 2);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 1 + c3 * 2);
   });
 
   it('warns (does not guess a PO) when the added item has no supplier bound', async () => {
@@ -340,7 +340,7 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 1 })];
     store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } } }];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 5, received_qty: 3, line_total_centi: 5000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 5, received_qty: 3, line_total_sen: 5000 }),
     ];
 
     await expect(reviseBoundPo(fakeSb(store), AMD, 'user-1')).rejects.toMatchObject({ code: 'received_floor' });

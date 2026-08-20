@@ -18,7 +18,7 @@
 export interface DoReversalMovement {
   movement_type: string;
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   variant_key: string | null;
   batch_no?: string | null;
   qty: number;
@@ -38,7 +38,7 @@ export interface DoReversalContext {
 
 export interface DoReversalRow {
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   variant_key: string;
   product_name: string | null;
   qty: number;
@@ -54,7 +54,7 @@ export interface DoReversalRow {
 
 interface Agg {
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   variant_key: string;
   batch_no: string | null;
   product_name: string | null;
@@ -82,10 +82,10 @@ export function buildDoReversalRows(
     if (m.movement_type !== 'IN' && m.movement_type !== 'OUT') continue;
     const variant_key = m.variant_key ?? '';
     const batch_no = m.batch_no ?? null;
-    const k = `${m.warehouse_id}::${m.product_code}::${variant_key}::${batch_no ?? ''}`;
+    const k = `${m.warehouse_id}::${m.item_code}::${variant_key}::${batch_no ?? ''}`;
     let agg = byBucket.get(k);
     if (!agg) {
-      agg = { warehouse_id: m.warehouse_id, product_code: m.product_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 };
+      agg = { warehouse_id: m.warehouse_id, item_code: m.item_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 };
       byBucket.set(k, agg);
     }
     const q = Number(m.qty ?? 0);
@@ -105,7 +105,7 @@ export function buildDoReversalRows(
       const unit_cost_sen = b.out_qty > 0 ? Math.round(b.out_total_cost / b.out_qty) : 0;
       const base = {
         warehouse_id: b.warehouse_id,
-        product_code: b.product_code,
+        item_code: b.item_code,
         variant_key: b.variant_key,
         product_name: b.product_name,
         qty: b.net_out, // positive — adds back the stock the DO shipped out

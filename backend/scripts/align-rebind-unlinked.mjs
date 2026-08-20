@@ -37,7 +37,7 @@ async function main() {
     if (!prod) { missingProduct++; continue; }
     const [existing] = await sql`
       SELECT 1 FROM scm.supplier_material_bindings
-      WHERE company_id=${cid} AND material_kind='mfg_product' AND material_code=${p.erp}
+      WHERE company_id=${cid} AND material_kind='mfg_product' AND item_code=${p.erp}
         AND supplier_sku IS NOT NULL AND btrim(supplier_sku)<>'' LIMIT 1`;
     if (existing) { alreadyBound++; continue; }
     const [sib] = await sql`
@@ -47,7 +47,7 @@ async function main() {
     if (!sib) { noSibling++; noSibList.push(`${p.erp} -> ${p.ac} (${p.cls})`); continue; }
     if (apply) {
       const res = await sql`
-        INSERT INTO scm.supplier_material_bindings (company_id, material_kind, material_code, supplier_id, supplier_sku, is_main_supplier)
+        INSERT INTO scm.supplier_material_bindings (company_id, material_kind, item_code, supplier_id, supplier_sku, is_main_supplier)
         VALUES (${cid}, 'mfg_product', ${p.erp}, ${sib.supplier_id}, ${sib.supplier_sku}, false)`;
       inserted += res.count;
     } else inserted++;

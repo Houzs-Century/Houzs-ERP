@@ -233,7 +233,7 @@ try {
              OR i.custom_specials IS NOT NULL )`;
   // The PO header numbers itself `po_number`; only mfg_sales_orders has doc_no.
   const poLines = await pg`
-    SELECT i.id, h.po_number AS doc_no, i.material_code AS code, i.item_group, i.description2 AS d2,
+    SELECT i.id, h.po_number AS doc_no, i.item_code AS code, i.item_group, i.description2 AS d2,
            i.custom_specials, i.variants,
            (h.linked_ac_docno IS NOT NULL) AS migrated
       FROM scm.purchase_order_items i
@@ -368,7 +368,7 @@ try {
     asArray(r.custom_specials).list
       .map((el) => live.get(K(elText(el)))).filter(Boolean)));
   const models = await pg`
-    SELECT DISTINCT p.code AS product_code, m.allowed_options
+    SELECT DISTINCT p.code AS item_code, m.allowed_options
       FROM scm.mfg_products p
       LEFT JOIN scm.product_models m ON m.id = p.model_id
      WHERE p.company_id = ${CO} AND upper(p.category::text) = 'SOFA'`;

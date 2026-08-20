@@ -22,8 +22,8 @@ import {
   canTransitionWorkOrder,
   isWorkOrderOpen,
   workOrderSeam,
-  workOrderTotalCenti,
-  workOrderLineCenti,
+  workOrderTotalSen,
+  workOrderLineSen,
   type WorkOrderLineInput,
   WORK_ORDER_STATES,
   WORK_ORDER_TRANSITIONS,
@@ -531,49 +531,49 @@ describe("isWorkOrderOpen + workOrderSeam", () => {
   });
 });
 
-describe("workOrderTotalCenti — labour + parts + outside + towing + tax", () => {
+describe("workOrderTotalSen — labour + parts + outside + towing + tax", () => {
   test("sums all legs and part lines (qty × unit price)", () => {
-    const total = workOrderTotalCenti({
-      labourCenti: 15_000,
-      outsideServiceCenti: 5_000,
-      towingCenti: 8_000,
-      taxCenti: 2_000,
+    const total = workOrderTotalSen({
+      labourSen: 15_000,
+      outsideServiceSen: 5_000,
+      towingSen: 8_000,
+      taxSen: 2_000,
       parts: [
-        { qty: 2, unitPriceCenti: 3_000 }, // 6000
-        { qty: 1, unitPriceCenti: 4_500 }, // 4500
+        { qty: 2, unitPriceSen: 3_000 }, // 6000
+        { qty: 1, unitPriceSen: 4_500 }, // 4500
       ],
     });
     expect(total).toBe(15_000 + 5_000 + 8_000 + 2_000 + 6_000 + 4_500);
   });
   test("missing legs default to zero; empty parts is fine", () => {
-    expect(workOrderTotalCenti({ labourCenti: 1_000 })).toBe(1_000);
-    expect(workOrderTotalCenti({})).toBe(0);
+    expect(workOrderTotalSen({ labourSen: 1_000 })).toBe(1_000);
+    expect(workOrderTotalSen({})).toBe(0);
   });
   test("fractional part quantities round to whole cents", () => {
-    expect(workOrderTotalCenti({ parts: [{ qty: 1.5, unitPriceCenti: 333 }] })).toBe(500); // 499.5 → 500
+    expect(workOrderTotalSen({ parts: [{ qty: 1.5, unitPriceSen: 333 }] })).toBe(500); // 499.5 → 500
   });
 });
 
-describe("workOrderLineCenti — the shape a workshop invoice actually prints", () => {
+describe("workOrderLineSen — the shape a workshop invoice actually prints", () => {
   test("a per-line discount percent comes off the line", () => {
     // 4 x RM1,100 at 15% -> RM3,740.00 (WJO00403 line 4, verbatim).
-    expect(workOrderLineCenti({ qty: 4, unitPriceCenti: 110_000, discountPct: 15 })).toBe(374_000);
+    expect(workOrderLineSen({ qty: 4, unitPriceSen: 110_000, discountPct: 15 })).toBe(374_000);
   });
   test("no discount field means no discount, never a silent 100% off", () => {
-    expect(workOrderLineCenti({ qty: 15, unitPriceCenti: 2_600 })).toBe(39_000);
-    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 28_000, discountPct: null })).toBe(28_000);
+    expect(workOrderLineSen({ qty: 15, unitPriceSen: 2_600 })).toBe(39_000);
+    expect(workOrderLineSen({ qty: 1, unitPriceSen: 28_000, discountPct: null })).toBe(28_000);
   });
   test("the PRINTED amount wins over the computation — the vendor's rounding is theirs", () => {
-    const line = { qty: 3, unitPriceCenti: 10_000, discountPct: 33.33, amountCenti: 20_000 };
-    expect(workOrderLineCenti(line)).toBe(20_000); // not 20_001
+    const line = { qty: 3, unitPriceSen: 10_000, discountPct: 33.33, amountSen: 20_000 };
+    expect(workOrderLineSen(line)).toBe(20_000); // not 20_001
   });
   test("a nonsense discount is clamped, not trusted", () => {
-    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: 250 })).toBe(0);
-    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: -50 })).toBe(10_000);
-    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: Number.NaN })).toBe(10_000);
+    expect(workOrderLineSen({ qty: 1, unitPriceSen: 10_000, discountPct: 250 })).toBe(0);
+    expect(workOrderLineSen({ qty: 1, unitPriceSen: 10_000, discountPct: -50 })).toBe(10_000);
+    expect(workOrderLineSen({ qty: 1, unitPriceSen: 10_000, discountPct: Number.NaN })).toBe(10_000);
   });
   test("a negative printed amount is floored at zero, not carried", () => {
-    expect(workOrderLineCenti({ amountCenti: -5_000 })).toBe(0);
+    expect(workOrderLineSen({ amountSen: -5_000 })).toBe(0);
   });
 
   /* The whole document, end to end. If this drifts, the line model no longer
@@ -583,37 +583,37 @@ describe("workOrderLineCenti — the shape a workshop invoice actually prints", 
   test("reproduces T FORCE quotation WJO00403 to the sen", () => {
     const rm = (v: number) => Math.round(v * 100);
     const parts: WorkOrderLineInput[] = [
-      { qty: 1, unitPriceCenti: rm(280) },
-      { qty: 1, unitPriceCenti: rm(280) },
-      { qty: 1, unitPriceCenti: rm(5_600), discountPct: 15 },
-      { qty: 4, unitPriceCenti: rm(1_100), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(7_500), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(1_500), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(320), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(480), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(390), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(400), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(210), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(290), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(230), discountPct: 15 },
-      { qty: 1, unitPriceCenti: rm(230), discountPct: 15 },
-      { qty: 15, unitPriceCenti: rm(26) },
-      { qty: 1, unitPriceCenti: rm(48) },
-      { qty: 1, unitPriceCenti: rm(48) },
-      { qty: 1, unitPriceCenti: rm(45) },
+      { qty: 1, unitPriceSen: rm(280) },
+      { qty: 1, unitPriceSen: rm(280) },
+      { qty: 1, unitPriceSen: rm(5_600), discountPct: 15 },
+      { qty: 4, unitPriceSen: rm(1_100), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(7_500), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(1_500), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(320), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(480), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(390), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(400), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(210), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(290), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(230), discountPct: 15 },
+      { qty: 1, unitPriceSen: rm(230), discountPct: 15 },
+      { qty: 15, unitPriceSen: rm(26) },
+      { qty: 1, unitPriceSen: rm(48) },
+      { qty: 1, unitPriceSen: rm(48) },
+      { qty: 1, unitPriceSen: rm(45) },
     ];
-    const labour: WorkOrderLineInput[] = [{ qty: 1, unitPriceCenti: rm(2_800) }];
+    const labour: WorkOrderLineInput[] = [{ qty: 1, unitPriceSen: rm(2_800) }];
 
     // Spot-check the lines the document prints an amount for.
-    expect(workOrderLineCenti(parts[2]!)).toBe(rm(4_760));
-    expect(workOrderLineCenti(parts[4]!)).toBe(rm(6_375));
-    expect(workOrderLineCenti(parts[8]!)).toBe(rm(331.5));
+    expect(workOrderLineSen(parts[2]!)).toBe(rm(4_760));
+    expect(workOrderLineSen(parts[4]!)).toBe(rm(6_375));
+    expect(workOrderLineSen(parts[8]!)).toBe(rm(331.5));
 
-    expect(parts.reduce((s, p) => s + workOrderLineCenti(p), 0)).toBe(rm(19_408.5));
+    expect(parts.reduce((s, p) => s + workOrderLineSen(p), 0)).toBe(rm(19_408.5));
 
     // Labour billed as its own SECTION of lines, with the header scalar left at
     // its default — the two shapes must never both be filled (mig 0241).
-    expect(workOrderTotalCenti({ parts: [...parts, ...labour] })).toBe(rm(22_208.5));
+    expect(workOrderTotalSen({ parts: [...parts, ...labour] })).toBe(rm(22_208.5));
   });
 });
 
@@ -622,31 +622,31 @@ describe("workOrderLineCenti — the shape a workshop invoice actually prints", 
 describe("deriveComponentLife — km_used / cost_per_km / warranty", () => {
   test("a removed component measures removed_km − fitted_km", () => {
     const life = deriveComponentLife(
-      { status: "REMOVED", fittedKm: 100_000, removedKm: 160_000, purchasePriceCenti: 60_000, warrantyUntil: "2025-01-01" },
+      { status: "REMOVED", fittedKm: 100_000, removedKm: 160_000, purchasePriceSen: 60_000, warrantyUntil: "2025-01-01" },
       null,
       TODAY,
     );
     expect(life.kmUsed).toBe(60_000);
-    expect(life.costPerKmCenti).toBe(1); // 60000 / 60000 = 1 cent/km
+    expect(life.costPerKmSen).toBe(1); // 60000 / 60000 = 1 cent/km
     expect(life.underWarranty).toBe(false); // warranty in the past
   });
   test("an active component measures current odometer − fitted_km", () => {
     const life = deriveComponentLife(
-      { status: "ACTIVE", fittedKm: 100_000, purchasePriceCenti: 90_000, warrantyUntil: "2027-01-01" },
+      { status: "ACTIVE", fittedKm: 100_000, purchasePriceSen: 90_000, warrantyUntil: "2027-01-01" },
       130_000,
       TODAY,
     );
     expect(life.kmUsed).toBe(30_000);
-    expect(life.costPerKmCenti).toBe(3); // 90000 / 30000
+    expect(life.costPerKmSen).toBe(3); // 90000 / 30000
     expect(life.underWarranty).toBe(true); // warranty in the future
   });
   test("zero / unknown km_used gives no cost-per-km (never divide by zero)", () => {
-    const noKm = deriveComponentLife({ status: "ACTIVE", fittedKm: 100_000, purchasePriceCenti: 90_000 }, 100_000, TODAY);
+    const noKm = deriveComponentLife({ status: "ACTIVE", fittedKm: 100_000, purchasePriceSen: 90_000 }, 100_000, TODAY);
     expect(noKm.kmUsed).toBe(0);
-    expect(noKm.costPerKmCenti).toBeNull();
-    const noBasis = deriveComponentLife({ status: "ACTIVE", fittedKm: null, purchasePriceCenti: 90_000 }, 130_000, TODAY);
+    expect(noKm.costPerKmSen).toBeNull();
+    const noBasis = deriveComponentLife({ status: "ACTIVE", fittedKm: null, purchasePriceSen: 90_000 }, 130_000, TODAY);
     expect(noBasis.kmUsed).toBeNull();
-    expect(noBasis.costPerKmCenti).toBeNull();
+    expect(noBasis.costPerKmSen).toBeNull();
   });
   test("an odometer below the fitted km (bad data) yields no km_used, not a negative", () => {
     const life = deriveComponentLife({ status: "ACTIVE", fittedKm: 130_000 }, 100_000, TODAY);

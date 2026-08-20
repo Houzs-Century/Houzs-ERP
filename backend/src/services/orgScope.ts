@@ -3,10 +3,9 @@
 //
 // "A reports to B, B reports to C → C sees B's AND A's records": the caller
 // plus their ENTIRE subtree in the public.users.manager_id tree, any depth.
-// This deliberately goes DEEPER than the existing one-hop projectAcl rule
-// (getProjectScope = [self, manager]) — the owner's spec for SO / Service
-// Case scoping is the full downline chain. projectAcl is left untouched;
-// aligning it is a separate decision.
+// This is the SO / Service Case scoping rule (full downline chain). It is
+// unrelated to project visibility, which is no longer PIC/brand-scoped at all
+// (the one-hop projectAcl rule was removed 2026-08-19).
 //
 // Implementation: iterative breadth-first expansion over users.manager_id
 // (works identically on the D1 shim and Postgres — no WITH RECURSIVE

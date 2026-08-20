@@ -11,7 +11,7 @@
 // SRW 722 / SBH 223).
 //
 // WHY IT MATTERS MORE THAN IT LOOKS. Stock is bucketed by
-// (warehouse_id, product_code, variant_key). so-stock-allocation puts a
+// (warehouse_id, item_code, variant_key). so-stock-allocation puts a
 // warehouse-less line in a 'NOWH' bucket that can match no lot, and the sofa
 // path is harder still — sofa-set-coverage.findCoveringBatch returns null on the
 // first line for a null warehouse, before it looks at any stock at all. So NO

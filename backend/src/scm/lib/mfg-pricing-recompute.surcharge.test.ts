@@ -65,26 +65,26 @@ const SOFA_CELLS = [{ id: 'c1', moduleId: 'A1', x: 0, y: 0, rot: 0 }];
 const SOFA_MODULE_PRICES = { A1: 200000 }; // RM 2000 for the single module
 
 const line = (
-  itemCode: string, itemGroup: string, variants: Record<string, unknown>, clientCenti = 0,
-): MfgItemForRecompute => ({ itemCode, itemGroup, qty: 1, unitPriceCenti: clientCenti, variants });
+  itemCode: string, itemGroup: string, variants: Record<string, unknown>, clientSen = 0,
+): MfgItemForRecompute => ({ itemCode, itemGroup, qty: 1, unitPriceSen: clientSen, variants });
 
 /* recomputeFromSnapshot(item, product, fabric, config, sofaCombos,
      sofaModulePrices, sellingFabricTiers, fabricAddonConfig, pwpBaseSen,
      pwpSofaComboIds, specialAddons, sofaModuleCostRows, modelFabricOverrides,
      compartmentFabricOverrides, trustOperatorSelling) */
-const runSofa = (specials: string[], trust: boolean | 'including-zero' = false, clientCenti = 0) =>
+const runSofa = (specials: string[], trust: boolean | 'including-zero' = false, clientSen = 0) =>
   recomputeFromSnapshot(
-    line('SF-1', 'sofa', { cells: SOFA_CELLS, depth: '24', specials }, clientCenti),
+    line('SF-1', 'sofa', { cells: SOFA_CELLS, depth: '24', specials }, clientSen),
     sofa, null, EMPTY_CONFIG, [], SOFA_MODULE_PRICES, null, null, null, null,
     [HYDRAULIC], null, null, null, trust,
   );
 
 const runBedframe = (
   specials: string[], sellPriceSen: number | null,
-  trust: boolean | 'including-zero' = false, clientCenti = 0,
+  trust: boolean | 'including-zero' = false, clientSen = 0,
 ) =>
   recomputeFromSnapshot(
-    line('BF-1', 'bedframe', { specials }, clientCenti),
+    line('BF-1', 'bedframe', { specials }, clientSen),
     bedframe(sellPriceSen), null, EMPTY_CONFIG, null, null, null, null, null, null,
     [HYDRAULIC], null, null, null, trust,
   );

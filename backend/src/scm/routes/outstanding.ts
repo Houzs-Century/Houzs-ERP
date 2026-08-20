@@ -90,30 +90,30 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
 }
 
 /* Per-module aggregate shape for /summary. The JS reducer this replaces sums
-   `Number(r.total_centi ?? r.local_total_centi ?? 0)` and
-   `Number(r.outstanding_centi ?? 0)` over every outstanding row. Cross-referenced
+   `Number(r.total_sen ?? r.local_total_sen ?? 0)` and
+   `Number(r.outstanding_sen ?? 0)` over every outstanding row. Cross-referenced
    against the v_*_outstanding view definitions (mig 0084), each view exposes at
-   most ONE of {total_centi, local_total_centi} and only pi/si expose
-   outstanding_centi — so no view ever mixes columns in the `??` chain and each
+   most ONE of {total_sen, local_total_sen} and only pi/si expose
+   outstanding_sen — so no view ever mixes columns in the `??` chain and each
    module maps to a single SUM column (or none → the total is always 0). We push
    these sums into SQL via PostgREST aggregates:
      - pkCol:   a non-null PK → PK.count() equals rows.length exactly.
-     - amtCol:  the column the `total_centi` reduce resolves to for this view
-                (null ⇒ total_centi is always 0, so no sum is requested).
-     - outCol:  outstanding_centi where the view has it (null ⇒ always 0).
+     - amtCol:  the column the `total_sen` reduce resolves to for this view
+                (null ⇒ total_sen is always 0, so no sum is requested).
+     - outCol:  outstanding_sen where the view has it (null ⇒ always 0).
    SUM ignores NULLs (0 contribution) exactly as the `?? 0` chain does, so the
    numbers stay byte-identical. */
 const SUMMARY_AGG: Record<
   string,
   { pkCol: string; amtCol: string | null; outCol: string | null }
 > = {
-  po:  { pkCol: "id",     amtCol: "total_centi",       outCol: null },
+  po:  { pkCol: "id",     amtCol: "total_sen",       outCol: null },
   grn: { pkCol: "id",     amtCol: null,                outCol: null },
-  pi:  { pkCol: "id",     amtCol: "total_centi",       outCol: "outstanding_centi" },
+  pi:  { pkCol: "id",     amtCol: "total_sen",       outCol: "outstanding_sen" },
   pr:  { pkCol: "id",     amtCol: null,                outCol: null },
-  so:  { pkCol: "doc_no", amtCol: "local_total_centi", outCol: null },
+  so:  { pkCol: "doc_no", amtCol: "local_total_sen", outCol: null },
   do:  { pkCol: "id",     amtCol: null,                outCol: null },
-  si:  { pkCol: "id",     amtCol: "total_centi",       outCol: "outstanding_centi" },
+  si:  { pkCol: "id",     amtCol: "total_sen",       outCol: "outstanding_sen" },
 };
 
 /* /outstanding/summary — counts + totals across all modules in one call.
@@ -153,7 +153,7 @@ outstanding.get("/summary", async (c) => {
     if (!meta.error) {
       let mvQ = sb
         .from("mv_ar_aging")
-        .select("module, cnt, total_centi, total_outstanding_centi");
+        .select("module, cnt, total_sen, total_outstanding_sen");
       mvQ = scopeToCompany(mvQ, c); // same REQUIRED-half predicate as the live path
       const { data, error } = await mvQ;
       if (!error) {
@@ -169,7 +169,7 @@ outstanding.get("/summary", async (c) => {
 
   const summary: Record<
     string,
-    { count: number; total_centi?: number; total_outstanding_centi?: number }
+    { count: number; total_sen?: number; total_outstanding_sen?: number }
   > = {};
 
   // Shared filter set — IDENTICAL to the individual endpoints' outstanding path:
@@ -208,8 +208,8 @@ outstanding.get("/summary", async (c) => {
         summary[slug] = {
           count: Number(row.cnt ?? 0),
           // SUM over zero rows is NULL → coalesce to 0, matching the empty reduce.
-          total_centi: agg.amtCol ? Number(row.amt ?? 0) : 0,
-          total_outstanding_centi: agg.outCol ? Number(row.outs ?? 0) : 0,
+          total_sen: agg.amtCol ? Number(row.amt ?? 0) : 0,
+          total_outstanding_sen: agg.outCol ? Number(row.outs ?? 0) : 0,
         };
         done = true;
       }
@@ -224,12 +224,12 @@ outstanding.get("/summary", async (c) => {
       const rows = (data ?? []) as Array<Record<string, unknown>>;
       summary[slug] = {
         count: rows.length,
-        total_centi: rows.reduce(
-          (s, r) => s + Number(r.total_centi ?? r.local_total_centi ?? 0),
+        total_sen: rows.reduce(
+          (s, r) => s + Number(r.total_sen ?? r.local_total_sen ?? 0),
           0,
         ),
-        total_outstanding_centi: rows.reduce(
-          (s, r) => s + Number(r.outstanding_centi ?? 0),
+        total_outstanding_sen: rows.reduce(
+          (s, r) => s + Number(r.outstanding_sen ?? 0),
           0,
         ),
       };

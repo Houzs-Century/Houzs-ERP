@@ -36,7 +36,7 @@ export interface AcTransferQty { DtlKey: number; Qty: number }
    this module would throw. */
 export const soLine = (r: Record<string, unknown>): ErpLine => ({
   id: r.id == null ? null : String(r.id),
-  item_code: String(r.item_code ?? r.material_code ?? ''),
+  item_code: String(r.item_code ?? r.item_code ?? ''),
   item_group: (r.item_group as string) ?? null,
   /* undefined on the five tables that do not select it, which soBranding reads
      as "this line has no brand" — the same convention `cancelled` runs under. */
@@ -44,7 +44,7 @@ export const soLine = (r: Record<string, unknown>): ErpLine => ({
   description: (r.description as string) ?? null,
   description2: (r.description2 as string) ?? null,
   qty: Number(r.qty ?? 0),
-  unit_price_centi: Number(r.unit_price_centi ?? 0),
+  unit_price_sen: Number(r.unit_price_sen ?? 0),
   variants: (r.variants as Record<string, unknown> | null) ?? null,
   linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
   /* `line_delivery_date` on a sales-order line, `delivery_date` on a purchase
@@ -125,7 +125,7 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty',
     headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
-    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
     line: soLine,
     header: (h) => present({
@@ -145,7 +145,7 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemQtyCol: 'qty_accepted',
     sourceQtyCol: 'qty',
     headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
-    itemCols: 'id, material_code, item_group, description, description2, qty_accepted, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    itemCols: 'id, item_code, item_group, description, description2, qty_accepted, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
     /* qty_ACCEPTED, not qty_received. AutoCount's GR line quantity is what
        entered stock, and qty_accepted is the number this ERP posts to stock and
@@ -167,7 +167,7 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty',
     headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
-    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
     header: (h) => present({
@@ -187,7 +187,7 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty_accepted',
     headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
-    itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
     header: (h) => present({

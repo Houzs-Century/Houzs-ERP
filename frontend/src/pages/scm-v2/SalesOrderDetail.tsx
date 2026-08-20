@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtMoneyCenti, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -241,7 +241,7 @@ const SO_STATUS_LABEL: Record<string, string> = {
   CANCELLED:     'Cancelled',
 };
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* Task #99 (UI perf) — Local debounce hook lifted to ../lib/hooks.ts as
    useDebouncedValue so SoLineCard's product picker (Task #102) can reuse
@@ -271,21 +271,21 @@ type SoHeader = {
   address3: string | null;
   address4: string | null;
   phone: string | null;
-  mattress_sofa_centi: number;
-  bedframe_centi: number;
-  accessories_centi: number;
-  others_centi: number;
+  mattress_sofa_sen: number;
+  bedframe_sen: number;
+  accessories_sen: number;
+  others_sen: number;
   /* Task #114 — per-category cost rollup (migration 0079). Used by the
      Totals card category breakdown so each row can show Revenue / Cost /
      Margin without summing items. May be undefined on rows older than
      0079 — fall back to 0 in the consumer. */
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?:      number;
-  accessories_cost_centi?:   number;
-  others_cost_centi?:        number;
-  local_total_centi: number;
-  total_cost_centi: number;
-  total_margin_centi: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?:      number;
+  accessories_cost_sen?:   number;
+  others_cost_sen?:        number;
+  local_total_sen: number;
+  total_cost_sen: number;
+  total_margin_sen: number;
   margin_pct_basis: number;
   line_count: number;
   currency: string;
@@ -366,8 +366,8 @@ type SoHeader = {
   merchant_provider: string | null;     // GHL | HLB | MBB | PBB
   approval_code: string | null;
   payment_date: string | null;          // PR #157 — date funds received
-  deposit_centi: number;
-  paid_centi: number;
+  deposit_sen: number;
+  paid_sen: number;
 };
 
 type SoItem = {
@@ -379,12 +379,12 @@ type SoItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  total_centi: number;
-  unit_cost_centi: number;
-  line_cost_centi: number;
-  line_margin_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  total_sen: number;
+  unit_cost_sen: number;
+  line_cost_sen: number;
+  line_margin_sen: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
   /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
@@ -430,9 +430,9 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   description:    it.description ?? '',
   uom:            it.uom ?? 'UNIT',
   qty:            it.qty ?? 1,
-  unitPriceCenti: it.unit_price_centi ?? 0,
-  discountCenti:  it.discount_centi ?? 0,
-  unitCostCenti:  it.unit_cost_centi ?? 0,
+  unitPriceSen: it.unit_price_sen ?? 0,
+  discountSen:  it.discount_sen ?? 0,
+  unitCostSen:  it.unit_cost_sen ?? 0,
   // 2026-06-08 (Loo) — canonicalise POS-vocabulary sofa keys (depth →
   // seatHeight, sofaLegHeight → legHeight) so the Edit modal's Seat/Leg
   // dropdowns prefill a POS-created line instead of re-asking. fabricCode
@@ -466,9 +466,9 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
   description:    d.description,
   uom:            d.uom,
   qty:            d.qty,
-  unitPriceCenti: d.unitPriceCenti,
-  discountCenti:  d.discountCenti,
-  unitCostCenti:  d.unitCostCenti,
+  unitPriceSen: d.unitPriceSen,
+  discountSen:  d.discountSen,
+  unitCostSen:  d.unitCostSen,
   variants:       d.variants ?? null,
   remark:         d.remark,
   lineDeliveryDate:           d.lineDeliveryDate ?? null,
@@ -508,7 +508,7 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
 const amendmentLineSig = (d: SoLineDraft): string => JSON.stringify({
   itemCode:       d.itemCode,
   qty:            d.qty,
-  unitPriceCenti: d.unitPriceCenti,
+  unitPriceSen: d.unitPriceSen,
   variants:       d.variants ?? null,
   remark:         d.remark ?? '',
 });
@@ -1056,6 +1056,10 @@ export const SalesOrderDetail = () => {
      amendment then flows through the supplier-confirm / approve gates before it
      re-derives the SO — direct line writes on a PO'd SO would break the supplier
      copy, which is exactly what this workflow prevents. */
+  /* A 0 typed here is a price, not an unresolved one — the wire cannot tell them
+     apart, so say which (see erpLineTrust). Both the PATCH and a staged ADD. */
+  const zeroPriceClaim = (sen: number) => (sen === 0 ? { zeroPriceIntended: true } : {});
+
   const buildAmendmentLines = (): CreateAmendmentLine[] => {
     const out: CreateAmendmentLine[] = [];
     // Existing lines — SPEC / QTY. An item still in editingDrafts whose AMENDABLE
@@ -1074,7 +1078,7 @@ export const SalesOrderDetail = () => {
       const qtyOnly =
         draft.itemCode === orig.itemCode
         && JSON.stringify(draft.variants ?? null) === JSON.stringify(orig.variants ?? null)
-        && draft.unitPriceCenti === orig.unitPriceCenti
+        && draft.unitPriceSen === orig.unitPriceSen
         && draft.qty !== orig.qty;
       out.push({
         salesOrderItemId: it.id,
@@ -1082,7 +1086,7 @@ export const SalesOrderDetail = () => {
         newItemCode: draft.itemCode || undefined,
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
-        newUnitPriceSen: draft.unitPriceCenti,
+        newUnitPriceSen: draft.unitPriceSen,
         /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
            actually moved: null/absent means "not requested", which is what stops
            the apply from rewriting a remark this session never touched. */
@@ -1094,7 +1098,7 @@ export const SalesOrderDetail = () => {
           itemCode: it.item_code,
           variants: it.variants ?? null,
           qty: it.qty,
-          unitPriceSen: it.unit_price_centi,
+          unitPriceSen: it.unit_price_sen,
           description2: it.description2 ?? null,
         },
       });
@@ -1110,7 +1114,7 @@ export const SalesOrderDetail = () => {
           itemCode: it.item_code,
           variants: it.variants ?? null,
           qty: it.qty,
-          unitPriceSen: it.unit_price_centi,
+          unitPriceSen: it.unit_price_sen,
           description2: it.description2 ?? null,
         },
       });
@@ -1125,7 +1129,7 @@ export const SalesOrderDetail = () => {
         newItemCode: draft.itemCode,
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
-        newUnitPriceSen: draft.unitPriceCenti,
+        newUnitPriceSen: draft.unitPriceSen,
         /* mig 0280 — an ADDED line carries whatever remark was typed on it. This
            is the case that lost the owner's instruction on 2990-SO-2608-016: the
            added line WAS a SVC-ADDON whose entire purpose lived in the text. */
@@ -1507,14 +1511,10 @@ export const SalesOrderDetail = () => {
       description:    d.description,
       uom:            d.uom,
       qty:            d.qty,
-      unitPriceCenti: d.unitPriceCenti,
-      /* A 0 typed HERE is a real price, not "the client could not resolve one".
-         The backend cannot tell those apart on the wire, so say which it is —
-         only this statement lets a 0 survive the recompute (TrustSelling
-         'operator-zero'). Sent only at 0; a priced line needs no claim. */
-      ...(d.unitPriceCenti === 0 ? { zeroPriceIntended: true } : {}),
-      discountCenti:  d.discountCenti,
-      unitCostCenti:  d.unitCostCenti,
+      unitPriceSen: d.unitPriceSen,
+      ...zeroPriceClaim(d.unitPriceSen),
+      discountSen:  d.discountSen,
+      unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
       lineDeliveryDate:           d.lineDeliveryDate ?? null,
@@ -1536,9 +1536,10 @@ export const SalesOrderDetail = () => {
       description:    d.description,
       uom:            d.uom,
       qty:            d.qty,
-      unitPriceCenti: d.unitPriceCenti,
-      discountCenti:  d.discountCenti,
-      unitCostCenti:  d.unitCostCenti,
+      unitPriceSen: d.unitPriceSen,
+      ...zeroPriceClaim(d.unitPriceSen),
+      discountSen:  d.discountSen,
+      unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
       lineDeliveryDate:           d.lineDeliveryDate ?? null,
@@ -1779,7 +1780,7 @@ export const SalesOrderDetail = () => {
   };
   const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
-       header columns (paid_centi, payment_method, …) are deprecated. If
+       header columns (paid_sen, payment_method, …) are deprecated. If
        the query is still loading we surface a brief notice and bail out
        rather than printing a PDF with an empty Payments table.
 
@@ -1860,8 +1861,8 @@ export const SalesOrderDetail = () => {
           + (currentDocNo && currentDocNo !== header.doc_no ? ` · Current ${currentDocNo}` : '')
           + (header.po_doc_no ? ` · Customer PO ${header.po_doc_no}` : '')
           + (header.customer_so_no ? ` · Ref ${header.customer_so_no}` : '')
-          + (Number((header as { customer_credit_centi?: number }).customer_credit_centi ?? 0) > 0
-            ? ` · Customer credit balance: ${fmtCenti(Number((header as { customer_credit_centi?: number }).customer_credit_centi ?? 0))}`
+          + (Number((header as { customer_credit_sen?: number }).customer_credit_sen ?? 0) > 0
+            ? ` · Customer credit balance: ${fmtSen(Number((header as { customer_credit_sen?: number }).customer_credit_sen ?? 0))}`
             : '')
         }
         primaryAction={
@@ -1894,7 +1895,7 @@ export const SalesOrderDetail = () => {
             <div className="mr-1 flex flex-col items-end leading-none">
               <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Total</span>
               <span className="text-[15px] font-semibold tabular-nums text-primary-ink">
-                {fmtRm(header.local_total_centi, header.currency)}
+                {fmtRm(header.local_total_sen, header.currency)}
               </span>
             </div>
             {(() => {
@@ -1936,7 +1937,7 @@ export const SalesOrderDetail = () => {
                 { label: 'Customer', value: header.debtor_name || '—' },
                 { label: 'Order date', value: fmtDateOrDash(header.so_date) },
                 { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
-                { label: 'Order total', value: fmtRm(header.local_total_centi, header.currency) },
+                { label: 'Order total', value: fmtRm(header.local_total_sen, header.currency) },
               ]}
               {...print.handlers}
             />
@@ -2486,8 +2487,8 @@ export const SalesOrderDetail = () => {
                       return coverage ?? <span className={styles.muted}>—</span>;
                     })()}
                   </td>
-                  <td className={styles.tableRight} data-label="Unit">{fmtRm(it.unit_price_centi, header.currency)}</td>
-                  <td className={styles.tableRight} data-label="Disc">{it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—'}</td>
+                  <td className={styles.tableRight} data-label="Unit">{fmtRm(it.unit_price_sen, header.currency)}</td>
+                  <td className={styles.tableRight} data-label="Disc">{it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—'}</td>
                   <td className={styles.tableRight} data-label="Delivery">
                     {displayDate ? (
                       <span style={isAuto ? { color: 'var(--fg-muted)' } : undefined}>
@@ -2498,7 +2499,7 @@ export const SalesOrderDetail = () => {
                       </span>
                     ) : '—'}
                   </td>
-                  <td className={styles.priceCell} data-label="Total">{fmtRm(it.total_centi, header.currency)}</td>
+                  <td className={styles.priceCell} data-label="Total">{fmtRm(it.total_sen, header.currency)}</td>
                   {/* Owner 2026-07-17: per-line Unit Cost / Line Cost / Margin
                       cells removed for EVERYONE (see the <thead> note). */}
                 </tr>
@@ -2563,7 +2564,7 @@ export const SalesOrderDetail = () => {
       <PaymentsTable
         key={header.doc_no}
         docNo={header.doc_no}
-        grandTotalCenti={header.local_total_centi}
+        grandTotalSen={header.local_total_sen}
         currency={header.currency}
         locked={!canEditPayments}
         draftUnlocked={isDraftSo}
@@ -3754,7 +3755,7 @@ const ScannedImageCard = ({
    The Revenue / Cost / Margin / Margin% card (and its per-category cost
    breakdown) is gone from the SO document view for EVERYONE — costing moves to
    the separate Finance "Fulfillment Costing" module. Customer-facing totals are
-   untouched. The header cost/margin columns (total_cost_centi etc.) remain in
+   untouched. The header cost/margin columns (total_cost_sen etc.) remain in
    the type + server payload; only their display is removed. */
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3806,7 +3807,7 @@ const OverridePriceModal = ({
   const override = useOverrideMfgSoLinePrice();
   const notify = useNotify();
   const [overrideRm, setOverrideRm] = useState(
-    (item.unit_price_centi / 100).toFixed(2),
+    (item.unit_price_sen / 100).toFixed(2),
   );
   const [reason, setReason] = useState('');
 
@@ -3826,9 +3827,9 @@ const OverridePriceModal = ({
     );
   };
 
-  const delta = Math.round(Number(overrideRm) * 100) - item.unit_price_centi;
-  const deltaPct = item.unit_price_centi > 0
-    ? (delta / item.unit_price_centi) * 100
+  const delta = Math.round(Number(overrideRm) * 100) - item.unit_price_sen;
+  const deltaPct = item.unit_price_sen > 0
+    ? (delta / item.unit_price_sen) * 100
     : 0;
 
   return (
@@ -3847,7 +3848,7 @@ const OverridePriceModal = ({
         <div className={styles.modalBody}>
           <p className={styles.muted}>
             Item <strong>{item.item_code}</strong>{item.description ? ` — ${item.description}` : ''}<br />
-            Current unit price: <strong>{fmtRm(item.unit_price_centi, currency)}</strong>
+            Current unit price: <strong>{fmtRm(item.unit_price_sen, currency)}</strong>
           </p>
 
           <div className={styles.formGrid4}>

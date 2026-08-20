@@ -90,7 +90,7 @@ try {
   // still carries the delivered trace (consumption → lot → batch_no).
   const lots = await pg`
     SELECT l.id::text AS id, l.company_id, l.warehouse_id::text AS warehouse_id,
-           l.product_code, COALESCE(l.variant_key,'') AS variant_key,
+           l.item_code, COALESCE(l.variant_key,'') AS variant_key,
            l.qty_received, l.qty_remaining, l.received_at,
            l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.source_doc_no,
            l.movement_id::text AS movement_id, l.notes
@@ -202,7 +202,7 @@ try {
          WHERE movement_type = 'IN' AND source_doc_type = 'GRN'
            AND source_doc_id::text = ${l.source_doc_id}
            AND warehouse_id::text = ${l.warehouse_id}
-           AND product_code = ${l.product_code}
+           AND item_code = ${l.item_code}
            AND COALESCE(variant_key,'') = ${l.variant_key}
            AND company_id = ${l.company_id}`;
       const conflicting = mv.find((r) => r.batch_no && r.batch_no !== p.poNumber);
@@ -227,24 +227,24 @@ try {
   log(`PLANNED STAMPS: ${writable.length}  (grn part ${doGrn ? "on" : "off"}, basis part ${doBasis ? "on" : "off"})`);
   for (const p of writable) {
     const l = p.lot;
-    log(`  lot ${l.id}  ${co(l.company_id)}  ${l.product_code}${l.variant_key ? ` [${l.variant_key}]` : ""}  recv=${l.qty_received} rem=${l.qty_remaining}  batch NULL -> '${p.poNumber}'`);
+    log(`  lot ${l.id}  ${co(l.company_id)}  ${l.item_code}${l.variant_key ? ` [${l.variant_key}]` : ""}  recv=${l.qty_received} rem=${l.qty_remaining}  batch NULL -> '${p.poNumber}'`);
     log(`      evidence: ${p.evidence}${p.movementIds.length ? `; also stamps IN movement ${p.movementIds.join(", ")}` : "; lot-only (no NULL-batch movement to pair)"}${p.note ? `; ${p.note}` : ""}`);
     if (p.affectedDos.length > 0) log(`      completes the delivered trace of: ${p.affectedDos.join(", ")}`);
   }
   log("");
   log(`REFUSED: ${refusals.length}`);
   for (const r of refusals) {
-    log(`  lot ${r.lot.id}  ${co(r.lot.company_id)}  ${r.lot.product_code}  ${r.reason}`);
+    log(`  lot ${r.lot.id}  ${co(r.lot.company_id)}  ${r.lot.item_code}  ${r.reason}`);
   }
   log("");
   log(`CLASSIFIED, NEVER STAMPED:`);
   log(`  adjustment (PO-less by design — UI shows STOCK ADJ): ${classes.adjustment.length}`);
   for (const l of classes.adjustment) {
-    log(`    lot ${l.id}  ${co(l.company_id)}  ${l.product_code}  recv=${l.qty_received} rem=${l.qty_remaining}  src=${l.source_doc_no ?? "-"}`);
+    log(`    lot ${l.id}  ${co(l.company_id)}  ${l.item_code}  recv=${l.qty_received} rem=${l.qty_remaining}  src=${l.source_doc_no ?? "-"}`);
   }
   log(`  unbatchable (no document evidence): ${classes.unbatchable.length}`);
   for (const l of classes.unbatchable) {
-    log(`    lot ${l.id}  ${co(l.company_id)}  ${l.product_code}  recv=${l.qty_received} rem=${l.qty_remaining}  src_type=${l.source_doc_type ?? "NULL"} src=${l.source_doc_no ?? "-"}${(l.notes ?? "").startsWith("repair:") ? `  notes=${(l.notes ?? "").slice(0, 60)}...` : ""}`);
+    log(`    lot ${l.id}  ${co(l.company_id)}  ${l.item_code}  recv=${l.qty_received} rem=${l.qty_remaining}  src_type=${l.source_doc_type ?? "NULL"} src=${l.source_doc_no ?? "-"}${(l.notes ?? "").startsWith("repair:") ? `  notes=${(l.notes ?? "").slice(0, 60)}...` : ""}`);
   }
 
   // ── APPLY ─────────────────────────────────────────────────────────────────

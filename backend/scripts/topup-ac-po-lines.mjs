@@ -21,7 +21,7 @@
 // cannot reach a decomposed sofa compartment, so it is the strongest signal and
 // never the only one), then by supplier_sku (the importers write the ItemCode
 // there, and `${ItemCode} ${compartment}` for a sofa piece), then - only for a
-// row carrying NO supplier_sku - by material_code / sofa model prefix. 225 of
+// row carrying NO supplier_sku - by item_code / sofa model prefix. 225 of
 // the 862 migrated PO lines have no supplier_sku, written by neither importer,
 // and they are real AutoCount lines: matching on supplier_sku alone would have
 // inserted 183 duplicates. Every row this script writes is given its
@@ -60,7 +60,7 @@
 //     resolves AND is not already claimed; NULL otherwise, never wrong. The
 //     claim is re-checked inside the transaction so a concurrent sibling repair
 //     cannot make us steal one.
-//   - the header's subtotal_centi / total_centi, INCREMENTED by exactly the
+//   - the header's subtotal_sen / total_sen, INCREMENTED by exactly the
 //     value of the rows this run inserted (an increment, not a recompute, so a
 //     hand-adjusted header is not clobbered).
 //
@@ -197,21 +197,21 @@ async function main() {
   const HAS_DTLKEY = (await sql`SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'scm' AND table_name = 'purchase_order_items' AND column_name = 'linked_ac_dtlkey'`).length > 0;
   const itemRows = HAS_DTLKEY
-    ? await sql`SELECT i.purchase_order_id, i.supplier_sku, i.material_code, i.linked_ac_dtlkey
+    ? await sql`SELECT i.purchase_order_id, i.supplier_sku, i.item_code, i.linked_ac_dtlkey
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
-    : await sql`SELECT i.purchase_order_id, i.supplier_sku, i.material_code, NULL::bigint AS linked_ac_dtlkey
+    : await sql`SELECT i.purchase_order_id, i.supplier_sku, i.item_code, NULL::bigint AS linked_ac_dtlkey
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const itemsByPo = new Map();
   for (const r of itemRows) {
     if (!itemsByPo.has(r.purchase_order_id)) itemsByPo.set(r.purchase_order_id, []);
-    itemsByPo.get(r.purchase_order_id).push({ supplierSku: r.supplier_sku, materialCode: r.material_code, linkedAcDtlKey: r.linked_ac_dtlkey });
+    itemsByPo.get(r.purchase_order_id).push({ supplierSku: r.supplier_sku, itemCode: r.item_code, linkedAcDtlKey: r.linked_ac_dtlkey });
   }
   const noSku = itemRows.filter((r) => !r.supplier_sku).length;
   const keyed = itemRows.filter((r) => r.linked_ac_dtlkey != null).length;
   log(`ERP: purchase orders carrying linked_ac_docno ${poRows.length}; their lines ${itemRows.length}`);
-  log(`   linked_ac_dtlkey column ${HAS_DTLKEY ? "present" : "NOT YET APPLIED here"}; lines carrying a key ${keyed}; lines with no supplier_sku (claimed by material_code) ${noSku}`);
+  log(`   linked_ac_dtlkey column ${HAS_DTLKEY ? "present" : "NOT YET APPLIED here"}; lines carrying a key ${keyed}; lines with no supplier_sku (claimed by item_code) ${noSku}`);
 
   /* One AutoCount ItemCode -> the ERP terms every stage needs. Returns null when
      the mapping CSV does not know the code: never guessed. */
@@ -292,7 +292,7 @@ async function main() {
         let lead = true;
         for (const comp of ps.pieces) {
           const code = `${model}-${comp}`;
-          rows.push({ ...base, materialCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
+          rows.push({ ...base, itemCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
             supplierSku: `${l.itemCode} ${comp}`, up: lead ? up : 0, variants, bf: null, note: null,
             soCode: code, soFallbackCode: `${model}-1S` });
           lead = false;
@@ -301,7 +301,7 @@ async function main() {
       }
       const ph = `${model}-1S`;
       const code = codeSet.has(ph.toUpperCase()) ? ph : r.erp;
-      return [{ ...base, materialCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
+      return [{ ...base, itemCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
         supplierSku: l.itemCode, up, variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
         bf: null, note: "SOFA UNPARSED - 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
         soCode: code, soFallbackCode: r.erp }];
@@ -319,7 +319,7 @@ async function main() {
         legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
     }
     const prod = prodByCode.get(r.erp.toUpperCase());
-    return [{ ...base, materialCode: r.erp, materialName: (prod && prod.name) || l.description || r.erp,
+    return [{ ...base, itemCode: r.erp, materialName: (prod && prod.name) || l.description || r.erp,
       supplierSku: l.itemCode, up, variants, bf, note: null,
       soCode: src ? (byAc.get(norm(src.code)) || {}).erp : null, soFallbackCode: null }];
   };
@@ -396,14 +396,14 @@ async function main() {
   }
 
   const rowsToInsert = plan.reduce((a, p) => a + p.rows.length, 0);
-  const valueCenti = plan.reduce((a, p) => a + p.rows.reduce((b, r) => b + r.up * r.qty, 0), 0);
+  const valueSen = plan.reduce((a, p) => a + p.rows.reduce((b, r) => b + r.up * r.qty, 0), 0);
   const sofaRows = plan.reduce((a, p) => a + p.rows.filter((r) => r.grp === "sofa").length, 0);
   const recvRows = plan.reduce((a, p) => a + p.rows.filter((r) => r.recv > 0).length, 0);
 
   log("");
   log(`AutoCount lines considered: ${acConsidered}; ERP rows they should produce: ${expectedTotal}`);
   log(`MISSING ERP rows (their AutoCount ItemCode has ZERO rows on the document): ${rowsToInsert} across ${plan.length} purchase orders`);
-  log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueCenti / 100).toFixed(2)}`);
+  log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueSen / 100).toFixed(2)}`);
   log(`   dedicated to an SO line ${dedicated}; no SO line resolved ${noSoLine}; no warehouse match ${noWarehouse}`);
   const withheldRows = recvWithheld.reduce((a, w) => a + w.rows, 0);
   log("");
@@ -431,7 +431,7 @@ async function main() {
   log("MISSING ROWS, one line each:");
   for (const p of plan) {
     log(`   ${p.po.po_number} (AutoCount ${p.doc}) [${p.po.status}] AutoCount ${p.acLines} lines / ERP ${p.existingRows} rows -> +${p.rows.length}`);
-    for (const r of p.rows) log(`      + ${r.materialCode} sku="${r.supplierSku}" x${r.qty} recv${r.recv} RM${((r.up * r.qty) / 100).toFixed(2)} group=${r.grp} wh=${r.wh ? "ok" : "-"} so_item=${r.soItemId ? "yes" : "null"}`);
+    for (const r of p.rows) log(`      + ${r.itemCode} sku="${r.supplierSku}" x${r.qty} recv${r.recv} RM${((r.up * r.qty) / 100).toFixed(2)} group=${r.grp} wh=${r.wh ? "ok" : "-"} so_item=${r.soItemId ? "yes" : "null"}`);
   }
 
   const statusMismatch = plan.filter((p) => p.rows.some((r) => r.recv > 0) && p.po.status === "SUBMITTED");
@@ -459,7 +459,7 @@ async function main() {
 
   log("");
   log("APPLYING...");
-  let wrote = 0, docsWritten = 0, deltaCenti = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
+  let wrote = 0, docsWritten = 0, deltaSen = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
   /* Ids of the rows this run actually inserted, so the verification below reads
      back exactly what was written rather than re-deriving the plan. */
   const writtenIds = [];
@@ -467,8 +467,8 @@ async function main() {
     await sql.begin(async (tx) => {
       /* Re-read inside the transaction: if another run - or the sibling repair -
          wrote these rows since the read above, this inserts nothing. */
-      const live = (await tx`SELECT supplier_sku, material_code FROM scm.purchase_order_items WHERE purchase_order_id = ${p.po.id}`)
-        .map((r) => ({ supplierSku: r.supplier_sku, materialCode: r.material_code }));
+      const live = (await tx`SELECT supplier_sku, item_code FROM scm.purchase_order_items WHERE purchase_order_id = ${p.po.id}`)
+        .map((r) => ({ supplierSku: r.supplier_sku, itemCode: r.item_code }));
       /* NB this last guard keys on supplier_sku only, deliberately - it is the
          column this script always writes, so it is the one that can prove a row
          it is about to write is already there. */
@@ -492,13 +492,13 @@ async function main() {
           if (claimed.length) soItemId = null; // never wrong: leave it NULL rather than steal
         }
         const [ins] = await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
+            (purchase_order_id, material_kind, item_code, material_name, supplier_sku,
              description, description2, notes,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
+             qty, received_qty, unit_price_sen, line_total_sen, item_group, uom,
              gap_inches, divan_height_inches, leg_height_inches,
              custom_specials, variants,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
-          VALUES (${p.po.id}, 'mfg_product', ${r.materialCode}, ${r.materialName}, ${r.supplierSku},
+          VALUES (${p.po.id}, 'mfg_product', ${r.itemCode}, ${r.materialName}, ${r.supplierSku},
                   ${r.description || null}, ${r.desc2 || null},
                   ${r.note ? (r.desc2 ? r.desc2 + " | " + r.note : r.note) : (r.desc2 || null)},
                   ${r.qty}, ${r.recv}, ${r.up}, ${r.up * r.qty}, ${r.grp},
@@ -526,15 +526,15 @@ async function main() {
       }
       if (added) {
         await tx`UPDATE scm.purchase_orders
-          SET subtotal_centi = COALESCE(subtotal_centi, 0) + ${added},
-              total_centi = COALESCE(total_centi, 0) + ${added}
+          SET subtotal_sen = COALESCE(subtotal_sen, 0) + ${added},
+              total_sen = COALESCE(total_sen, 0) + ${added}
           WHERE id = ${p.po.id}`;
-        deltaCenti += added;
+        deltaSen += added;
       }
       docsWritten++;
     });
   }
-  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaCenti / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
+  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaSen / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
   log("no inventory movement written, no document created, no status changed - by design.");
   await sql.end();
 

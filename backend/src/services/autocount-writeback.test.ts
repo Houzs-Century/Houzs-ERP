@@ -64,7 +64,7 @@ const header: ErpSoHeader = {
 };
 
 const line = (over: Partial<ErpLine> = {}): ErpLine => ({
-  item_code: 'SKU-1', description: 'Mattress', qty: 2, unit_price_centi: 199_900, ...over,
+  item_code: 'SKU-1', description: 'Mattress', qty: 2, unit_price_sen: 199_900, ...over,
 });
 
 /* The name behind mfg_sales_orders.salesperson_id, which composeCreateSo now
@@ -363,7 +363,7 @@ describe('Description 2 — AutoCount\'s Further Description, which is what the 
   });
 });
 
-describe('ItemCode resolution (D10) — no silent fallback to material_code', () => {
+describe('ItemCode resolution (D10) — no silent fallback to item_code', () => {
   test('a mapped code is replaced by its AutoCount ItemCode', () => {
     expect(createSo(header, [line()], SALESPERSON, opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
@@ -416,7 +416,7 @@ describe('composeCreatePo', () => {
   const po = (over: Partial<ErpPoHeader> = {}) => composeCreatePo({
     po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
     creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N', ...over,
-  }, [line({ unit_price_centi: 5000, location: 'KL' })], opts);
+  }, [line({ unit_price_sen: 5000, location: 'KL' })], opts);
 
   test('carries the creditor and the lines', () => {
     const p = po();
@@ -846,7 +846,7 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
     description: `SOFA 9028 ${code}`,
     description2: '1EL + 1ER (28") / COL: BEIGE',
     qty: 1,
-    unit_price_centi: 0,
+    unit_price_sen: 0,
     variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: [] },
     linked_ac_dtlkey: 8801,
     ...over,
@@ -854,7 +854,7 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
 
   test('every compartment cancelled retires the one AutoCount line', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [
-      compartment('9028-1A(LHF)', { unit_price_centi: 500_000, cancelled: true }),
+      compartment('9028-1A(LHF)', { unit_price_sen: 500_000, cancelled: true }),
       compartment('9028-1A(RHF)', { cancelled: true }),
     ], sofaOpts);
     expect(p.Lines).toHaveLength(1);
@@ -865,7 +865,7 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
     let err: unknown;
     try {
       composeEdit('SO', 'SO-000021', {}, [
-        compartment('9028-1A(LHF)', { unit_price_centi: 500_000, cancelled: true }),
+        compartment('9028-1A(LHF)', { unit_price_sen: 500_000, cancelled: true }),
         compartment('9028-1A(RHF)'),
       ], sofaOpts);
     } catch (e) { err = e; }
@@ -877,7 +877,7 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
 
   test('none cancelled is an ordinary keyed edit', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [
-      compartment('9028-1A(LHF)', { unit_price_centi: 500_000 }),
+      compartment('9028-1A(LHF)', { unit_price_sen: 500_000 }),
       compartment('9028-1A(RHF)'),
     ], sofaOpts);
     expect(p.Lines).toHaveLength(1);
@@ -945,13 +945,13 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
     description: `SOFA 9028 ${comp}`,
     description2: '1A(LHF) + 2A(RHF) (28")',
     qty: 1,
-    unit_price_centi: 0,
+    unit_price_sen: 0,
     ...over,
   });
 
   test('a policy-chosen ItemCode is OMITTED, so the book keeps its own', () => {
     const p = composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
-      compartment('1A(LHF)', { linked_ac_dtlkey: 991, unit_price_centi: 399_000 }),
+      compartment('1A(LHF)', { linked_ac_dtlkey: 991, unit_price_sen: 399_000 }),
       compartment('2A(RHF)', { linked_ac_dtlkey: 991 }),
     ], real);
     /* D9 folds the build into one line, addressed by its key. */
@@ -962,7 +962,7 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
 
   test('a CREATE carries it — one line per compartment, each its own code', () => {
     const { details } = composeDetails([
-      compartment('1A(LHF)', { unit_price_centi: 399_000 }),
+      compartment('1A(LHF)', { unit_price_sen: 399_000 }),
       compartment('2A(RHF)'),
     ], real);
     expect(details).toHaveLength(2);
@@ -971,7 +971,7 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
 
   test('an ordinary line the book owns keeps its item too — not just the sofas', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [
-      { item_code: 'AKEMI APEX MATT (SP)', description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 55 },
+      { item_code: 'AKEMI APEX MATT (SP)', description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 55 },
     ], real);
     expect(p.Lines[0].DtlKey).toBe(55);
     expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
@@ -982,7 +982,7 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
        DtlKey, so it keeps its ItemCode and is appended. This is the path that
        makes dropping the in-place item safe. */
     const p = composeEdit('SO', 'SO-000021', {}, [
-      { id: 'new-1', item_code: 'AKEMI ARISTOI MATT (SP)', description: 'M2', qty: 1, unit_price_centi: 100 },
+      { id: 'new-1', item_code: 'AKEMI ARISTOI MATT (SP)', description: 'M2', qty: 1, unit_price_sen: 100 },
     ], { ...real, newLineIds: new Set(['new-1']) }, [{ DtlKey: 55, ItemCode: 'AK-APEX MATT (SP)' }]);
     const added = p.Lines.find((l) => l.DtlKey == null);
     expect(added?.ItemCode).toBe('AK-ARISTOI MATT (SP)');

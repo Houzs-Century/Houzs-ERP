@@ -100,8 +100,8 @@ const STATEMENT_TYPES = new Set(['OPEN_ITEM', 'BALANCE_FORWARD', 'NO_STATEMENT']
 const AGING_BASES = new Set(['INVOICE_DATE', 'DUE_DATE']);
 
 const BINDING_COLS =
-  'id, supplier_id, material_kind, material_code, material_name, supplier_sku, ' +
-  'unit_price_centi, currency, lead_time_days, payment_terms_override, moq, ' +
+  'id, supplier_id, material_kind, item_code, material_name, supplier_sku, ' +
+  'unit_price_sen, currency, lead_time_days, payment_terms_override, moq, ' +
   'price_valid_from, price_valid_to, is_main_supplier, notes, price_matrix, ' +
   'is_cost_anchor, created_at, updated_at';
 
@@ -115,7 +115,7 @@ const BINDING_COLS =
      SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n }, ... }
      BEDFRAME  → { "P1"?: n, "P2"?: n }
      MATTRESS / ACCESSORY / SERVICE → must be null/undefined (single price
-                                       flows via unit_price_centi).
+                                       flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
 function validatePriceMatrix(
@@ -186,7 +186,7 @@ function validatePriceMatrix(
   throw new Error(`invalid_price_matrix:unsupported_category:${cat || 'UNKNOWN'}`);
 }
 
-/* Look up the mfg_products.category for a material_code so the matrix can
+/* Look up the mfg_products.category for a item_code so the matrix can
    be shape-validated. Returns null for non-mfg_product kinds (fabric/raw)
    or codes that aren't in the catalogue — those bindings should not carry
    a price_matrix. */
@@ -218,8 +218,8 @@ async function syncAnchoredProductFromBinding(
   binding: {
     is_cost_anchor?: boolean | null;
     material_kind?: string | null;
-    material_code?: string | null;
-    unit_price_centi?: number | null;
+    item_code?: string | null;
+    unit_price_sen?: number | null;
     price_matrix?: unknown;
   },
   companyId?: number,
@@ -227,7 +227,7 @@ async function syncAnchoredProductFromBinding(
   try {
     if (!binding.is_cost_anchor) return;
     if (binding.material_kind !== 'mfg_product') return;
-    const code = binding.material_code;
+    const code = binding.item_code;
     if (!code) return;
 
     // Multi-company: `code` is shared, so pin to the active company or we could
@@ -239,7 +239,7 @@ async function syncAnchoredProductFromBinding(
 
     const result = bindingToProductPatch({
       category: (product as { category: string | null }).category,
-      unit_price_centi: binding.unit_price_centi ?? null,
+      unit_price_sen: binding.unit_price_sen ?? null,
       price_matrix: binding.price_matrix ?? null,
     });
     if (result.skipped) return;
@@ -356,7 +356,7 @@ suppliers.get('/:id', async (c) => {
 
   const [supplierRes, bindingsRes] = await Promise.all([
     scopeToCompany(supabase.from('suppliers').select(SUPPLIER_COLS).eq('id', id), c).maybeSingle(),
-    scopeToCompany(supabase.from('supplier_material_bindings').select(BINDING_COLS).eq('supplier_id', id), c).order('material_code'),
+    scopeToCompany(supabase.from('supplier_material_bindings').select(BINDING_COLS).eq('supplier_id', id), c).order('item_code'),
   ]);
 
   if (supplierRes.error) return c.json({ error: 'load_failed', reason: supplierRes.error.message }, 500);
@@ -527,12 +527,13 @@ suppliers.get('/:id/bindings', async (c) => {
       .eq('supplier_id', id),
     c,
   )
-    .order('material_code');
+    .order('item_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ bindings: data ?? [] });
 });
 
-suppliers.post('/:id/bindings', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const createSupplierBindingHandler = async (c: any) => {
   const supplierId = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
@@ -541,7 +542,7 @@ suppliers.post('/:id/bindings', async (c) => {
 
   const kind = body.materialKind as string;
   if (!MATERIAL_KINDS.has(kind)) return c.json({ error: 'invalid_material_kind' }, 400);
-  if (!body.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!body.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!body.materialName) return c.json({ error: 'material_name_required' }, 400);
   if (!body.supplierSku) return c.json({ error: 'supplier_sku_required' }, 400);
   const currency = (body.currency as string) ?? 'MYR';
@@ -549,11 +550,25 @@ suppliers.post('/:id/bindings', async (c) => {
 
   const supabase = c.get('supabase');
 
+  /* Multi-company: verify the supplier belongs to the active company before
+     creating a binding stamped with company_id = active. The SCM client is
+     service-role (RLS bypassed), so an unchecked :id from another company would
+     mint this company's binding against a foreign supplier. Mirror the scorecard
+     guard (~L862) and the scoped edit/delete paths below. */
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
+    supabase.from('suppliers').select('id').eq('id', supplierId),
+    c,
+  ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
+  if (!ownerRow) {
+    return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
+  }
+
   // PR — Commander 2026-05-27: validate per-category price_matrix shape
   // against the SKU's mfg_products.category.
   let priceMatrix: Record<string, unknown> | null | undefined;
   if (body.priceMatrix !== undefined) {
-    const cat = await categoryForMaterial(supabase, kind, String(body.materialCode), activeCompanyId(c));
+    const cat = await categoryForMaterial(supabase, kind, String(body.itemCode), activeCompanyId(c));
     try {
       priceMatrix = validatePriceMatrix(body.priceMatrix, cat);
     } catch (e) {
@@ -565,10 +580,10 @@ suppliers.post('/:id/bindings', async (c) => {
   const row: Record<string, unknown> = {
     supplier_id: supplierId,
     material_kind: kind,
-    material_code: body.materialCode,
+    item_code: body.itemCode,
     material_name: body.materialName,
     supplier_sku: body.supplierSku,
-    unit_price_centi: typeof body.unitPriceCenti === 'number' ? body.unitPriceCenti : 0,
+    unit_price_sen: typeof body.unitPriceSen === 'number' ? body.unitPriceSen : 0,
     currency,
     lead_time_days: typeof body.leadTimeDays === 'number' ? body.leadTimeDays : 0,
     payment_terms_override: (body.paymentTermsOverride as string) ?? null,
@@ -586,7 +601,7 @@ suppliers.post('/:id/bindings', async (c) => {
       .from('supplier_material_bindings')
       .update({ is_main_supplier: false })
       .eq('material_kind', row.material_kind)
-      .eq('material_code', row.material_code)
+      .eq('item_code', row.item_code)
       .eq('is_main_supplier', true)
       .eq('company_id', activeCompanyId(c));
   }
@@ -597,12 +612,14 @@ suppliers.post('/:id/bindings', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ binding: data }, 201);
-});
+};
+suppliers.post('/:id/bindings', createSupplierBindingHandler);
 
 // Batch-create bindings — multi-select from Products app maps to N bindings
 // in a single POST. Each row may have its own supplier_sku/price/lead/moq.
 // Skips materials already bound for this supplier (returns count skipped).
-suppliers.post('/:id/bindings/batch', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const createSupplierBindingsBatchHandler = async (c: any) => {
   const supplierId = c.req.param('id');
   let body: { bindings?: Array<Record<string, unknown>> };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -611,16 +628,28 @@ suppliers.post('/:id/bindings/batch', async (c) => {
 
   const supabase = c.get('supabase');
 
+  /* Multi-company: verify the supplier belongs to the active company before
+     minting bindings stamped with company_id = active (service-role bypasses
+     RLS). Same guard as the single POST above. */
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
+    supabase.from('suppliers').select('id').eq('id', supplierId),
+    c,
+  ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
+  if (!ownerRow) {
+    return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
+  }
+
   // Pre-check: drop rows already bound for this supplier (avoid 23505).
-  const codes = list.map((b) => String(b.materialCode ?? '')).filter(Boolean);
+  const codes = list.map((b) => String(b.itemCode ?? '')).filter(Boolean);
   const { data: existing } = await supabase
     .from('supplier_material_bindings')
-    .select('material_code, material_kind')
+    .select('item_code, material_kind')
     .eq('supplier_id', supplierId)
-    .in('material_code', codes);
+    .in('item_code', codes);
   const seen = new Set<string>(
-    ((existing ?? []) as Array<{ material_code: string; material_kind: string }>)
-      .map((r) => `${r.material_kind}|${r.material_code}`),
+    ((existing ?? []) as Array<{ item_code: string; material_kind: string }>)
+      .map((r) => `${r.material_kind}|${r.item_code}`),
   );
 
   const rows: Array<Record<string, unknown>> = [];
@@ -628,18 +657,18 @@ suppliers.post('/:id/bindings/batch', async (c) => {
   for (const b of list) {
     const kind = String(b.materialKind ?? 'mfg_product');
     if (!MATERIAL_KINDS.has(kind)) continue;
-    if (!b.materialCode || !b.materialName || !b.supplierSku) continue;
-    const key = `${kind}|${b.materialCode}`;
+    if (!b.itemCode || !b.materialName || !b.supplierSku) continue;
+    const key = `${kind}|${b.itemCode}`;
     if (seen.has(key)) { skipped += 1; continue; }
     const currency = String(b.currency ?? 'MYR');
     if (!CURRENCIES.has(currency)) continue;
     const row: Record<string, unknown> = {
       supplier_id: supplierId,
       material_kind: kind,
-      material_code: b.materialCode,
+      item_code: b.itemCode,
       material_name: b.materialName,
       supplier_sku: b.supplierSku,
-      unit_price_centi: typeof b.unitPriceCenti === 'number' ? b.unitPriceCenti : 0,
+      unit_price_sen: typeof b.unitPriceSen === 'number' ? b.unitPriceSen : 0,
       currency,
       lead_time_days: typeof b.leadTimeDays === 'number' ? b.leadTimeDays : 0,
       moq: typeof b.moq === 'number' ? b.moq : 0,
@@ -651,7 +680,7 @@ suppliers.post('/:id/bindings/batch', async (c) => {
     // the row rather than 400ing the whole batch (caller can read the
     // inserted/skipped counts to know something dropped).
     if (b.priceMatrix !== undefined) {
-      const cat = await categoryForMaterial(supabase, kind, String(b.materialCode), activeCompanyId(c));
+      const cat = await categoryForMaterial(supabase, kind, String(b.itemCode), activeCompanyId(c));
       try {
         const pm = validatePriceMatrix(b.priceMatrix, cat);
         if (pm !== undefined) row.price_matrix = pm;
@@ -676,7 +705,8 @@ suppliers.post('/:id/bindings/batch', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ inserted: (data ?? []).length, skipped, bindings: data ?? [] }, 201);
-});
+};
+suppliers.post('/:id/bindings/batch', createSupplierBindingsBatchHandler);
 
 suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   const bindingId = c.req.param('bindingId');
@@ -687,8 +717,8 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const map: Array<[keyof typeof body, string]> = [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
-    ['supplierSku', 'supplier_sku'], ['unitPriceCenti', 'unit_price_centi'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
+    ['supplierSku', 'supplier_sku'], ['unitPriceSen', 'unit_price_sen'],
     ['leadTimeDays', 'lead_time_days'], ['paymentTermsOverride', 'payment_terms_override'],
     ['moq', 'moq'], ['priceValidFrom', 'price_valid_from'], ['priceValidTo', 'price_valid_to'],
     ['notes', 'notes'],
@@ -707,17 +737,17 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
 
   // PR — Commander 2026-05-27: validate price_matrix shape against the
   // binding's current category. We fetch the existing row's material_kind +
-  // material_code (since the PATCH body may omit them), then look up the
+  // item_code (since the PATCH body may omit them), then look up the
   // SKU's category.
   if (body.priceMatrix !== undefined) {
     const { data: existing } = await scopeToCompanyId(supabase
       .from('supplier_material_bindings')
-      .select('material_kind, material_code')
+      .select('material_kind, item_code')
       .eq('id', bindingId), co.companyId)
       .maybeSingle();
     if (!existing) return c.json(NOT_THIS_COMPANY, 404);
     const kind = (updates.material_kind as string | undefined) ?? existing.material_kind;
-    const code = (updates.material_code as string | undefined) ?? existing.material_code;
+    const code = (updates.item_code as string | undefined) ?? existing.item_code;
     const cat = await categoryForMaterial(supabase, kind, code, co.companyId);
     try {
       updates.price_matrix = validatePriceMatrix(body.priceMatrix, cat);
@@ -731,7 +761,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   if (updates.is_main_supplier === true) {
     const { data: existing } = await scopeToCompanyId(supabase
       .from('supplier_material_bindings')
-      .select('material_kind, material_code')
+      .select('material_kind, item_code')
       .eq('id', bindingId), co.companyId)
       .maybeSingle();
     if (existing) {
@@ -739,7 +769,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
         .from('supplier_material_bindings')
         .update({ is_main_supplier: false })
         .eq('material_kind', existing.material_kind)
-        .eq('material_code', existing.material_code)
+        .eq('item_code', existing.item_code)
         .eq('is_main_supplier', true)
         .eq('company_id', co.companyId)
         .neq('id', bindingId);
@@ -754,7 +784,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
   /* Cost anchor (0177) — if this binding is the cost anchor for its
-     material_code, mirror its (just-written) cost onto the linked
+     item_code, mirror its (just-written) cost onto the linked
      mfg_products row. Best-effort: the binding write above already
      committed, so a sync failure must not 500 this response. */
   await syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c));
@@ -766,9 +796,9 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
 // PATCH /suppliers/:id/bindings/:bindingId/cost-anchor   body { anchor: boolean }
 //
 // Migration 0177. Flags (or clears) this binding as THE cost anchor for its
-// material_code. At most one anchor per material_code is enforced here (app
+// item_code. At most one anchor per item_code is enforced here (app
 // layer, like is_main_supplier): setting the anchor first clears the flag on
-// every OTHER binding with the same material_code. On SET we also push the
+// every OTHER binding with the same item_code. On SET we also push the
 // binding's current cost → the product immediately, so the two sides start
 // aligned. Gated by RLS on supplier_material_bindings (write denial → 403),
 // the same gate the cost-field PATCH above relies on.
@@ -792,7 +822,7 @@ suppliers.patch('/:id/bindings/:bindingId/cost-anchor', async (c) => {
   // to drive the initial sync).
   const { data: existing, error: loadErr } = await scopeToCompanyId(supabase
     .from('supplier_material_bindings')
-    .select('id, material_kind, material_code')
+    .select('id, material_kind, item_code')
     .eq('id', bindingId), co.companyId)
     .maybeSingle();
   if (loadErr) return c.json({ error: 'load_failed', reason: loadErr.message }, 500);
@@ -811,13 +841,13 @@ suppliers.patch('/:id/bindings/:bindingId/cost-anchor', async (c) => {
   }
 
   // Enforce one-anchor-per-material: clear the flag on every OTHER binding for
-  // the same material_code (only when turning this one ON).
+  // the same item_code (only when turning this one ON).
   if (anchor) {
     await supabase
       .from('supplier_material_bindings')
       .update({ is_cost_anchor: false })
       .eq('material_kind', existing.material_kind)
-      .eq('material_code', existing.material_code)
+      .eq('item_code', existing.item_code)
       .eq('is_cost_anchor', true)
       .eq('company_id', co.companyId)
       .neq('id', bindingId);
@@ -870,7 +900,7 @@ suppliers.get('/:id/scorecard', async (c) => {
   const { data: pos, error: posErr } = await scopeToCompany(
     supabase
       .from('purchase_orders')
-      .select('id, po_number, status, po_date, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, received_at, total_centi')
+      .select('id, po_number, status, po_date, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, received_at, total_sen')
       .eq('supplier_id', id),
     c,
   )
@@ -964,7 +994,7 @@ suppliers.get('/:id/scorecard', async (c) => {
       poDate: po.po_date,
       expectedDate: po.expected_at,
       receivedDate: po.received_at,
-      totalCenti: po.total_centi,
+      totalSen: po.total_sen,
       orderedQty: agg.orderedQty,
       receivedQty: agg.receivedQty,
     };
@@ -996,11 +1026,11 @@ suppliers.get('/material/:kind/:code', async (c) => {
       .from('supplier_material_bindings')
       .select(`${BINDING_COLS}, supplier:suppliers(id, code, name, status)`)
       .eq('material_kind', kind)
-      .eq('material_code', code),
+      .eq('item_code', code),
     c,
   )
     .order('is_main_supplier', { ascending: false })
-    .order('unit_price_centi', { ascending: true });
+    .order('unit_price_sen', { ascending: true });
   if (mainOnly) q = q.eq('is_main_supplier', true);
 
   const { data, error } = await q;

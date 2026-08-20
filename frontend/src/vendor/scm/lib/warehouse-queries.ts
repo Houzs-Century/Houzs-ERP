@@ -19,7 +19,7 @@ export type RackStatus = 'OCCUPIED' | 'EMPTY' | 'RESERVED';
 export type RackItem = {
   id: string;
   rack_id: string;
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   size_label: string | null;
   customer_name: string | null;
@@ -104,6 +104,7 @@ export function useCreateRack() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse', 'racks'] }),
+    onError: writeFailedAs('Rack not created'),
   });
 }
 
@@ -116,6 +117,7 @@ export function useUpdateRack() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse', 'racks'] }),
+    onError: writeFailedAs('Rack not updated'),
   });
 }
 
@@ -133,7 +135,7 @@ export function useDeleteRack() {
    desktop-p1). The rich 3-tab Warehouse page needs the stock-flow mutations and
    the movement ledger read the plain Racks & Bins grid never used. All hit the
    existing backend routes verbatim in shape:
-     POST /warehouse/stock-in  — { rackId, productCode, productName?, sizeLabel?,
+     POST /warehouse/stock-in  — { rackId, itemCode, productName?, sizeLabel?,
                                    customerName?, sourceDocNo?, qty?, notes?, reason? }
      POST /warehouse/stock-out — { itemId, reason? }
      POST /warehouse/transfer  — { fromItemId, toRackId, qty? }  (same warehouse)
@@ -152,7 +154,7 @@ export type RackMovement = {
   to_rack_id: string | null;
   to_rack_label: string | null;
   warehouse_id: string | null;
-  product_code: string;
+  item_code: string;
   variant_key: string | null;
   product_name: string | null;
   source_doc_no: string | null;
@@ -164,7 +166,7 @@ export type RackMovement = {
 
 export type StockInBody = {
   rackId: string;
-  productCode: string;
+  itemCode: string;
   productName?: string;
   sizeLabel?: string;
   customerName?: string;
@@ -183,6 +185,7 @@ export function useStockIn() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse'] }),
+    onError: writeFailedAs('Stock-in not saved'),
   });
 }
 
@@ -195,6 +198,7 @@ export function useStockOut() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse'] }),
+    onError: writeFailedAs('Stock-out not saved'),
   });
 }
 

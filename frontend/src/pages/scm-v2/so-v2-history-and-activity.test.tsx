@@ -66,9 +66,9 @@ const header = {
   debtor_name: "Ada",
   customer_type: "retail",
   currency: "MYR",
-  local_total_centi: 100000,
-  balance_centi: 0,
-  discount_centi: 0,
+  local_total_sen: 100000,
+  balance_sen: 0,
+  discount_sen: 0,
   phone: null,
   email: null,
 };

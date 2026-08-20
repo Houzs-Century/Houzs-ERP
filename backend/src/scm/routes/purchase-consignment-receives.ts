@@ -124,11 +124,11 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     ?? (await defaultWarehouseId(sb, (header as { company_id?: number | null }).company_id ?? undefined));
 
   // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
-  type Bucket = { product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number };
+  type Bucket = { item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled && warehouseId) {
     const { data: lines } = await sb.from('purchase_consignment_receive_items')
-      .select('material_code, material_name, qty_accepted, unit_price_centi, item_group, variants')
+      .select('item_code, material_name, qty_accepted, unit_price_sen, item_group, variants')
       .eq('pc_receive_id', receiveId);
     // Commander 2026-06-18 — a consignment receive often carries a 0 price (the
     // supplier still owns the goods until settlement), so fall back to the SKU's
@@ -136,31 +136,31 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     // later sale would consume and under-state COGS on. Same fix the sales-side
     // consignment-returns.ts got for BUG-2026-06-07-001; this in-path was missed.
     const costByBucket = await resolveWarehouseLotCosts(sb, warehouseId);
-    for (const it of ((lines ?? []) as Array<{ material_code: string; material_name: string | null; qty_accepted: number | null; unit_price_centi: number | null; item_group: string | null; variants: unknown }>)) {
+    for (const it of ((lines ?? []) as Array<{ item_code: string; material_name: string | null; qty_accepted: number | null; unit_price_sen: number | null; item_group: string | null; variants: unknown }>)) {
       const qty = Number(it.qty_accepted ?? 0);
       if (qty <= 0) continue;
       const vk = computeVariantKey(it.item_group, (it.variants as VariantAttrs | null) ?? null);
-      const lineCost = Number(it.unit_price_centi ?? 0);
-      const unitCost = lineCost > 0 ? lineCost : (costByBucket.get(`${it.material_code}::${vk}`) ?? 0);
-      const k = `${it.material_code}::${vk}`;
+      const lineCost = Number(it.unit_price_sen ?? 0);
+      const unitCost = lineCost > 0 ? lineCost : (costByBucket.get(`${it.item_code}::${vk}`) ?? 0);
+      const k = `${it.item_code}::${vk}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
-      else targetByBucket.set(k, { product_code: it.material_code, variant_key: vk, product_name: it.material_name, qty, unit_cost_sen: unitCost });
+      else targetByBucket.set(k, { item_code: it.item_code, variant_key: vk, product_name: it.material_name, qty, unit_cost_sen: unitCost });
     }
   }
 
   // 2. CURRENT net IN per bucket from ALL this receive's movements (PC_RECEIVE IN
   //    + any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
-    .select('movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name')
+    .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', receiveId)
     .in('source_doc_type', ['PC_RECEIVE', 'STOCK_TRANSFER']);
   type Agg = { in_qty: number; out_qty: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
+  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
     // Bucket on product+variant only — the receive is single-warehouse + single
     // batch, so the TARGET keys on product::variant and CURRENT must match.
-    const k = `${m.product_code}::${m.variant_key ?? ''}`;
+    const k = `${m.item_code}::${m.variant_key ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { in_qty: 0, out_qty: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
     if (m.movement_type === 'IN') a.in_qty += Number(m.qty ?? 0);
@@ -185,7 +185,7 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
       const usePcReceive = neverMoved && !pcReceiveEmitted.has(`${pc}::${vk}`);
       if (usePcReceive) pcReceiveEmitted.add(`${pc}::${vk}`);
       writes.push({
-        movement_type: 'IN', warehouse_id: warehouseId, product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'IN', warehouse_id: warehouseId, item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: delta, unit_cost_sen: t?.unit_cost_sen ?? 0,
         source_doc_type: usePcReceive ? 'PC_RECEIVE' : 'STOCK_TRANSFER',
         source_doc_id: receiveId, source_doc_no: receiveNo,
@@ -195,7 +195,7 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
       });
     } else {
       writes.push({
-        movement_type: 'OUT', warehouse_id: warehouseId, product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'OUT', warehouse_id: warehouseId, item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: -delta,
         source_doc_type: 'STOCK_TRANSFER',
         source_doc_id: receiveId, source_doc_no: cancelled ? `${receiveNo}-CANCEL` : receiveNo,
@@ -224,17 +224,17 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
 const HEADER =
   'id, receive_number, purchase_consignment_order_id, pc_order_no, supplier_id, received_at, delivery_note_ref, status, notes, ' +
   'warehouse_id, ' +
-  'currency, subtotal_centi, tax_centi, total_centi, ' +
+  'currency, subtotal_sen, tax_sen, total_sen, ' +
   'posted_at, created_at, created_by, updated_at';
 const ITEM =
-  'id, pc_receive_id, pc_order_item_id, material_kind, material_code, material_name, supplier_sku, ' +
-  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_centi, notes, ' +
+  'id, pc_receive_id, pc_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
+  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
   /* variant fields (migration 0057) */
-  'item_group, description, description2, uom, discount_centi, variants, ' +
+  'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, ' +
   /* line money + per-line date + cost snapshot */
-  'line_total_centi, delivery_date, unit_cost_centi, ' +
+  'line_total_sen, delivery_date, unit_cost_sen, ' +
   /* consumption tracking (downstream PR draw) */
   'invoiced_qty, returned_qty, created_at, ' +
   /* rack placement (nullable physical link; off-ledger, never required) */
@@ -250,18 +250,18 @@ const nextNumber = async (sb: any, prefix: string, table: string, col: string, c
 };
 
 /* ── Recompute PC Receive header money rollups ────────────────────────────
-   Sum line_total_centi across receive_items → write subtotal_centi +
-   total_centi. The receive carries no tax, so total = subtotal.
+   Sum line_total_sen across receive_items → write subtotal_sen +
+   total_sen. The receive carries no tax, so total = subtotal.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
    recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePcReceiveTotals(sb: any, receiveId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_consignment_receive_items')
-    .select('line_total_centi')
+    .select('line_total_sen')
     .eq('pc_receive_id', receiveId);
   /* A failed READ is not an empty receive, and `?? []` cannot tell them apart —
-     it folded a transient blip into subtotal_centi / total_centi ZERO on a
+     it folded a transient blip into subtotal_sen / total_sen ZERO on a
      receive whose lines were intact. The ERROR is the signal, never the
      emptiness: a genuinely empty receive resolves error === null with data === []
      and MUST still fall through to zero the header. */
@@ -270,10 +270,10 @@ async function recomputePcReceiveTotals(sb: any, receiveId: string) {
     console.error('[pcr-recompute] item read failed — header left unchanged:', receiveId, itemsErr.message);
     return;
   }
-  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
+  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_sen ?? 0), 0);
   const { error: updErr } = await sb.from('purchase_consignment_receives').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     updated_at: new Date().toISOString(),
   }).eq('id', receiveId);
   if (updErr) {
@@ -471,7 +471,7 @@ purchaseConsignmentReceives.get('/', async (c) => {
   }
   const receives = rows.map((g) => ({
     ...g,
-    total_centi: (g.total_centi as number | null | undefined) ?? 0,
+    total_sen: (g.total_sen as number | null | undefined) ?? 0,
     ...computePcReceiveFlags(linesByReceive.get(g.id) ?? []),
   }));
   return c.json({ grns: receives });
@@ -487,8 +487,8 @@ purchaseConsignmentReceives.get('/outstanding-pco-items', async (c) => {
     sb
       .from('purchase_consignment_order_items')
       .select(`
-      id, purchase_consignment_order_id, material_kind, material_code, material_name, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
+      id, purchase_consignment_order_id, material_kind, item_code, material_name, item_group,
+      description, qty, received_qty, unit_price_sen, warehouse_id, variants, delivery_date,
       pco:purchase_consignment_orders!inner ( id, pc_number, supplier_id, status, po_date, expected_at,
         purchase_location_id, supplier:suppliers ( code, name ) )
     `),
@@ -499,9 +499,9 @@ purchaseConsignmentReceives.get('/outstanding-pco-items', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   type Row = {
-    id: string; purchase_consignment_order_id: string; material_kind: string; material_code: string;
+    id: string; purchase_consignment_order_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
+    qty: number; received_qty: number; unit_price_sen: number;
     warehouse_id: string | null; variants: unknown; delivery_date: string | null;
     pco: {
       id: string; pc_number: string; supplier_id: string; status: string;
@@ -518,13 +518,13 @@ purchaseConsignmentReceives.get('/outstanding-pco-items', async (c) => {
     pcoItemId:       r.id,
     pcoId:           r.pco.id,
     pcoDocNo:        r.pco.pc_number,
-    itemCode:        r.material_code,
+    itemCode:        r.item_code,
     description:     r.description ?? r.material_name,
     itemGroup:       r.item_group ?? '',
     qty:             r.qty,
     receivedQty:     r.received_qty ?? 0,
     remainingQty:    r.qty - (r.received_qty ?? 0),
-    unitPriceCenti:  r.unit_price_centi,
+    unitPriceSen:  r.unit_price_sen,
     warehouseId:     r.warehouse_id,
     variants:        r.variants,
     deliveryDate:    r.delivery_date ?? null,
@@ -598,7 +598,7 @@ purchaseConsignmentReceives.get('/outstanding-order-lines', async (c) => {
 
   const { data: items, error: iErr } = await chunkIn<Record<string, unknown>>(orderIds, (batch, from, to) => sb
     .from('purchase_consignment_order_items')
-    .select('id, purchase_consignment_order_id, material_kind, material_code, material_name, supplier_sku, item_group, description, uom, qty, received_qty, unit_price_centi, variants')
+    .select('id, purchase_consignment_order_id, material_kind, item_code, material_name, supplier_sku, item_group, description, uom, qty, received_qty, unit_price_sen, variants')
     .in('purchase_consignment_order_id', batch)
     .range(from, to));
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
@@ -615,7 +615,7 @@ purchaseConsignmentReceives.get('/outstanding-order-lines', async (c) => {
       supplierId: o?.supplier_id ?? null,
       supplierName: o?.supplier?.name ?? null,
       materialKind: (it.material_kind as string) ?? 'OTHER',
-      materialCode: it.material_code as string,
+      itemCode: it.item_code as string,
       materialName: (it.material_name as string) ?? '',
       supplierSku: (it.supplier_sku as string | null) ?? null,
       itemGroup: (it.item_group as string | null) ?? null,
@@ -624,7 +624,7 @@ purchaseConsignmentReceives.get('/outstanding-order-lines', async (c) => {
       ordered,
       received,
       outstanding: ordered - received,
-      unitPriceCenti: Number(it.unit_price_centi ?? 0),
+      unitPriceSen: Number(it.unit_price_sen ?? 0),
       variants: it.variants ?? null,
     };
   }).filter((l) => l.outstanding > 0);
@@ -647,14 +647,14 @@ purchaseConsignmentReceives.get('/:id', async (c) => {
      downstream PC Return breakdown. */
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PC receive lines expose `material_code`, so sort a shimmed
+     on `item_code`; PC receive lines expose `item_code`, so sort a shimmed
      view that carries the original row back unchanged. `.order('created_at')`
      above stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type PcrLineRow = Record<string, unknown> & { id: string; pc_order_item_id: string | null; material_code: string; item_code: string };
+  type PcrLineRow = Record<string, unknown> & { id: string; pc_order_item_id: string | null; item_code: string };
   const lineItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; pc_order_item_id: string | null; material_code: string }>)
-        .map((it): PcrLineRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; pc_order_item_id: string | null; item_code: string }>)
+        .map((it): PcrLineRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -806,24 +806,24 @@ purchaseConsignmentReceives.post('/', async (c) => {
 
   const rows = items.map((it) => {
     const qtyReceived = Number(it.qtyReceived ?? 0);
-    const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-    const discountCenti = Number(it.discountCenti ?? 0);
+    const unitPriceSen = Number(it.unitPriceSen ?? 0);
+    const discountSen = Number(it.discountSen ?? 0);
     return {
       pc_receive_id: h.id,
       pc_order_item_id: (it.pcOrderItemId as string | undefined) ?? null,
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty_received: qtyReceived,
       qty_accepted: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
       qty_rejected: Number(it.qtyRejected ?? 0),
       rejection_reason: (it.rejectionReason as string | undefined) ?? null,
-      unit_price_centi: unitPriceCenti,
-      discount_centi: discountCenti,
-      line_total_centi: (qtyReceived * unitPriceCenti) - discountCenti,
+      unit_price_sen: unitPriceSen,
+      discount_sen: discountSen,
+      line_total_sen: (qtyReceived * unitPriceSen) - discountSen,
       delivery_date: dateOrNull(it.deliveryDate),
-      unit_cost_centi: Number(it.unitCostCenti ?? 0),
+      unit_cost_sen: Number(it.unitCostSen ?? 0),
       notes: (it.notes as string | undefined) ?? null,
       item_group: (it.itemGroup as string | undefined) ?? null,
       variants: it.variants ?? null,
@@ -902,19 +902,19 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
   // pcoIds)` is id-keyed, and an id-keyed read on a converter is the shape this
   // sweep exists for, so it carries the predicate rather than inheriting it.
   const { data: items } = await scopeToCompany(sb.from('purchase_consignment_order_items')
-    .select('id, purchase_consignment_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
+    .select('id, purchase_consignment_order_id, material_kind, item_code, material_name, qty, received_qty, unit_price_sen, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
-      'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date')
+      'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen, unit_cost_sen, delivery_date')
     .in('purchase_consignment_order_id', pcoIds), c);
   const itemList = ((items ?? []) as unknown as Array<{
-    id: string; purchase_consignment_order_id: string; material_kind: string; material_code: string;
-    material_name: string; qty: number; received_qty: number; unit_price_centi: number;
+    id: string; purchase_consignment_order_id: string; material_kind: string; item_code: string;
+    material_name: string; qty: number; received_qty: number; unit_price_sen: number;
     item_group?: string | null; description?: string | null; description2?: string | null;
     uom?: string; variants?: unknown; gap_inches?: number | null;
     divan_height_inches?: number | null; divan_price_sen?: number;
     leg_height_inches?: number | null; leg_price_sen?: number;
     custom_specials?: unknown; line_suffix?: string | null; special_order_price_sen?: number;
-    discount_centi?: number; unit_cost_centi?: number; delivery_date?: string | null;
+    discount_sen?: number; unit_cost_sen?: number; delivery_date?: string | null;
   }>).filter((it) => it.qty - (it.received_qty ?? 0) > 0);
 
   if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'No outstanding lines came back for this PC Order. Open it and check its received balance before treating it as received in full.' }, 400);
@@ -941,19 +941,19 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
 
   const rows = itemList.map((it) => {
     const qtyReceived = it.qty - (it.received_qty ?? 0);
-    const discountCenti = it.discount_centi ?? 0;
+    const discountSen = it.discount_sen ?? 0;
     return {
       pc_receive_id: h.id,
       pc_order_item_id: it.id,
       material_kind: it.material_kind,
-      material_code: it.material_code,
+      item_code: it.item_code,
       material_name: it.material_name,
       qty_received: qtyReceived,
       qty_accepted: qtyReceived,
       qty_rejected: 0,
-      unit_price_centi: it.unit_price_centi,
-      line_total_centi: (qtyReceived * it.unit_price_centi) - discountCenti,
-      unit_cost_centi: it.unit_cost_centi ?? 0,
+      unit_price_sen: it.unit_price_sen,
+      line_total_sen: (qtyReceived * it.unit_price_sen) - discountSen,
+      unit_cost_sen: it.unit_cost_sen ?? 0,
       item_group: it.item_group ?? null,
       description: it.description ?? null,
       description2: it.description2 ?? null,
@@ -967,7 +967,7 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
       custom_specials: it.custom_specials ?? null,
       line_suffix: it.line_suffix ?? null,
       special_order_price_sen: it.special_order_price_sen ?? 0,
-      discount_centi: discountCenti,
+      discount_sen: discountSen,
       delivery_date: it.delivery_date ?? null,
     };
   });
@@ -1086,7 +1086,7 @@ purchaseConsignmentReceives.patch('/:id/cancel', cancelPurchaseConsignmentReceiv
 /* ════════════════════════════════════════════════════════════════════════
    PC Receive CRUD (PATCH header + line add / edit / delete) — mirrors the GRN
    detail page editing. The editable line quantity is qty_received;
-   line_total_centi = qty_received * unit_price_centi - discount_centi;
+   line_total_sen = qty_received * unit_price_sen - discount_sen;
    recomputePcReceiveTotals rolls the header subtotal/total. Line CRUD recounts
    received_qty onto the PC Order AND resyncs the inventory IN (on-ledger).
    ════════════════════════════════════════════════════════════════════════ */
@@ -1122,7 +1122,7 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   const receiveId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -1137,9 +1137,9 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const qtyReceived = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const discountCenti = Number(it.discountCenti ?? 0);
-  const lineTotal = (qtyReceived * unitPriceCenti) - discountCenti;
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const discountSen = Number(it.discountSen ?? 0);
+  const lineTotal = (qtyReceived * unitPriceSen) - discountSen;
 
   /* Over-receipt guard — a PC-order-linked added line can't accept more than the
      PC Order line's remaining (qty - received_qty). Manual lines uncapped. */
@@ -1157,16 +1157,16 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
     pc_receive_id: receiveId,
     pc_order_item_id: (it.pcOrderItemId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     qty_received: qtyReceived,
     qty_accepted: qtyReceived,
     qty_rejected: 0,
-    unit_price_centi: unitPriceCenti,
-    discount_centi: discountCenti,
-    line_total_centi: lineTotal,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    unit_price_sen: unitPriceSen,
+    discount_sen: discountSen,
+    line_total_sen: lineTotal,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     notes: (it.notes as string) ?? null,
     gap_inches: (it.gapInches as number) ?? null,
     divan_height_inches: (it.divanHeightInches as number) ?? null,
@@ -1239,7 +1239,7 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_consignment_receive_items')
-    .select('qty_received, qty_accepted, unit_price_centi, discount_centi, item_group, variants, pc_order_item_id, material_code, material_name')
+    .select('qty_received, qty_accepted, unit_price_sen, discount_sen, item_group, variants, pc_order_item_id, item_code, material_name')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1261,22 +1261,22 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
     }
   }
 
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : ((prev as { discount_centi: number }).discount_centi ?? 0);
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : ((prev as { discount_sen: number }).discount_sen ?? 0);
   const lineTotal = (qtyReceived * unit) - discount;
 
   const updates: Record<string, unknown> = {
     qty_received: qtyReceived,
     qty_accepted: qtyReceived,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['uom', 'uom'],
-    ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],

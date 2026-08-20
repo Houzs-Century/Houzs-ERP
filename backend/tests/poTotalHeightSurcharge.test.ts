@@ -47,7 +47,7 @@ const cost = (totalHeight: string | null) => computeMfgPoUnitCost(
   {
     category: 'BEDFRAME',
     priceMatrix: null,
-    unitPriceCenti: 40750, // the supplier binding's flat base for CODY-(SS)
+    unitPriceSen: 40750, // the supplier binding's flat base for CODY-(SS)
     totalHeight,
   },
   MAINT,

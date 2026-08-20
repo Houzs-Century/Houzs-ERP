@@ -19,8 +19,8 @@ import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier
 type PiHeader = {
   invoice_number: string; supplier_invoice_ref: string | null; status: string;
   invoice_date: string; due_date: string | null; currency: string;
-  subtotal_centi: number; tax_centi: number; total_centi: number;
-  paid_centi: number; notes: string | null;
+  subtotal_sen: number; tax_sen: number; total_sen: number;
+  paid_sen: number; notes: string | null;
   supplier_id?: string | null;
   supplier?: { code: string; name: string };
   // Source PO / GRN this invoice was raised from — the detail endpoint already
@@ -31,8 +31,8 @@ type PiHeader = {
   grn?: { grn_number: string } | null;
 };
 type PiItem = {
-  material_code: string; material_name: string;
-  qty: number; unit_price_centi: number; line_total_centi: number;
+  item_code: string; material_name: string;
+  qty: number; unit_price_sen: number; line_total_sen: number;
   /* Dual-code extras — optional so older call sites keep compiling. */
   supplier_sku?: string | null;
   item_group?: string | null;
@@ -122,11 +122,11 @@ export async function renderPurchaseInvoiceInto(
 
   /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
      services) — mirror the sales side. The shared helper keys on `item_code`;
-     PI lines expose `material_code`, so sort a shimmed view that carries the
+     PI lines expose `item_code`, so sort a shimmed view that carries the
      original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.material_code, __row: it })),
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
@@ -137,11 +137,11 @@ export async function renderPurchaseInvoiceInto(
     return [
       String(idx + 1),
       supplierCodeFor(it, skuMap),
-      it.material_code,
+      it.item_code,
       specs ? `${desc}\n${specs}` : desc,
       String(it.qty),
-      fmtRm(it.unit_price_centi, header.currency),
-      fmtRm(it.line_total_centi, header.currency),
+      fmtRm(it.unit_price_sen, header.currency),
+      fmtRm(it.line_total_sen, header.currency),
     ];
   });
   autoTable(doc, {
@@ -173,14 +173,14 @@ export async function renderPurchaseInvoiceInto(
   };
   doc.setFontSize(9);
   let ty = lastY;
-  drawRow('Subtotal', fmtRm(header.subtotal_centi, header.currency), ty); ty += 4;
-  drawRow('Tax',      fmtRm(header.tax_centi,      header.currency), ty); ty += 5;
+  drawRow('Subtotal', fmtRm(header.subtotal_sen, header.currency), ty); ty += 4;
+  drawRow('Tax',      fmtRm(header.tax_sen,      header.currency), ty); ty += 5;
   doc.setDrawColor(0); doc.line(totalsX, ty - 2, pageW - margin, ty - 2);
   doc.setFontSize(11);
-  drawRow('GRAND TOTAL', fmtRm(header.total_centi, header.currency), ty + 2, true); ty += 6;
+  drawRow('GRAND TOTAL', fmtRm(header.total_sen, header.currency), ty + 2, true); ty += 6;
   doc.setFontSize(9);
-  drawRow('Paid',        fmtRm(header.paid_centi, header.currency), ty + 4); ty += 4;
-  drawRow('Outstanding', fmtRm(header.total_centi - header.paid_centi, header.currency), ty + 4, true);
+  drawRow('Paid',        fmtRm(header.paid_sen, header.currency), ty + 4); ty += 4;
+  drawRow('Outstanding', fmtRm(header.total_sen - header.paid_sen, header.currency), ty + 4, true);
 
   // Footer: doc no · portal · page n of m on every page (of THIS PI's run)
   const pageCount = doc.getNumberOfPages();
