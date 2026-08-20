@@ -34,7 +34,6 @@
 // Mounted at '/sales-invoices' in scm/index.ts.
 
 import { Hono } from 'hono';
-import type { SaveProblem } from '../shared/so-save-problems';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
@@ -1391,9 +1390,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
      delivery orders names them all; AcSyncService takes FromDocNos. What this
      used to skip on was the primitive's single-source key array, which the
      service now works around by grouping per source document. */
-  let acNotSent: SaveProblem[] = [];
-  if (doIds.length) {
-    ({ problems: acNotSent } = await enqueueConvert(sb, {
+  const ac = doIds.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'do_to_iv',
       from: doIds.map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
@@ -1402,13 +1399,12 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       docNo: h.invoice_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    }));
-  }
+  }) : null;
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */
   if (isDraft) {
-    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
+    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
   }
 
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
@@ -1449,7 +1445,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   }
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 salesInvoices.post('/from-dos', createSalesInvoiceFromDoLinesHandler);
 
