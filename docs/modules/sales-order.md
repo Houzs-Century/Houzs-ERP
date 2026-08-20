@@ -5,6 +5,17 @@
 
 # Module: Sales Order (SCM)
 
+> **Naming (vocabulary registry).** Three SO-header concepts are now declared in
+> `backend/scripts/lib/vocabulary.mjs` (glossary: `docs/generated/GLOSSARY.md`):
+> the salesperson is `salesperson_id` (uuid; the legacy `agent` text is kept for
+> the AutoCount book, see "stamped TWICE" below), the ship-from warehouse is
+> `warehouse_id` (the header's free-text `sales_location` snapshot is being
+> unified onto it by a staged backfill migration), and the customer's own
+> reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
+> fallback and `po_doc_no`/`customer_po*` are dead columns pending a staged drop).
+> No column was renamed in this registration — the two renames are reviewed
+> follow-ups because they need a backfill / a view-guarded drop.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission
@@ -691,6 +702,39 @@ main router, so its static path resolves ahead of `/:docNo`. It shares the
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### The 2990 receiver: `POST /api/sync/so-mirror` — IMPORT-ONCE since 2026-08-20
+
+Not in the table above because it is not a staff endpoint. It is mounted
+PRE-AUTH in `src/index.ts` and authenticated by a shared secret
+(`x-sync-secret` == `SYNC_SECRET`), because the caller is 2990's DATABASE —
+pg_cron + pg_net — not a person. Handler: `routes/so-mirror.ts`.
+
+| inbound | what it does now |
+|---|---|
+| `{docNo, header, items, payments}`, `doc_no` **absent** for company 2 | imports it: header, then the whole item + payment set. Unchanged from before. |
+| `{docNo, …}`, `doc_no` **present** | **writes nothing.** `200 {action:"skipped_existing", skipped:true}` + a `[so-mirror] skipped_existing` warning. |
+| `{docNo, deleted:true}`, `doc_no` **present** | **refuses.** `200 {action:"refused_delete", refused:true}` + a `[so-mirror] refused_delete` warning. |
+| `{docNo, deleted:true}`, `doc_no` absent | unchanged: the DELETE runs, matches nothing, acknowledges. |
+
+**Why it changed.** Before the 2026-07-21 cutover this was a live replica and
+re-applying 2990's copy was correct. After it, Houzs is the WRITER of `2990-`
+orders (`HOUZS_OWNS_2990="true"`; the POS creates them here, Houzs mints the
+numbers, the readonly wall lifts so staff can edit them) — and the receiver went
+on replaying 2990's older copy over those edits. Worse than losing the edit: it
+replaced the item set with a DELETE-then-INSERT, and
+`delivery_order_items.so_item_id` is `ON DELETE SET NULL`, so every replay
+blanked the Delivery Order lines that named those SO lines.
+
+**Every refusal is 200, deliberately.** 2990's drainer keys on HTTP status;
+non-2xx keeps the outbox row PENDING and retries forever, so one refused order
+would wedge the queue and every later SO would stop arriving. A skip is a
+delivered message we chose not to apply.
+
+**The header is the commit marker.** A first import that dies part-way deletes
+the header it just wrote before returning 500, so the retry redoes the whole
+document instead of finding a header-only order and skipping it. Pinned by
+`backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
+
 ### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
 
 Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
@@ -1060,12 +1104,20 @@ readers; they are not what drives this.)
 Owner, 2026-07-31: **"我们的 item 都不会有仓库, 还是跟着 SO 的"** — an item never
 carries a warehouse of its own; the warehouse comes from the Sales Order.
 
-**There is NO warehouse FK on `scm.mfg_sales_orders`.** This is the surprising
-part and the reason people look in the wrong place. The header records its
-warehouse as the free-text **`sales_location`**, written by `warehouseLabel()`
-(`lib/warehouse-label.ts` — the warehouse CODE when there is one, else the
-name), which is itself derived from `customer_state` through
-`state_warehouse_mappings`. So the SO's warehouse resolves as:
+**The header's warehouse is the free-text `sales_location` snapshot, with a
+canonical `warehouse_id` alongside it since mig 0309.** For most of this
+module's life there was NO warehouse FK on the header at all — that is why people
+look in the wrong place — and `sales_location` (written by `warehouseLabel()`,
+`lib/warehouse-label.ts`: the warehouse CODE when there is one, else the name,
+itself derived from `customer_state` through `state_warehouse_mappings`) is still
+the value every reader/writer resolves through. Mig 0309 (batch-3 naming
+unification) ADDED a nullable header `warehouse_id uuid -> scm.warehouses(id)`
+and backfilled it from `sales_location` (code-then-name, company-scoped, only
+where exactly one warehouse matches — 2772 of 2823 rows; the 51 unresolved
+`"SLGR WAREHOUSE"` orders in company 2 stay on `sales_location`). It is a
+SNAPSHOT that mirrors the per-line binding, NOT yet a read path: `sales_location`
+remains the source of truth and is not being dropped. So the SO's warehouse
+still resolves as:
 
 ```
 sales_location  ->  warehouses.code / warehouses.name    (what the SO says)
@@ -1195,11 +1247,19 @@ agreement, else the company's single active warehouse. The sibling arm does
 NOT breach the callout above: the callout guards against pooling across a
 warehouse boundary, and an SO whose every warehoused line names ONE warehouse
 has no boundary to pool across — disagreeing siblings refuse, and the
-single-warehouse fallback must not rescue them. Company-2990 rows are
-mirror-maintained (`so-mirror.ts` drains DELETE-then-INSERT per SO, wiping
-local stamps), so they verdict `mirror-source` — reported with the exact stamp
-for the 2990 SOURCE database, never written here. Rule:
-`classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
+single-warehouse fallback must not rescue them. Company-2990 rows verdict
+`mirror-source` — reported with the exact stamp for the 2990 SOURCE database,
+never written here. Rule: `classifySoLineWarehouse`,
+`backend/scripts/lib/doc-evidence-core.mjs`.
+
+> **The REASON for that verdict expired on 2026-08-20, the verdict did not.**
+> This paragraph used to justify it with *"`so-mirror.ts` drains
+> DELETE-then-INSERT per SO, wiping local stamps"*. It no longer does — the
+> receiver is import-once and never rewrites a doc_no Houzs already holds, so a
+> stamp written here now survives. What still holds is that these lines'
+> warehouse evidence lives in the 2990 source database, which is why the classifier
+> reports rather than writes. If that ever stops being the reason, the verdict
+> should be revisited on its own merits, not on this sentence.
 
 **Historical backfill for the MIGRATED AutoCount lines (2026-08-11, applied).**
 A different population and a different rule. `import-ac-outstanding-so.mjs`
@@ -1388,6 +1448,13 @@ company-2 order would wedge the queue behind it. The rule for company 2 belongs
 in 2990's own write paths. The route says so in a comment, and
 `tests/soDatePairWiring.test.ts` asserts the comment is still there.
 
+**Since 2026-08-20 that exclusion is a ONE-TIME exclusion, and it shrank on its
+own.** The receiver is import-once: it writes only a `doc_no` company 2 does not
+already hold, and every later delivery of the same order is a no-op. So the
+unpaired-dates exemption now covers the FIRST import of a legacy order and
+nothing else — every subsequent state of a 2990 order is authored in Houzs, by a
+path that does run the pair gate.
+
 The enumeration is a TEST, not prose: `tests/soDatePairWiring.test.ts` anchors on
 each path's source and fails if one stops calling the predicate. That file exists
 because the rule was previously hand-written in five places and simply missing
@@ -1559,6 +1626,9 @@ deploy schedule, which never got the 2026-08-13 unification) was written straigh
 through. It needs no code change: `applyMap` filters against
 `information_schema`, so the drop silently ends it. Until then it is the only
 thing that can still put a value in the column, and nothing reads it.
+*(Narrowed further 2026-08-20: import-once means it can only do so on an order's
+FIRST arrival, so the reachable population is new legacy imports, not every
+re-delivery of every company-2 order.)*
 
 Also gone with the writes: **`soProceedGateBlocked`**, whose two call sites were
 the `/status` stamp block and the header PATCH's `proceededAt` branch. The RULE
@@ -2030,7 +2100,9 @@ familiar RM250), decomposed into line specs by `buildDeliveryFeeServiceLines`
 (`scm/shared/service-lines.ts` — Σ lines === fee.total by construction), and
 written by exactly one primitive: the atomic RPC
 `scm.rebuild_mfg_so_delivery_lines` (migration **0214**: per-doc advisory xact
-lock, delete → insert → header stamp in one call — the duplicate-fee race fix).
+lock, re-derive → header stamp in one call — the duplicate-fee race fix;
+migration **0310** made the re-derive REUSE its rows, see "the line keeps its
+identity" below).
 
 **Path inventory — how each SO-producing path satisfies the ruling:**
 
@@ -2065,7 +2137,7 @@ the rebuild derives the price, one truth — and until this date the discount
 road was silently dead too: the line PATCH accepted a bounded discount on a
 delivery line, and the very next rebuild wrote `discount_sen: 0` over it. An
 operator who typed 250 → 125 watched the line "nuke to 0 and disappear"
-(the rebuild deletes and re-inserts the `SVC-DELIVERY*` set). Now the rebuild
+(the rebuild deleted and re-inserted the `SVC-DELIVERY*` set). Now the rebuild
 recovers each fee line's discount by `item_code`, clamps it to the rebuilt
 line's own total (a fee line can never go negative), and re-applies it — so
 the SO prints unit 250 / discount 125 / total 125, which is how every other
@@ -2075,6 +2147,27 @@ from unit × qty rather than `total_sen`, or a discounted ADD line would
 compound the reduction on every save. A component that disappears on rebuild
 (the base swapping to CROSS on a follow-up change) drops its discount rather
 than migrating it to money it never named.
+
+**The line keeps its identity (2026-08-20, migration 0310).** The rebuild now
+UPDATEs the fee lines in place instead of deleting and re-inserting them
+(`backend/src/db/migrations-pg/0310_scm_rebuild_so_delivery_lines_keeps_identity.sql`
+— this module owns that RPC; the earlier bodies are 0214 and 0305).
+This is not tidiness — **a Delivery Order can carry a delivery-fee line**
+(`routes/delivery-orders-mfg.ts` records Nico's DO for 2990-SO-2606-034, blocked
+on `SVC-DISPOSE-SOFA` and `SVC-DELIVERY-CROSS` being "short" at BALAKONG), and
+`delivery_order_items.so_item_id` is **ON DELETE SET NULL** (0235). So every
+single fee change used to blank the link of any DO that had shipped that fee,
+and left an SO that still showed a delivery line — a *different row wearing the
+same `item_code`*, which is why an investigator checking "is the line still
+there?" sees yes. That appearance is why 0302 set the FK theory aside; only
+`created_at` distinguishes the two, and `scm.mfg_so_item_deletions` now records
+the deletes directly. Rows are matched per `item_code` by their **position in
+the specs array**, because `buildDeliveryFeeServiceLines` emits
+`SVC-DELIVERY-CROSS` twice on a follow-up that also crosses categories — so
+keep that order stable. A component that genuinely disappears is still deleted,
+and still takes its link, which is correct: the line it named is gone. This is
+also the precondition for ever exposing an editable delivery charge — without
+it, every edit manufactures an orphan.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows

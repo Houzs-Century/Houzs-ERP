@@ -217,3 +217,68 @@ export function soStockLocationError(i: SoLocationGuardInput): SoFormError | nul
     body: "Ask an administrator to map that State to a warehouse, then try again.",
   };
 }
+
+export interface SoRequiredFieldsInput {
+  customerName: string;
+  phone: string;
+  /** True when at least one line has a product picked (itemCode) AND qty > 0. */
+  hasNamedLine: boolean;
+  /** Save-as-draft: a draft needs none of the confirm-only fields. */
+  asDraft: boolean;
+  /** Resolved venue — false when none picked. Confirm-only. */
+  hasVenue: boolean;
+  /** Resolved salesperson — false when none. Confirm-only. */
+  hasSalesperson: boolean;
+  /** Stock-location gate input — only its "no State picked" case counts as a
+      missing FIELD here; the "State has no warehouse" config case stays with
+      soStockLocationError, run separately AFTER this returns empty. */
+  location: SoLocationGuardInput;
+}
+
+/**
+ * Collect EVERY missing always-required field for a CREATE/CONFIRM in ONE pass,
+ * so the operator sees them together instead of one dialog per field (owner
+ * 2026-08-20, live QA: "为什么要慢慢爆呢" — why does it pop one at a time).
+ *
+ * Returns the human-readable labels of the missing fields (empty = all present).
+ * The CONDITIONAL / SEQUENTIAL guards deliberately stay OUT of this and run after
+ * it, because each only applies once an earlier choice is made: soDateGuardError
+ * (only with dates), the sofa-mix rule (only with those lines), the
+ * Processing-Date proceed gate (only with a date), the "State has no warehouse"
+ * config error (only once a State is picked), and payment sub-fields (only with
+ * payments). Shared by desktop SalesOrderNew and mobile MobileNewSO so the
+ * required set can't drift between surfaces.
+ */
+export function soRequiredFieldErrors(i: SoRequiredFieldsInput): string[] {
+  const missing: string[] = [];
+  if (!i.customerName.trim()) missing.push("Customer name");
+  if (!i.phone.trim()) missing.push("Phone number");
+  if (!i.hasNamedLine) missing.push("At least one line item with a product");
+  if (!i.asDraft) {
+    if (!i.hasVenue) missing.push("Venue");
+    if (!i.hasSalesperson) missing.push("Salesperson");
+    // "No State picked yet" is a missing field the operator can fill now, so it
+    // joins the list. The "picked State has no warehouse" case is an admin
+    // config problem, not a field the operator forgot — it keeps its own
+    // sentence via soStockLocationError, which the caller runs once this is empty.
+    const l = i.location;
+    const locationRequired =
+      !l.asDraft && !l.isEdit && l.mappingsLoaded !== false &&
+      companyRequiresStockLocation(l.companyCode);
+    if (locationRequired && l.salesLocation.trim() === "" && l.state.trim() === "") {
+      missing.push("Delivery State (it sets the shipping warehouse)");
+    }
+  }
+  return missing;
+}
+
+/** Render the collected missing-field labels as ONE dialog/toast error. */
+export function soRequiredFieldsMessage(missing: string[]): SoFormError {
+  if (missing.length === 1) {
+    return { title: `${missing[0]} is required.` };
+  }
+  return {
+    title: "Fill in the required fields before creating this order.",
+    body: `Still missing: ${missing.join(", ")}.`,
+  };
+}

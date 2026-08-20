@@ -12,6 +12,16 @@ Per-module technical doc for `scm.warehouses` — the master list of physical
 stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 / SO reserve / inventory balance / venue resolve reads from it.
 
+> **Naming (vocabulary registry).** The building an order ships from is
+> `warehouse_id` (uuid -> `scm.warehouses`), per line; its one display rule is
+> `warehouse-label.ts` (code first, then name). It is declared in
+> `backend/scripts/lib/vocabulary.mjs`. The SO header still keeps a free-text
+> snapshot `sales_location`; unifying that onto `warehouse_id` is a STAGED backfill
+> migration (it lands on `scm.mfg_sales_orders` and its grant-bearing
+> `mfg_sales_orders_with_payment_totals` view — the 0189 hazard), not yet shipped.
+> `purchase_location_id` (PO header) and `showroom_warehouse_id` are separate
+> columns, not drift.
+
 > Convention: money in **sen**, dates UTC. Reads/writes via `/api/scm/*`.
 >
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

@@ -3,6 +3,13 @@ import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
+/* The GR edit wrapper moved OUT of grns.ts on 2026-08-20 (the file-size ratchet
+   refused the growth, and its own message says to move new code into a module).
+   It is still the "thin per-file wrapper" this file's matcher was written for —
+   it just lives in its own file now, so the scan has to follow it there. Without
+   this import the EDIT case reports GR unreachable while grns.ts calls it four
+   times: a true property, measured through a mechanism that lost sight of it. */
+import rawGrnOutbox from '../src/scm/lib/ac-grn-outbox.ts?raw';
 import rawSi from '../src/scm/routes/sales-invoices.ts?raw';
 import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawSoAmend from '../src/scm/routes/so-amendments.ts?raw';
@@ -32,6 +39,7 @@ const SO = lf(rawSo);
 const PO = lf(rawPo);
 const DO = lf(rawDo);
 const GRN = lf(rawGrn);
+const GRN_OUTBOX = lf(rawGrnOutbox);
 const SI = lf(rawSi);
 const PI = lf(rawPi);
 const SO_AMEND = lf(rawSoAmend);
@@ -41,7 +49,7 @@ const SI_SOURCE = lf(rawSiSource);
 const WRITEBACK = lf(rawWriteback);
 const SERVICE = lf(rawService);
 
-const ROUTERS = [SO, PO, DO, GRN, SI, PI, SO_AMEND, PO_AMEND];
+const ROUTERS = [SO, PO, DO, GRN, GRN_OUTBOX, SI, PI, SO_AMEND, PO_AMEND];
 
 const between = (hay: string, startAnchor: string, endAnchor: string): string => {
   const start = hay.indexOf(startAnchor);
@@ -114,11 +122,15 @@ describe('the four downstream document types queue an edit on every line and hea
     expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });
 
+  /* The pinned shapes carry `sb` since 2026-08-20: the outbox helper now takes
+     its client explicitly, so a caller inside a PG transaction can hand it the
+     transactional one. Pinning the ARGUMENTS, not just the name, is what makes
+     that visible here — a signature change cannot slip past this file. */
   test('GRN — header PATCH and line add / edit / delete', () => {
-    expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, id)');
-    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, grnId)');
-    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, grnId)');
-    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, grnId, retire)');
+    expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, sb, id)');
+    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
   });
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {

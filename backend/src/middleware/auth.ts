@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
-import { getUserBySession, type AuthUser } from "../services/auth";
+import { getUserBySession, timingSafeEqualStr, type AuthUser } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
@@ -135,8 +135,8 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   // are trusted backend callers, never a POS tablet, and must keep pricing
   // freely.
   if (
-    (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) ||
-    (c.env.CONNECT_SERVICE_TOKEN && token === c.env.CONNECT_SERVICE_TOKEN)
+    (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) ||
+    (c.env.CONNECT_SERVICE_TOKEN && timingSafeEqualStr(token, c.env.CONNECT_SERVICE_TOKEN))
   ) {
     c.set("user", SERVICE_USER);
     c.set("userId", (SERVICE_USER as any).id ?? null);
