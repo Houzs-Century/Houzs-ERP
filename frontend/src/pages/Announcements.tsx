@@ -42,6 +42,10 @@ import {
 } from "../components/AnnouncementMedia";
 import { fmtDateTime } from "../vendor/shared/format";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
+import {
+  ANNOUNCEMENT_STATUS_LABEL,
+  announcementStatus,
+} from "../lib/announcementStatus";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Domain types — mirrors backend/src/routes/announcements.ts public shape.
@@ -1151,13 +1155,12 @@ function AnnouncementRow({
   const [acks, setAcks] = useState<AcksResponse["data"] | null>(null);
   const [acksLoading, setAcksLoading] = useState(false);
 
-  const expired =
-    a.expiresAt != null && Date.parse(a.expiresAt) <= Date.now();
-  const statusText = !a.isActive
-    ? "Hidden"
-    : expired
-    ? "Expired"
-    : "Live";
+  /* Hidden / Expired / Live comes from the SHARED rule, imported — not
+     re-derived here — so the phone's badges can never disagree with these.
+     See lib/announcementStatus.ts for why that mattered. */
+  const status = announcementStatus(a);
+  const expired = status === "expired";
+  const statusText = ANNOUNCEMENT_STATUS_LABEL[status];
   const statusCls = !a.isActive
     ? "bg-surface-dim text-ink-muted border-border"
     : expired
