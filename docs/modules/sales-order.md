@@ -756,6 +756,38 @@ the header it just wrote before returning 500, so the retry redoes the whole
 document instead of finding a header-only order and skipping it. Pinned by
 `backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
 
+**Every decline is RECORDED — `scm.so_mirror_skips`, migration 0311.** This is
+what makes the refusal provable rather than merely claimed, and it exists
+because of the reading above: while the queue is idle a surviving edit proves
+nothing, so the missing fact was "was a delivery even offered?".
+
+| column | |
+|---|---|
+| `(company_id, doc_no, action)` | primary key. `action` is `skipped_existing` or `refused_delete` |
+| `hits` | how many deliveries have been declined for that pair |
+| `first_seen` / `last_seen` | `last_seen` is the one an acceptance test turns on |
+
+One row per pair, **never one per delivery** — the drainer retries every 10s, so
+append-per-event would grow by 8,640 rows a day per wedged document. The ceiling
+is (2990 orders) x 2.
+
+**Reading it:** `node backend/scripts/check-so-mirror-skips.mjs`, workflow **So
+mirror skips**. An edit that survived while that doc's `last_seen` moved inside
+your wait window is proof import-once held; an edit that survived while it did
+not move says only that the mirror was quiet.
+
+Two properties worth not breaking:
+
+- **The write is wrapped and never fatal.** Same rule as mig 0302's delete
+  audit: turning a correct refusal into a 500 would put the outbox row back to
+  PENDING and wedge the queue, which is the exact failure the 200 avoids. A
+  failed record is logged, and the refusal still stands.
+- **The reader asserts the COLUMN SHAPE, not a row count.** 0311 is `CREATE
+  TABLE IF NOT EXISTS`, so a pre-existing table of that name and a different
+  shape would be skipped in silence and the INSERT would fail against it
+  forever. An empty table and a wrong table both count zero; only the shape
+  check tells them apart.
+
 ### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
 
 Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
