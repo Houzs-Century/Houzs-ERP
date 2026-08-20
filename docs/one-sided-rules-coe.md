@@ -53,9 +53,25 @@ prop: forgetting it is a compile error.
 
 The frontend does **not** import the backend's rule modules. It **vendors
 copies** — `frontend/src/vendor/shared/*` and `vendor/scm/lib/*` against
-`backend/src/scm/shared/*`. One pair carries a byte-identical canonical test
-(`phone.ts` / `phone.canonical.test.ts`), and that is precisely why phone
-normalisation has never drifted. The rest had no referee.
+`backend/src/scm/shared/*` and `backend/src/scm/lib/*`. One pair carries a
+byte-identical canonical test (`phone.ts` / `phone.canonical.test.ts`), and that
+is precisely why phone normalisation has never drifted. The rest had no referee.
+
+**Corrected 2026-08-18.** The sentence above used to say the backend side was
+`scm/shared` alone, and so did the script: `check-shared-mirrors.mjs` read one
+directory while the frontend vendored from two. Every `scm/lib` pair was
+therefore invisible to the one check whose whole job is finding a rule with two
+homes. Widening it to both directories took the module count from 48 to 226 and
+immediately surfaced a defect in the checker itself — for any function whose
+RETURN TYPE contains a brace (`rulesByCategory(): Array<{ … }>`) the extractor
+sliced the type annotation instead of the body, so it could report DIVERGED over
+two spellings of a type alias and, far worse, report COSMETIC over two genuinely
+different bodies under one identical annotation. Both are fixed and a self-test
+probe now asserts the braced-return-type form. Two `scm/lib` pairs report
+NO-OVERLAP and were read by hand: `costing-enabled` (the backend resolves it
+from env bindings, the frontend is a hard-coded constant) and `slip` (the
+backend holds R2 bindings and hash/expiry helpers, the frontend the client-side
+upload API). Both are filename collisions, not copies.
 
 `backend/scripts/check-shared-mirrors.mjs` now compares every pair — not whole
 files (one copy is a superset, another a documented slice, most differ only in a
@@ -164,6 +180,11 @@ that was still moving. It is not replaced with a new number.)
   findings → 0.**
 - `frontend/scripts/check-silent-mutations.mjs` — 297 mutations. **35 SILENT → 0.**
 - `backend/scripts/check-shared-mirrors.mjs` — 41 rule pairs. **1 DIVERGED → 0.**
+  (Since 2026-08-18 it walks `scm/shared` **and** `scm/lib`; run it for the
+  current numbers rather than quoting these — §6 lesson 5.)
+- `backend/scripts/check-duplicated-decisions.mjs` — the same class one level
+  up: a rule with two homes under **different filenames**, which the sentence
+  in §2.2 says this script cannot see. Added 2026-08-18.
 
 **The handler count moved after this was written: the scanner now reports 1019
 SCM route handlers, 17 by-id reads with no company helper, 0 of them WRITE.**

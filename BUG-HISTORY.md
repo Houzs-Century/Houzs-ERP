@@ -211,6 +211,606 @@ is unanswered. Run RED first: `Failed to resolve import "./zero-cost-refusal"`
 
 ---
 
+## One rule, two homes, no referee — the class the owner named, and the audit script that now looks for it [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**The ask (owner, 2026-08-18).** *"同一条规则两个家 —— 又是今天那个形状 … 那这一个要
+统一一下吧。然后系统也是要查看这些类型的问题，要统一掉."* Unify the instances, and
+make the system check for the class.
+
+**The shape.** One business question, answered independently in more than one
+place. Nobody is careless: the second copy gets written because the first was in
+the wrong layer to reach, or because a new path was added by somebody who did not
+know the rule existed. Then it drifts, and the failure is always the same — the
+rule is enforced at N-1 of N places and the missing one is invisible, because
+nothing errors. Four instances in three days: the both-dates-or-neither rule in
+FIVE files with the CO header PATCH carrying no copy at all; the unlinked-line
+money guard on the INSERT path of five chains and the EDIT path of none (#2374);
+the typographic-quote normaliser added to the pricing engine and never to the
+allowed-options gate (#2379); the stock-readiness label built twice, so one
+screen printed a retired label as a group header over rows using the corrected
+one.
+
+**What now exists.** `backend/scripts/check-duplicated-decisions.mjs`, wired as
+`audit:duplicated-decisions` into the REQUIRED `backend-typecheck` job. Three
+detectors:
+
+- **D1** fingerprints every string-literal array (this covers `new Set([...])`,
+  `as const` tuples and inline PostgREST `.in('status', [...])` filters) and
+  every named enum-keyed constant map, and reports a fingerprint carried by two
+  or more FILES. This is the class `check-shared-mirrors.mjs` declares itself
+  blind to at its own lines 32-35 — a rule re-implemented under a different
+  filename. **130 groups on main** (re-measured 2026-08-20; it was 124 when this was written).
+- **D2** compares those fingerprints pairwise and reports NEAR MISSES (Jaccard
+  ≥ 0.75, not identical) with the exact differing members. This is what sees a
+  rule enforced at N-1 of N. **96 pairs on main**, among them the three live
+  answers to "which SO statuses are done" — FOUR and FIVE as two constants with
+  the SAME NAME and different contents inside `routes/inventory.ts`, and SIX in
+  `shared/so-terminal-states.ts`.
+- **D3** asserts a configured guard symbol appears inside the BALANCED-BRACE
+  slice of each sibling route handler. The slice is the point: a file-level grep
+  passes while the guard sits in a neighbouring handler, which is the
+  INSERT-guarded / EDIT-unguarded shape behind #2374. It is the only one of the
+  three that catches an ABSENCE.
+
+**A REVIEWED ALLOWLIST, not a meaning detector** — the mechanism
+`check-empty-state-claims.mjs` already uses. 226 entries, each with a reason a
+person wrote; a NEW hit fails until somebody decides about it; a stale entry
+prints and never fails, because a gate that punishes the fix is a gate that
+stops fixes. Pre-existing hits pass, so nobody is failed for a duplicate they did
+not write. **The seeding pass IS the census the owner asked for**, and it is the
+deliverable rather than a side effect.
+
+**What it found while being built.**
+
+- `soMainMixIntroduced` guards BOTH the add and the edit path of a sales order
+  and NEITHER path of a consignment order, while `ConsignmentOrderNew.tsx`
+  enforces the same rule client-side via `hasSofaMixConflict` — which exists
+  only in the vendored frontend `so-variant-rule.ts` and has no backend
+  counterpart. So the sofa-mix rule is enforced at the form and nowhere behind
+  it. Recorded as a dated question, not fixed: whether a consignment order may
+  mix a sofa with a bedframe is the owner's call.
+- `EXPLICIT_APPROVAL_KEYS` (the permission keys a `*` wildcard must NOT satisfy)
+  and the Assistant's known/denied position lists are unrefereed cross-tree
+  twins whose frontend copies call themselves mirrors. Recorded; each is the
+  same twenty-line pin as the password pair.
+- The **common-password check in `passwordStrength.ts` is unreachable.** The
+  four character-class gates run first, so anything reaching the dictionary is
+  ≥12 chars with an uppercase, a lowercase, a digit and a symbol; of the ~290
+  entries the only one with a symbol is 8 characters and the only two of 12+
+  characters carry neither a digit nor a symbol. Found by the drift test's own
+  vacuity guard, which demanded every refusal message and could not produce the
+  seventh. Recorded and pinned, not fixed — changing it is a password-policy
+  decision.
+
+**`check-shared-mirrors.mjs` widened, and a defect in it fixed.** It read
+`backend/src/scm/shared` alone while the frontend vendors from `vendor/shared`
+AND `vendor/scm/lib`, so every `scm/lib` pair was invisible to the one check
+whose whole job is this class. Walking both directories took it from 48 modules
+to 226 — and the first new pair exposed a bug in the extractor: for any function
+whose RETURN TYPE contains a brace (`rulesByCategory(): Array<{ … }>`) it sliced
+the type annotation instead of the body. That can report DIVERGED over two
+spellings of a type alias, and — the dangerous direction — COSMETIC over two
+genuinely different bodies under one identical annotation. Fixed, with a
+self-test probe for the braced-return-type form. Baseline before: rc=0, 0
+DIVERGED, 12 COSMETIC, 8 IDENTICAL. After: rc=0, 0 DIVERGED, 13 COSMETIC, 8
+IDENTICAL, 2 NO-OVERLAP (`costing-enabled` and `slip` — filename collisions,
+read by hand, not copies).
+
+**What the FIRST HONEST RUN found, after `main` moved under it (2026-08-20).**
+The gate went red on 25 findings. Two were real and are FIXED here; the rest were
+the allowlist rotting, and one was this PR pinning a rule `main` has since
+reversed.
+
+- **Two lock-label maps re-typed beside the rulebook that exports them.**
+  `document-policy.ts` calls itself "the single source" for which header columns
+  freeze once a document has a live child, and both `grn-inherited-lock.ts` and
+  `po-identity-lock.ts` already import their COLUMN set from it — then declare
+  their own local `label` map of the human names for those same columns. Add a
+  column to the rulebook and the refusal message reads "cost allocation method"
+  in the PCO's 409 and a raw `allocation_method` in the GRN's. Latent today
+  because the copies still agree; the N-1-of-N shape exactly. Both now read
+  `GRN_LOCK_LABELS` / `PO_LOCK_LABELS` from the rulebook, and D1 stopped
+  reporting them, which is the detector confirming its own finding.
+- **Sixteen allowlist keys rotted on the `_centi` -> `_sen` money rename.** The
+  key is the fingerprint's VALUES, so renaming 251 columns re-spelled every
+  money-shaped entry and 16 recorded decisions read as brand-new findings while
+  their originals read as stale. Re-keyed with the reason preserved, and the ten
+  `why` texts that still named `deposit_centi` corrected too — a reason that
+  cites a column which no longer exists is the same rot one layer up.
+- **PIN 4 pinned the losing side of a ruling.** It asserted `computeVariantKey`
+  must NEVER fold typographic inch marks. #2430 shipped exactly that fold on
+  2026-08-18 and gave its reason: a curly `12"` priced correctly and then
+  allocated to a bucket nothing could match, so the same physical item never
+  pooled. The assertion is flipped and annotated, never deleted, plus a
+  non-vacuity test proving the two keys are equal by FOLDING rather than by both
+  collapsing to empty.
+
+**One finding is NOT resolved and is the owner's**, recorded in the allowlist as
+open rather than decided: the consignment order's identity lock still freezes
+`salesperson_id`, and the Sales Order's stopped (owner 2026-08-17 — a DO or SI
+snapshots the customer, the addresses and the money, never who sold it, and
+freezing it stranded a resigning salesperson's delivered orders where the
+replacement could not even see them). Whether that ruling extends to consignment
+orders is a business judgement, so it is raised, not guessed.
+
+**The pins, for rules that must keep two homes.**
+`backend/tests/duplicatedDecisionPins.test.ts` and
+`backend/tests/passwordStrengthDrift.test.ts` feed ONE corpus through BOTH
+implementations and compare. The password pair is imported on both sides and run
+over 26 cases; the crew-scope predicate likewise over 18 (position, permissions)
+pairs. The SO "done" disagreement is pinned at exact membership for all three
+spellings and fails if a FOURTH appears — the count cannot quietly grow while
+the owner's ruling on DRAFT and SHIPPED is outstanding. `so-terminal-states.ts`
+and `inventory.ts` both already say in prose that this must not be merged
+without that ruling; the test is what makes saying it enough. The PO receivable
+threshold (`['SUBMITTED','PARTIALLY_RECEIVED']` at four homes) is TWO members,
+below the detector's floor and invisible to it — pinned by test instead, which
+is the honest division of labour between the two mechanisms.
+
+**One behaviour fix.** The desktop projects filter bar decided "is this user
+force-scoped crew" with `/\bhelper\b/i || /storekeeper/i` and no permission
+escape, while the server matches the EXACT position name against a three-entry
+set and exempts anyone holding `*` or `projects.write`
+(`services/projectGates.ts:30-45`, whose own comment forbids substring matching
+because position names are owner-editable free text). Two consequences, neither
+of which errors: an owner-created position like "Warehouse Helper" caged the UI —
+slimmed filter bar, "You see your own events" — while the server returned
+everything; and an admin holding the Storekeeper position lost controls the
+server would have allowed, because `permissions.includes("*")` fed only
+`_isDirector`, which gates `_isSalesExec` and not the crew arm. The predicate now
+lives in `frontend/src/auth/crewScope.ts`, exact-match plus escape, and the pin
+runs both copies over one corpus. `MobilePMS.tsx`'s `_isCrew` is deliberately
+NOT changed: it folds drivers in, so it answers the filter-bar cohort question,
+not this one.
+
+**What the gate cannot catch, stated in its own header so a green run is not
+over-read.** (1) A semantic duplicate whose copies share no literal — the
+total-height family (divan + leg + gap, sixteen surfaces) shares every literal
+and every regex and diverges only in CONTROL FLOW, so D1 and D2 call those copies
+identical. (2) A rule expressed once in TypeScript and once in SQL. (3) Whether a
+flagged pair is even the same QUESTION — `hr-commission.ts`'s
+`COMMISSION_EXCLUDED_STATUSES` has the same three members as the SO deliverable
+threshold and is a different question; that judgement is what the allowlist
+`why` field exists to record. (4) Anything assembled at runtime, and anything
+below the three-member floor. Test files are not scanned, deliberately: a test
+that pins a set's membership is the REMEDY for this class.
+
+**Proved not vacuous, ten times.** A violation was planted for each mechanism,
+watched fail, removed, and watched pass: D1 (a fourth home for
+`DRAFT/CANCELLED/ON_HOLD` → rc 1, and it re-opened the already-reviewed group by
+naming the NEW home); D2 (a set one member off → rc 1, naming the differing
+member); D3 (the guard deleted from ONE of the two guarded handlers in
+`mfg-sales-orders.ts` → rc 1, while the symbol was still present twice elsewhere
+in the same file, which a grep would have passed); the mirror widening (the same
+planted `scm/lib` divergence is rc=0 with ZERO mentions on `origin/main`'s
+checker and rc=1 DIVERGED on the widened one); and each of the six pins. The new
+script's own startup self-test also fired twice for real during development,
+refusing to report a number: once because the array parser dropped a member
+carrying an escaped quote, and once because it dropped `["12'", …]` entirely —
+the other quote character inside a literal defeated the regex, and a dropped
+array is a duplicate the gate would then swear does not exist.
+## Converting a Sales Order on the PHONE shipped the goods on the spot [critical]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 手机上把销售单转成送货单，货就直接出了 —— 库存立刻扣、销售单直接变成
+「已送达」、客户还收到邮件。中间没有任何复核，也没有撤销。桌面版不是这样：桌面只
+是个选行的画面，选完跳到新增送货单表单，那边有「存为草稿」的开关。同一个精灵里的
+收货 (GRN) 那一支早就写了 `asDraft: true`，还留了注解说不要自动过账库存 —— 送货单
+这一支单纯漏掉了。改法：送货单也送 `asDraft: true`，落成草稿，由人确认后才出货。
+
+**Symptom.** `MobileConvertWizard` with `target="do"` posted
+`POST /delivery-orders-mfg/from-sos` with `{ picks }` and nothing else. One tap
+on a phone — commonly in a customer's driveway — and the stock was out, the
+Sales Order was advanced to delivered, and the customer delivery email was sent.
+There was no review step between picking the lines and the goods leaving the
+building, and no undo: reversing it means cancelling the DO, which is the path
+whose own reversal defect is recorded two entries below (DO-2607-005).
+
+**Root cause (traced).** `from-sos` is born SHIPPED unless the caller opts out.
+In `createDoFromSoLinesHandler`
+(`backend/src/scm/routes/delivery-orders-mfg.ts`):
+
+    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+
+and the same flag gates the entire write half —
+`if (body.asDraft !== true) { deductInventoryForDo(...);
+syncSoDeliveredFromDo(...); maybeSendDeliveryOrderEmail(...) }`. So OMITTING the
+field is not "leave it to the server", it is an affirmative "ship it now". The
+mobile DO arm omitted it.
+
+This was never a form-factor decision, and the proof is in the same file: the
+wizard's GRN arm deliberately does NOT use the auto-posting `/grns/from-pos`
+endpoint, and posts `asDraft: true` to the generic create instead, with a
+comment reasoning explicitly about not auto-posting stock and about the operator
+posting from the receipt. Desktop never had the shortcut at all —
+`DeliveryOrderFromSo.tsx` is only a line picker that navigates into
+`DeliveryOrderNewV2.tsx`, which carries a "Save as draft" toggle and sends
+`asDraft`. Three of the four surfaces agreed; the mobile DO arm was the outlier.
+
+**Fix.** The DO arm sends `asDraft: true`, mirroring the GRN arm in the same
+file: the phone CREATES the document, a human CONFIRMS it, and that confirm
+(`PATCH /:id/status`) is the single stock-writing chokepoint. The button label
+follows the behaviour — "Create draft Delivery Order", the wording the GRN arm
+already uses — because a CTA promising a Delivery Order while parking one is the
+same misstatement pointed the other way. The short-stock pre-flight is
+deliberately left running on the draft: it is not gated on `asDraft` server-side,
+and it also resolves the incoming-PO commitments, so the "Ship anyway?" decision
+is still taken once, by the operator who picked the lines.
+
+Pinned by `frontend/src/mobile/mobileConvertWizardDraft.test.tsx`, whose fake
+server is that ternary in miniature and counts stock movements rather than the
+flag. Verified RED on the unfixed tree (`expected 'DISPATCHED' to be 'DRAFT'`).
+
+**Surface change** — the mobile SO→DO convert now lands a DRAFT and the CTA says
+so; `docs/modules/delivery-order.md` updated in the same PR.
+
+**Ref.** fix/stock-movement-parity, 2026-08-20.
+
+## Desktop bulk "Convert to DO" carried no Idempotency-Key while mobile's identical call did [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 桌面「送货规划」板上的「转成送货单」，同一个 API、同一个扣库存后果，手机
+那边有防重复的钥匙 (Idempotency-Key)，桌面这边没有 —— 而桌面才是那个一次可以框选
+四张单批量转的画面。补上钥匙，并且钥匙是「每张销售单一把」，不是「每次开画面一把」。
+
+**Symptom.** `useConvertSosToDo` (`delivery-planning-queries.ts`) posted
+`/delivery-orders-mfg/from-sos` as a bare
+`{ method: 'POST', body: JSON.stringify({ picks }) }`. The idempotency
+middleware is OPT-IN (`backend/src/middleware/idempotency.ts`) — a pure
+pass-through unless the client sends the header — so this call had none of it,
+while the mobile board's identical call (`MobileDeliveryPlanning.tsx`) did. The
+desktop call is fired from BOTH a single-row action and a bulk bar that converts
+four SOs at a time (`DeliveryPlanning.tsx`).
+
+**HONEST SCOPE — this was depth, not an open double-ship.** Stated plainly
+because the audit that raised it framed it as an unguarded double-deduction, and
+that overstates what the tree does. Three defences already existed and were read
+before changing anything:
+
+1. the client disables the button on `convertSos.isPending` and `runConvert`
+   returns early while pending, so a literal double-click is largely absorbed;
+2. Phase B's `over_remaining` check refuses a SEQUENTIAL duplicate outright;
+3. **Edge #E** re-derives remaining AFTER inserting the DO lines and rolls the
+   document back with 409 `race_conflict` when any line has gone negative — and
+   it runs BEFORE `deductInventoryForDo`, so the concurrent read-then-write race
+   does not reach the stock ledger.
+
+No scenario was found in this tree where the missing header alone deducts stock
+twice, and none is claimed. What the key adds is a decision the CLIENT can make:
+under Edge #E a true tie rolls BOTH inserts back, so two racing clicks can
+convert NOTHING and report `race_conflict`; with a key the retry REPLAYS the
+first DO instead of racing for a rollback. That, plus removing a mobile/desktop
+divergence on a stock-writing call, is the whole of the justification.
+
+**Root cause (traced).** The idempotency module was introduced for money-
+mutating writes and rolled out call site by call site; this one was simply never
+visited. Its own header states the scope it should have caught — "MINTS A SOURCE
+DOCUMENT money hangs off" — and a DO is exactly that.
+
+**Fix.** `useConvertSosToDo` mints keys through the existing
+`newIdempotencyKey` / `idempotentInit` helpers — no second scheme — held in a
+ref `Map` keyed by SO **doc_no**.
+
+Per-ORDER, not per-mount, and that is mobile's own instruction rather than a
+variation on it. `MobileDeliveryPlanning`'s key is per-mount only because
+StopDetail sits behind an early return, so a mount is exactly one stop; its
+comment says "If that early return is ever replaced ... this key MUST move onto
+the order identity". The desktop board IS that case — one mount, many SOs — so a
+copied per-mount key would post SO #2 under SO #1's claim with a different
+payload, be answered `idempotency_key_reused`, and break bulk convert by
+converting the first order and failing the rest. A test pins that specifically.
+
+Keys are never rotated for the life of the mount, per the module's rule that a
+key is retired by the INTENT ending and not by the write succeeding: the two
+halves of a double-fire must find the SAME key. A genuine later re-convert of the
+same SO (its DO cancelled, remaining restored) carries a different payload and is
+refused rather than silently replayed — the safe direction, and a board refresh
+mints fresh keys.
+
+Pinned by `frontend/src/vendor/scm/lib/delivery-planning-idempotency.test.tsx`.
+Verified RED on the unfixed tree (two concurrent converts created 2 DOs; a retry
+created a second; all keys were `undefined`).
+
+**No surface change** — no new route, permission, status or required field; the
+board behaves identically for every non-duplicate conversion.
+
+**Ref.** fix/stock-movement-parity, 2026-08-20.
+
+## BUG CLASS - unscoped-query-by-omission: forgetting the company predicate and choosing to omit it are the same text [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**白话.** 我们两家公司（Houzs 和 2990）的资料能不能分开，全靠每一句查询里面那一句
+「只看这家公司」。数据库那层的保护是关掉的（mig 0061 开了 RLS 但一条规则都没写），
+而系统用的是最高权限的连线，所以那句话就是唯一的墙。问题是：**写漏了，跟故意不写，
+在代码里长得一模一样。** 谁看都看不出来。这次做的是让「不写」变成一件要**打出来**的
+事——不写就编译不过。先只改一支单（库存调拨），量一量改一支要多少工。
+
+**The shape.** A statement's `company_id` predicate is the entire tenant boundary
+— mig 0061 enabled RLS on every scm table with ZERO policies and the SCM client
+is the service-role client, so no policy is ever evaluated on an app request.
+The predicate is written by hand at 2,654 `.from(` call sites across 213 files
+in `backend/src/scm` (measured 2026-08-20:
+`git grep -c ".from(" -- backend/src/scm`), and its ABSENCE is invisible: `sb.from('stock_transfers').update(x).eq('id', id)` is
+either a forgotten predicate or a deliberate cross-company write, and the source
+does not say which. No compile error, no failing test, no runtime signal. This
+is **BUG CLASS optional-param-noop** with the parameter removed entirely.
+
+**It is not hypothetical, and this module is where it landed.** The 2026-07-22
+owner audit scoped the sibling flows and missed `PATCH /stock-transfers/:id/cancel`:
+a caller in company A holding company B's transfer UUID could cancel B's POSTED
+transfer and drive `reverseMovements` over B's stock. Found 2026-08-13 by a code
+audit, fixed then. Nothing structural stopped it recurring — the fix was a
+predicate somebody had to remember.
+
+**Why the existing guards do not close it.** `check-company-scope.mjs` is
+regexes over lines and says so in its own header: a NON-ZERO result is worth
+reading, a ZERO result means "this heuristic found nothing". It has been wrong
+in five distinct ways in a single day, one of them the *stamp is not a predicate*
+blind spot — seven cross-company MONEY writes hid behind
+`insert({ company_id: activeCompanyId(c) })` while it printed `0 WRITE`.
+
+**The remedy, and its measured cost.** `backend/src/scm/lib/scopedDb.ts` makes
+the scope a REQUIRED second argument: `db.from(table, scope)`. Omitting it is a
+TS2554. "This one is deliberately centralised" is `CENTRALISED('<why>')` with a
+non-empty reason — a sentence in the diff instead of an absence. The four
+constructors DELEGATE to `companyScope.ts` and re-derive none of its logic; in
+particular the two context-derived scopes carry the CONTEXT rather than a
+resolved id, because the three-state sentinel's UNRESOLVED state is not a number
+and collapsing it either way is a leak or an app-wide blank (asserted in
+`scopedDb.test.ts` against `fake-postgrest.ts`, all three states, both scopes).
+
+**The one trap inside the remedy.** The INSERT arm STAMPS; every other arm
+PREDICATES. Swapping them is silent — a predicate on an insert filters nothing,
+and a stamp on an update rewrites `company_id` on every row the statement
+matched. That would rebuild the seven-money-writes blind spot inside the
+abstraction meant to end it, so it is pinned by test, not by comment
+(`update PREDICATES and never stamps`, proven red by making `update` stamp).
+
+**MEASURED on the pilot** (`backend/src/scm/routes/stock-transfers.ts`, 14
+`.from(` sites), with `npm --prefix backend run typecheck`:
+
+| step | errors |
+| --- | --- |
+| swap the 5 `c.get('supabase')` for `scmDb(c)`, change nothing else | **17** (12 TS2554 + 5 TS2345) |
+| also retype the file's two `sb: any` parameters | **21** (14 TS2554 + 6 TS2345 + 1 TS2339) |
+
+The 12-vs-14 gap is the honest part: two `.from(` sites sit inside a helper
+taking `sb: any`, and `any` absorbs the requirement until the parameter is
+typed. A first draft of the wrapper typed `select(columns?: string)`, which
+erased supabase-js's column-literal row types and added phantom TS2352/TS2322
+casts — 2 at the swap step and 4 after the retype, so 19 / 25 instead of 17 / 21.
+A generic `Cols extends string` removed them. A wrapper that manufactures conversion work is a wrapper nobody adopts.
+
+**No defect was found by this conversion.** Every statement kept the scope it
+already had; the four that carry no predicate today now carry a `CENTRALISED`
+reason saying why. `check-company-scope.mjs` reports the same 12 findings / 0
+WRITE over 1034 handlers before and after.
+
+**What it does NOT solve, stated so a green run is not over-read.** It binds
+CONVERTED files only (1 of the 99 modules in `backend/src/scm/routes` on day
+one, and 14 of those 2,654 call sites). It cannot check the scope is the RIGHT
+one — `companyIdScope(theOtherCompany)` compiles. `any` absorbs it: 371
+`sb: any` declarations across 105 files in `backend/src/scm`, measured the same
+day with `git grep -c "sb: any" -- backend/src/scm`. Raw
+`env.DB` SQL and `.rpc()` are outside it entirely. And one
+`const sb = c.get('supabase')` re-opens a converted file completely — which is
+why `backend/scripts/company-scope-converted.json` plus a fourth pass in
+`check-company-scope.mjs --strict` (inside the required `backend-typecheck` job)
+fails on exactly that line, with a startup self-test and a FATAL on a missing or
+empty list so a verdict computed over nothing can never read as a pass.
+
+**Ref.** feat/scoped-db-pilot, 2026-08-20.
+## The GRN line DELETE's "durable" allocation enqueue was swallowed by a best-effort catch [medium]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 删掉收货单的一行，系统会把那笔货退出库存，然后本来要叫「重算订单可出货
+状态」。那句叫重算的指令被包在一个「出错就当没事」的壳里 —— 一旦它出错，货已经退
+出去了，订单那边却还标着可以出，而且没有任何声音。旁边的注解偏偏写着「这句不会被
+吞掉」，所以看代码的人只会更放心。
+
+**Symptom.** No incident reported. Found while converting the NEXT GRN route to
+the same pattern: the line-delete route shipped the day before carried the
+comment *"DURABLE: queues with the OUT above, and is NOT caught - a failed
+enqueue must fail the delete"*, and the statement it described sat inside a
+`try { ... } catch { /* best-effort */ }`.
+
+**Root cause, traced.** `grns.ts`'s `DELETE /:id/items/:itemId` reverses a
+posted line's receipt inside a best-effort block — the reversing OUT must never
+block the delete — and `scheduleStockAllocationAfterCommand` was written on the
+line after `writeMovements`, INSIDE that block. Read top-down the comment is
+true of the line beside it; read for reachability, the enclosing `catch` eats a
+throw from the enqueue and the request goes on to return 204. The transaction
+then COMMITS the stock reversal with no queue row — which is the exact state
+(`stock moved, no recompute, no retry`) the PG-command conversion exists to make
+unreachable. Confirmed by brace nesting, not by inference: the `try` opens at
+the `qty_accepted > 0` branch and its `catch` closes after the `if (warehouseId)`
+block that holds the enqueue.
+
+**Why nothing caught it.** `stockAllocationDurabilityScope.test.ts` counts the
+CALL, not its reachability; `grnLineDeleteAtomicity.pg.test.ts` injects a throw
+AFTER the enqueue rather than making the enqueue itself fail; and the comment
+made a reviewer's read agree with the intent.
+
+**Fix.** Both GRN transactional routes now set a `stockReversed` flag inside the
+best-effort block and call `scheduleStockAllocationAfterCommand` AFTER it, so a
+failed enqueue propagates and rolls the whole command back. The new
+`tests-pg/grnCancelAtomicity.pg.test.ts` adds the assertion that was missing —
+it renames the queue table out from under the enqueue mid-transaction, so the
+real upsert really fails, and asserts the CANCEL did not survive.
+
+**Class.** A comment is not a control-flow proof. Where a guarantee depends on a
+statement NOT being caught, put the statement outside the `try` where a reader
+can see it, rather than asserting it in prose next to a line that is inside one.
+
+**Ref.** 2026-08-20.
+## The two CONSIGNMENT return docs let an unlinked line be re-pointed at the parent's own goods by editing the code — GAP-2 edit back door [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 寄售退货（consignment return）和采购寄售退货（purchase consignment return）
+这两张退货单，之前可以这样钻空子：先加一条源单里没有的货（系统允许，因为那是正常的
+临时/赠品行），存一次；再把这条行的货号改成源单本来就有的货，第二次存。改完之后这条行
+和源单的行还是没连上（link 还是空），而所有"这批货退过没有"的核对全都是看这个 link 的，
+所以同一批货可以退第二次——寄售退货是把货收回来（IN），采购寄售退货是把货送出去（OUT），
+两边都会重复动库存。GRN / 采购退货 / 交货退货 / 销售发票这四张单早就堵了这个洞，就差这
+两张寄售退货没堵。
+
+**Symptom.** `PATCH /consignment-returns/:id/items/:itemId` and
+`PATCH /purchase-consignment-returns/:id/items/:itemId` mapped `item_code` /
+`variants` straight into the update with no guard. An operator could add a line
+whose code is NOT on the parent document (correctly allowed — the ad-hoc /
+goodwill carve-out), then edit that line's code to one the parent DOES carry.
+
+**Root cause (traced).** The stored link column stays NULL through that edit
+(`consignment_do_item_id` for the CN return, `pc_receive_item_id` for the PC
+return), and every cap + recount on both chains is gated on that link being
+non-null: the consignment-return over-return cap (`checkCrOverRemaining`, gated
+on `noteItemId`) and its inventory resync, and the purchase-consignment-return
+qty cap (`qtyCapRefusal` on `purchase_consignment_receive_items`, gated on
+`receiveItemId`) and `adjustPcReceiveReturnedQty`. So a re-pointed unlinked line
+counts against no parent line and the same goods can be returned twice. Identical
+to the GRN / purchase-return / delivery-return / sales-invoice edit hole closed
+2026-08-17; these two routes were added without the guard and nobody noticed —
+the exact "a rule at N call sites ends up at N-1" failure the shared guard exists
+to prevent.
+
+**Fix.** Wired `unlinkedEditRefusal` (`scm/lib/unlinked-line-edit-guard.ts`) into
+both line-PATCH handlers, after the qty/over-return cap and before the update,
+with two new chains in its CHAINS map: `'consignment-return'` (parent = the
+Consignment Note, codes from `consignment_delivery_order_items` via new
+`cnItemCodesOf`) and `'purchase-consignment-return'` (parent = the PC Receive,
+codes from `purchase_consignment_receive_items` via new `pcReceiveItemCodesOf`).
+Same narrow rule as the other four: refused only on the transition
+not-on-parent -> on-parent (409 `unlinked_line_repoint`); a genuinely ad-hoc
+code, a linked line, and a code-untouched qty edit all still pass; a failed
+parent read fails CLOSED (`unlinked_check_failed`). Tests added to
+`unlinked-line-edit-guard.test.ts` (exploit refuse per chain, parent-from-header
+resolution, ad-hoc allow, linked-qty allow, fail-closed) plus both handlers
+added to the source-slice WIRING assertion.
+
+**Ref.** refactor/txn-consignment-return-guard, 2026-08-20.
+## A second line in the SAME Save silently put the delivery fee back to 250 [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 销售员把运费从 250 改成 125，同一次「储存」里又顺手改了沙发的数量 —— 结果
+运费自己变回 250。客人拿到的报价是 125，出的单是 250，中间没有任何提示。原因是：一按
+储存，系统是**同时**把每一行改动送上去的（不是一行一行送）。改沙发那一行的请求，在读
+运费资料的时候，改运费那一行的请求还没写进资料库，所以它读到的还是「没有折扣」的旧数
+字；等它稍后写回去的时候，就把 125 覆盖成 250。系统本来有一道「同一张单一次只准一个人
+重算运费」的锁，但那道锁是在**要写的时候**才上，读的时候没上 —— 等于两个人先各自抄了
+一份旧数字，再排队把旧数字写回去。现在改成：写之前先核对「我抄的那份数字现在还一样
+吗」，不一样就整个重算一次再写。
+
+**Symptom.** On the ERP Sales Order editor, reduce a `SVC-DELIVERY` line 250 -> 125
+and change any other line (a sofa quantity, a description) in the SAME Save. The
+fee reads 125 for a moment and then reads 250 again. Reducing the fee ALONE always
+worked, which is what made it look intermittent.
+
+**Root cause (traced, not guessed).** Read, THEN lock.
+
+`scm.rebuild_mfg_so_delivery_lines` takes a per-doc_no `pg_advisory_xact_lock`
+(migration 0214) — but it takes it when it is CALLED.
+`recomputeDeliveryFeeCore` reads the `SVC-DELIVERY*` lines first
+(`mfg-sales-orders.ts`, the `mfg_sales_order_items` select at the top of the
+function) and calls the RPC ~170 lines later. Between those two points there is no
+lock at all, and the two things the OPERATOR owns on those lines — the free-form
+`SVC-DELIVERY-ADD` gross and the per-line `discount_sen` that #2490 taught the
+rebuild to carry — are read in that gap.
+
+The parallelism is not exotic, it is one ordinary Save.
+`runSoLineWrites` (`frontend/src/pages/scm-v2/so-add-lines.ts:184`) hands the
+dirty-line stage to `settleParallelLineWrites`, which is
+`Promise.allSettled(jobs.map((job) => job.run()))` at `:124`. The ADD stage next to
+it is sequential and its comment says exactly why — `POST /:docNo/items` is a
+read-modify-write against the order. The UPDATE stage is the same shape and was
+left parallel. Every one of those PATCHes ends in `rederiveDeliveryFee`, and the
+SO edit lease does not separate them: all the PATCHes of one Save carry the same
+`X-SO-Edit-Lease` token, so `requireSoLineWriteLease` passes them all.
+
+    P_fee   writes discount_sen = 12500, reads the fee lines, derives 125
+    P_sofa  reads the fee lines BEFORE that commit, derives 250 (discount 0)
+    P_fee   takes the lock, writes 125
+    P_sofa  takes the lock, writes 250      <- the reduction is gone
+
+The lock made that ordering deterministic. It never made it impossible, because
+serialising the WRITES does nothing for a value that was READ before the queue.
+
+**The owner ruling this sits under, which also settles a contradiction on record.**
+#2490 wrote that the typed fee number "is never read ... by design"; #2527 wrote
+that it "has always been typed in". The owner: *"运费应该根据实际的价钱去填写。我们的
+POS System 已经 preset 了 250，但进到 ERP 其实也只是把那个 amount 填进来而已，所以正常
+来说 ERP 里是可以随意填写 amount 的"* — **in the ERP the typed amount IS the value
+and stays freely editable.** The two PRs turned out to be complementary rather than
+opposed: #2490 is the backend half (the reduction survives a rebuild) and
+#2527/#2529 are the frontend half (where the operator types it, and what the cell
+means). Neither was reverted here. What was missing is that the typed amount only
+holds while nothing else is saving.
+
+**Fix.** Migration 0314 turns read-then-lock into lock-read-compare-write. The
+caller passes the operator-owned fee state it DERIVED FROM as `p_expect_state`
+(`deliveryFeeStateKey`, keyed by row id so the comparison is order-free); the
+function re-reads that same state AFTER its advisory lock and returns **false
+without writing** when it has moved. `recomputeDeliveryFeeCore` becomes a bounded
+loop over `recomputeDeliveryFeeAttempt` — re-read, re-derive, call again — and
+writes nothing at all if the lines keep moving, the same fail-closed posture as the
+failed header read next to it.
+
+A boolean rather than a `RAISE`, deliberately: this RPC is also called inside
+`runScmPgCommand` (tbc-update / tbc-swap / tbc-swap-sofa), where an exception would
+roll back a whole save that only needed recomputing. In that path the retry is
+guaranteed to converge — the advisory xact lock the first call took is held for the
+rest of that transaction, so nothing can move the state under attempt two.
+
+The write half moved out of the 12,000-line router into
+`backend/src/scm/lib/so-delivery-fee-rebuild.ts`, which now owns the whole lock
+contract (0214 serialisation, 0310 line reuse, 0314 staleness refusal) in one
+readable place. `mfg-sales-orders.ts` got 35 lines SHORTER.
+
+**Carried in the same migration: the grants 0305 dropped.** 0214 ended
+`REVOKE ALL ... FROM PUBLIC` + `GRANT EXECUTE ... TO service_role`, with a comment
+saying why (the function takes arbitrary line rows for an arbitrary doc_no). 0305
+re-created it with DROP + CREATE and did not restore either statement, so since
+2026-08-18 it has carried the default PUBLIC execute privilege. 0314 is another
+DROP + CREATE, so restoring the 0214 posture is the same statement either way. **The
+prod ACL was not queried** — this is read from the migration files, so LIKELY, not
+PROVEN; restoring it returns the function to the state it ran in from 2026-07-14 to
+2026-08-18 regardless.
+
+**Proved RED first.** The three route-level cases in
+`soDeliveryFeeLineIntegrity.test.ts` fail on the unfixed source with
+`expected undefined to deeply equal { Object (fee-1) }` (no expectation sent) and
+`expected [ { ... } ] to have a length of 2 but got 1` (no re-derivation), while the
+14 pre-existing cases in that file stay green. The postgres cases in
+`deliveryRebuildKeepsIdentity.pg.test.ts` run the interleave for real against
+`backend-postgres` and pair `deliveryFeeStateKey` with the function's own
+`jsonb_object_agg`, which is the one way this guard could be silently wrong: an
+integer rendered `1.00` on one side would refuse every rebuild forever.
+
+**One trap found while writing it.** `isDeliveryFeeServiceCode` is a PREFIX match
+(`startsWith('SVC-DELIVERY')`) while the RPC names three exact codes. Built from
+the prefix, the expectation would carry a hand-added `SVC-DELIVERY-BESPOKE` row
+that the function never re-reads — a mismatch that never resolves, so that order
+would stop re-deriving its fee FOREVER, silently. `deliveryFeeStateKey` therefore
+filters on `REBUILT_DELIVERY_FEE_CODES`, the same three the RPC's own `live` CTE
+and DELETE name, and a pg case plants such a row to prove both sides ignore it.
+
+**What this does NOT cover.** Only the SVC-DELIVERY* lines are in the expectation.
+A concurrent edit to a GOODS line is still read without a lock — deliberately, so
+an ordinary multi-line Save does not retry n times. The delivery derivation reads
+goods lines for their CATEGORY and item code, not their quantity or price, so a
+qty edit cannot move the fee; a concurrent product SWAP theoretically can, and is
+untested and unfixed here.
+
+**Ref.** fix/so-fee-lock-ordering, 2026-08-20. Fourth entry of the fee chain
+(#2516 -> #2527 -> #2529 -> here), and the first one that is about concurrency
+rather than about the cell.
 ## Service Maintenance's SLA Hours cell saved, said OK, and changed nothing [medium]
 
 <!-- area: Service cases (ASSR) -->

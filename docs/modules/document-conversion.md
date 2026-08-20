@@ -867,6 +867,24 @@ shape** — and it is the same shape every ERP below converged on.
 | 10 | PC Order → PC Receive | `purchase_consignment_order_items.received_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
 | 11 | PC Receive → PC Return | `purchase_consignment_receive_items.returned_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
 
+**Edit-side re-point guard (GAP-2), rows 9 & 11 — closed 2026-08-20.** The
+`Unlinked-line back door closed` column above is the CREATE / add-line half. A
+second half of the same door is EDITING an already-saved unlinked line's
+`item_code` to one the parent carries: the stored link stays NULL, so the cap
+and recount (both gated on it) still miss the line. That edit half was closed on
+the GRN, purchase-return, delivery-return and sales-invoice chains on 2026-08-17
+by `unlinkedEditRefusal` (`scm/lib/unlinked-line-edit-guard.ts`), and is now
+wired into both consignment return line-PATCH handlers too — chain
+`'consignment-return'` (parent = the Consignment Note, codes via `cnItemCodesOf`)
+in `consignment-returns.ts`, and chain `'purchase-consignment-return'` (parent =
+the PC Receive, codes via `pcReceiveItemCodesOf`) in
+`purchase-consignment-returns.ts`. Both refuse the not-on-parent -> on-parent
+transition with 409 `unlinked_line_repoint`; an ad-hoc code, a linked line and a
+code-untouched qty edit still pass; a failed parent read fails closed. The
+CREATE half for these two consignment pairs stays open — they convert through the
+plain `POST /`, so there is no single create handler to hang the insert guard on
+(the nine-not-eleven finding below).
+
 The three population claims in that table are mechanically checkable, and each
 command is the definition of its column:
 
