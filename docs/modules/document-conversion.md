@@ -302,6 +302,34 @@ Planning bulk convert, and MRP → PO. **Mobile-only pairs: none.**
 
 ---
 
+## 6a. Every picker row shows its VARIANTS (owner rule, 2026-08-19)
+
+*"只要有 variants 的，你就应该要显示 variants"*. A sofa model decomposes into
+modules — `9028-1A(LHF)`, `9028-1A(RHF)`, `9028-1NA` — that share a name, so a
+row printing only the name identifies nothing. Every line-picker in this module
+therefore renders the shared `buildVariantSummary` string for its row.
+
+Two things have to be true, and **only checking the first is how this defect
+hides**: the component has to be on the row, AND the row's endpoint has to have
+SELECTED `variants`. `<VariantDescription>` over a row whose read never selected
+them renders empty and is indistinguishable from a missing component.
+
+| Surface | How it renders the summary |
+|---|---|
+| The ten desktop `*From*.tsx` pickers | `vendor/scm/components/VariantDescription.tsx` |
+| `MobileConvertWizard` (all four targets) | `variantLineOf()` → `buildVariantSummary`, one muted line under the name; omitted when empty (no `Standard` filler on a phone) |
+| `SalesOrderNewFromProducts`, `SoFromProducts` | **Deliberately none.** These pick CATALOGUE SKUs, not document lines. A catalogue row has no per-line variants (`default_variants` is SKU-master admin data, `pages/scm-v2/products/VariantsTab.tsx`), and the SO line they create carries none either — so a summary here could only ever print `Standard`. |
+
+The reads that feed them all select `variants` — `routes/delivery-orders-mfg.ts`
+(`soDeliverableRemaining`), `lib/do-line-remaining.ts`,
+`routes/mfg-purchase-orders.ts` (`/outstanding-so-items`),
+`lib/outstanding-po-lines.ts`, `routes/consignment-notes.ts`,
+`routes/consignment-returns.ts`, `routes/purchase-consignment-receives.ts`,
+`routes/purchase-consignment-returns.ts`. **Adding a picker means checking its
+read, not copying the JSX.**
+
+---
+
 ## 7. Backend converters with no live frontend caller
 
 Worth knowing before building anything: several converters already exist
