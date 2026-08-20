@@ -18,10 +18,12 @@ import { newIdempotencyKey } from "../lib/idempotency";
 import { serviceNotify } from "../vendor/scm/lib/dialog-service";
 import {
   normalizeJobs,
+  normalizeScanSalespeople,
   jobTs,
   isTodayTs,
   hhmm,
   isActiveJob,
+  SCAN_SALESPEOPLE_PATH,
   type ScanJob,
   type ScanJobsResp,
 } from "../vendor/scm/lib/scan-jobs";
@@ -256,6 +258,14 @@ export type MobileScanPrefill = {
   /* Edit-gate carry-through — mirrors desktop's ScanPrefill. */
   sampleId: string | null;
   salesperson: string | null;
+  /* PROVENANCE — the R2 keys of the photos this prefill was read from, which
+     /scan-so/extract already answers with. They ride to the create as
+     slip_image_key / receipt_image_key (migrations 0033 / 0034) so the SO detail
+     can show the slip as proof; desktop's ScanPrefill carries the same pair.
+     Dropping them here is why a phone-scanned order's "Scanned photos" card was
+     always empty. null = that photo does not exist for this scan. */
+  slipImageKey: string | null;
+  receiptImageKey: string | null;
   aiOriginal: ExtractedSlip;
 };
 
@@ -481,6 +491,10 @@ function buildPrefill(
     })),
     sampleId: d.sampleId,
     salesperson: repName || rec.salesRep || null,
+    /* Straight off the extract response — the reader uploaded these photos, so
+       these keys are what the SO must point at. */
+    slipImageKey: d.imageKey ?? null,
+    receiptImageKey: d.receiptImageKey ?? null,
     aiOriginal: ex,
   };
 }
@@ -590,7 +604,36 @@ export function MobileScan({
     ],
   );
 
-  const salesperson = (user?.name || user?.email || "").trim();
+  /* Salesperson — desktop parity (ScanOrderModal). Each rep has their own
+     handwriting/notation habits, so the extractor learns PER REP: this value
+     picks which rule file and few-shot examples READ the slip, and files the
+     resulting learning sample. Default it to whoever is signed in (the usual
+     case — staff scan their OWN slips) and keep it EDITABLE against the same
+     GET /scan-so/salespeople list desktop offers, "for the occasional
+     someone-else slip".
+
+     This was a `const` off the signed-in user with no setter and no list, so an
+     office person working through a stack of colleagues' slips read every one of
+     them against their OWN habits, and taught their colleagues' corrections into
+     their own rule file. */
+  const [salesperson, setSalesperson] = useState((user?.name || user?.email || "").trim());
+  const [knownReps, setKnownReps] = useState<string[]>([]);
+  /* The list failing must not take the screen down — the field is free-text
+     either way — but the failure is SAID, not swallowed: an empty datalist and a
+     refused read look identical, and "the names stopped appearing" with no
+     reason is the shape CLAUDE.md calls worse than a crash. */
+  const [repsUnavailable, setRepsUnavailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    authedFetch<unknown>(SCAN_SALESPEOPLE_PATH)
+      .then((r) => { if (alive) { setKnownReps(normalizeScanSalespeople(r)); setRepsUnavailable(false); } })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setRepsUnavailable(true);
+        console.warn("[scan] salesperson list unavailable:", e instanceof Error ? e.message : e);
+      });
+    return () => { alive = false; };
+  }, []);
 
   /* ── Recent scans — background-job status list ──────────────────────────
      Visit bookkeeping first: record this open, remembering the previous one
@@ -1353,10 +1396,27 @@ export function MobileScan({
               </span>
             </div>
 
-            {salesperson && (
-              <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#767b6e" }}>
-                <span className="ey" style={{ letterSpacing: ".14em", color: "#9aa093" }}>Salesperson</span>
-                <span style={{ fontWeight: 700, color: "#414539" }}>{salesperson}</span>
+            {/* Salesperson — EDITABLE (desktop parity). It was a read-only
+                caption showing the signed-in user, which is why a stack of
+                colleagues' slips all landed under the scanner's own name. */}
+            <label style={{ marginTop: 16, display: "block" }}>
+              <span className="ey" style={{ display: "block", letterSpacing: ".14em", color: "#9aa093", fontSize: 9.5, fontWeight: 700, marginBottom: 5 }}>Salesperson</span>
+              <input
+                aria-label="Salesperson"
+                list="mobile-scan-salespeople"
+                value={salesperson}
+                disabled={submitting}
+                onChange={(e) => setSalesperson(e.target.value)}
+                placeholder="Whose slip is this?"
+                style={{ width: "100%", boxSizing: "border-box", height: 42, padding: "0 12px", borderRadius: 10, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 14, color: "var(--ink)" }}
+              />
+            </label>
+            <datalist id="mobile-scan-salespeople">
+              {knownReps.map((r) => <option key={r} value={r} />)}
+            </datalist>
+            {repsUnavailable && (
+              <div style={{ marginTop: 5, fontSize: 11, color: "#a16a2e" }}>
+                Couldn&apos;t load the salesperson list — type the name instead.
               </div>
             )}
 
