@@ -306,7 +306,7 @@ jobs:
       # INSERT-guarded / EDIT-unguarded shape behind PR #2374 and the only one
       # of the three that catches an ABSENCE.
       #
-      # A REVIEWED ALLOWLIST, exactly like empty-state-claims above: 223 entries
+      # A REVIEWED ALLOWLIST, exactly like empty-state-claims above: 226 entries
       # today, each with a reason a person wrote; a NEW hit fails until somebody
       # decides about it, and a stale entry prints without failing. The script's
       # own header is explicit about the four things it CANNOT see — chief among

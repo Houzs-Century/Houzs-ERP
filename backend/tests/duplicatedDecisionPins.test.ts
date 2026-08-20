@@ -268,9 +268,9 @@ describe("is this user force-scoped crew — the server and the UI must agree", 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PIN 4 — TWO NORMALISERS THAT MUST NEVER CONVERGE.
+// PIN 4 — TWO NORMALISERS THAT HAVE NOW CONVERGED, ON PURPOSE.
 // ─────────────────────────────────────────────────────────────────────────────
-describe("quote-folding and identity-folding are different questions", () => {
+describe("quote-folding and identity-folding — one question after all", () => {
   const bedframe = (gap: string) =>
     computeVariantKey("bedframe", {
       fabricCode: "FAB-1",
@@ -291,15 +291,21 @@ describe("quote-folding and identity-folding are different questions", () => {
     expect(normaliseTypographicQuotes("Ab“")).toBe('Ab"');
   });
 
-  test("the variant-key normaliser DOES NOT fold them — a curly gap is a different bucket", () => {
-    /* THE DIVERGENCE IS THE POINT, and it is measured on prod: since PR #2379
-       the system PRICES and PERMITS a curly-quoted value as equal to its ASCII
-       sibling while STOCKING them as two. Folding quotes here instead would
-       re-key every stored variant_key, movement and ship-commitment binding and
-       orphan live FIFO buckets — maintenance-pools.ts:123 records the same
-       reason for leaving computeVariantKey alone. The data is repaired on the
-       write path, never by changing this function. */
-    expect(bedframe('12"')).not.toBe(bedframe("12“"));
+  test("the variant-key normaliser FOLDS them too — one inch mark, one stock bucket", () => {
+    /* THIS PIN WAS WRITTEN THE OTHER WAY UP AND `main` OVERTOOK IT.
+       It used to assert the divergence was the point: since PR #2379 the system
+       PRICED and PERMITTED a curly-quoted value as equal to its ASCII sibling
+       while STOCKING them as two, and folding here would re-key every stored
+       variant_key. PR #2430 (2026-08-18) ruled the opposite way and shipped the
+       fold, because the divergence WAS the bug — BUG-HISTORY "Typographic inch
+       marks split inventory variant_key buckets" [sev: high — silent stock
+       fragmentation]: a line priced correctly and then allocated to a bucket
+       nothing could match, so the same physical item never pooled and MRP saw
+       two variants where there is one. Historical curly-keyed movements are
+       deliberately NOT migrated, the same stance the POS seat/leg aliases take.
+       The assertion is FLIPPED, not deleted: this file's job is to pin what the
+       system actually decided, and what it decided changed. */
+    expect(bedframe('12"')).toBe(bedframe("12“"));
   });
 
   test("…while it DOES fold case and surrounding whitespace, which the quote folder does not", () => {
@@ -312,5 +318,13 @@ describe("quote-folding and identity-folding are different questions", () => {
   test("this pin is not vacuous — the two keys it compares are both real keys", () => {
     expect(bedframe('12"').length).toBeGreaterThan(0);
     expect(bedframe("12“").length).toBeGreaterThan(0);
+  });
+
+  test("…and the fold is what makes them equal, not an empty key on both sides", () => {
+    /* An equality assertion can pass because both sides collapsed to ''. Prove
+       the curly mark is really being folded rather than dropped: the key carries
+       the ASCII form of the gap, and a DIFFERENT gap still keys differently. */
+    expect(bedframe("12“")).toContain('gap=12"');
+    expect(bedframe("12“")).not.toBe(bedframe('13"'));
   });
 });

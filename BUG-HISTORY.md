@@ -28,7 +28,7 @@ detectors:
   every named enum-keyed constant map, and reports a fingerprint carried by two
   or more FILES. This is the class `check-shared-mirrors.mjs` declares itself
   blind to at its own lines 32-35 — a rule re-implemented under a different
-  filename. **124 groups on main.**
+  filename. **130 groups on main** (re-measured 2026-08-20; it was 124 when this was written).
 - **D2** compares those fingerprints pairwise and reports NEAR MISSES (Jaccard
   ≥ 0.75, not identical) with the exact differing members. This is what sees a
   rule enforced at N-1 of N. **96 pairs on main**, among them the three live
@@ -42,7 +42,7 @@ detectors:
   three that catches an ABSENCE.
 
 **A REVIEWED ALLOWLIST, not a meaning detector** — the mechanism
-`check-empty-state-claims.mjs` already uses. 223 entries, each with a reason a
+`check-empty-state-claims.mjs` already uses. 226 entries, each with a reason a
 person wrote; a NEW hit fails until somebody decides about it; a stale entry
 prints and never fails, because a gate that punishes the fix is a gate that
 stops fixes. Pre-existing hits pass, so nobody is failed for a duplicate they did
@@ -84,6 +84,43 @@ self-test probe for the braced-return-type form. Baseline before: rc=0, 0
 DIVERGED, 12 COSMETIC, 8 IDENTICAL. After: rc=0, 0 DIVERGED, 13 COSMETIC, 8
 IDENTICAL, 2 NO-OVERLAP (`costing-enabled` and `slip` — filename collisions,
 read by hand, not copies).
+
+**What the FIRST HONEST RUN found, after `main` moved under it (2026-08-20).**
+The gate went red on 25 findings. Two were real and are FIXED here; the rest were
+the allowlist rotting, and one was this PR pinning a rule `main` has since
+reversed.
+
+- **Two lock-label maps re-typed beside the rulebook that exports them.**
+  `document-policy.ts` calls itself "the single source" for which header columns
+  freeze once a document has a live child, and both `grn-inherited-lock.ts` and
+  `po-identity-lock.ts` already import their COLUMN set from it — then declare
+  their own local `label` map of the human names for those same columns. Add a
+  column to the rulebook and the refusal message reads "cost allocation method"
+  in the PCO's 409 and a raw `allocation_method` in the GRN's. Latent today
+  because the copies still agree; the N-1-of-N shape exactly. Both now read
+  `GRN_LOCK_LABELS` / `PO_LOCK_LABELS` from the rulebook, and D1 stopped
+  reporting them, which is the detector confirming its own finding.
+- **Sixteen allowlist keys rotted on the `_centi` -> `_sen` money rename.** The
+  key is the fingerprint's VALUES, so renaming 251 columns re-spelled every
+  money-shaped entry and 16 recorded decisions read as brand-new findings while
+  their originals read as stale. Re-keyed with the reason preserved, and the ten
+  `why` texts that still named `deposit_centi` corrected too — a reason that
+  cites a column which no longer exists is the same rot one layer up.
+- **PIN 4 pinned the losing side of a ruling.** It asserted `computeVariantKey`
+  must NEVER fold typographic inch marks. #2430 shipped exactly that fold on
+  2026-08-18 and gave its reason: a curly `12"` priced correctly and then
+  allocated to a bucket nothing could match, so the same physical item never
+  pooled. The assertion is flipped and annotated, never deleted, plus a
+  non-vacuity test proving the two keys are equal by FOLDING rather than by both
+  collapsing to empty.
+
+**One finding is NOT resolved and is the owner's**, recorded in the allowlist as
+open rather than decided: the consignment order's identity lock still freezes
+`salesperson_id`, and the Sales Order's stopped (owner 2026-08-17 — a DO or SI
+snapshots the customer, the addresses and the money, never who sold it, and
+freezing it stranded a resigning salesperson's delivered orders where the
+replacement could not even see them). Whether that ruling extends to consignment
+orders is a business judgement, so it is raised, not guessed.
 
 **The pins, for rules that must keep two homes.**
 `backend/tests/duplicatedDecisionPins.test.ts` and
