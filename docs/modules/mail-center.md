@@ -150,3 +150,38 @@ over mailboxes; it never widened the company predicate and must not be made to.
 Before this, both reads returned every company's rows — including `body_html`,
 which carries the one-time `/invite/<token>` and `/reset/<token>` links minted in
 `routes/auth.ts`.
+
+## Mobile shares the desktop's rules — it does not re-derive them (2026-08-20)
+
+`frontend/src/mobile/MobileMailCenter.tsx` is the phone twin of the desktop
+screens, and the owner's standing rule is ONE shared logic layer with the two
+surfaces differing only in presentation. Three rules had been re-implemented on
+the phone instead of imported, and each copy was missing the half that had
+already been fixed on desktop. They now come from the same modules:
+
+| rule | shared module both surfaces use |
+|---|---|
+| which mailbox the From defaults to | `frontend/src/pages/MailCenter/mail-from-default.ts` (`pickDefaultFromAddress`) |
+| the auto-sent log's fetchers | `frontend/src/pages/MailCenter/mail-actions.ts` (`fetchOutbox`, `fetchOutboxDetail`) |
+
+**`replyAll` is a REQUIRED prop on the phone's reply box, and `defaultFrom` is a
+REQUIRED prop on its composer.** Both were written that way on purpose, per the
+`optional-param-noop` rule in `CLAUDE.md`: an omitted `replyAll` silently
+answers one person on a mail that copied several, and an omitted `defaultFrom`
+silently falls back to `addresses[0]`, which is the ALPHABETICALLY first mailbox
+because `GET /addresses` is `ORDER BY address ASC`. Neither failure raises an
+error, so the compiler is the only thing that can catch a new call site that
+forgets one.
+
+**The member's own alias is spliced into the From list on both surfaces.**
+`getMailScope` builds `scope.addresses` from `email_addresses` rows only, while
+`canSendFrom` also accepts the caller's `users.email_alias`. A member whose only
+sending identity is that alias therefore gets an EMPTY `/addresses` response and
+must be offered the alias by the client, or they cannot send at all.
+
+**"Auto-sent" is on the phone too.** Same read-only outbox log as the desktop
+folder, same endpoint, same company scope (see the section above). It is the
+only place a FAILED customer notice is visible — the auto-sent mail goes out
+from a no-reply sender, so there is no thread and no "Sent" copy anywhere else.
+Before this the phone had a fixed six-folder list and a failed invoice email was
+invisible to anyone not at a desk.

@@ -8,6 +8,7 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
@@ -1300,6 +1301,8 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     invalidateModuleShared(qc, moduleKey);
   };
 
+  const zeroCost = useGrnZeroCostRemedy({ grnId: id, onPosted: refresh });
+
   const mutation = useMutation({
     mutationFn: (action: DocAction) =>
       authedFetch(action.request.path, {
@@ -1321,7 +1324,16 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       refresh();
       void notify({ title: "Done" });
     },
-    onError: (e) => { setRunningKey(null); setError(e instanceof Error ? e.message : "Something went wrong. Please try again."); },
+    /* A zero-cost receipt refusal is the one error here that CAN be answered on
+       this screen: the sheet carries the same sentence plus the two remedies the
+       refusal names (a unit price, or a per-line "Received free"). Mobile had
+       neither and sent the receiver to a PC. Everything else keeps the inline
+       line. */
+    onError: (e) => {
+      setRunningKey(null);
+      if (zeroCost.capture(e)) { setError(null); return; }
+      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    },
   });
 
   const run = async (action: DocAction) => {
@@ -1394,6 +1406,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       {payOpen && payKind && (
         <PaymentSheet kind={payKind} id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
       )}
+      {zeroCost.sheet}
     </>
   );
 }
