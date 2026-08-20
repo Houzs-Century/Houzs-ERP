@@ -15,10 +15,10 @@
    off this very column. It is now gated rather than frozen: only
    `scm.so.attribute_other` may move it (see salespersonReattributed). */
 export const SO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
-  'debtor_code', 'debtor_name', 'agent', 'sales_location', 'ref', 'po_doc_no',
+  'debtor_code', 'debtor_name', 'agent', 'sales_location', 'ref',
   'venue', 'venue_id', 'branding', 'address1', 'address2', 'address3', 'address4',
-  'phone', 'currency', 'so_date', 'customer_id', 'customer_state', 'customer_po',
-  'customer_po_id', 'customer_po_date', 'customer_po_image_b64', 'customer_so_no',
+  'phone', 'currency', 'so_date', 'customer_id', 'customer_state',
+  'customer_po_image_b64', 'customer_so_no',
   'hub_id', 'hub_name', 'ship_to_address', 'bill_to_address', 'install_to_address',
   'email', 'customer_type', 'city', 'postcode', 'building_type',
   'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
