@@ -1,4 +1,4 @@
-## The bug ledger came back to the path it was split out of, and no gate was looking at that path [high]
+## The bug ledger came back to the path it was split out of, and no audit script was looking at that path [high]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
 
@@ -82,6 +82,14 @@ hunks and cannot resolve a tree-level modify/delete. That is left as an owner
 decision, not taken here — it costs the signpost that ~60 comments in `backend/`,
 `frontend/` and `docs/` cite by name, which is why #2567 kept it. A branch that
 never touched `BUG-HISTORY.md` was verified safe either way.
+
+
+**Why this entry's title says "audit script".** `backend/tests/bugIndexAreas.test.ts`
+refused the first wording — *"no **gate** was looking at that path"* — because `gate`
+on its own is PRODUCT vocabulary here (the confirm gate, the stock-location gate, a
+permission gate) and would have dragged this entry into the tooling area on a word
+that does not mean tooling. The test was right and the title changed; the pattern was
+not widened.
 
 **Ref.** `fix/restore-bug-ledger-split`, 2026-08-21. Repo tooling; no migration.
 Follows #2567 (the split) and #2568 (the merge that undid it).
