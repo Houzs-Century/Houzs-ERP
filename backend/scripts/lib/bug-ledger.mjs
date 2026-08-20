@@ -211,7 +211,7 @@ export function mergeBaseLedger(repoRoot) {
   return {
     resolved: true,
     names,
-    /* Read ON DEMAND, not all 471 up front: the callers only ever ask about the
+    /* Read ON DEMAND, not the whole directory up front: the callers only ever ask about the
        handful of files they already found a problem in, and `git show` per entry
        across the whole directory would put ~460 process spawns in a required
        check. */

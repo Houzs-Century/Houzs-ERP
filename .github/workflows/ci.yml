@@ -321,6 +321,28 @@ jobs:
       # threshold, both of which are covered by tests instead. Read it before
       # treating a green run as proof of anything wider.
       - run: npm run audit:duplicated-decisions
+      # The NINTH: ONE SYSTEM, TWO ORGANISATIONS (owner 2026-08-18, "两个公司不是
+      # 用着同一个系统吗？他们只是 Multi-Organization 关系而已啊"). A company may have
+      # its own DATA — documents, numbering prefix, branding — and a few rules the
+      # owner set himself. It may not have different CAPABILITIES by accident.
+      #
+      # A REVIEWED ALLOWLIST over lines that NAME a company. Every one is either
+      # removed or listed in scripts/data/company-divergence-allowlist.json with a
+      # reason AND whose decision it was; a new one fails until somebody decides.
+      # It catches the shapes a `company_id === <n>` grep does not — a rule
+      # expressed against BASE_COMPANY_CODE, or scoped by doc-number prefix, which
+      # is how the SO-PO edit lock is confined to one organisation without ever
+      # naming it.
+      #
+      # STATED PLAINLY BECAUSE A GREEN RUN MUST NOT BE OVER-READ: this would NOT
+      # have caught the bug it was written after. The DO→Sales-Invoice transfer
+      # button was gated on a hand-typed ["signed","delivered"] with no company
+      # term in it at all, and only fired on one organisation because that
+      # organisation's deliveries sit at DISPATCHED. What catches THAT class is
+      # one declaration per concept, mirrored and pinned — check-shared-mirrors
+      # above. This gate is the cheaper half, and it cannot see a config row that
+      # exists for one company and not the other.
+      - run: npm run audit:company-divergence
       # ONE DATE FORMAT (owner 2026-08-18: "全套系统的 date format 没有统一").
       # The rule was already written down TWICE and re-derived by hand ~30 more
       # times in four other spellings — a list page said 2026/08/16 while the

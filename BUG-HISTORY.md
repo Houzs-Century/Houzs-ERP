@@ -5,8 +5,8 @@
 follows one of those should land somewhere useful rather than nowhere.
 
 - **The entries** are in [`docs/bugs/`](docs/bugs/) — one file each,
-  `NNNN-slug.md`, opening with `## Title [severity]`. All 471 that were in this
-  file are there, unchanged.
+  `NNNN-slug.md`, opening with `## Title [severity]`. Every entry that was in this
+  file is there, unchanged.
 - **Read by subsystem:** `npm --prefix backend run gen:bug-index` →
   `docs/generated/bug-index.md`.
 - **Read the whole thing, newest first:** `npm --prefix backend run gen:bug-history`

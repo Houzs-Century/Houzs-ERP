@@ -44,7 +44,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { readWritebackScope, WRITEBACK_KEY } from '../lib/autocount-writeback-flag';
 import {
@@ -300,8 +300,41 @@ export const listAutocountOutboxHandler = async (
      things either side of it, and the page must not make the reader guess which.
      The RAW value is reported next to the verdict for the same reason the health
      check does: a typo like 'On ' is visible rather than hidden behind the word
-     "off". */
+     "off".
+
+     THE SWITCH IS A COMPANY ALLOW-LIST, AND THIS LINE USED TO FORGET THAT.
+     `scm.autocount_writeback` takes 'off' / 'all' / a comma-separated list of
+     company ids, and every one of the eight enqueue gates asks the question the
+     right way — `isWritebackEnabled(sb, companyId)`. This report was the ONLY
+     caller in the backend that read the scope bare and then published
+     `on: scope !== 'off'`, i.e. "is it on for ANYBODY". With the live value set
+     to one company, the OTHER organisation's operator was told, on this page,
+     that sending was switched on FOR HIS COMPANY and that saving a document
+     would queue it. Neither was true: his queue is company-scoped (see
+     scopeToCompany below), so it is permanently empty, and nothing errors. The
+     comment above already said this page "must not make the reader guess" which
+     side of the switch an empty queue is on — for one of the two organisations
+     it was answering with the wrong side.
+
+     Two facts now, because they are two different questions and the page needs
+     both: `scope` still reports what the switch SAYS (unchanged — an admin has
+     to be able to see the whole allow-list), and `on` reports whether it covers
+     THIS company, which is what governs whether this reader's next save queues
+     anything. The sibling flag built on the same parser never had the bug —
+     write-freeze-status.ts prints "company 1, 3" rather than "this company". */
   const scope = await readWritebackScope(sb);
+  const writebackCompanyId = activeCompanyId(c);
+  /* Mirrors isWritebackEnabled's own arithmetic (lib/autocount-writeback-flag.ts).
+     Not a call to it, because a REPORT and an ENQUEUE want opposite answers when
+     the company is unresolved: the enqueue must refuse (never write into a live
+     account book on a guess), while this page must not claim the switch is off
+     on the strength of a company it could not resolve. Unresolved is carried as
+     null and rendered as its own sentence. */
+  const writebackOn: boolean | null =
+    scope === 'off' ? false
+    : scope === 'all' ? true
+    : writebackCompanyId == null ? null
+    : scope.includes(Number(writebackCompanyId));
   const { data: flagRow, error: flagErr } = await sb
     .from('app_config').select('value').eq('key', WRITEBACK_KEY).maybeSingle();
   /* THE ERROR IS BOUND AND BRANCHED ON, not discarded. supabase-js does not
@@ -470,7 +503,8 @@ export const listAutocountOutboxHandler = async (
          absent, empty, 'off', or anything it cannot parse all mean nothing is
          queued and nothing is sent. */
       value: flagValue,
-      on: scope !== 'off',
+      /* ON FOR THIS COMPANY — not "on for anybody". See the derivation above. */
+      on: writebackOn,
       scope: scope === 'off' ? 'off' : scope === 'all' ? 'all' : scope.join(','),
     },
     /* EVERY ONE OF THESE IS A COUNT OF DOCUMENTS. They no longer sum to the

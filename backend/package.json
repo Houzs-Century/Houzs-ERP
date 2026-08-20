@@ -55,6 +55,8 @@
     "audit:empty-state-claims": "node scripts/check-empty-state-claims.mjs --strict",
     "check:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs",
     "audit:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs --strict",
+    "check:company-divergence": "node scripts/check-company-divergence.mjs",
+    "audit:company-divergence": "node scripts/check-company-divergence.mjs --strict",
     "audit:date-format": "node scripts/check-date-formatting.mjs --strict",
     "audit:workflow-consistency": "node scripts/check-workflow-consistency.mjs",
     "check:company-scope": "node scripts/check-company-scope.mjs",

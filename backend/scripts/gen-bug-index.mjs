@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Build docs/generated/bug-index.md from the bug ledger in docs/bugs/.
 //
-// WHY. The ledger is 471 entries and 24,000+ lines of reverse-chronological
-// prose with no index, so "have we hit this before?" costs a full scan that
-// nobody performs. The entries are good; they are simply unreachable. This makes
+// WHY. The ledger runs to hundreds of entries and tens of thousands of lines of
+// reverse-chronological prose with no index, so "have we hit this before?" costs a
+// full scan that nobody performs. (No count is typed here: it grows every day, and
+// this file prints its own on every run.) The entries are good; they are simply unreachable. This makes
 // them reachable by subsystem without touching the entries themselves.
 //
 // THE SOURCE MOVED 2026-08-20, from the single file BUG-HISTORY.md to one file
