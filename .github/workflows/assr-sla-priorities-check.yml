@@ -1,0 +1,44 @@
+name: Service SLA priorities check (read-only)
+
+# Answers "does making assr_priorities.sla_hours live change any deadline?"
+# without anyone opening a SQL console.
+#
+# Until 2026-08-20 that column was saved by Service Maintenance and never read
+# back, so its production values decided nothing. This PR makes them decide new
+# case deadlines. Whether that MOVES anything depends on whether a manager ever
+# edited a row away from the mig 065 seed — a fact that lives only in
+# production, and one that reading code cannot answer.
+#
+# Manual trigger only. A production DB read on a schedule turns a real question
+# into CI noise nobody reads.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: assr-sla-priorities-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-assr-sla-priorities.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

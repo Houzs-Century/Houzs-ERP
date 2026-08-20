@@ -2406,18 +2406,68 @@ line authored from 0 stays a plain unit price until saved and re-mounted, and a
 product pick over the line resets the verdict. The keystroke sequence itself is
 a test case.
 
-**Only once the fee EXISTS (2026-08-20, same day).** The cell reads as
-"amount to charge" only when the line already carries a gross. A delivery-fee
-line added by hand on a NEW SO starts at 0, and there the operator is AUTHORING
-the fee: reading 250 as a target booked a discount of `max(0 - 250, 0)` = 0,
-never wrote the price, and the box snapped back to RM 0. That matters more than
-it sounds, because `applyDeliveryFee` — the create flag that makes the server
-derive a fee — is sent ONLY by the POS handover (`git grep applyDeliveryFee --
-frontend/src` returns nothing; see `mfg-sales-orders.ts:4477`), so a
-Houzs-authored SO has always had its fee typed in as a unit price. The rule is
-`editsFeeAsDiscount(isFeeCode, grossSen)`: no gross, plain unit price. The GROSS
-decides and not the net, so a fee waived to zero keeps fee semantics rather than
-flipping the cell's meaning under the operator's hands.
+**A hand-authored fee line is a plain PRICE, and that is why the verdict is
+per-mount (2026-08-20).** This paragraph used to describe the rule as
+`editsFeeAsDiscount(isFeeCode, grossSen)`. That predicate was **DELETED the same
+day** by #2529 and replaced by `lockedFeeSemantics` above; the reason is kept
+here because the CASE it was written for is still live and still decides the
+answer. A delivery-fee line added by hand on a NEW SO starts at 0, and there the
+operator is AUTHORING the fee: reading 250 as a target booked a discount of
+`max(0 - 250, 0)` = 0, never wrote the price, and the box snapped back to RM 0.
+That matters more than it sounds, because `applyDeliveryFee` — the create flag
+that makes the server derive a fee — is sent ONLY by the POS handover (`git grep
+applyDeliveryFee -- frontend/src` returns nothing; see `mfg-sales-orders.ts`), so
+a Houzs-authored SO has always had its fee typed in as a unit price. **In the ERP
+the typed amount IS the value** — owner, 2026-08-20: *"运费应该根据实际的价钱
+去填写。我们的 POS System 已经 preset 了 250，但进到 ERP 其实也只是把那个 amount
+填进来而已，所以正常来说 ERP 里是可以随意填写 amount 的"*. POS presetting 250 is a
+default carried in, not a derivation the ERP must defend. The two readings on
+record are complementary, not opposed: #2490 is the BACKEND half (the reduction
+survives the rebuild) and #2527/#2529 the FRONTEND half (where it is typed and
+what the cell means).
+
+**… and it only holds while nothing ELSE is saving (2026-08-20, migration 0314).**
+Everything above is about one editor typing one figure. A second line changed in
+the SAME Save used to put it back. `rebuild_mfg_so_delivery_lines` takes its
+advisory lock when it is CALLED, and `recomputeDeliveryFeeCore` READS the fee
+lines long before that — including the two things the operator owns on them
+(the `SVC-DELIVERY-ADD` gross and `discount_sen`). `runSoLineWrites` fans the
+dirty-line stage out with `Promise.allSettled`
+(`frontend/src/pages/scm-v2/so-add-lines.ts`), every one of those PATCHes ends in
+`rederiveDeliveryFee`, and one Save's PATCHes all carry the same edit-lease token
+so nothing separates them:
+
+    P_fee   writes discount_sen = 12500, reads, derives 125
+    P_sofa  reads BEFORE that commit, derives 250 (discount 0)
+    P_fee   takes the lock, writes 125
+    P_sofa  takes the lock, writes 250      <- quoted RM 125, invoiced RM 250
+
+The lock made that ordering deterministic; it never made it impossible. **0314
+turns read-then-lock into lock-read-compare-write.** The caller sends the
+operator-owned fee state it derived FROM as `p_expect_state` —
+`deliveryFeeStateKey` in `backend/src/scm/shared/service-lines.ts`, keyed by row
+id so the comparison is order-free — and the function re-reads that state under
+its own lock and **returns false without writing** when it has moved.
+`recomputeDeliveryFeeCore` is then a bounded loop (three attempts) over
+`recomputeDeliveryFeeAttempt`: re-read, re-derive, call again. If the lines keep
+moving it writes NOTHING, the same fail-closed posture as the failed header read
+("a failed read is not 'no fee'").
+
+Three things about that are deliberate and worth not re-litigating. It returns a
+**boolean, not a `RAISE`** — the same RPC runs inside `runScmPgCommand`
+(tbc-update / tbc-swap / tbc-swap-sofa) where an exception rolls back a whole save
+that only needed recomputing; and in that path convergence is guaranteed rather
+than likely, because the xact lock the first call took is held for the rest of the
+transaction. `p_expect_state` **NULL means do not check**, which is what
+`repair-so-fee-line-integrity.mjs` and the pg fixtures want. And only the
+`SVC-DELIVERY*` lines are in the expectation — a concurrent GOODS-line edit is
+still read unlocked, so an ordinary multi-line Save does not retry n times; the
+derivation reads goods lines for CATEGORY and item code, not qty or price.
+
+The write half of all of this now lives in
+`backend/src/scm/lib/so-delivery-fee-rebuild.ts` rather than inline in the router:
+one place that owns 0214 serialisation, 0310 line reuse and 0314 staleness
+refusal.
 
 **All three faults were on THIS side — it was not the mirror.** An earlier draft
 of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
