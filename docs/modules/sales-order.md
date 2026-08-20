@@ -702,6 +702,39 @@ main router, so its static path resolves ahead of `/:docNo`. It shares the
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### The 2990 receiver: `POST /api/sync/so-mirror` — IMPORT-ONCE since 2026-08-20
+
+Not in the table above because it is not a staff endpoint. It is mounted
+PRE-AUTH in `src/index.ts` and authenticated by a shared secret
+(`x-sync-secret` == `SYNC_SECRET`), because the caller is 2990's DATABASE —
+pg_cron + pg_net — not a person. Handler: `routes/so-mirror.ts`.
+
+| inbound | what it does now |
+|---|---|
+| `{docNo, header, items, payments}`, `doc_no` **absent** for company 2 | imports it: header, then the whole item + payment set. Unchanged from before. |
+| `{docNo, …}`, `doc_no` **present** | **writes nothing.** `200 {action:"skipped_existing", skipped:true}` + a `[so-mirror] skipped_existing` warning. |
+| `{docNo, deleted:true}`, `doc_no` **present** | **refuses.** `200 {action:"refused_delete", refused:true}` + a `[so-mirror] refused_delete` warning. |
+| `{docNo, deleted:true}`, `doc_no` absent | unchanged: the DELETE runs, matches nothing, acknowledges. |
+
+**Why it changed.** Before the 2026-07-21 cutover this was a live replica and
+re-applying 2990's copy was correct. After it, Houzs is the WRITER of `2990-`
+orders (`HOUZS_OWNS_2990="true"`; the POS creates them here, Houzs mints the
+numbers, the readonly wall lifts so staff can edit them) — and the receiver went
+on replaying 2990's older copy over those edits. Worse than losing the edit: it
+replaced the item set with a DELETE-then-INSERT, and
+`delivery_order_items.so_item_id` is `ON DELETE SET NULL`, so every replay
+blanked the Delivery Order lines that named those SO lines.
+
+**Every refusal is 200, deliberately.** 2990's drainer keys on HTTP status;
+non-2xx keeps the outbox row PENDING and retries forever, so one refused order
+would wedge the queue and every later SO would stop arriving. A skip is a
+delivered message we chose not to apply.
+
+**The header is the commit marker.** A first import that dies part-way deletes
+the header it just wrote before returning 500, so the retry redoes the whole
+document instead of finding a header-only order and skipping it. Pinned by
+`backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
+
 ### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
 
 Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
@@ -1214,11 +1247,19 @@ agreement, else the company's single active warehouse. The sibling arm does
 NOT breach the callout above: the callout guards against pooling across a
 warehouse boundary, and an SO whose every warehoused line names ONE warehouse
 has no boundary to pool across — disagreeing siblings refuse, and the
-single-warehouse fallback must not rescue them. Company-2990 rows are
-mirror-maintained (`so-mirror.ts` drains DELETE-then-INSERT per SO, wiping
-local stamps), so they verdict `mirror-source` — reported with the exact stamp
-for the 2990 SOURCE database, never written here. Rule:
-`classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
+single-warehouse fallback must not rescue them. Company-2990 rows verdict
+`mirror-source` — reported with the exact stamp for the 2990 SOURCE database,
+never written here. Rule: `classifySoLineWarehouse`,
+`backend/scripts/lib/doc-evidence-core.mjs`.
+
+> **The REASON for that verdict expired on 2026-08-20, the verdict did not.**
+> This paragraph used to justify it with *"`so-mirror.ts` drains
+> DELETE-then-INSERT per SO, wiping local stamps"*. It no longer does — the
+> receiver is import-once and never rewrites a doc_no Houzs already holds, so a
+> stamp written here now survives. What still holds is that these lines'
+> warehouse evidence lives in the 2990 source database, which is why the classifier
+> reports rather than writes. If that ever stops being the reason, the verdict
+> should be revisited on its own merits, not on this sentence.
 
 **Historical backfill for the MIGRATED AutoCount lines (2026-08-11, applied).**
 A different population and a different rule. `import-ac-outstanding-so.mjs`
@@ -1407,6 +1448,13 @@ company-2 order would wedge the queue behind it. The rule for company 2 belongs
 in 2990's own write paths. The route says so in a comment, and
 `tests/soDatePairWiring.test.ts` asserts the comment is still there.
 
+**Since 2026-08-20 that exclusion is a ONE-TIME exclusion, and it shrank on its
+own.** The receiver is import-once: it writes only a `doc_no` company 2 does not
+already hold, and every later delivery of the same order is a no-op. So the
+unpaired-dates exemption now covers the FIRST import of a legacy order and
+nothing else — every subsequent state of a 2990 order is authored in Houzs, by a
+path that does run the pair gate.
+
 The enumeration is a TEST, not prose: `tests/soDatePairWiring.test.ts` anchors on
 each path's source and fails if one stops calling the predicate. That file exists
 because the rule was previously hand-written in five places and simply missing
@@ -1578,6 +1626,9 @@ deploy schedule, which never got the 2026-08-13 unification) was written straigh
 through. It needs no code change: `applyMap` filters against
 `information_schema`, so the drop silently ends it. Until then it is the only
 thing that can still put a value in the column, and nothing reads it.
+*(Narrowed further 2026-08-20: import-once means it can only do so on an order's
+FIRST arrival, so the reachable population is new legacy imports, not every
+re-delivery of every company-2 order.)*
 
 Also gone with the writes: **`soProceedGateBlocked`**, whose two call sites were
 the `/status` stamp block and the header PATCH's `proceededAt` branch. The RULE
