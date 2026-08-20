@@ -184,3 +184,37 @@ describe('one swipe settling several orders', () => {
     expect(d.comboHints.length).toBeGreaterThan(0);
   });
 });
+
+/* A set that adds up ONE way is an answer whatever its size — the pre-tick used
+   to require exactly two documents, so a customer settling three orders with one
+   swipe was found and then not offered. */
+describe('pre-ticking the set that adds up', () => {
+  const pay = (id: string, sen: number): PaymentCandidate =>
+    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null });
+
+  const decide = (grossSen: number, pool: PaymentCandidate[]) => matchStatement(
+    { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
+    [{ lineNo: 1, txnDate: '2026-08-01', ref: null, grossSen, feeSen: 0, netSen: grossSen }],
+    pool, new Set<string>(),
+  )[0]!;
+
+  it('ticks two when two is the only way', () => {
+    const d = decide(100000, [pay('a', 60000), pay('b', 40000), pay('c', 33000)]);
+    expect(d.suggested?.map((p) => p.id)).toEqual(['a', 'b']);
+    expect(d.clue).toMatch(/SO-a \+ SO-b add up to it exactly/);
+  });
+
+  it('ticks THREE when three is the only way', () => {
+    const d = decide(125000, [pay('a', 60000), pay('b', 40000), pay('c', 25000)]);
+    expect(d.suggested?.map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(d.clue).toMatch(/add up to it exactly/);
+  });
+
+  /* Two ways to make the amount is a question. Nothing is ticked, and the
+     screen says how many ways there are rather than picking one. */
+  it('ticks nothing when the amount can be made two ways', () => {
+    const d = decide(100000, [pay('a', 60000), pay('b', 40000), pay('c', 60000), pay('d', 40000)]);
+    expect(d.suggested).toEqual([]);
+    expect(d.clue).toMatch(/set\(s\) of payments add up to this amount — pick the right one/);
+  });
+});

@@ -217,10 +217,13 @@ export function matchStatement(
       .sort((a, b) => b.amountSen - a.amountSen);
     if (inWindow.length > 0) {
       const hints = exactPairs(inWindow, row.grossSen);
-      /* One swipe, two orders (一笔刷卡对应两张订单). Exactly one pair that adds
-         up is the same kind of single answer as one payment on the amount. */
-      const onlyPair = hints.length === 1
-        ? inWindow.filter((p) => hints[0].includes(p.id))
+      /* One swipe, several orders (一笔刷卡对应两张订单, and the owner more
+         generally on 2026-08-20: 顾客可能刷一次卡，但是还两个单). Exactly ONE set
+         that adds up is the same kind of single answer as one payment on the
+         amount — whether that set is two documents or four. Two different sets
+         that both add up is a question, not an answer, so nothing is ticked. */
+      const onlySet = hints.length === 1
+        ? inWindow.filter((p) => hints[0]!.includes(p.id))
         : [];
       decisions.push({
         row,
@@ -229,11 +232,11 @@ export function matchStatement(
         matched: [],
         candidates: inWindow,
         comboHints: hints,
-        suggested: onlyPair.length === 2 ? onlyPair : [],
-        clue: onlyPair.length === 2
-          ? `No single payment matches — ${onlyPair.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and confirm.`
+        suggested: onlySet,
+        clue: onlySet.length > 0
+          ? `No single payment matches — ${onlySet.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and confirm.`
           : hints.length
-            ? `No single payment matches; ${hints.length} set(s) of payments add up to this amount`
+            ? `No single payment matches; ${hints.length} set(s) of payments add up to this amount — pick the right one`
             : `No payment matches this amount — ${inWindow.length} smaller payment(s) are within ${tolerance} day(s)`,
       });
       continue;
