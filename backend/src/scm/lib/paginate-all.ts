@@ -4,11 +4,27 @@ import { mapBounded } from './concurrency';
 // paginateAll — page through a PostgREST query so the default 1000-row cap can
 // never silently truncate a result set.
 //
-// PostgREST (Supabase) returns at most `max-rows` (1000) rows per response. A
+// PostgREST (Supabase) returns at most `max-rows` rows per response. A
 // `.limit(5000)` does NOT lift that ceiling — it only sets an upper bound; the
-// server still hands back ≤1000 and the rest is dropped without an error. The
-// only safe way to read the full set is to page with `.range(from, to)` and
+// server still hands back ≤max-rows and the rest is dropped without an error.
+// The only safe way to read the full set is to page with `.range(from, to)` and
 // concatenate until a page comes back shorter than the page size.
+//
+// THE 1000 BELOW IS AN ASSUMPTION UNTIL SOMEONE READS THE NUMBER. This header
+// asserted "1000" as fact for weeks and nothing had ever observed it; that
+// matters because the stop condition here is "a page shorter than PAGE", so a
+// real ceiling BELOW PAGE would make page one look final and truncate every
+// paged read in this tree — silently, and in the same shape as the bug this
+// file exists to prevent. `backend/scripts/probe-mrp-read-ceiling.mjs` was
+// written to settle it and its REST half never ran (Worker-only credentials —
+// see CLAUDE.md). The measurement now lives where the credentials are:
+//
+//   GET /api/admin/health/rest-page-ceiling   -> src/routes/systemHealth.ts
+//
+// It reports rows-returned against the Content-Range total at several limits
+// and states a CORRECT / TRUNCATES_SILENTLY verdict for the PAGE below. If it
+// ever comes back TRUNCATES_SILENTLY, this file is wrong and every caller of
+// paginateAll is reading a slice.
 //
 // Usage — pass a factory that returns a fully-built query for a given window.
 // Apply all filters/ordering INSIDE the factory so every page is consistent:
@@ -23,7 +39,12 @@ import { mapBounded } from './concurrency';
 // as a single PostgREST call so existing error handling is unchanged.
 // ----------------------------------------------------------------------------
 
-const PAGE = 1000;
+/* EXPORTED so the diagnostic that measures the real ceiling reads THIS constant
+   rather than a copy of it — a re-declared 1000 in the probe would agree with
+   itself no matter what this file said. Same reason recompute-so-allocation.mjs
+   imports SO_TERMINAL_STATES instead of restating it. See
+   routes/systemHealth.ts `/rest-page-ceiling`. */
+export const PAGE = 1000;
 // Absolute ceiling so a runaway view can't loop forever (50 pages = 50k rows).
 const MAX_PAGES = 50;
 
