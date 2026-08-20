@@ -47,6 +47,7 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
@@ -252,20 +253,12 @@ export const PurchaseConsignmentOrderNew = () => {
     });
   };
 
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
   const setVariant = (rid: string, k: string, v: unknown) =>
     setLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants };
     }));
