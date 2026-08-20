@@ -20,7 +20,7 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import {
-  findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
+  coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { readStatusCounts } from '../lib/status-counts';
@@ -34,6 +34,9 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
+/* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
+import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
 /* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
    blocks only — every guard stayed, because the unlinked-line suite proves them
    per HANDLER against this router's own source text. */
@@ -71,51 +74,6 @@ const ITEM =
    resolve below walks id lists hop by hop. */
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
-
-/* ── coveredGrnIds — EVERY receipt a purchase invoice bills ──────────────────
-   The header's `grn_id` is only the PRIMARY ref. `/from-grn-items` says so where
-   it stamps it — "PRIMARY note ref … the line-level grn_item_id is the
-   authoritative linkage" — because one supplier invoice may cover several notes
-   (owner 2026-08-06, migration 0267). This file already walks
-   `grn_item_id -> grn_items.grn_id` twice for READS (the detail's `sourceGrns`,
-   the linked-docs fan-out); the unlinked-line GUARD was the one place still
-   trusting the header ref alone, so a hand-added line billing a SECONDARY note's
-   material passed the very check written to refuse it.
-
-   Every read binds its error and the result carries `error`, because the CALLER
-   is a money guard: an id list short by one receipt is a door left open, and it
-   is indistinguishable from a receipt that legitimately has no lines. */
-async function coveredGrnIds(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sb: any,
-  args: {
-    /** The header's primary ref, when there is one. */
-    headerGrnId?: string | null;
-    /** Walk this invoice's OWN lines for the receipts they descend from. */
-    piId?: string | null;
-    /** Receipt LINE ids from the request body (a create has no invoice yet). */
-    grnItemIds?: Array<string | null | undefined>;
-  },
-): Promise<{ ids: string[]; error: string | null }> {
-  const grnItemIds = [...(args.grnItemIds ?? [])];
-  if (args.piId) {
-    const { data, error } = await sb.from('purchase_invoice_items')
-      .select('grn_item_id').eq('purchase_invoice_id', args.piId);
-    if (error) return { ids: [], error: `invoice lines: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ grn_item_id: string | null }>) grnItemIds.push(r.grn_item_id);
-  }
-  const lineIds = uniq(grnItemIds);
-  const out = uniq([args.headerGrnId ?? null]);
-  if (lineIds.length > 0) {
-    const { data, error } = await sb.from('grn_items').select('grn_id').in('id', lineIds);
-    if (error) return { ids: [], error: `receipt lines: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ grn_id: string | null }>) {
-      if (r.grn_id && !out.includes(r.grn_id)) out.push(r.grn_id);
-    }
-  }
-  return { ids: out, error: null };
-}
-
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   const d = new Date();
@@ -736,12 +694,15 @@ purchaseInvoices.get('/:id/linked', async (c) => {
   });
 });
 
+/* Every refusal here releases the request's idempotency claim, so a corrected
+   Save reaches the handler instead of replaying the first one — rule 1 of
+   lib/pi-create-refusals.ts, which also draws the boundary this follows. */
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
+  if (!body.supplierId) return refuseWithoutWriting(c, { error: 'supplier_required' }, 400);
   const items = body.items as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
+  if (!Array.isArray(items) || !items.length) return refuseWithoutWriting(c, { error: 'items_required' }, 400);
 
   /* DRAFT lifecycle (re-added per the full 6-doc Draft/Confirmed plan; reverses
      migration 0078's PI DRAFT removal). asDraft is opt-in per request — a normal
@@ -772,7 +733,7 @@ purchaseInvoices.post('/', async (c) => {
       headerGrnId: (body.grnId as string | undefined) ?? null,
       grnItemIds: items.map((it) => (it.grnItemId as string | undefined) ?? null),
     });
-    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    if (covered.error) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(covered.error), 500);
     const unlinked = await findUnlinkedPiLines(
       sb,
       covered.ids,
@@ -783,8 +744,8 @@ purchaseInvoices.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
-    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
+    if (!unlinked.ok) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return refuseWithoutWriting(c, unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   /* Over-invoice guard (mirrors /from-grn-items line ~432 + /:id/items): any
@@ -807,8 +768,8 @@ purchaseInvoices.post('/', async (c) => {
        fence. */
     {
       const mig = await migratedRefusalForGrnItems(sb, gids);
-      if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
-      if (mig.refusal) return c.json(mig.refusal, 409);
+      if (!mig.ok) return refuseWithoutWriting(c, loadFailed(mig.reason, 'check whether this receipt was carried over from the account book'), 500);
+      if (mig.refusal) return refuseWithoutWriting(c, mig.refusal, 409);
     }
     if (gids.length > 0) {
       /* The parent GRN rides the embed for the guard below: these grn_item ids
@@ -825,19 +786,19 @@ purchaseInvoices.post('/', async (c) => {
       const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
       // isCrossCompanySource is false for a null company_id, so a hit is never null.
       const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
-      if (foreign) return c.json(crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
+      if (foreign) return refuseWithoutWriting(c, crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
       const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
         giList.map((g) => [g.id, g]),
       );
       const over: Array<{ grnItemId: string; requested: number; remaining: number }> = [];
       for (const [gid, want] of wantByGrnItem.entries()) {
         const g = byId.get(gid);
-        if (!g) return c.json({ error: 'item_not_found', grnItemId: gid }, 400);
+        if (!g) return refuseWithoutWriting(c, { error: 'item_not_found', grnItemId: gid, message: 'A line on this invoice points at a receipt line that is no longer there. Reopen the Goods Receipt and raise the invoice from it again.' }, 400);
         const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
         if (want > remaining) over.push({ grnItemId: gid, requested: want, remaining });
       }
       if (over.length > 0) {
-        return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+        return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
       }
     }
   }
@@ -855,7 +816,7 @@ purchaseInvoices.post('/', async (c) => {
     });
     if (!parsed.ok) {
       const b = invalidLineNumberBody(parsed.invalid);
-      return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
+      return refuseWithoutWriting(c, { ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
   const itemRows = items.map((it) => {
@@ -902,7 +863,7 @@ purchaseInvoices.post('/', async (c) => {
      inherit an exchange_rate already gated at GRN create, so they need no guard. */
   {
     const rateGuard = await assertForeignRatePostable(sb, { currency: piCurrency, operatorRate: body.exchangeRate, docLabel: 'purchase invoice' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
@@ -925,12 +886,20 @@ purchaseInvoices.post('/', async (c) => {
     created_by: user.id,
     }).select(HEADER).single(),
   );
-  if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
+  // Past the first write, but nothing survived it: an attempt that errored wrote
+  // no row, and the earlier ones only minted doc numbers. So this releases too.
+  if (hErr) return refuseWithoutWriting(c, insertFailed(hErr.message), 500);
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
   const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
-  if (iErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+  if (iErr) {
+    // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
+    // released one over a surviving header would mint a second invoice.
+    const b = insertFailed(iErr.message, 'items_insert_failed');
+    if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 500);
+    return refuseWithoutWriting(c, b, 500);
+  }
 
   /* Post-insert over-invoice verification (race guard) — the pre-check above is
      read-before-write; re-sum live invoiced per GRN line now that OUR lines are
@@ -944,8 +913,10 @@ purchaseInvoices.post('/', async (c) => {
     if (verify.error) console.error(`[pi over-invoice verify] ${h.invoice_number}: ${verify.error}`);
     const over = verify.over;
     if (over.length > 0) {
-      await sb.from('purchase_invoices').delete().eq('id', h.id);
-      return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+      // Same rule as the items-insert rollback: release only on a proven undo.
+      const b = { error: 'qty_exceeds_remaining', lines: over };
+      if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 409);
+      return refuseWithoutWriting(c, b, 409);
     }
   }
 
@@ -954,6 +925,10 @@ purchaseInvoices.post('/', async (c) => {
      the header, so from here every exit is a success and this CREATE row is
      true. Written before the DRAFT-dependent side-effects so both statuses
      record exactly one. */
+  /* Committed => 201, whatever happens after. A throw ABOVE one of these five
+     catches would report a SAVED invoice as a 500, which is the one shape that
+     books a second payable now that a refusal releases the key — rule 2. */
+  await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
   /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
@@ -993,6 +968,7 @@ purchaseInvoices.post('/', async (c) => {
     // billed price (or its later correction) in real time.
     await recostForPi(sb, h.id);
   }
+  });
   return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
 });
 
