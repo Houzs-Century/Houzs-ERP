@@ -386,6 +386,133 @@ try {
     if (locations.size) notice(`  DISTINCT LINE LOCATIONS (${locations.size}): ${[...locations].join(" | ")}`);
     if (items.size) notice(`  DISTINCT ITEM CODES (${items.size}): ${[...items].slice(0, 25).join(" | ")}`);
   }
+
+  /* ── THE DOCUMENT NUMBER, AND WHETHER IT IS ALREADY SPOKEN FOR ────────────
+     `Primary Key Error` is AutoCount's own words for "something with this key
+     is already here", and the report above could not say WHICH key. It printed
+     the agent, the location, the creditor and the item codes — every FOREIGN
+     key this chain has ever tripped over — and never once printed the document
+     number the payload actually carries. So the one question a primary-key
+     refusal asks ("what name did we ask the book to use?") was the one field
+     you had to open a SQL console to see.
+
+     Three facts, and they are three different questions:
+
+       SENT AS      `payload -> body ->> DocNo` — the string AutoCount was
+                    given. The ERP numbers its own documents on every type
+                    (autocount-outbox.ts, "THE ERP NUMBERS ITS OWN DOCUMENTS"),
+                    so this should equal doc_no exactly. If it ever differs,
+                    something between the composer and the queue is rewriting
+                    the number, and that is the finding.
+       SENT BEFORE  another row for the SAME company + doc_type + doc_no that
+                    reached `sent`. The queue is append-only and never deletes,
+                    so a `sent` sibling is the ERP's OWN record that this number
+                    has already been written into the account book — which makes
+                    a second create of it a duplicate the book must refuse.
+       ERP LINK     `linked_ac_docno` on the document itself. A create is only
+                    enqueued when this is NULL (`enqueueSoCreate` returns early
+                    otherwise), so a stuck create means the ERP believes the
+                    document is NOT in the book. When that belief is wrong —
+                    the column was cleared by hand, or a send landed and the
+                    write-back never recorded it — the ERP will keep asking for
+                    a number the book already holds, forever.
+
+     Nothing here can see inside AED_HOUZS: this reads the ERP's Postgres and
+     the account book is SQL Server on the office host. What it can do is say
+     whether the ERP's OWN records already claim that number, which is the
+     difference between a guess and a lead. */
+  const names = await pg`
+    SELECT o.id, o.doc_type, o.doc_no, o.op, o.status, o.attempts,
+           o.payload -> 'body' ->> 'DocNo'              AS sent_doc_no,
+           jsonb_exists(o.payload -> 'body', 'DocNo')   AS carries_doc_no,
+           o.ac_doc_no,
+           prior.n_sent,
+           prior.sent_as
+      FROM scm.autocount_outbox o
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS n_sent,
+               string_agg(DISTINCT coalesce(p.ac_doc_no, '(sent, no ac_doc_no recorded)'), ' | ') AS sent_as
+          FROM scm.autocount_outbox p
+         WHERE p.company_id = o.company_id
+           AND p.doc_type   = o.doc_type
+           AND p.doc_no     = o.doc_no
+           AND p.status     = 'sent'
+           AND p.id        <> o.id
+      ) prior ON true
+     WHERE o.status IN ('pending', 'failed')
+     ORDER BY o.created_at DESC
+     LIMIT 40`;
+
+  if (names.length) {
+    /* The ERP side of the same question, for exactly the documents above.
+       Two tables because a sales order and a purchase order do not share a
+       key column — `doc_no` on one, `po_number` on the other — and a UNION is
+       one statement where two round trips would be two. */
+    const soNos = names.filter((r) => r.doc_type === 'SO').map((r) => r.doc_no);
+    const poNos = names.filter((r) => r.doc_type === 'PO').map((r) => r.doc_no);
+    const links = await pg`
+      SELECT 'SO' AS doc_type, h.doc_no AS doc_no, h.linked_ac_docno AS linked
+        FROM scm.mfg_sales_orders h
+       WHERE h.doc_no = ANY(${soNos}::text[])
+      UNION ALL
+      SELECT 'PO' AS doc_type, p.po_number AS doc_no, p.linked_ac_docno AS linked
+        FROM scm.purchase_orders p
+       WHERE p.po_number = ANY(${poNos}::text[])`;
+    const linkOf = new Map(links.map((r) => [`${r.doc_type}:${r.doc_no}`, r.linked]));
+
+    notice(
+      `DOCUMENT NUMBER ON THE STUCK ROWS — ${names.length} row(s). ` +
+        'A primary-key refusal is about a NAME, so this is the name we asked for.',
+    );
+    for (const r of names) {
+      const key = `${r.doc_type}:${r.doc_no}`;
+      const known = linkOf.has(key);
+      const linked = linkOf.get(key);
+      notice(
+        `  - ${r.doc_type} ${r.doc_no} (${r.op}, ${r.status}, ${r.attempts} attempt(s)): ` +
+          `sentAs=${r.carries_doc_no ? JSON.stringify(r.sent_doc_no) : 'KEY ABSENT — AutoCount auto-numbers'} ` +
+          (r.carries_doc_no && r.sent_doc_no !== r.doc_no
+            ? `DIFFERS FROM ERP doc_no ${JSON.stringify(r.doc_no)} `
+            : '') +
+          `erpLink=${known ? JSON.stringify(linked) : 'DOCUMENT NOT FOUND in the ERP table'} ` +
+          `sentBefore=${r.n_sent ?? 0}` +
+          (r.n_sent ? ` AS ${r.sent_as}` : ''),
+      );
+    }
+    /* THE READING, spelled out, because the three fields above only mean
+       something together and a reader at 11pm should not have to combine them. */
+    for (const r of names) {
+      const key = `${r.doc_type}:${r.doc_no}`;
+      const linked = linkOf.get(key);
+      if ((r.n_sent ?? 0) > 0) {
+        notice(
+          `  !! ${r.doc_type} ${r.doc_no}: this queue has ALREADY sent this exact number ` +
+            `(${r.n_sent} row(s), as ${r.sent_as}). Asking the book to create it again is a ` +
+            'duplicate, and a duplicate is what a primary-key refusal looks like.',
+        );
+      }
+      if (linkOf.has(key) && !linked) {
+        notice(
+          `  ?  ${r.doc_type} ${r.doc_no}: linked_ac_docno is NULL, so the ERP believes this ` +
+            'document is NOT in the account book. If AutoCount is refusing the number, that ' +
+            'belief is wrong and only the book can say so — see the AED_HOUZS query below.',
+        );
+      }
+    }
+    /* WHAT WOULD SETTLE IT, as a query someone with the book can run. This
+       script cannot reach AED_HOUZS, and saying so with the exact statement is
+       the honest form of "unknown" — it names what would answer the question
+       instead of leaving a reader to invent one. */
+    const soList = [...new Set(names.filter((r) => r.doc_type === 'SO').map((r) => r.doc_no))];
+    const poList = [...new Set(names.filter((r) => r.doc_type === 'PO').map((r) => r.doc_no))];
+    notice(
+      'THIS SCRIPT CANNOT SEE INSIDE AED_HOUZS (that book is SQL Server on the office host). ' +
+        'What settles a primary-key refusal is whether the book already holds the number:' +
+        (soList.length ? `  SELECT DocNo, Cancelled FROM SO WHERE DocNo IN (${soList.map((d) => `'${d}'`).join(', ')});` : '') +
+        (poList.length ? `  SELECT DocNo, Cancelled FROM PO WHERE DocNo IN (${poList.map((d) => `'${d}'`).join(', ')});` : ''),
+    );
+  }
+
 } finally {
   await pg.end({ timeout: 5 });
 }
