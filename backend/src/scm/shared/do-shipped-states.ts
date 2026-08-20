@@ -101,6 +101,53 @@ export const DO_STATUSES = [
 /** Pre-ship: no stock has left our hands yet. */
 export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
 
+/* ── "HAS THIS DELIVERY COUNTED?" — one home, added 2026-08-20 ───────────────
+
+   Every engine that sums what a Sales Order has already been delivered wrote
+   the same rule by hand, and every one of them wrote it as {CANCELLED, DRAFT}:
+   do-unlinked-coverage (twice), so-delivery-sync, so-stock-allocation,
+   routes/inventory, do-line-remaining, and check-do-integrity.mjs. LOADED is a
+   PRE-SHIP state — it is in the set two lines above, and the inventory OUT only
+   fires on ENTRY to a shipped state — so all of them counted a delivery that is
+   still on the lorry.
+
+   The cost was a delivery that could not be dispatched. The confirm gate admits
+   DRAFT and LOADED, so a LOADED DO's own lines were already inside the delivered
+   sum its remaining figure was computed from, and the over-delivery check
+   refused it against ITSELF whenever 2 x own_qty > ordered_qty — every full
+   delivery. Because the OUT had not fired, stock on hand read too high, MRP did
+   not reorder, and the operator's way out was cancel-and-re-raise: the exact
+   path that minted the DO-005 duplicate delivery.
+
+   `unbilled-deliveries.ts` is the tell — a second consumer of the same engine
+   that had to add LOADED to its own list by hand, with a comment saying a
+   LOADED DO is still on the lorry. One list beside the rule now, not seven.
+
+   PROVEN 2026-08-20 (run 32368212535, `check-do-integrity.mjs` R4 against
+   production): ZERO delivery orders are in LOADED today, in either company, and
+   zero would be refused. Nothing is stuck right now. That is not proof the
+   state is unreachable — `delivery_orders.status` is DEFAULT 'LOADED' NOT NULL
+   and `PATCH /:id/status` accepts every DO_STATUSES member — so this is a blind
+   spot closed before it costs a dispatch, not after. */
+
+/** A delivery order in one of these has NOT put stock in the customer's hands:
+ *  the pre-ship states plus CANCELLED. The complement of DO_STOCK_OUT_STATES
+ *  over DO_STATUSES, written from DO_PRESHIP_STATES so the two cannot drift. */
+export const DO_NOT_DELIVERED_STATES = [...DO_PRESHIP_STATES, 'CANCELLED'] as const;
+
+/** Do this delivery order's lines COUNT as delivered? Case-insensitive and
+ *  null-safe, because the callers read a nullable text column. */
+export function doCountsAsDelivered(status: string | null | undefined): boolean {
+  const s = String(status ?? '').toUpperCase();
+  return !(DO_NOT_DELIVERED_STATES as readonly string[]).includes(s);
+}
+
+/** The same set as a PostgREST `.not('status', 'in', ...)` literal, BUILT from
+ *  the array rather than typed out — a hand-typed copy is what this whole block
+ *  exists to end. */
+export const DO_NOT_DELIVERED_IN_LIST =
+  `(${DO_NOT_DELIVERED_STATES.map((s) => `"${s}"`).join(',')})`;
+
 /* ----------------------------------------------------------------------------
  * WHICH DELIVERIES MAY BE INVOICED — the owner's ruling, 2026-08-18:
  *   "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED — 这些 status 都可以转 SI"

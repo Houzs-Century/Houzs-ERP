@@ -14,6 +14,7 @@
 //   - The coverage DECISION is the pure `isSoFullyCovered` below (unit-tested);
 //     this module's async wrapper is the thin Supabase glue around it.
 
+import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
@@ -107,15 +108,17 @@ export async function syncSoDeliveredFromDo(
       // reference these SO items (a line may be split over several DOs). This is
       // re-derived live every call, so a cancelled DO drops out of the sum.
       // Keep the DO line id so returns can be traced back to the SO line below.
-      // LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped — it must never count
-      // toward SO delivery coverage (else a draft could auto-advance the SO to
-      // DELIVERED or stamp lines READY without any stock leaving). Excluded
-      // alongside CANCELLED, so any path that re-runs this sync stays safe.
+      // LEAK GUARD (PRE-SHIP): a DO that has not shipped must never count
+      // toward SO delivery coverage (else it could auto-advance the SO to
+      // DELIVERED or stamp lines READY without any stock leaving). That is
+      // DRAFT *and* LOADED — this list named only DRAFT until 2026-08-20. The
+      // literal is built from DO_NOT_DELIVERED_STATES, so it cannot drift from
+      // the JS predicate the coverage engine uses.
       const { data: doItemsRaw } = await sb
         .from('delivery_order_items')
         .select('id, so_item_id, qty, delivery_orders!inner(status)')
         .in('so_item_id', soLines.map((l) => l.id))
-        .not('delivery_orders.status', 'in', '("CANCELLED","DRAFT")');
+        .not('delivery_orders.status', 'in', DO_NOT_DELIVERED_IN_LIST);
       const doItemRows = (doItemsRaw ?? []) as Array<{ id: string; so_item_id: string | null; qty: number }>;
       const doLines = doItemRows.map((d) => ({ soItemId: d.so_item_id, qty: Number(d.qty) }));
 

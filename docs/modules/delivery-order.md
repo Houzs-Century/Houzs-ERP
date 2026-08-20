@@ -275,7 +275,7 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
+| `LOADED` | `PATCH /:id/status` ("Mark loaded") | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
@@ -287,10 +287,48 @@ Refusals the operator sees, in the order they fire:
 |---|---|
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
-| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) — and until 2026-08-20 a LOADED DO tripped this against ITSELF, see below |
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
+
+> **"Has this delivery counted?" is ONE predicate now (2026-08-20).**
+> `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES` live in
+> `backend/src/scm/shared/do-shipped-states.ts`, with a PostgREST literal
+> (`DO_NOT_DELIVERED_IN_LIST`) and a `.mjs` mirror for the audits, all BUILT
+> from one array. The set is `DO_PRESHIP_STATES` + CANCELLED = the exact
+> complement of `DO_STOCK_OUT_STATES` over the eight-label vocabulary.
+>
+> It was written by hand in NINE places and every one read `{CANCELLED, DRAFT}`:
+> `lib/do-unlinked-coverage.ts` (twice), `lib/so-delivery-sync.ts`,
+> `lib/so-stock-allocation.ts`, `lib/do-line-remaining.ts` (twice),
+> `routes/inventory.ts`, `routes/delivery-orders-mfg.ts` and
+> `scripts/check-do-integrity.mjs`. LOADED is PRE-SHIP — the inventory OUT only
+> fires on ENTRY to a shipped state — so all nine counted a delivery that is
+> still on the lorry, and the confirm gate one row above then refused a LOADED
+> DO against its own lines whenever `2 x own_qty > ordered_qty`, which is every
+> full delivery. Goods on the lorry, button returns 409; and because the OUT had
+> not fired, stock on hand read too high, MRP did not reorder, and the way out
+> an operator reaches for is cancel-and-re-raise — the path that minted the
+> DO-005 duplicate delivery.
+>
+> `routes/unbilled-deliveries.ts` was the tell: the one consumer that had LOADED
+> right, and it had it right BY HAND.
+>
+> **PROVEN 2026-08-20** (`check-do-integrity.mjs` R4/R4b against production, run
+> 32368212535): **0** delivery orders are in LOADED in either company and **0**
+> would be refused, so nothing was stuck when this was fixed. Not proof the state
+> is unreachable — the column is `DEFAULT 'LOADED' NOT NULL` and
+> `PATCH /:id/status` accepts every `DO_STATUSES` member.
+>
+> `routes/delivery-planning.ts` keeps the two-state pair ON PURPOSE: it asks
+> which DO is the LIVE one for an order so a board write lands somewhere, not
+> whether it shipped, and a LOADED delivery IS live. The reason is written
+> beside the exemption in `backend/tests/doDeliveredOneHome.test.ts` rather than
+> at the two sites, because that router is already over its file-size ceiling
+> and a ceiling may only fall. That test is also what stops the tenth copy — it
+> scans for the hand-typed pair per MATCH (a window about delivery orders), not
+> per file, self-tests its own regexes first, and names that one exemption.
 
 `delivery_substatus` is a SEPARATE column with its own whitelist (Pending
 Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not

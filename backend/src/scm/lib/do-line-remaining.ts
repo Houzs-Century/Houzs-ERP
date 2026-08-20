@@ -62,6 +62,7 @@
 // operator hunting for a duplicate that does not exist.
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST, doCountsAsDelivered } from '../shared/do-shipped-states';
 import { paginateAll, chunkIn } from './paginate-all';
 import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 
@@ -169,12 +170,12 @@ export async function doLineRemaining(
     id: string; do_number: string; status: string | null;
     debtor_code: string | null; debtor_name: string | null;
   }>) {
-    const st = (d.status ?? '').toUpperCase();
-    // LEAK GUARD (DRAFT, 2026-06-25 anchoring diff vs 2990) — a DRAFT DO has NOT
-    // shipped: it delivered nothing, so its lines must never become invoiceable /
-    // returnable (the "Pending" pool both downstream pickers read). Dropped
-    // alongside CANCELLED.
-    if (st === 'CANCELLED' || st === 'DRAFT') continue; // delivered nothing
+    // LEAK GUARD (PRE-SHIP, 2026-06-25 anchoring diff vs 2990) — a DO that has
+    // NOT shipped delivered nothing, so its lines must never become invoiceable
+    // / returnable (the "Pending" pool both downstream pickers read). That is
+    // DRAFT *and* LOADED; this read named only DRAFT until 2026-08-20, and
+    // unbilled-deliveries.ts had already dropped LOADED by hand next door.
+    if (!doCountsAsDelivered(d.status)) continue; // delivered nothing
     headerById.set(d.id, { do_number: d.do_number, debtor_code: d.debtor_code, debtor_name: d.debtor_name });
   }
   const activeDoIds = [...headerById.keys()];
@@ -389,15 +390,28 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-        /* OFFER EXACTLY WHAT THE SERVER WILL ACCEPT — one declaration for "may
-           be invoiced", read by the create gate (siTransferRefusal) AND by the
-           thing that offers the choice, so the picker cannot advertise a
-           document the create path then refuses. This filtered on
-           NOT IN (CANCELLED, DRAFT) by hand; the only member that predicate has
-           and this one does not is INVOICED, which nothing in this codebase ever
-           writes (routes/unbilled-deliveries.ts:13). LOADED is IN the set —
-           owner 2026-08-19, #2485. */
-        .in('status', SI_TRANSFERABLE_DO_STATES as unknown as string[]);
+      /* KEPT EXACTLY AS `main` LANDED IT (#2557). THE DISAGREEMENT IS REAL AND
+         IS NOT SETTLED HERE — two merged PRs answer "may a LOADED delivery be
+         invoiced" differently:
+           - #2485 (owner, 2026-08-19): every CONFIRMED delivery, LOADED
+             included. Still what the desktop offers — do-next-step.ts's
+             SI_TRANSFERABLE_DO_STATUSES opens with 'loaded'.
+           - #2557 (2026-08-20): a LOADED DO is still on the lorry and its
+             inventory OUT has not fired, so billing it would be the bug. That
+             is this line; unbilled-deliveries.ts:39 says the same in words.
+         Which one wins is the owner's call, so this change does not make it: it
+         leaves main's behaviour exactly as it found it and raises the question.
+
+         The invariant siTransferRefusal exists for HOLDS either way, because the
+         two lists nest the safe direction — this picker offers a STRICT SUBSET
+         of what the create gate accepts, so it can never advertise a delivery
+         the create path then refuses. A picker WIDER than its gate is the shape
+         that produced the original bug; this is the opposite. */
+      /* A LOADED DO is still on the lorry, so it is not invoiceable either —
+         unbilled-deliveries.ts already dropped LOADED from its own copy of this
+         list by hand, saying "billing it would be the bug". Same list now,
+         built from DO_NOT_DELIVERED_STATES. */
+      .not('status', 'in', DO_NOT_DELIVERED_IN_LIST);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);
   });
