@@ -151,10 +151,18 @@ implementation".
 - The consistency `audit:` check green.
 - BUG-HISTORY entry; module-guide update where a surface moves.
 
-## 6. Owner decisions still needed (JUDGEMENT calls, not defects)
-- Q3 posture: make all 8 over-qty verifiers fail-CLOSED (recommended) — confirm you
-  accept "occasionally refuse a save" over "occasionally commit an over-qty row".
-- PO variant gate: require variants at PO-confirm, or keep deferring to receipt
-  (recommended: defer).
-- Legacy detail-page retirement (Phase 2): confirm the V2 read-only surface is the
-  target for every document.
+## 6. Owner decisions — DECIDED 2026-08-20 (locked)
+- **Over-qty posture: FAIL-CLOSED, all 8 verifiers.** Owner note: reads almost
+  always succeed and over-qty is structurally impossible (the cap is the remaining
+  qty); fail-open only matters in a rare transient DB read error, and there we
+  REFUSE the save rather than commit an unverified over-qty row.
+- **PO variant gate: REQUIRED (owner overruled the "defer" proposal).** Rationale:
+  the supplier cannot make the item without the spec. On PO create/confirm the CORE
+  variant axes (fabric / gaps / divan+leg+seat height per group) are REQUIRED for
+  sofa/bedframe; **Special Orders stays OPTIONAL** (it is optional by design). SO
+  stays gated on Processing Date (unchanged); PO is now gated at confirm.
+- **Legacy detail pages: RETIRE.** The V2 read-only surface is the single target for
+  every document; legacy PO/GRN/PI editors are removed in Phase 2.
+- **Amount = 0: KEEP the zero-cost-receipt protection, make "Received free" a clean
+  one-tick path.** Do not remove the guard (it prevents valuation corruption from a
+  previously-priced SKU booked at 0); make the intentional-free path frictionless.
