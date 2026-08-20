@@ -27,7 +27,6 @@ import {
   useSoDropdownOptions,
   optionsOrFallback,
   preferredCustomerTypeValue,
-  FALLBACK_OPTIONS,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import {
   useLocalities,
@@ -266,9 +265,17 @@ type PaymentsResp = { payments: SoPayment[] };
    static allowlist here: the SHARED reconciler (vendor/scm/lib/scan-prefill) has
    already snapped those against the LIVE catalog before the value reaches this
    file, so both the interactive seed and the headless createDraftFromPrefill
-   trust the reconciled value. PAY_METHODS stays (fixed 4-value enum), single-
-   sourced from the shared FALLBACK_OPTIONS. */
-const PAY_METHODS = FALLBACK_OPTIONS.payment_method.map((o) => o.value);
+   trust the reconciled value.
+
+   The payment METHOD now follows the same rule, 2026-08-20. It used to be
+   re-checked here against a PAY_METHODS list built from the static
+   FALLBACK_OPTIONS — a second, stale allow-list applied on top of a value
+   reconcilePayment had ALREADY snapped against the live payment_method catalog
+   (scan-prefill.ts: snapValue, and it returns null rather than a bad method).
+   It dropped nothing while the static list happened to be a superset, and it
+   was one maintenance edit away from silently blanking a correctly scanned
+   method — which is exactly what the paragraph above says re-guarding did to
+   customer type. One list, one place. */
 /* Sentinel for "the signed-in creator has no scm.staff row" — shows their name
    in the Salesperson select but sends null so the backend stamps the caller. */
 const SELF_SALESPERSON = "__self__";
@@ -654,8 +661,6 @@ export function MobileNewSO({
   });
   const seededLineMeta: Record<string, ScanLineMetaSeed> = {};
   for (const { line, meta } of scanLines) seededLineMeta[line.key] = meta;
-  const inList = (v: string, list: string[]) => (list.includes(v) ? v : "");
-
   /* Seed ONE payment row per captured payment slip. */
   const scanPaymentSlips = scanPrefill?.payments ?? [];
   const scanSlipFilesInit: Record<string, File> = {};
@@ -663,7 +668,7 @@ export function MobileNewSO({
     ? scanPaymentSlips.map((ps) => {
         const row: Payment = {
           ...newPayment(),
-          method: inList(ps.method, PAY_METHODS),
+          method: ps.method,
           amount: ps.amount || "0.00",
           approval: ps.approval ?? "",
           slipName: ps.file.name,
@@ -673,7 +678,7 @@ export function MobileNewSO({
         return row;
       })
     : scanPrefill?.payment
-      ? [{ ...newPayment(), method: inList(scanPrefill.payment.method, PAY_METHODS), amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
+      ? [{ ...newPayment(), method: scanPrefill.payment.method, amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
       : [];
 
   // Customer
