@@ -28,6 +28,7 @@
     "explain:check": "node scripts/explain.mjs --check",
     "explain:write": "node scripts/explain.mjs --write",
     "explain:check-docs": "node scripts/explain.mjs --check-docs",
-    "explain:test": "node --test scripts/explain.test.mjs"
+    "explain:test": "node --test scripts/explain.test.mjs",
+    "migration:new": "node scripts/new-migration.mjs"
   }
 }
