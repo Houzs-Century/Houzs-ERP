@@ -836,12 +836,12 @@ Total: 1038 route registrations across 139 files.
 ## backend/src/routes/roles.ts  (8)
 - L25  GET    /permissions
 - L41  GET    /
-- L77  POST   /
-- L134  PATCH  /:id
-- L195  GET    /pages
-- L221  GET    /:id/page-access
-- L268  PATCH  /:id/page-access
-- L326  DELETE /:id
+- L82  POST   /
+- L139  PATCH  /:id
+- L200  GET    /pages
+- L226  GET    /:id/page-access
+- L273  PATCH  /:id/page-access
+- L331  DELETE /:id
 
 ## backend/src/routes/systemHealth.ts  (8)
 - L49  GET    /live

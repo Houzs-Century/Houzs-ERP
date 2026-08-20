@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { PERMISSIONS, isValidPermission, parsePermissions } from "../services/permissions";
+import { PERMISSIONS, isValidPermission, parsePermissions, droppedPermissions } from "../services/permissions";
 import {
   PAGES,
   computeBackfillLevel,
@@ -61,6 +61,11 @@ app.get("/", requirePermissionOrSalesDirector("roles.read"), async (c) => {
       name: r.name,
       description: r.description,
       permissions: parsePermissions(r.permissions),
+      // The other half of the same answer. parsePermissions DISCARDS any stored
+      // key this build does not declare, so a role row can carry keys that
+      // decide nothing and the list looked identical to a clean one. Surfaced
+      // here because Team > Roles is the one place a human looks at a role.
+      unknown_permissions: droppedPermissions(r.permissions),
       is_system: !!r.is_system,
       scope_to_pic: !!r.scope_to_pic,
       member_count: r.member_count ?? 0,
