@@ -28,7 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments } from '../../acc/payments';
+import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -809,7 +809,10 @@ accounting.post('/journal-entries/:id/reverse', async (c) => {
    FOREIGN lines (control-account lines from a source no rule maps there).
    Sums run over POSTED, non-reversed entries — the same predicate every
    balance view uses. */
-accounting.get('/control-check', async (c) => {
+/* Exported so a test can mount it on a bare app, the same reason
+   postJournalEntryHandler above is: the router carries supabaseAuth, which
+   cannot run without Worker bindings. */
+export const controlCheckHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
@@ -905,8 +908,24 @@ accounting.get('/control-check', async (c) => {
   };
 
   const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
-  return c.json({ checks });
-});
+
+  /* THE THIRD FINDING: money recorded on a document that never reached the
+     ledger at all. A booking failure does not fail the operator's save (sales
+     must be able to record money whatever accounting is doing), so until now
+     the only trace was a server log. Owner, asked whether this page should say
+     so: 要. `since` is the derived boundary — see acc/payments.ts — and it is
+     returned so the screen can show which period it is speaking about. */
+  const unbooked = await unbookedPayments(sb, companyId);
+
+  return c.json({
+    checks,
+    payments: unbooked.ok
+      ? { since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen, ok: unbooked.rows.length === 0 }
+      : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
+  });
+};
+
+accounting.get('/control-check', controlCheckHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Phase 2A — acquirer master + customer-payment backfill
