@@ -115,7 +115,33 @@ import {
   type AcDownstreamSpec,
 } from './autocount-convert-lines';
 
+/* The operator's half of a refusal. The skipped row this file writes is the
+   engineer's half and has not changed — see lib/ac-preflight.ts for why there
+   are two and why only ONE module is allowed to write either sentence. */
+import { acNotSentProblems, type AcDocKind } from './ac-preflight';
+import type { SaveProblem } from '../shared/so-save-problems';
+
 type Sb = SupabaseClient<any, any, any>;
+
+/** What to call each document in a sentence an operator reads. */
+const AC_DOC_NOUN: Record<AcDocType, AcDocKind> = {
+  SO: 'sales order', PO: 'purchase order', DO: 'document',
+  GR: 'document', IV: 'document', PI: 'document',
+};
+
+/**
+ * What an enqueue did, and — when it refused — what to TELL the operator.
+ *
+ * `queued` is the old boolean, unchanged. `problems` is the answer the composer
+ * has always computed inside the caller's own request and thrown away: every
+ * refusal below is raised, caught and filed while the route still holds the
+ * response it is about to return. Empty for every ordinary outcome (queued, the
+ * flag off, no company, a cutover-imported document, a dedupe collision) — a
+ * warning nobody needed is how an operator learns to stop reading them.
+ */
+export type AcEnqueueOutcome = { queued: boolean; problems: SaveProblem[] };
+
+const AC_ENQUEUE_SILENT: AcEnqueueOutcome = { queued: false, problems: [] };
 
 /** Past this an operation is surfaced as FAILED instead of retrying forever. */
 export const MAX_ATTEMPTS = 6;
@@ -587,7 +613,7 @@ async function noteReadFailure(
   sb: Sb,
   e: unknown,
   ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
-): Promise<void> {
+): Promise<SaveProblem[]> {
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
     || e instanceof ItemCodeError
@@ -604,7 +630,7 @@ async function noteReadFailure(
        six commits of the change that introduced it, while its own class comment
        promised "a readable outbox row instead". */
     || e instanceof AcSoToPoAlignmentError;
-  if (!refused && !(e instanceof AcReadError)) return;
+  if (!refused && !(e instanceof AcReadError)) return [];
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
@@ -633,6 +659,13 @@ async function noteReadFailure(
         : `compose failed, nothing sent: ${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
+  /* AND THE OPERATOR IS TOLD. The skipped row is what an ENGINEER reads; it is
+     durable and it names the foreign key. It is not what the person holding the
+     document reads, and until now nothing was — the create returned 201 and the
+     refusal lived only in a queue with its own permission key
+     (index.ts:433, `scm.autocount.read`). Same facts, addressed to the operator:
+     lib/ac-preflight.ts owns the sentence, this only carries it back out. */
+  return acNotSentProblems(e, AC_DOC_NOUN[ctx.docType] ?? 'document');
 }
 
 // ── enqueue helpers, one per flow ───────────────────────────────────────────
@@ -641,16 +674,16 @@ async function noteReadFailure(
 export async function enqueueSoCreate(
   sb: Sb,
   opts: { companyId: number | null | undefined; docNo: string; createdBy?: number | null },
-): Promise<boolean> {
+): Promise<AcEnqueueOutcome> {
   try {
-    if (opts.companyId == null) return false;
-    if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
+    if (opts.companyId == null) return AC_ENQUEUE_SILENT;
+    if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readOrThrow('mfg_sales_orders header',
       sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', opts.docNo).maybeSingle());
-    if (!header) return false;
+    if (!header) return AC_ENQUEUE_SILENT;
     /* A cutover-imported SO ALREADY exists in AutoCount (mig 0271). Creating it
        again would duplicate the order in the live book. */
-    if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return false;
+    if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
@@ -671,7 +704,7 @@ export async function enqueueSoCreate(
     const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
     const body = composeCreateSo(
       header as never, lines, salespersonName, outstandingSen, paymentRefs, { bindings });
-    return await enqueueAcOp(sb, {
+    return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
       docType: 'SO',
@@ -690,10 +723,10 @@ export async function enqueueSoCreate(
       },
       dedupeKey: `create_so:${opts.docNo}`,
       createdBy: opts.createdBy ?? null,
-    });
+    }), problems: [] };
   } catch (e) {
-    await noteReadFailure(sb, e, { companyId: opts.companyId as number, op: 'create_so', docType: 'SO', docNo: opts.docNo });
-    return false;
+    const problems = await noteReadFailure(sb, e, { companyId: opts.companyId as number, op: 'create_so', docType: 'SO', docNo: opts.docNo });
+    return { queued: false, problems };
   }
 }
 
@@ -749,17 +782,17 @@ async function readPoHeader(sb: Sb, poId: string) {
 export async function enqueuePoCreate(
   sb: Sb,
   opts: { companyId: number | null | undefined; poId: string; createdBy?: number | null },
-): Promise<boolean> {
+): Promise<AcEnqueueOutcome> {
   /* Falls back to the id: a header read that FAILED has no number to name the
      note row by, and the id is what every PO route addresses anyway. */
   let poNumber = opts.poId;
   try {
-    if (opts.companyId == null) return false;
-    if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
+    if (opts.companyId == null) return AC_ENQUEUE_SILENT;
+    if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readPoHeader(sb, opts.poId);
-    if (!header) return false;
+    if (!header) return AC_ENQUEUE_SILENT;
     poNumber = header.po_number || opts.poId;
-    if (header.linked_ac_docno) return false;
+    if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
@@ -774,7 +807,7 @@ export async function enqueuePoCreate(
     const body = composeCreatePo(header, lines, { bindings });
     if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
-    return await enqueueAcOp(sb, {
+    return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: shape.kind === 'transfer' ? 'so_to_po' : 'create_po',
       docType: 'PO',
@@ -819,12 +852,12 @@ export async function enqueuePoCreate(
       },
       dedupeKey: `create_po:${opts.poId}`,
       createdBy: opts.createdBy ?? null,
-    });
+    }), problems: [] };
   } catch (e) {
-    await noteReadFailure(sb, e, {
+    const problems = await noteReadFailure(sb, e, {
       companyId: opts.companyId as number, op: 'create_po', docType: 'PO', docNo: poNumber, docId: opts.poId,
     });
-    return false;
+    return { queued: false, problems };
   }
 }
 

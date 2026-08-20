@@ -797,7 +797,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
        one column, is what has to stay fixed. Any failed read must end the
        compose. */
     const sb = seeded({ mfg_sales_order_items: ['linked_ac_dtlkey'] });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(false);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).queued).toBe(false);
 
     const rows = sb.tables.autocount_outbox;
     expect(rows).toHaveLength(1);
@@ -810,7 +810,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
 
   test.skip('every field, against the shape CreateSo parses', async () => {
     const sb = seeded();
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).queued).toBe(true);
 
     expect(await wireBody(sb)).toEqual({
       DocNo: 'SO-2608-011',
@@ -920,7 +920,7 @@ describe('/create-po — the creditor comes from scm.suppliers', () => {
 
   test.skip('a PO create queues, and the body carries the supplier CODE', async () => {
     const sb = seeded();
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(true);
     expect(sb.tables.autocount_outbox).toHaveLength(1);
 
     const body = await wireBody(sb);
@@ -986,7 +986,7 @@ describe('/create-po — the creditor comes from scm.suppliers', () => {
 
   test('a PO whose supplier read fails composes NOTHING — the D13 mechanism, on the PO side', async () => {
     const sb = seeded({ suppliers: ['code'] });
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(false);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(false);
     const rows = sb.tables.autocount_outbox;
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('skipped');
@@ -1031,7 +1031,7 @@ describe('/so-to-po names the supplier', () => {
        quietly fell back to `create_po` would pass them while testing the wrong
        code path entirely. */
     const sb = soToPoSb();
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(true);
     expect(sb.tables.autocount_outbox[0].op).toBe('so_to_po');
   });
 
@@ -1373,7 +1373,15 @@ describe('/so-to-po carries the whole master', () => {
       is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
     }];
 
-    expect(await enqueue(t), 'nothing is queued for AutoCount').toBe(false);
+    const outcome = await enqueue(t);
+    expect(outcome.queued, 'nothing is queued for AutoCount').toBe(false);
+    /* AND THE PERSON HOLDING THE DOCUMENT IS TOLD, which is the second half of
+       "surfaced". The skipped row below is what an ENGINEER reads; this is the
+       same refusal addressed to the operator, and an error with no sentence
+       here comes back as an empty `problems` — saved, not sent, nobody told. */
+    expect(outcome.problems, 'the operator gets a sentence, not silence').toHaveLength(1);
+    expect(outcome.problems[0].message).toContain('has NOT reached the accounts');
+    expect(outcome.problems[0].message, 'and it ends in a next step').toContain('re-raise the');
     const rows = t.tables.autocount_outbox;
     expect(rows).toHaveLength(1);
     expect(rows[0].status, 'a refusal, not a retry').toBe('skipped');
