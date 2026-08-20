@@ -1328,6 +1328,61 @@ describe('/so-to-po carries the whole master', () => {
     expect(unread, `keys the host would silently drop: ${unread.join(', ')}`).toEqual([]);
   });
 
+  test('a misaligned transfer REFUSES with a row an operator can read, not silently', async () => {
+    /* THE REFUSAL IS ONLY WORTH HAVING IF IT SURFACES. `noteReadFailure`'s list
+       IS the mechanism: an error missing from it is not handled elsewhere, it
+       is DROPPED — the enqueue answers false with no outbox row, no console
+       line and nothing for an operator to read. `AcSoToPoAlignmentError` was
+       missing from that list when it was written, which is the same shape of
+       defect as the one this whole block is about.
+
+       THE MISALIGNMENT IS BUILT THE ONE WAY IT ARISES, and it is the case
+       `collapseSofaLines` itself calls "the dangerous one": a sofa build whose
+       compartments carry MIXED DtlKeys. All-null passes them through and
+       all-distinct leaves them separate — either way the counts match — but
+       mixed means the account book holds the build FOLDED while the ERP's
+       record of that is incomplete, so the compartments fold to one line while
+       `poTransferShape` still names one source key per ERP row. */
+    const t = soToPoSb();
+    t.tables.mfg_sales_order_items[1].id = 'so-item-2';
+    t.tables.mfg_sales_order_items[1].linked_ac_dtlkey = 4343;
+    t.tables.mfg_sales_order_items[2].id = 'so-item-3';
+    t.tables.mfg_sales_order_items[2].linked_ac_dtlkey = 4344;
+    t.tables.purchase_order_items = [
+      {
+        id: 'po-item-2', purchase_order_id: 'po-uuid-1', so_item_id: 'so-item-2',
+        item_code: 'ANNSA-1B(LHF)', item_group: 'sofa', description: 'SOFA ANNSA',
+        description2: 'FABRIC HR805-30', qty: 1, unit_price_sen: 90_000,
+        variants: { buildKey: 'build-1', cellIndex: 0 }, warehouse_id: 'wh-kl',
+        delivery_date: null, linked_ac_dtlkey: 555,
+      },
+      {
+        id: 'po-item-3', purchase_order_id: 'po-uuid-1', so_item_id: 'so-item-3',
+        item_code: 'ANNSA-CNR', item_group: 'sofa', description: 'SOFA ANNSA',
+        description2: 'FABRIC HR805-30', qty: 1, unit_price_sen: 90_000,
+        variants: { buildKey: 'build-1', cellIndex: 1 }, warehouse_id: 'wh-kl',
+        delivery_date: null, linked_ac_dtlkey: null,
+      },
+    ];
+    /* The folded build resolves to the model's own AutoCount code, so the item
+       resolver has something to answer with — without it the compose refuses
+       one step earlier with ItemCodeError and this test would pass for the
+       wrong reason. */
+    t.tables.supplier_material_bindings = [{
+      item_code: 'ANNSA-1S', supplier_id: 'supplier-uuid-1', supplier_sku: 'AC-ANNSA',
+      is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
+    }];
+
+    expect(await enqueue(t), 'nothing is queued for AutoCount').toBe(false);
+    const rows = t.tables.autocount_outbox;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status, 'a refusal, not a retry').toBe('skipped');
+    expect(String(rows[0].last_error), 'the class name, so the remedy is findable')
+      .toContain('AcSoToPoAlignmentError');
+    expect(String(rows[0].last_error), 'and the two counts').toContain('2 source line(s)');
+    expect(rows[0].payload, 'nothing that could be POSTed').toEqual({ body: {} });
+  });
+
   test('the AGENT the transfer now sends is one PurchaseHeader actually assigns', () => {
     /* CARRYING A FIELD IS NOT LANDING IT. `PurchaseHeader` is what /so-to-po
        calls for its header, and it did not read `Agent` at all — only

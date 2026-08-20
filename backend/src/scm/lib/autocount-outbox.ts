@@ -76,6 +76,7 @@ import {
   KeylessLineError,
   MissingAgentError,
   MissingCreditorError,
+  AcSoToPoAlignmentError,
   MissingLocationError,
   MissingSalesLocationError,
   SofaCollapseError,
@@ -594,7 +595,15 @@ async function noteReadFailure(
     || e instanceof MissingLocationError
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
-    || e instanceof MissingCreditorError;
+    || e instanceof MissingCreditorError
+    /* THE LIST IS THE WHOLE MECHANISM, and an error missing from it is not
+       "handled elsewhere" — it is SWALLOWED. The early return below drops
+       anything that is neither a refusal nor a read failure, so the enqueue
+       answers false with no outbox row, no console line and nothing for an
+       operator to read. That was true of AcSoToPoAlignmentError for the first
+       six commits of the change that introduced it, while its own class comment
+       promised "a readable outbox row instead". */
+    || e instanceof AcSoToPoAlignmentError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console

@@ -60,7 +60,11 @@ first draft added it only to `PurchaseHeader` and left `/create-po` sending a ke
 the host never read — the same *carrying is not landing* trap as `Agent`, caught
 by asserting the READ on both routes rather than one. `composeSoToPo` also
 now REFUSES a payload whose `DtlKeys` and `Details` counts differ, an invariant
-its doc comment had claimed without enforcing.
+its doc comment had claimed without enforcing — and that refusal is WIRED into
+`noteReadFailure`'s list, because an error missing from that list is not handled
+elsewhere, it is dropped: the enqueue answers false with no outbox row and
+nothing an operator can read. It was missing for six commits of this change
+while its own class comment promised a readable row.
 
 **Still open.** `/edit`'s header allow-list has no `PurchaseLocation`, so moving
 a written purchase order's ship-to warehouse in the ERP does not reach the book

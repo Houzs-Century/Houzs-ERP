@@ -1141,6 +1141,20 @@ wrong number while looking saved; `SoToPo`'s own guard compares the lines it
 CREATED against `DtlKeys` and does not catch it. `AcSoToPoAlignmentError`
 refuses instead.
 
+**Which sofa build actually reaches it**: the MIXED-key one, which
+`collapseSofaLines` calls "the dangerous one" itself. All-null keys are passed
+through and all-distinct keys are left separate — either way the counts match.
+Mixed means the book holds the build folded while the ERP's record of that is
+incomplete, so the compartments fold to one line while the transfer still names
+one source key per ERP row.
+
+**And the refusal is WIRED, which is its own trap.** `noteReadFailure`'s
+instanceof list IS the mechanism: an error missing from it is not handled
+somewhere else, it is DROPPED — the enqueue answers false, no outbox row, no
+console line, nothing to read. `AcSoToPoAlignmentError` was missing from that
+list for six commits of this change while its own class comment promised "a
+readable outbox row instead".
+
 #### 7c3b-ii. Purchase Location — AutoCount has a header one, and the ERP had never sent it
 
 The second half of the owner's 2026-08-19 report, and it is **not** transfer-only

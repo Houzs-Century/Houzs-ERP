@@ -671,8 +671,14 @@ export class MissingCreditorError extends Error {
  * `composeSoToPo` zips them by index — the Nth key gets the Nth cost — and the
  * two lists are built by different code from different rows: `poTransferShape`
  * counts ERP purchase-order lines, `composeDetails` COLLAPSES a sofa build into
- * a single AutoCount line (divergence D9). One sofa is enough to make them
- * disagree.
+ * a single AutoCount line (divergence D9).
+ *
+ * THE CASE THAT REACHES IT IS THE MIXED ONE, and `collapseSofaLines` calls it
+ * "the dangerous one" itself. A build whose compartments carry NO DtlKeys is
+ * passed through and one whose keys are ALL DISTINCT is left separate — either
+ * way the counts match. MIXED keys mean the account book holds the build folded
+ * while the ERP's record of that is incomplete, so the compartments fold to one
+ * line while the transfer still names one source key per ERP row.
  *
  * Nothing downstream catches it. `SoToPo`'s own guard compares the lines it
  * CREATED against `DtlKeys` (AcSyncService.cs:2382-2384), so a short `Details`
@@ -1270,7 +1276,7 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
-  /* Through the same map the LINE locations go through (composeDetails:994), so
+  /* Through the same map the LINE locations go through (composeDetails:1000), so
      the header and its lines cannot end up spelling one warehouse two ways. */
   const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
@@ -1909,6 +1915,7 @@ export function clearedAcKeys(
  * `composeDetails` COLLAPSES a sofa build into one AutoCount line (D9) while
  * `poTransferShape` counts ERP rows, so the two can disagree without anything
  * in between noticing. Misaligned, the Nth key would be given the (N+1)th cost.
+ * See `AcSoToPoAlignmentError` for which sofa build actually reaches it.
  */
 export function composeSoToPo(
   master: AcCreatePoPayload,
