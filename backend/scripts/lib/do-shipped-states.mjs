@@ -23,3 +23,15 @@ export const DO_SHIPPED_STATES = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVER
 /** Statuses in which the OUT has already been written. Equal to
  *  DO_SHIPPED_STATES since COMPLETED was removed; still its own question. */
 export const DO_STOCK_OUT_STATES = [...DO_SHIPPED_STATES];
+
+/** Pre-ship: no stock has left our hands yet. */
+export const DO_PRESHIP_STATES = ["DRAFT", "LOADED"];
+
+/** A delivery order in one of these has NOT put stock in the customer's hands.
+ *  Read the ORIGINAL's "HAS THIS DELIVERY COUNTED?" block for why LOADED
+ *  belongs here and what it cost while it did not. */
+export const DO_NOT_DELIVERED_STATES = [...DO_PRESHIP_STATES, "CANCELLED"];
+
+/** The same set as a SQL `NOT IN (...)` literal, built from the array. */
+export const DO_NOT_DELIVERED_SQL_IN =
+  `(${DO_NOT_DELIVERED_STATES.map((s) => `'${s}'`).join(", ")})`;
