@@ -26,7 +26,7 @@ Written 2026-08-02 alongside the fix for the bug that rule is named after
 | Surface | File | Notes |
 |---|---|---|
 | Desktop | `frontend/src/components/GlobalSearch.tsx` | Cmd+K overlay, grouped by type with icons + keyboard nav |
-| Mobile | `frontend/src/mobile/MobileSearch.tsx` | Same sources, flat list with type chips |
+| Mobile | `frontend/src/mobile/MobileSearch.tsx` | Same sources, same ten types. Five are tappable (sales order, project, service case, product, person); the five SCM documents render READ-ONLY with an "Open on desktop" line, because the phone has no detail screen to route them to |
 
 ### The shared layer
 
@@ -162,7 +162,17 @@ positive must cost a conversation, never a deploy.
 4. **A new hit type needs the deep link to exist on BOTH surfaces.** Desktop
    navigates the router; mobile resolves through `mobileRoute.ts`, which will not
    404 on an unknown path — it lands somewhere wrong.
-5. **`.or()` cannot filter an embedded FK resource.** Supplier name reaches the
+5. **On mobile, "cannot open it" must never mean "do not show it".** Until
+   2026-08-21 the phone listed only the five types it could route to, while its
+   "No matches" line was gated on the RAW hit count — so a search for a
+   delivery-order or invoice number returned hits, suppressed the empty state,
+   dropped every hit, and rendered a BLANK screen with no explanation. Mobile's
+   display order is now `Object.keys(TYPE_LABEL)`, and `TYPE_LABEL` is
+   `Record<SearchHitType, string>`, so **tsc** refuses a type that is not listed:
+   a new hit type cannot go unrendered on the phone again. Whether a card is a
+   button is decided by `navFor` alone — one source of truth, no parallel list of
+   "openable" types to drift.
+6. **`.or()` cannot filter an embedded FK resource.** Supplier name reaches the
    subtitle through the SELECT, not the filter. Adding it to `.or` errors — and
    before 0239's sibling fix, that error was silent.
 
