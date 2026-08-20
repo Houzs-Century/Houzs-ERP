@@ -88,7 +88,13 @@ try {
            min(COALESCE(delivered_at, signed_at))                                  AS oldest,
            max(COALESCE(delivered_at, signed_at))                                  AS newest
       FROM scm.delivery_orders
-     WHERE upper(status) IN ('SIGNED', 'DELIVERED', 'INVOICED')
+     /* `status::text`, not `upper(status)`. The column is the scm.do_status
+        ENUM, and Postgres has no upper() overload for it — the first dispatch
+        of this script died on exactly that:
+          POD census failed to read the database:
+          function upper(scm.do_status) does not exist
+        The enum labels are already upper-case, so the cast alone is enough. */
+     WHERE status::text IN ('SIGNED', 'DELIVERED', 'INVOICED')
      GROUP BY company_id, status
      ORDER BY company_id, status
   `;
