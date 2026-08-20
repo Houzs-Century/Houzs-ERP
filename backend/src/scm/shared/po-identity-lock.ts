@@ -18,11 +18,12 @@
  * Lines are a separate, deliberately WHOLESALE lock (add/edit/delete a PO line
  * is refused once a GRN exists): a line IS what was ordered, and you cannot
  * change what was ordered after it has been received. That lock is unchanged. */
-export const PO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
-  'supplier_id',           // the GRN is a receipt FROM this supplier
-  'currency',              // the GRN was received + costed in this currency
-  'purchase_location_id',  // fans to each line's warehouse — where the GRN landed
-]);
+import { PO_LOCK_COLS } from './document-policy';
+
+/* The columns (supplier / currency / purchase location — the GRN's basis) come
+   from the ONE rulebook (document-policy.ts) so this set can't drift from the
+   registry or its siblings. Re-exported here for the route + tests that import it. */
+export const PO_IDENTITY_LOCK_COLS: ReadonlySet<string> = PO_LOCK_COLS;
 
 /** Loose equality mirroring the SO lock's `norm()` — null / undefined / '' all
     collapse, so a form re-sending a blank field as '' does not read as a change

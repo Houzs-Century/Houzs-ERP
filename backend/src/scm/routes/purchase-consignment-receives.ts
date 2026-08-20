@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { PCR_LOCK_COLS, PCR_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
 export const purchaseConsignmentReceives = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -464,10 +465,11 @@ export async function recomputePcoReceived(
    lines has a downstream PC Return (returned_qty > 0). There is no PC invoice in
    scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
    the receive is free to edit. */
-/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — like GRN, this header had
-   no downstream guard; supplier + currency freeze once a PC Return exists. */
-const PCR_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>(['supplier_id', 'currency']);
-const PCR_IDENTITY_LABELS: Record<string, string> = { supplier_id: 'supplier', currency: 'currency' };
+/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — supplier + currency freeze
+   once a PC Return exists. Column set + labels come from the ONE rulebook
+   (shared/document-policy.ts) so they can't drift from the siblings. */
+const PCR_IDENTITY_LOCK_COLS = PCR_LOCK_COLS;
+const PCR_IDENTITY_LABELS = PCR_LOCK_LABELS;
 
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_consignment_receive_items')
