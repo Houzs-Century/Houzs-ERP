@@ -18,8 +18,12 @@ import stockTransfers from '../src/scm/routes/stock-transfers.ts?raw';
    SCOPE LEDGER for the durable allocation queue (defect 1, 2026-07-22).
 
    HONEST STATEMENT OF WHAT SHIPPED. The durable outbox introduced by this PR
-   covers FOUR of the THIRTY-EIGHT places that trigger an SO stock-allocation
-   recompute. The other thirty-four still call `recomputeSoStockAllocation`
+   covered FOUR of the THIRTY-EIGHT places that trigger an SO stock-allocation
+   recompute; it is SIX as of 2026-08-20, the two additions being the GRN line
+   DELETE and PATCH /:id/cancel. The prose below is kept in the tense it was
+   written in because it explains WHY the rest were not converted, and that
+   reasoning is unchanged — only the counts move, and the LEDGER further down is
+   the authority on those. The other thirty-two still call `recomputeSoStockAllocation`
    inline, best-effort: if the Worker dies, the network drops, or the CPU limit
    is hit between the source write and the recompute, the projection stays stale
    until the next unrelated mutation happens to sweep it. Allocation is
@@ -83,9 +87,13 @@ const LEDGER: Array<{
   { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 3, durable: 0, deferred: 0 },
   /* grns.ts moved 6 -> 5 inline and 0 -> 1 durable on 2026-08-20: the line
      DELETE now runs inside runScmPgCommand, so its queue row commits with the
-     stock reversal. The other five GRN routes are unchanged; postGrnHandler is
-     deliberately last. docs/ALLOCATION-DURABILITY-PLAN.md. */
-  { module: 'routes/grns.ts', source: grns, inline: 5, durable: 1, deferred: 0 },
+     stock reversal.
+     Then 5 -> 4 inline and 1 -> 2 durable, same day: PATCH /:id/cancel is the
+     second route through, so the reversing stock OUT and the recompute request
+     commit together. Four GRN routes remain (header PATCH, line add, line edit,
+     and the create paths), with postGrnHandler deliberately last.
+     docs/ALLOCATION-DURABILITY-PLAN.md. */
+  { module: 'routes/grns.ts', source: grns, inline: 4, durable: 2, deferred: 0 },
   { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 7, durable: 3, deferred: 1 },
   { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
@@ -108,16 +116,16 @@ describe('durable allocation coverage is stated honestly', () => {
     });
   }
 
-  test('the totals match the documented scope: 4 durable of 38 triggers', () => {
+  test('the totals match the documented scope: 6 durable of 38 triggers', () => {
     const durable = LEDGER.reduce((sum, entry) => sum + entry.durable, 0);
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
-    expect(durable).toBe(5);
-    expect(inline).toBe(32);
+    expect(durable).toBe(6);
+    expect(inline).toBe(31);
     expect(deferred).toBe(1);
     /* The trigger count is unchanged: deferring one moved it between columns,
-       it did not remove it. 34 are still best-effort (33 inline + 1 deferred). */
-    expect(inline + deferred).toBe(33);
+       it did not remove it. 32 are still best-effort (31 inline + 1 deferred). */
+    expect(inline + deferred).toBe(32);
     expect(durable + inline + deferred).toBe(38);
   });
 

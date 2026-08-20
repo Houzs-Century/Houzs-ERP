@@ -9,40 +9,41 @@
 /* ══════════════════════════════════════════════════════════════════════════════
    SCOPE — READ THIS BEFORE RELYING ON "DURABLE".
 
-   This queue makes an SO stock-allocation recompute durable for the FOUR call
+   This queue makes an SO stock-allocation recompute durable for the SIX call
    sites that use `scheduleStockAllocationAfterCommand`: the three TBC line
-   commands and amendment approve-so. Those four run inside `runScmPgCommand`,
-   so the queue row commits in the SAME database transaction as the source
-   write, and a Worker crash between the two is impossible.
+   commands, amendment approve-so, and — since 2026-08-20 — the GRN line DELETE
+   and GRN cancel. Those six run inside `runScmPgCommand`, so the queue row
+   commits in the SAME database transaction as the source write, and a Worker
+   crash between the two is impossible.
 
-   The other THIRTY-FOUR allocation triggers in this codebase still call
-   `recomputeSoStockAllocation` best-effort (GRN post/cancel, DO ship/cancel,
+   The other THIRTY-TWO allocation triggers in this codebase still call
+   `recomputeSoStockAllocation` best-effort (GRN post, DO ship/cancel,
    delivery + purchase returns, stock takes, transfers, inventory adjustments,
    consignment, and eight paths in mfg-sales-orders itself). For those, a crash
    between the source write and the recompute leaves READY / PENDING and the SO
    header status stale until some later mutation happens to sweep. ALLOCATION IS
    NOT DURABLE IN GENERAL. Do not read the word "durable" in this file as
-   covering the whole surface — it covers four entry points.
+   covering the whole surface — it covers six entry points.
 
    NARROWED, NOT CLOSED, 2026-08-17. `recomputeSoStockAllocation` now enqueues
    its OWN retry row whenever a sweep it actually ENTERED did not finish — a
    lost single-flight race, a throw, or a header left un-advanced under an edit
    lease. So the cron below IS now a repair loop for those outcomes, on all ~38
-   triggers rather than the durable four. The gap that remains is the one this
+   triggers rather than the durable six. The gap that remains is the one this
    header was written about and it is unchanged: if the Worker dies BEFORE the
    recompute is reached, there is still no row and still no retry, because only
-   a queue write inside the source write's own transaction can cover that. Four
+   a queue write inside the source write's own transaction can cover that. Six
    entry points have it. Converting the rest still means moving each route onto
    `runScmPgCommand` first.
 
-   THIRTY-THREE of those thirty-four are `await`ed inline, so the operator's
+   THIRTY-ONE of those thirty-two are `await`ed inline, so the operator's
    request pays for the whole global sweep. ONE — the SO header PATCH — is
    DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
    upgrade: same call, same crash window, just moved off the response path. If
    anything it is harder to reason about, because the operator has already been
    told the save succeeded when the sweep dies. It buys latency and nothing
    else; the honest fix for that call site is still to move it onto
-   `runScmPgCommand` so it can join the durable four.
+   `runScmPgCommand` so it can join the durable six.
 
    The exact inventory is pinned by tests/stockAllocationDurabilityScope.test.ts,
    which fails if any count moves. Converting the rest requires first moving
