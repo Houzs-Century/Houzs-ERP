@@ -580,9 +580,10 @@ the STALE-BRANCH mechanism behind the incidents below:
    once and reported success.** *Added 2026-08-14.* #2120's new AutoCount requeue
    workflow failed on its first dispatch (run 31704539182) reaching for
    `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, which exist nowhere in this repo
-   — it copied `recompute-2990-so-allocation.yml`, a workflow that has never run,
-   instead of `recompute-so-allocation.yml`, which works. Precedent was taken by
-   name similarity rather than by evidence the precedent runs.
+   — it copied `recompute-2990-so-allocation.yml`, a workflow that never ran
+   once (deleted 2026-08-20), instead of `recompute-so-allocation.yml`, which
+   works. Precedent was taken by name similarity rather than by evidence the
+   precedent runs.
 
 **Do NOT add `backend-tests (N)` or `backend` as required contexts.** The shard
 name carries an index that changes with the shard count, and `backend` is a
@@ -956,13 +957,23 @@ the SHAPE, not PostgREST credentials: `backend/scripts/lib/pgrest-shim.mjs`
 gives you `sb.from(...)` over the pg connection. Copy
 `recompute-so-allocation.mjs`, which does exactly this.
 
-**Do NOT copy `recompute-2990-so-allocation.yml`.** It is three characters away
-from that one by name and it is wired to `SUPABASE_URL` +
-`SUPABASE_SERVICE_ROLE_KEY`, which do not exist here — so it has never run and
-cannot. On 2026-08-13 a new workflow was written by copying it and failed on its
-first dispatch with both secrets empty. `SOURCE_SUPABASE_URL` /
-`SOURCE_SERVICE_ROLE_KEY` DO exist and are a third thing again: they point at
-the 2990 SOURCE system, not at Houzs.
+**`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` exist — as WORKER secrets, never
+as Actions ones.** Both halves matter, and stating only the first sent two
+authors down a dead end. They are real and in use: `src/db/supabase.ts:66`
+builds `createClient(url, serviceKey)` and every `sb.from(...)` in the SCM
+module is a PostgREST call (`wrangler secret list --name autocount-sync-api`
+lists both). They are absent from GitHub: not at repo level, not in Production,
+not in Staging. **Adding them to Actions is forbidden** — this repository is
+public, non-admin collaborators can read repository secrets, and the
+service-role key bypasses RLS on the one database both tenants share, so it is
+total access to both. A workflow that needs PostgREST cannot have it; if it
+needs the SHAPE, use `pgrest-shim.mjs` over `DATABASE_URL`. If it genuinely
+needs the REST EDGE — the ceiling measurement is the real case — ask the Worker,
+which already holds the credentials: `GET /api/admin/health/rest-page-ceiling`.
+`recompute-2990-so-allocation.yml` was wired to them, never ran, was copied
+anyway despite a warning here, and was DELETED on 2026-08-20.
+`SOURCE_SUPABASE_URL` / `SOURCE_SERVICE_ROLE_KEY` DO exist as Actions secrets
+and are a third thing again: they point at the 2990 SOURCE system, not at Houzs.
 
 Rules for anything in this shape:
 

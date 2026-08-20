@@ -25,6 +25,7 @@ import {
   setItemQty,
   setItemCartonQty,
 } from "../services/assr";
+import { normalizeSlaHours } from "../services/assrSla";
 import { runSlaEscalation } from "../services/assrEscalation";
 import { issueStaffToken, issueSalesToken, revokeCaseTokens } from "../services/caseTracking";
 import { sendEmail, publicUrl } from "../services/email";
@@ -45,11 +46,11 @@ import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
 /* Row-level case visibility + the creditor strip. Lives in services/ so the
    PRINT route can apply the SAME rule — see assrVisibility.ts. */
 import {
-  assrUnrestricted, assrVisibleUserIds, assrVisibleAgentNames,
+  assrUnrestricted, assrVisibleUserIds, assrVisibilityPredicateSql,
   assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields,
 } from "../services/assrVisibility";
 import { notifyServiceCaseResponsible } from "../services/assrNotify";
-import { isSalesUser, isDirectorUser } from "../services/pmsAccess";
+import { isDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
@@ -82,38 +83,80 @@ const enforceCaseScope: MiddlewareHandler<{ Bindings: Env }> = async (c, next) =
 app.use("/:id{[0-9]+}", enforceCaseScope);
 app.use("/:id{[0-9]+}/*", enforceCaseScope);
 
-// ── Sales access to Service Cases (owner rule 8, 2026-07) ─────
-// Service Cases + My Case are granted to Sales WITHOUT relying on the
-// configurable permission matrix: a Sales-department / Sales-position user may
-// VIEW their own cases, CREATE cases, and see the status of cases they handled.
-// Their DATA stays scoped to self + downline (assrVisibleUserIds → rule 9);
-// this gate only decides who gets THROUGH the route, not which rows they see.
+// ── Company access to Service Cases (owner rule 8, 2026-07;
+//    re-keyed from job title to the COMPANY grant 2026-08-20) ──
+// Service Cases + My Case are granted WITHOUT relying on the configurable
+// permission matrix: whoever is authorised for the company may VIEW cases,
+// CREATE cases, and see the status of cases they handled. Their DATA is still
+// narrowed by assrVisibilityPredicateSql — this gate only decides who gets
+// THROUGH the route, not which rows they see.
+//
+// WHAT CHANGED AND WHY. The middle term used to be `isSalesUser(user)`: a
+// `/^sales/i` test on `position_name` plus a "sales" substring on
+// `department_name`. The owner ruled that out on 2026-08-20 —
+// "有 Houzs 这家公司的授权 就好（不看职称）" / "我们不 control Agent，可是我们
+// control Company." A job TITLE is owner-editable free text that nobody
+// re-checks against this gate, so a rename or a department move silently
+// revoked Service Cases from people who still had the job. The company grant is
+// provisioned deliberately, in one place, by someone who meant to.
 //
 // `canAccessServiceCases` passes when the caller holds ANY of the given
-// permissions (the legacy path — unchanged for existing ASSR staff), OR is
-// Sales staff, OR is a director (Owner/IT `*`, Super Admin, Sales Director,
-// Finance Manager). It is applied ONLY to the read + create endpoints Sales
-// needs — NOT to write / manage / approve / delete, which keep their original
+// permissions (the legacy path — unchanged for existing ASSR staff), OR holds
+// the HOUZS company grant, OR is a director (Owner/IT `*`, Super Admin, Sales
+// Director, Finance Manager). It is applied ONLY to the read + create endpoints
+// — NOT to write / manage / approve / delete, which keep their original
 // `requirePermission` gate so this never widens mutation access.
-function canAccessServiceCases(
+//
+// Takes the context, not just the user, because a company grant is resolved per
+// REQUEST by companyContext. Required, never optional: a gate that silently
+// keeps its old answer when a caller forgets to pass the context is the
+// optional-param-noop bug class at the top of BUG-HISTORY.md.
+export function canAccessServiceCases(
+  c: CompanyScopeCtx,
   user: AuthUser | null | undefined,
   perms: string[],
 ): boolean {
   if (!user) return false;
   const granted = user.permissions_set ?? user.permissions ?? [];
   if (perms.some((p) => hasPermission(granted, p))) return true;
-  return isSalesUser(user) || isDirectorUser(user);
+  return holdsHouzsCompanyGrant(c) || isDirectorUser(user);
 }
 
-/** Route gate that admits the service_cases permission holder OR Sales / director
- *  (see canAccessServiceCases). `perms` defaults to the read key. */
+/**
+ * Does this caller hold the HOUZS company grant?
+ *
+ * Reads the same three-state sentinel every other company helper does:
+ *   `undefined` — company context UNRESOLVED (pre-migration, D1 test mirror,
+ *                 cold start). Degrade to the legacy single-company answer, YES,
+ *                 exactly as `allowedCompaniesSql` degrades to no predicate.
+ *                 Treating it as "no grant" would 403 every caller on a blip.
+ *   `[]`        — resolved, and the caller is granted NO active company. NO.
+ *   non-empty   — YES when HOUZS is among them.
+ *
+ * A companies master with no HOUZS row answers NO rather than YES: at that point
+ * the caller's grants are resolved and simply do not include the company this
+ * gate names, and inventing a grant is never the safe direction.
+ *
+ * Exported for backend/tests/assrVisibilityRule.test.ts.
+ */
+export function holdsHouzsCompanyGrant(c: CompanyScopeCtx): boolean {
+  const allowed = allowedCompanyIds(c);
+  if (allowed === undefined) return true; // unresolved -> legacy single-company
+  const houzs = houzsCompanyId(c);
+  if (houzs === undefined) return false;
+  return allowed.includes(houzs);
+}
+
+/** Route gate that admits the service_cases permission holder OR a HOUZS company
+ *  grantee OR a director (see canAccessServiceCases). `perms` defaults to the
+ *  read key. */
 function requireServiceCaseAccess(
   perms: string[] = ["service_cases.read"],
 ): MiddlewareHandler<{ Bindings: Env }> {
   return async (c, next) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
-    if (!canAccessServiceCases(user, perms)) {
+    if (!canAccessServiceCases(c, user, perms)) {
       return c.json({ error: "You don't have permission to open service cases." }, 403);
     }
     await next();
@@ -161,83 +204,58 @@ export function assrCreateCompanyId(c: Context<any>): number | undefined {
   return activeCompanyId(c) ?? houzsCompanyId(c);
 }
 
-// Raw-SQL twin of pushVisibilityScope (services/assr.ts), which serves the
-// paginated list + CSV export through their bind arrays. The AGGREGATE queries
-// below build their WHERE by interpolation, so they need the same rule as a
-// fragment. Both express ONE rule and MUST be changed together: a new
-// assigned_to_3, a changed legacy-name match, a new tier — if it lands in one
-// and not the other, the list and its own totals disagree again, which is the
-// defect this pass exists to close. They live apart because services/assr.ts
-// cannot import from routes/assr.ts (routes already imports services).
+// ` AND (...)` wrapper around THE row-visibility rule, for the AGGREGATE
+// endpoints (/summary, /metrics, /by-creditor, /metrics/drill, /logistics/all),
+// which build their WHERE by interpolation. The rule itself is
+// assrVisibilityPredicateSql (services/assrVisibility.ts) — the same string the
+// paginated list and the CSV export splice in through pushVisibilityScope, and
+// the same one the detail / print row check asks the database. ONE rule, ONE
+// home: this used to be a hand-maintained TWIN of pushVisibilityScope, and a
+// drift between them is what `fix/assr-aggregate-scope` had to close when the
+// list and its own totals disagreed.
 //
-// Three states, deliberately the same shape as allowedCompaniesSql so the two
-// scope fragments compose in one WHERE:
-//   undefined -> ""          unrestricted (`*` / service_cases.manage /
-//                            director). Emits NOTHING, so their SQL stays
-//                            byte-identical to today's.
-//   []        -> " AND 1=0"  scoped caller with no resolvable identity. Fail
-//                            closed: `1=0` (not `false`) stays valid on the
-//                            D1/SQLite test mirror.
-//   else      -> the OR-set  self + downline by id, plus the legacy free-text
-//                            agent-name reach.
-//
-// `prefix` is the table alias — "" for a bare `assr_cases`, "c." / "ca." where
-// the query aliases it.
-//
-// Ids are INLINED, agent NAMES are BOUND, and the split is not cosmetic: ids
-// come from our own users master (subtreeUserIds) and are re-validated as
-// positive integers right here, which is the same justification
-// allowedCompaniesSql states for inlining company ids. Agent names are
-// user-controlled text and never touch the SQL string. The caller must splice
-// `binds` into its own bind list AT THE POSITION the fragment appears — binds
-// are positional.
+// `binds` is now always EMPTY — every id is inlined after re-validation, so
+// there is nothing positional left to get wrong. The field is kept because the
+// aggregate handlers splice it into their own bind arrays at the position the
+// fragment appears; spreading an empty array there is a no-op and removing it
+// would touch every one of those call sites for no behaviour change.
 function assrVisibilitySql(
   ids: number[] | undefined,
-  agentNames: string[] | undefined,
-  prefix = "c.",
+  prefix: string,
 ): { sql: string; binds: string[] } {
-  if (ids === undefined) return { sql: "", binds: [] };
-  const clean = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
-  if (clean.length === 0) return { sql: ` AND 1=0`, binds: [] };
-  const idList = clean.join(",");
-  const clauses = [
-    `${prefix}created_by IN (${idList})`,
-    `${prefix}assigned_to IN (${idList})`,
-    `${prefix}assigned_to_2 IN (${idList})`,
-  ];
-  const binds: string[] = [];
-  const names = (agentNames ?? [])
-    .map((n) => n.trim().toLowerCase())
-    .filter(Boolean);
-  for (const n of names) {
-    clauses.push(`LOWER(COALESCE(${prefix}sales_agent, '')) LIKE ?`);
-    binds.push(`%${n}%`);
-  }
-  return { sql: ` AND (${clauses.join(" OR ")})`, binds };
+  const pred = assrVisibilityPredicateSql(ids, prefix);
+  if (pred === null) return { sql: "", binds: [] };
+  return { sql: ` AND (${pred})`, binds: [] };
 }
 
-/** Both halves of the row-level scope for the aggregate endpoints, resolved
- *  once per request. Returns a builder because the same scope has to be
- *  rendered against several table aliases within one handler. */
+/** The row-level scope for the aggregate endpoints, resolved once per request.
+ *  Returns a builder because the same scope has to be rendered against several
+ *  table aliases within one handler. */
 async function assrVisibilityScope(c: {
   get(key: "user"): unknown;
   env: Env;
 }): Promise<(prefix?: string) => { sql: string; binds: string[] }> {
   const ids = await assrVisibleUserIds(c);
-  const names = await assrVisibleAgentNames(c);
-  return (prefix = "c.") => assrVisibilitySql(ids, names, prefix);
+  // "assr_cases." — not "" — for an unaliased `FROM assr_cases`: the rule
+  // references doc_no inside a subquery-bearing expression and an unqualified
+  // column there is ambiguous. See assrVisibilityPredicateSql.
+  return (prefix = "c.") => assrVisibilitySql(ids, prefix);
 }
 
 /**
- * True when the case identified by `caseId` is within the caller's
- * assrVisibleUserIds scope (self + downline; directors/admins unrestricted).
- * Mirrors the row-level check the detail GET performs (createdBy / assignedTo
- * ∈ visible ids) so Sales-reachable SUB-routes — attachment / timeline
- * download, sales comment / nudge — can't reach a case outside the caller's
- * reporting chain. A missing/unknown case returns false so the caller gets the
- * same 404 as a nonexistent id (never distinguishes existence across the scope
- * boundary). Raw env.DB reads return snake_case columns (D1-compat shim — same
- * as the customer-history query below).
+ * True when the case identified by `caseId` is within the caller's scope on BOTH
+ * dimensions — the case's company is in the caller's granted set, and the
+ * row-visibility rule admits it. Sales-reachable SUB-routes (attachment /
+ * timeline download, sales comment / nudge) go through here so they cannot
+ * reach a case the list would not show. A missing/unknown case returns false so
+ * the caller gets the same 404 as a nonexistent id (never distinguishes
+ * existence across the scope boundary). Raw env.DB reads return snake_case
+ * columns (D1-compat shim — same as the customer-history query below).
+ *
+ * The row rule is NOT restated here: it delegates to assrCaseRowInScope, which
+ * answers through the same SQL predicate the list builds its WHERE from. This
+ * function used to carry its own copy of the id + agent-name test, which is two
+ * places to change and one to forget.
  */
 async function caseInCallerScope(
   c: { get(key: "user"): unknown; env: Env },
@@ -250,10 +268,10 @@ async function caseInCallerScope(
   // Fully unrestricted on BOTH dimensions — no read needed.
   if (visibleIds === undefined && allowedCo === undefined) return true;
   const row = await c.env.DB.prepare(
-    `SELECT created_by, assigned_to, assigned_to_2, sales_agent, company_id FROM assr_cases WHERE id = ?`,
+    `SELECT id, created_by, assigned_to, assigned_to_2, doc_no, company_id FROM assr_cases WHERE id = ?`,
   )
     .bind(caseId)
-    .first<{ created_by: number | null; assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null; company_id: number | null }>();
+    .first<{ id: number; created_by: number | null; assigned_to: number | null; assigned_to_2: number | null; doc_no: string | null; company_id: number | null }>();
   if (!row) return false;
   // Company scope FIRST — mirrors the detail GET (see the /:id handler): when the
   // caller's company set is resolved, the case's company must be inside it. This
@@ -264,25 +282,7 @@ async function caseInCallerScope(
     if (Number.isFinite(caseCo) && !allowedCo.includes(caseCo)) return false;
   }
   if (visibleIds === undefined) return true; // unrestricted visibility tier
-  const createdBy = Number(row.created_by ?? NaN);
-  const assignedTo = Number(row.assigned_to ?? NaN);
-  // Co-assignee (assigned_to_2) — the LIST includes it (services/assr.ts), so a
-  // co-assignee who sees the case in their list must be able to OPEN it too.
-  const assignedTo2 = Number(row.assigned_to_2 ?? NaN);
-  if (
-    (Number.isFinite(createdBy) && visibleIds.includes(createdBy)) ||
-    (Number.isFinite(assignedTo) && visibleIds.includes(assignedTo)) ||
-    (Number.isFinite(assignedTo2) && visibleIds.includes(assignedTo2))
-  ) {
-    return true;
-  }
-  // Legacy agent-name reach — same additive rule as the list scope: a case
-  // whose free-text sales_agent matches a subtree member's name is openable.
-  const agent = (row.sales_agent ?? "").trim().toLowerCase();
-  if (!agent) return false;
-  const names = await assrVisibleAgentNames(c);
-  if (names === undefined) return true;
-  return names.some((n) => agent.includes(n));
+  return assrCaseRowInScope(c as Context<any>, row);
 }
 
 // ── Module-level settings (default assignees) ─────────────────
@@ -372,6 +372,7 @@ function lookupTable(kind: string): string | null {
   return (LOOKUP_TABLES as Record<string, string>)[kind] ?? null;
 }
 
+
 app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   const kind = c.req.param("kind");
   const table = lookupTable(kind);
@@ -411,7 +412,10 @@ app.post("/lookups/:kind", requirePermission("service_cases.manage"), async (c) 
   );
   const sortOrder = Number.isFinite(body.sort_order) ? Number(body.sort_order) : 0;
   if (kind === "priorities") {
-    const sla = Number.isFinite(body.sla_hours) ? Number(body.sla_hours) : null;
+    const sla = normalizeSlaHours(body.sla_hours);
+    if (sla === false) {
+      return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+    }
     await c.env.DB.prepare(
       `INSERT INTO assr_priorities (slug, name, sort_order, sla_hours)
        VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -442,6 +446,15 @@ app.patch("/lookups/:kind/:id", requirePermission("service_cases.manage"), async
   const binds: any[] = [];
   for (const k of allowed) {
     if (k in body) {
+      if (k === "sla_hours") {
+        const sla = normalizeSlaHours(body.sla_hours);
+        if (sla === false) {
+          return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+        }
+        sets.push("sla_hours = ?");
+        binds.push(sla);
+        continue;
+      }
       sets.push(`${k} = ?`);
       binds.push(body[k] ?? null);
     }
@@ -605,7 +618,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   // unchanged.
   const vis = await assrVisibilityScope(c);
   const visC = vis("c.");
-  const visBare = vis("");
+  const visBare = vis("assr_cases.");
 
   // These 13 aggregates are independent of one another and depend only on the
   // predicates resolved above, so they run as ONE concurrent wave instead of 13
@@ -811,15 +824,9 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
 
 app.get("/", requireServiceCaseAccess(), async (c) => {
   const assignedToParam = c.req.query("assigned_to");
-  // Independent reads off the same tier predicate — one wave, not two round
-  // trips, before the list query can even start.
-  const [visibleIds, visibleAgentNames] = await Promise.all([
-    assrVisibleUserIds(c),
-    assrVisibleAgentNames(c),
-  ]);
+  const visibleIds = await assrVisibleUserIds(c);
   const result = await listAssrCases(c.env, {
     visible_to_user_ids: visibleIds,
-    visible_agent_names: visibleAgentNames,
     allowed_company_ids: assrCompanyIds(c),
     stage: c.req.query("stage"),
     status: c.req.query("status"),
@@ -987,7 +994,7 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
   const coC = assrCompanySql(c, "c.company_id");
   const vis = await assrVisibilityScope(c);
   const visC = vis("c.");
-  const visBare = vis("");
+  const visBare = vis("assr_cases.");
 
   const rowsQ = c.env.DB.prepare(
     `SELECT c.creditor_code,
@@ -1157,10 +1164,8 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
 
 app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
   const csvVisibleIds = await assrVisibleUserIds(c);
-  const csvVisibleAgentNames = await assrVisibleAgentNames(c);
   const rows = await exportAssrCases(c.env, {
     visible_to_user_ids: csvVisibleIds,
-    visible_agent_names: csvVisibleAgentNames,
     allowed_company_ids: assrCompanyIds(c),
     stage: c.req.query("stage"),
     status: c.req.query("status"),
@@ -2276,7 +2281,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // ships customer_name + phone, so an unscoped GROUP BY handed a caller the
   // contact details of cases outside their reporting chain.
   const vis = await assrVisibilityScope(c);
-  const visBare = vis("");
+  const visBare = vis("assr_cases.");
   const visC = vis("c.");
   const visA = vis("a.");
 

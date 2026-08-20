@@ -52,7 +52,7 @@
 //      enqueueSoCreate / enqueuePoCreate are pure supabase-js with no Cloudflare
 //      binding anywhere in their path, so they execute verbatim under `tsx`.
 //      This is the repo's established answer to exactly this problem, not a new
-//      idea: recompute-2990-so-allocation.mjs, recompute-so-allocation.mjs,
+//      idea: recompute-so-allocation.mjs,
 //      restamp-do-actual-cost.mjs and check-status-disagreement-why.mjs all run
 //      `npx tsx` over a .mjs script that imports the canonical function from
 //      src/ for the stated reason that the alternative is a re-implementation.
@@ -73,7 +73,7 @@
 // exactly this for the same reason.
 //
 // This shipped once wired to SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, copied
-// from recompute-2990-so-allocation.yml — the ONE workflow in the repo that
+// from recompute-2990-so-allocation.yml (DELETED 2026-08-20) — the workflow that
 // references those, three characters away from the working one by name, and
 // broken for the same reason: neither secret exists in this repo, at repo
 // level or in any of its three environments. The first dispatch failed on it.

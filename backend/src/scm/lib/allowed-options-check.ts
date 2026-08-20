@@ -246,12 +246,22 @@ export function checkAllowedOptions(
     };
   }
 
-  /* total_height is COMPUTED, never typed — divan + leg + gap, written into the
-     draft by SoLineCard.tsx:439-445, with no Total Height input on the form. So
-     this is the one refusal that must hand the client the inputs behind it;
-     without `derivedFrom` the only honest message names a box that does not
-     exist. Every part is listed even when empty, so the message can name all
-     three boxes while showing values only for the ones that are filled. */
+  /* total_height is COMPUTED, never typed — divan + leg + gap, decided by
+     `shared/total-height.ts` (mirrored to frontend/src/vendor/shared) and
+     written into the draft by whichever screen is open, with no Total Height
+     input on any of the forms. So this is the one refusal that must hand the
+     client the inputs behind it; without `derivedFrom` the only honest message
+     names a box that does not exist. Every part is listed even when empty, so
+     the message can name all three boxes while showing values only for the ones
+     that are filled.
+
+     THE GUARD BELOW IS ALSO THE CONTRACT FOR AN EMPTY HEIGHT. `v.totalHeight`
+     being falsy skips the gate entirely, which is what makes it safe for the
+     client to write '' when divan, leg and gap are all blank: a cleared spec is
+     not refused, it is simply not checked. Before the sixteen private copies of
+     that rule were unified, two of them left a STALE height on a cleared line
+     instead — and a stale height is exactly what this gate then refuses, naming
+     a field the operator cannot edit. */
   if (v.totalHeight && hasRestriction(opts.total_heights)
       && !inPool(opts.total_heights, v.totalHeight)) {
     return {

@@ -144,3 +144,61 @@ The INSERT is fixed. What has **not** been built is anything that watches for th
 shape: *the pull ran, reported success, and moved nothing.* Until that exists,
 this class is found the way it was found this time — by a person who cannot do
 their job. See `BUG-HISTORY.md`, 2026-08-19.
+
+---
+
+## `GET /rest-page-ceiling` — the one number nobody had measured
+
+**Read-only. Gated on `*`** (not on the `system_health` page): the ladder below
+issues multi-thousand-row reads, so an unauthenticated or broadly-granted
+trigger would be a denial-of-service lever. It is the same gate this module's
+other heavy admin routes already carry.
+
+### What it answers
+
+`backend/src/scm/lib/paginate-all.ts` pages in `PAGE = 1000` windows and stops
+on the first page shorter than `PAGE`. Its header asserted that PostgREST caps a
+response at 1000 rows — **an assertion nothing had ever observed.** 52 files
+import `paginateAll`, and the number decides whether they are correct:
+
+| real ceiling | consequence |
+| --- | --- |
+| `>= PAGE` | the short-page stop is sound |
+| `< PAGE` | page one comes back short, the loop stops on it, and **every paged read in the tree truncates silently** |
+
+The response reports, per requested limit (500 / 1000 / 1001 / 5000): rows
+actually returned, the `Content-Range` total, and whether the edge capped.
+**The gap between those two numbers is the answer.** It also issues
+`paginateAll`'s own `.range(0, PAGE-1)` window and states a verdict —
+`CORRECT`, `TRUNCATES_SILENTLY`, or `UNKNOWN`.
+
+### Reading it honestly
+
+- A rung whose `contentRangeTotal` is `<=` its requested limit is marked
+  **`inconclusive`** and excluded from `ceiling`. That read ran out of *table*,
+  not out of *ceiling*, and counting it would manufacture a number.
+- `ceiling: null` / `status: "unknown"` is a real answer, not a failure. It
+  means no probe pushed past the table's own size.
+- `crossTable` re-asks the decisive `PAGE+1` of every other candidate table big
+  enough to answer, so agreement across tables is **shown** rather than argued
+  from "`db-max-rows` is server-level config".
+- It measures a **row** cap only. Response-size and URI-length limits are
+  different failures — see `URL_QUERY_BUDGET` in `paginate-all.ts` for the URI one.
+- **Counts only.** No row, id, document number or name reaches the payload.
+
+### Why it lives in the Worker
+
+`backend/src/db/supabase.ts` builds a real `createClient`, and every
+`sb.from(...)` in the SCM module is a PostgREST call — so the ceiling is a
+property of the **REST edge**, and only something holding `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY` can ask it. Those are **Worker** secrets and must
+stay that way: this repository is public, non-admin collaborators can read
+repository secrets, and the service-role key bypasses RLS on the single database
+both tenants share. `backend/scripts/probe-mrp-read-ceiling.mjs` was written to
+answer this from Actions and its REST half **never ran once** — it printed
+`SKIPPED` and the workflow reported success. Rewriting it over `DATABASE_URL`
+would have measured Postgres, which is not the thing in question.
+
+**To get the number:** deploy, sign in as an owner, and call the route. If it
+returns `TRUNCATES_SILENTLY`, `paginateAll` is wrong and that is its own fix,
+not a footnote to this one.
