@@ -403,6 +403,24 @@ describePg('the delivery-fee rebuild refuses a stale derivation (0314)', () => {
     expect(Number((await feeLines(admin))[0].unit_price_sen)).toBe(30000);
   });
 
+  test('a hand-added SVC-DELIVERY-ANYTHING row is in NEITHER side of the compare', async () => {
+    /* isDeliveryFeeServiceCode is a PREFIX match; the function names three exact
+       codes. If the expectation used the prefix, a row like this would be in it
+       and not in what the function re-reads — a mismatch that never resolves, so
+       the order would stop re-deriving its fee forever, silently. */
+    await admin.unsafe(`
+      INSERT INTO scm.mfg_sales_order_items (company_id, doc_no, item_code, qty, unit_price_sen, total_sen)
+      VALUES (2, '${DOC}', 'SVC-DELIVERY-BESPOKE', 1, 9900, 9900)
+    `);
+    const state = await stateNow(admin);
+    expect(Object.values(state ?? {}).map((v) => v[0])).not.toContain('SVC-DELIVERY-BESPOKE');
+    const [rebuilt] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, state);
+    expect(rebuilt.rebuilt).toBe(true);
+    // …and the function leaves the stray row alone, exactly as it did before.
+    const rows = await feeLines(admin);
+    expect(rows.map((r) => r.item_code)).toContain('SVC-DELIVERY-BESPOKE');
+  });
+
   test('an SO with no fee lines at all expects an empty object, not null', async () => {
     await admin.unsafe(`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = '${DOC}'`);
     expect(await stateNow(admin)).toEqual({});

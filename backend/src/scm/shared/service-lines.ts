@@ -171,12 +171,28 @@ export function deliveryFeeStateKey(
   };
   const out: Record<string, [string, number, number, number]> = {};
   for (const l of deliveryLines) {
+    /* EXACTLY the three codes the RPC's own predicate names, not
+       isDeliveryFeeServiceCode's PREFIX match. The caller filters with the
+       prefix (`startsWith(SVC_DELIVERY)`), the function compares
+       `item_code IN ('SVC-DELIVERY','SVC-DELIVERY-CROSS','SVC-DELIVERY-ADD')`,
+       and a hand-added SVC-DELIVERY-ANYTHING row would therefore be in the
+       expectation and NOT in what the function re-reads — a mismatch that never
+       resolves, so the fee would stop re-deriving on that order forever. Fails
+       CLOSED, silently, which is the worst shape. The two sides must name the
+       same set. */
+    if (!REBUILT_DELIVERY_FEE_CODES.has(l.item_code)) continue;
     const id = l.id == null ? '' : String(l.id);
     if (!id) return null;
     out[id] = [l.item_code, int(l.qty), int(l.unit_price_sen), int(l.discount_sen)];
   }
   return out;
 }
+
+/** The SVC-DELIVERY* codes `scm.rebuild_mfg_so_delivery_lines` reads, writes and
+ *  deletes — its `live` CTE and its DELETE both name exactly these three. */
+export const REBUILT_DELIVERY_FEE_CODES: ReadonlySet<string> = new Set([
+  SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD,
+]);
 
 export function buildDeliveryFeeServiceLines(
   fee: SoDeliveryFeeResult,

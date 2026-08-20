@@ -96,6 +96,14 @@ PROVEN; restoring it returns the function to the state it ran in from 2026-07-14
 `jsonb_object_agg`, which is the one way this guard could be silently wrong: an
 integer rendered `1.00` on one side would refuse every rebuild forever.
 
+**One trap found while writing it.** `isDeliveryFeeServiceCode` is a PREFIX match
+(`startsWith('SVC-DELIVERY')`) while the RPC names three exact codes. Built from
+the prefix, the expectation would carry a hand-added `SVC-DELIVERY-BESPOKE` row
+that the function never re-reads — a mismatch that never resolves, so that order
+would stop re-deriving its fee FOREVER, silently. `deliveryFeeStateKey` therefore
+filters on `REBUILT_DELIVERY_FEE_CODES`, the same three the RPC's own `live` CTE
+and DELETE name, and a pg case plants such a row to prove both sides ignore it.
+
 **What this does NOT cover.** Only the SVC-DELIVERY* lines are in the expectation.
 A concurrent edit to a GOODS line is still read without a lock — deliberately, so
 an ordinary multi-line Save does not retry n times. The delivery derivation reads
