@@ -85,6 +85,34 @@ export async function readSoOutstandingSen(
 }
 
 /**
+ * One warehouse id -> the `dbo.Location` code AutoCount keys its stock by.
+ *
+ * The single-row twin of `withLocations` (autocount-outbox.ts), for a document's
+ * HEADER warehouse (`scm.purchase_orders.purchase_location_id`). Not folded into
+ * it because the two answer different questions: that one resolves a SET of line
+ * warehouses and tolerates a line with none, this one resolves the order's own
+ * default. It lives HERE for the reason this whole module exists — the outbox
+ * file is at its 2,000-line cap, and this is a READ.
+ *
+ * A FAILED READ THROWS, the rule the top of this file states: null here means
+ * "this purchase order has no ship-to warehouse", which `composeCreatePo` turns
+ * into a refusal naming a remedy, and an unreadable `scm.warehouses` must not be
+ * able to look like that.
+ */
+export async function readWarehouseCode(sb: Sb, warehouseId: unknown): Promise<string | null> {
+  const id = typeof warehouseId === 'string' ? warehouseId.trim() : '';
+  if (!id) return null;
+  const row = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').eq('id', id).maybeSingle());
+  const w = row as { code?: string | null; name?: string | null } | null;
+  /* `code` first, `name` as the fallback — exactly what `withLocations` does, so
+     a warehouse row with a blank code resolves the same way on a header as it
+     does on a line. */
+  const code = ((w?.code ?? w?.name ?? '') as string).trim();
+  return code || null;
+}
+
+/**
  * The payment REFERENCES this order carries, oldest first, for the `PAYEMENT`
  * UDF.
  *

@@ -256,6 +256,11 @@ here, and it is highly regular:**
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
+**The attachment stream (`GET /attachments/:key{.+}`) sends
+`X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
+content-type cannot be MIME-sniffed into html/svg — parity with
+`mail-center.ts`'s INLINE_SAFE serve.
+
 **`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
 caller (2026-08-14).** The project is loaded with the `activeCompanySql`
 predicate first, so a cross-company id answers `404 Not found` before

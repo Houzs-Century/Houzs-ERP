@@ -115,6 +115,387 @@ guard `a header fact reaches a route, or the build says which one does not`.
 Guide §7c5. **The host binary must be rebuilt** (`deploy-on-host.ps1`) for the
 four `SalesHeader` slots; the ERP half lands with the merge and an old binary
 ignores the keys.
+## SO -> PO transfer threw the whole header away, so five fields never left the ERP [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**白话.** 用 Sales Order transfer 出来的采购单，很多资料没跟着过去。系统本来就有一段程
+式把整张采购单的表头（单号、日期、供应商、采购员、备注 Description）组好；可是一旦判断
+「这张单是 transfer 出来的」，它就把整个表头丢掉，只送三样东西过去。之前已经被抓到两次，
+每次只补一个栏位 —— 补了供应商、补了单号 —— 剩下五个还是没补：日期、采购员、Ref、
+Description、UDF。老板 2026-08-19 走真实采购流程时撞到的就是这个。这次不再补第三个栏位，
+改成「表头整个带过去，只有真的必须换的才换」，以后新加的栏位自动跟着走。另外一件：采购单
+的**收货仓库**（Purchase Location）AutoCount 表头上本来就有这个栏位，ERP 也有，可是从来
+没送过，所以 AutoCount 一直自己填 —— 这不是 transfer 才有的问题，是每一张 ERP 写进去的
+采购单都不对。
+
+**Symptom.** Owner, 2026-08-19, walking a real Sales Order → PO → GRN →
+Purchase Invoice chain: 「为什么 Sales Order to PO，它的 Description2 不对的呢？再来，
+它的 Purchase Location 也不对… 因为它是用 transfer from Sales Order 的嘛，为什么它没有
+把 Sales Order 的那些资料带过去呢？」
+
+**Root cause (traced in source).** `scm/lib/autocount-outbox.ts` built the PO
+payload with `composeCreatePo` — nine fields: `DocNo, DocDate, CreditorCode,
+CreditorName, Agent, Ref, Description, UDF, Details` — and then, on the transfer
+branch only, discarded that object and sent `composeSoToPo(...)`, which returned
+`{ DocNo, DtlKeys, Details }`, plus a hand-merged `CreditorCode` / `CreditorName`.
+Dropped on every transfer: **DocDate, Agent, Ref, Description, UDF**.
+`Description` is `purchase_orders.notes`. `Agent` carries the constant
+`AC_PURCHASE_AGENT` behind `FK_PO_PurchaseAgent`.
+
+The same hole had been found and patched TWICE before, one field at a time, each
+time after a live document failed — `CreditorCode` on 2026-08-17 09:15 (the host
+answered `FK_PO_DisplayTerm`, the payment term's key, because the term defaults
+from a supplier there was none of) and `DocNo` on 2026-08-17 10:15 (the first
+successful transfer landed as `PO-009968` instead of `HC-PO-2608-001`). A third
+one-field patch was the wrong fix.
+
+Purchase Location is a **second, wider** bug, and not transfer-only.
+AutoCount's purchase documents carry `PurchaseLocation`, and it is assigned in
+TWO places because the purchase side does not share one header function:
+`CreatePo` sets its own master, `PurchaseHeader` is what `/so-to-po` and the four
+conversions apply. `PurchaseHeader`'s own comment records that the ERP "has never
+been sent" one. The ERP's counterpart is
+`scm.purchase_orders.purchase_location_id`, which `/submit` refuses a purchase
+order without unless every line names its own. So AutoCount had been defaulting
+the purchase location on every ERP-written purchase order since the cutover.
+
+**Fix.** `composeSoToPo` now takes the CREATE payload and SPREADS it —
+`{ ...master, DtlKeys, Details }` — so a field added to `composeCreatePo` reaches
+a transfer without anyone editing it. `Details` is the ONLY deliberate override,
+and it carries exactly the four keys the service's phase two applies
+(`UnitPrice`, `Qty`, `Location`, `DeliveryDate`); a fifth would be composed,
+stored, POSTed and silently dropped. `PurchaseHeader` now also reads `Agent`
+(guarded — the four conversions send none), because carrying a field is not
+landing it. `readPoHeader` selects `purchase_location_id` and resolves it to the
+`dbo.Location` code, `composeCreatePo` sends it as `PurchaseLocation` and uses it
+as the LINE default — the ERP's own precedence, `warehouse_id ??
+po.purchase_location_id` — so a PO the ERP considers complete is no longer
+refused with `MissingLocationError`. `mastersOf` opens it, since the service
+applies it through `Set()`, which swallows. Assigned on BOTH service routes: the
+first draft added it only to `PurchaseHeader` and left `/create-po` sending a key
+the host never read — the same *carrying is not landing* trap as `Agent`, caught
+by asserting the READ on both routes rather than one. `composeSoToPo` also
+now REFUSES a payload whose `DtlKeys` and `Details` counts differ, an invariant
+its doc comment had claimed without enforcing — and that refusal is WIRED into
+`noteReadFailure`'s list, because an error missing from that list is not handled
+elsewhere, it is dropped: the enqueue answers "not queued" with no outbox row and
+nothing an operator can read. It was missing for six commits of this change
+while its own class comment promised a readable row. It also has a sentence in
+`acNotSentProblems`, so the person holding the document is told and not only the
+engineer reading the queue — and those two `instanceof` chains are now pinned
+against each other, because both were short of the same class on the same day.
+
+**Still open.** `/edit`'s header allow-list has no `PurchaseLocation`, so moving
+a written purchase order's ship-to warehouse in the ERP does not reach the book
+(same class as divergence D8). `so_to_po` also does not run `ensure_masters`.
+
+**Ref.** this PR, 2026-08-20. Pinned by `/so-to-po carries the whole master` in
+`backend/src/services/autocount-writeback.contract.test.ts` (key parity between
+the two arms, so a new create field that misses the transfer fails the day it is
+added), by `describe('composeSoToPo')` in
+`backend/src/services/autocount-writeback.test.ts`, and by 'every refusal reaches
+BOTH the queue and the operator' in `backend/src/scm/lib/ac-preflight.test.ts`.
+Guide §7c3b-i / §7c3b-ii, and `docs/modules/purchase-order.md` for the buyer's
+sentence.
+**The host binary must be rebuilt** (`deploy-on-host.ps1`) for the `Agent` half —
+the ERP half is Worker-side and lands with the merge.
+## The rule that stops a bound SKU reading as "— none —" had been applied at one of six call sites [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 老板 2026-08-19 报:MRP 沙发页,同一张销售单的三个沙发模块,规格一模一样,
+三行都是 SHORT,可是其中两行的供应商栏显示「— none —」,只有中间那行有下拉。我先去
+生产环境查了:三个料号的绑定完全一样(各 5 笔、同公司、同 kind、连字元逐字节相同),
+所以不是资料缺。再把 MRP 的读取和画面两边都跑起来验证:两边都是「一行一料号各查各的」,
+在生产规模下也不会掉资料。真正找到的问题是同一条规则只修了六处中的一处 —— 采购单那两
+处(选单画面、转 PO)完全没有分批也没有翻页,操作员在 MRP 那行选了替代供应商,那笔绑定
+一旦掉在第 1000 笔之后,系统会不吭一声改用主供应商下单。规则现在收进一个共用读取器,
+六处全部走它。
+
+**Symptom.** MRP / Stock Status, Sofa tab, one sales order expanding into three
+module rows of the same model — same fabric, same seat height, same leg. All three
+SHORT. Two showed `— none —` in the Supplier cell; the third offered the dropdown.
+
+**What the report was NOT (measured on production, not inferred).** Probe run
+`32264907247` (read-only) compared each SO line's `item_code` against
+`scm.supplier_material_bindings` byte for byte: all three codes carry 5 bindings,
+`material_kind = 'mfg_product'`, the same company, 0 orphaned, 1 main, and
+`identical = true` on the spelling — no look-alike glyph, no stray space (the trap
+that BUG-HISTORY's curly-quote entry documents for this same catalogue). Run
+`32264907247` also shows every binding created 2026-08-08/09, ten days before the
+screenshot. Production was serving `2cecfecf8` (= `origin/main`) at the time.
+
+**And it is not the read the page uses, either.** `routes/mrp.ts` section 5 keys
+`suppliersByCode` on `d.item_code` and section 8 attaches
+`suppliersByCode.get(d.item_code)` — the SAME expression, so a set's own code is
+what looks its suppliers up (`mrp.ts:925`, `mrp.ts:1312`). The Sofa tab folds each
+set into a PER-MODULE `MrpSku` (`Mrp.tsx` `sofaSetsToSkus`) and the module row
+renders `v.suppliers` (`Mrp.tsx` `SofaSoTable`), not the group's. Both halves were
+driven at production scale — the engine over 531 demand codes / 13,918 demand lines
+company-scoped, and the page over the reported three-row shape — and both keep
+every module's suppliers. Probe run `31942066593` measured that read on production
+at 887 rows in ONE request, so no cap is in play there. The reported rows are NOT
+reproducible from `origin/main` plus the data that exists, and this entry does not
+claim to have reproduced them.
+
+**What IS wrong, and it is the same rule at the sites nobody fixed.** On 2026-08-16
+that binding read was taught to chunk its IN-list, page its result and order it
+TOTALLY, after 2,660 rows met PostgREST's 1,000-row cap and two thirds never
+arrived. Six places ask the same question. ONE was fixed. Two of the other five are
+the next thing the operator touches from that page:
+
+  * `mfg-purchase-orders.ts` — the SO→PO picker's Main Supplier column, one
+    un-chunked IN-list over EVERY code in the picker, its error not even read, so a
+    refused URL blanks the column for every row in silence;
+  * the same file's convert body, where the loss is not a blank cell. `is_main_supplier
+    DESC` protects the MAINS while they fit in one page, so what falls off the end is
+    the ALTERNATES — and the alternate is exactly what the MRP row's Supplier dropdown
+    sends as a per-pick `supplierId`. `effectiveBindingFor` finds no `code|supplier`
+    binding, falls back to the SKU's main, and the purchase order is raised against a
+    supplier the operator did not choose, at that supplier's price, reporting nothing.
+
+`so-revision.ts`, `autocount-outbox.ts` and `suppliers.ts` carried the same shape.
+The last of those had no `.range()` at all, so a supplier's own detail page could
+list a subset of its bindings.
+
+**Fix.** `scm/lib/supplier-bindings.ts` — one home for the read: chunked by URL
+bytes, paged, ordered `is_main_supplier DESC, item_code, id`. That third key is not
+decoration: every caller takes the first row per code as the main supplier, and
+without a tie-break the ties come back in planner order, so both "which alternate
+wins" and "where a truncation cuts" were unowned. All six call sites now go through
+it. `Mrp.tsx`'s three groupers no longer copy the first child's `suppliers` onto the
+parent `ModelGroup` — a Sales Order does not have suppliers, each module SKU does;
+nothing read the field, so it was a wrong value waiting for a reader.
+
+**Proof.** `mfg-purchase-orders.binding-cap.test.ts` drives the REAL convert body
+through a fake that enforces PostgREST's 1,000-row ceiling: 403 picked lines x 3
+bindings = 1,209 rows, the operator picking an alternate. Pre-fix it fails naming
+the supplier each module was actually ordered from
+(`9028-1A(LHF) ordered from AC-… ` where `ALT-…` was chosen); post-fix, green.
+`mrpSofaSupplier.test.tsx` renders the reported three-row shape and pins that each
+module row names its OWN supplier. Two fakes (`so-revision.reviseBoundPo.test.ts`,
+`autocount-writeback.contract.test.ts`) gained the `Range` window they lacked, so a
+paged caller is exercised rather than silently handed the whole set.
+
+**Left alone, deliberately.** The convert's own SO-line read is capped the same way
+(a pick above 1,000 lines answers `item_not_found`); it is a different read with a
+different blast radius and belongs in its own change. `probe-mrp-read-ceiling`'s
+REST half has never once run — `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` arrive
+empty in the Production environment (runs `31942066593` and `32264550057` both
+print "SKIPPED"), so the page ceiling it exists to measure is still unmeasured at
+the edge.
+
+**Ref.** this PR, 2026-08-19.
+## 39 purchase-side links were gone and nothing said so [medium]
+
+**Symptom.** Found by hand, twice, while chasing "received sofa still reads
+PENDING" (2990-SO-2607-006): `purchase_order_items.so_item_id` NULL on lines
+whose PO note says which SO they were raised from. 39 lines across 21 live POs
+on 2026-08-19 — 35% of every from_mrp line in use. The DO-side twin of this
+(#2355) at least announced itself through MRP re-ordering; the PO side has no
+such tell. An unbound line means bound-mode readiness cannot tie received stock
+to its order: goods on the shelf, the SO stuck at PENDING, and the only way it
+surfaces is an owner asking why.
+
+**Root cause of the blindness.** Same `ON DELETE SET NULL` FK family as the DO
+side; the mechanism that blanks them is still unidentified there and here. What
+was missing was any measurement: the hourly sentinel watched DO orphans,
+NULL-warehouse lines — and nothing on the purchase side.
+
+**Repair (data, done by hand 2026-08-19).** 37 of 39 rebound 1:1 — source SO
+taken from the PO's own "From SOs:" note, matched on item code + qty, only
+where the free-SO-line count equals the unbound-PO-line count, verified no SO
+line claimed twice. A later pass caught 3 more that had become unambiguous.
+2 remain on 2990-PO-2606-016: its source SO's lines are already claimed by a
+different PO — a human question, not a matching one.
+
+**Fix (this PR).** The sentinel gains a fourth alarm: from_mrp PO lines with
+so_item_id NULL, baseline 2 (the ones with an ANSWER), same do-not-raise rule
+as its siblings.
+
+**Ref.** PR (branch `chore/sentinel-po-side`, stacked on
+`chore/null-warehouse-guard`), 2026-08-19.
+
+## R2 object serves missed `X-Content-Type-Options: nosniff` on three endpoints [low]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 有三个下载 / 看图的接口（服务单附件、项目附件、用户头像）从 R2 直接把文件
+丢回浏览器，但没告诉浏览器「别自作聪明去猜这是什么档」。浏览器猜错时，一个被塞进来的
+恶意档可能被当成网页 / SVG 在我们的网址下执行（偷 token）。`mail-center` 的附件接口早就
+补了这个头，这三个跟上，保持一致。
+
+**Symptom.** None reported — a defense-in-depth parity gap. `mail-center.ts`'s
+attachment serve already sets `X-Content-Type-Options: nosniff` on its
+INLINE_SAFE path; three sibling R2 object serves that stream a stored object with
+a server-derived content-type did not, so a browser was free to MIME-sniff the
+bytes back into html/svg and execute script in the ERP origin.
+
+**Root cause (traced in source).** Each of `routes/assr.ts` (attachment serve,
+~:3217), `routes/projects.ts` (project-attachment serve, ~:4592) and
+`routes/users.ts` (profile-pic serve, ~:914) built its `Response` with
+`Content-Type` + `Cache-Control` only — no `nosniff`. The content-type is
+`obj.httpMetadata?.contentType || "application/octet-stream"` (server-derived,
+not attacker-supplied per request), so the exposure is lower than the inbound
+mail path, but the header is the same cheap belt.
+
+**Fix.** Add `"X-Content-Type-Options": "nosniff"` to all three serve responses,
+matching mail-center's path. Header-only; no route/permission/status/field
+change, so no module-guide surface moved.
+
+**Ref.** `fix/over-delivery-unlinked-blind-spot`, PR #2522, 2026-08-20.
+
+## The unlinked over-delivery guard is now WIRED into the ship-confirm — the DO-005 hole is closed at the deduct chokepoint [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 上一条把「按货号数的守卫」和测试做好了，但还没接到真正扣库存的那一步。这次接
+上了：草稿送货单点「确认出货」的那一刻，系统除了照旧检查连到销售单行的那些行，还会把没连
+结的行按货号加起来，跟这张送货单指名的那张销售单「还欠多少」对一对 —— 如果那货销售单本来
+就有、而且已经全部送完，就挡下来（409），货不会第二次出门。正常分批 / 多张送货单还是照送，
+销售单没有的临时货（换的零件、样品）也照过。`2990-DO-2607-005` 那种六行空连结、把货送第二
+次的洞，现在在扣库存的关口就被拦住了。
+
+**Symptom.** None newly reported — this LANDS the guard the previous entry
+built. Until this PR the confirm-path over-delivery cap was linked-only, so the
+`2990-DO-2607-005` shape (a DRAFT DO whose lines carry no `so_item_id` for an
+already-delivered SO line) could still be confirmed and ship the order's goods a
+second time. The guard existed in `lib/do-over-delivery.ts` but nothing called
+it at the chokepoint.
+
+**Root cause (traced in source).** `routes/delivery-orders-mfg.ts` Status PATCH,
+the `SHIPPED_STATES` first-ship block, built `linkedQty` via `if (l.so_item_id)`
+— dropping every unlinked line — and called only `findOverDeliveredSoItems`
+(keyed by `so_item_id`). A line with `so_item_id = null` contributed nothing and
+was invisible, yet `deductInventoryForDo` reads the DO's OWN lines, so the goods
+left regardless. The wiring for `findOverDeliveredUnlinkedItems` was deferred
+behind #2406 (round2) to avoid a merge collision; round2 has now merged.
+
+**Fix.** In the same `SHIPPED_STATES` block: the `delivery_order_items` select
+gains `item_code`; lines WITHOUT `so_item_id` are summed into
+`unlinkedByItemCode`; `openByItemCode` is aggregated from
+`soDeliverableRemaining` for the header's named `so_doc_no`, per ordered
+`item_code` (that engine excludes DRAFT + CANCELLED deliveries via
+`do-unlinked-coverage.ts`, so THIS draft being confirmed is already out of the
+tally — "this DO excluded" holds for free); `findOverDeliveredUnlinkedItems`
+runs alongside the existing linked check, and either returns **409
+`over_delivery`**. A partial / multi-DO split within the open qty still ships; an
+ad-hoc code the SO never ordered is never flagged. `openByItemCode` is aggregated
+under `itemCodeKey` so two SO lines of the same normalised code sum rather than
+overwrite. round2's company-scope predicates in this file are preserved —
+`so_doc_no` was only added to the already-`scopeToCompanyId`-scoped header load.
+
+**Test.** `backend/tests/doOverDeliveryUnlinkedRoute.test.ts` — new file, 3
+route-level tests driving `patchDeliveryOrderStatusHandler` through a fake
+PostgREST: the unlinked duplicate is refused 409 (and the draft stays a draft —
+refused BEFORE the flip), a legit multi-DO split still ships, and an ad-hoc line
+the SO never ordered is not flagged. The harness's `.is(col, null)` filters
+faithfully (the sibling harness leaves it a no-op), so the coverage engine does
+not misread a linked line as unlinked coverage. Pure guard stays pinned by
+`lib/do-over-delivery.test.ts`.
+
+**Ref.** `fix/over-delivery-unlinked-blind-spot`, PR #2522, 2026-08-20.
+
+## The confirm-ship over-delivery guard is blind to unlinked delivery lines — the DO-005 hole, one chokepoint further in [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 一张送货单如果整组行都没连到销售单的那一行（`so_item_id` 是空的），货照样出，
+但系统数「这张单出了多少」的时候看不到它 —— 因为它是按「销售单第几行」来数的，没连上就
+数不到。这正是 `2990-DO-2607-005` 把 `2990-SO-2606-019` 的货送第二次却没人拦的原因：六
+行全是空的连结。开单和加行那两个入口 2026-08-04 已经补上拦截了；但「草稿单 → 确认出货」
+这个真正扣库存的关口没有 —— 它唯一的出货检查就是那个看不到空连结的守卫。这次给守卫补上
+按「货号」数的版本：只有当销售单本来就有这货、而且已经全部送完，空连结那行才拦；正常的
+分批 / 多张送货单还是照送。**先做守卫本体和测试，接到关口那一步要改 `delivery-orders-mfg.ts`，
+按指示留到 `fix/cross-tenant-leaks-round2`（#2406）合并后再接，避免撞车。**
+
+**Symptom.** None newly reported — this hardens the exact chokepoint that let
+`2990-DO-2607-005` ship `2990-SO-2606-019`'s goods a second time (the CRITICAL
+entry of 2026-08-04, `docs/unlinked-line-duplicate-coe.md`). The create and
+add-line paths were closed then; the DRAFT→shipped CONFIRM path — the single
+point where a draft's stock actually leaves — was not.
+
+**Root cause (traced in source).** The confirm-ship guard in
+`routes/delivery-orders-mfg.ts` (Status PATCH, the `SHIPPED_STATES` block ~:5055)
+builds `linkedQty` by `if (l.so_item_id)` and drops every line without one, then
+calls `findOverDeliveredSoItems`, which keys entirely by `so_item_id`. A line
+with `so_item_id = null` therefore contributes nothing to the tally and is
+invisible to the check — yet `deductInventoryForDo` reads the DO's OWN lines, so
+the goods leave regardless. So an unlinked draft DO of an already-delivered SO
+line can be confirmed and ship without the over-delivery guard ever counting it.
+`findUnlinkedSoLines` (2026-08-04) closes this on `POST /` and `POST /:id/items`
+but is not called on the Status PATCH.
+
+**Fix.** `lib/do-over-delivery.ts` gains `findOverDeliveredUnlinkedItems(
+unlinkedByItemCode, openByItemCode)` — a pure, quantity-aware guard that flags an
+unlinked line only when the named SO ordered that item code AND has no open qty
+left for it (item_code present with 0 open). An item the SO never ordered (code
+absent) is genuinely ad-hoc and never flagged, and a partial / multi-DO split
+with open qty remaining still ships. Comparison is item_code-only, sharing
+`itemCodeKey` with `do-unlinked-so-lines.ts` so all sides agree on "the same
+item". **Guard + tests only in this PR; the Status-PATCH wiring is a caller edit
+to `delivery-orders-mfg.ts` deliberately deferred behind #2406 (round2) to avoid
+a merge collision** — until wired, the confirm-path cap stays linked-only (noted
+in `docs/modules/delivery-order.md`). The class, again: a pure guard only sees
+the fields it is HANDED; when the caller drops the field, no lib change recovers
+it — the caller has to stop dropping it.
+
+**Test.** `backend/src/scm/lib/do-over-delivery.test.ts` — new file, 13 tests:
+an unlinked duplicate against a fully-delivered SO is caught, and a partial /
+multi-DO split is still allowed, plus ad-hoc / case / whitespace / multi-offender
+cases and the full six-line DO-005 shape. Also locks `findOverDeliveredSoItems`,
+which had no test of its own.
+
+**Ref.** `fix/over-delivery-unlinked-blind-spot`, 2026-08-20.
+## A goods line written with no warehouse said nothing, three times over [medium]
+
+**Symptom.** None at the moment it happens — which is the defect. Reported only
+when someone noticed the downstream effect on 2990-SO-2607-028 (see the entry
+above): a line with `warehouse_id = NULL` matches no allocation bucket
+(allocation is keyed by warehouse + item + variant), so it never leaves PENDING
+and never shows an incoming PO, while its goods may already be received into the
+right bucket in the right warehouse.
+
+**Root cause of the BLINDNESS, separate from the causes of the NULLs.** Three
+different write paths could produce such a line and not one of them said
+anything. So of the 18 found on 2026-08-18, two groups could only be attributed
+afterwards by comparing insert timestamps against audit rows — a single
+microsecond-identical statement with no audit rows identified
+`apply-sofa-compartment-corrections.mjs` — and the third, the reported line,
+still cannot be attributed at all: it was inserted 229 ms before an
+`UPDATE_LINE` audit row, by the sofa re-split inside the line-update path, whose
+`baseRow` DOES carry `warehouse_id: it.warehouseId ?? defaultWarehouseId`.
+
+**Fix.** `lib/null-warehouse-signal.ts`, called from all three SO-line write
+paths (create, sofa-split add-line, single-row add-line). It LOGS and never
+throws: a NULL warehouse is legitimate on an order with no address yet — 10 of
+the 18 are exactly that — and refusing the write would turn a reporting gap into
+an outage. What it buys is attribution: the next occurrence names its own route,
+document and item under a greppable `[null-warehouse]` tag.
+
+The hourly sentinel gained a matching alarm with a committed baseline of 10 (the
+addressless lines nobody can resolve without a human). Raising that number to go
+green is called out in the file as the thing not to do, same as the orphan
+baseline beside it.
+
+**Service lines are deliberately excluded.** They hold no stock and allocation
+skips them by design, so a NULL there means nothing — and a guard that fires on
+every delivery-fee line is one somebody turns off.
+
+**What this does NOT do.** It does not explain the third group, and it does not
+prevent any of the three. It converts a silent write into a signal, so the next
+one is attributable in one grep instead of by forensics.
+
+**A lead recorded rather than acted on.** `lib/so-warehouse.ts` resolves an
+order's warehouse as `sales_location` first, then `customer_state`. The WRITE
+path derives from `customerState` alone. 2990-SO-2607-028 carries
+`sales_location = 'KL WAREHOUSE'`, so a line-update request that does not send
+`customerState` would resolve NULL on a document that plainly names its
+warehouse. Not proven — the guard is what will prove or kill it.
+
+**Ref.** PR (branch `chore/null-warehouse-guard`), 2026-08-18.
+
 ## Three convert pickers printed a sofa's modules as identical rows — no variants shown [high]
 
 <!-- area: Sofa, fabric, variants -->
