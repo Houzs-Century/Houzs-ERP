@@ -497,9 +497,17 @@ const PRESCRIPTION_RX = new RegExp(
    好 on 「好像」. The one exception is 跑 followed by a LATIN token — 「跑 all
    模式」, 「跑 mode=all」 — which is a command being named, and cannot collide
    with 跑了 / 跑得 / 跑步 because those continue in CJK.
+
+   …from the RIGHT. The collision this missed comes from the LEFT (found
+   2026-08-19, the day this shipped): 「列表白跑 MRP」 — the list ran MRP FOR
+   NOTHING — is narration about waste, and 白跑 + a Latin token walked straight
+   through the exception. Paired with a 补上 twenty characters later in the
+   SAME entry's 白话, the gate's own corpus test went red on main for every PR.
+   So the exception now refuses a vain-run prefix: 白跑/空跑 are statements that
+   a run achieved nothing, which is as far from prescribing one as Chinese gets.
    --------------------------------------------------------------------------- */
 const CN_PRESCRIPTION =
-  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|跑\s*[A-Za-z0-9`'"-])/;
+  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|(?<![白空])跑\s*[A-Za-z0-9`'"-])/;
 
 const CN_OUTCOME =
   /(修好|修复|补回|补齐|补上|补完|补起来|恢复|救回|解决掉|解决了|就会好|就能好|就没事|干净做法|正确做法|唯一办法|最好的做法)/;
@@ -510,10 +518,9 @@ const CN_OUTCOME =
    cheapest possible way to get 「跑了 all 模式，但是补不回来」 right. */
 const CN_NEGATED = /[不没无未别]/;
 
-const prescribesCn = (line) => CN_PRESCRIPTION.test(line);
-
+/** The instruction's MATCH (so the promise can be sought after it), or null. */
 const prescribes = (line) =>
-  IMPERATIVE_RX.test(line) || PRESCRIPTION_RX.test(line) || prescribesCn(line);
+  IMPERATIVE_RX.exec(line) ?? PRESCRIPTION_RX.exec(line) ?? CN_PRESCRIPTION.exec(line);
 
 /**
  * The first promise in `text` that is not denied right where it stands.
@@ -595,7 +602,8 @@ export function findRemedyClaims(text) {
     if (open[i]) continue;
     const line = raw[i].trim();
     if (!line || QUESTION_RX.test(line)) continue;
-    if (!prescribes(line)) continue;
+    const instruction = prescribes(line);
+    if (!instruction) continue;
 
     // The window: this line plus the next few PROSE lines, joined. A promise
     // may trail the instruction by a sentence or two.
@@ -606,6 +614,20 @@ export function findRemedyClaims(text) {
     }
     const joined = window.join(" ");
 
+    /* THE PROMISE MUST FOLLOW THE INSTRUCTION. Searching the whole window let a
+       sentence that merely NARRATES read as a prescription, and BUG-HISTORY.md
+       had a live example the moment the corpus grew:
+
+         「...独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处...」
+
+       「跑 MRP」 matches the 跑 + latin-token pattern and 「补上」 matches the
+       promise vocabulary — but 补上 sits BEFORE 跑 MRP and belongs to a different
+       clause entirely. The text is describing a disease that was already cured,
+       not telling anyone to run anything. Every real claim reads
+       instruction-then-promise ("Run X and it collects Y", 「跑这个就能补回来」),
+       so the search starts where the instruction ends. */
+    const after = joined.slice(instruction.index + instruction[0].length);
+
     /* Two languages, each with its own promise vocabulary AND its own lookback
        distance. 34 characters is about a clause of English; Chinese says the
        same thing in a fraction of that, so a 34-character Chinese lookback
@@ -613,7 +635,7 @@ export function findRemedyClaims(text) {
        A line may satisfy either side — mixed-language bodies are the norm here
        ("dispatch 一次这个 workflow 就能修复"). */
     const promise =
-      matchPromise(joined, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(joined, CN_OUTCOME, CN_NEGATED, 4);
+      matchPromise(after, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(after, CN_OUTCOME, CN_NEGATED, 4);
     if (!promise) continue;
 
     claims.push({

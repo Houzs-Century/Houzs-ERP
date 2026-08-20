@@ -73,6 +73,7 @@ import {
 import {
   buildDeliveryFeeServiceLines,
   computeAddonServiceLines,
+  recoverOperatorDeliveryState,
   type AddonSelectionInput,
   type ServiceLineSpec,
 } from '../shared/service-lines';
@@ -6315,9 +6316,9 @@ async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_sen, line_no, variants')
+    .select('item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
      ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
@@ -6355,10 +6356,8 @@ async function recomputeDeliveryFeeCore(
       .map((l) => (typeof l.line_no === 'number' ? l.line_no : -1)),
   );
 
-  // Operator free-form fee — preserved across the recompute.
-  const additionalSen = deliveryLines
-    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+  // Operator-owned state (free-form fee + discounts) — see recoverOperatorDeliveryState.
+  const { additionalSen, discountByCode } = recoverOperatorDeliveryState(deliveryLines);
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6434,20 +6433,23 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  /* Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed,
-     stamp the header — as ONE atomic RPC (migration 0214, ported from 2990
-     migration 0211). The Backend SO Detail Save fires one line PATCH per changed
-     line IN PARALLEL, and each PATCH ends here; when this was two statements
-     (delete, then insert) two rebuilds could interleave as
-     delete/delete/insert/insert and double the delivery fee on the bill
-     (SO-2606-043 2026-06-28, SO-2607-010 2026-07-12). Being inside the
-     atomic-command transaction does not fix it — under READ COMMITTED the second
-     DELETE cannot see the first transaction's new rows. The RPC takes a per-doc_no
-     advisory xact lock, so concurrent rebuilds serialize and the last writer
-     leaves exactly one consistent set. */
+  /* Re-derive the SVC-DELIVERY* lines and stamp the header as ONE atomic RPC
+     (0214, ported from 2990's 0211). SO Detail Save fires line PATCHes IN
+     PARALLEL and each ends here; as two statements (delete, then insert) two
+     rebuilds interleaved and DOUBLED the fee on the bill (SO-2606-043
+     2026-06-28, SO-2607-010 2026-07-12) — READ COMMITTED hides the first
+     transaction's rows from the second DELETE — so the RPC takes a per-doc_no
+     advisory xact lock. It also REUSES each fee line rather than replacing it
+     (0310): a DO can carry a fee line and so_item_id is ON DELETE SET NULL
+     (0235), so replacing one silently blanked that DO's link, leaving a
+     same-item_code row that looked untouched. Lines pair per item_code by
+     POSITION here (CROSS appears twice on a follow-up) — keep `specs` order. */
   {
     const lineDateToday = todayMyt();
-    const rows = specs.map((spec, i) => ({
+    // disc = preserved operator discount, clamped to THIS rebuilt line's own total.
+    const rows = specs.map((spec, i) => {
+      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen), net = spec.totalSen - disc;
+      return {
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
@@ -6460,14 +6462,14 @@ async function recomputeDeliveryFeeCore(
       uom: 'UNIT',
       qty: spec.qty,
       unit_price_sen: spec.unitPriceSen,
-      discount_sen: 0,
-      total_sen: spec.totalSen,
-      total_inc_sen: spec.totalSen,
-      balance_sen: spec.totalSen,
+      discount_sen: disc,
+      total_sen: net,
+      total_inc_sen: net,
+      balance_sen: net,
       variants: null,
       unit_cost_sen: 0,
       line_cost_sen: 0,
-      line_margin_sen: spec.totalSen,
+      line_margin_sen: net,
       divan_price_sen: 0,
       leg_price_sen: 0,
       special_order_price_sen: 0,
@@ -6478,13 +6480,14 @@ async function recomputeDeliveryFeeCore(
       branding: null,
       venue: h.venue ?? null,
       stock_status: 'READY',
-    }));
+      }; });
     /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
        line can never land in another company (mig 0083 made it NOT NULL). */
+    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0); // header mirrors the LINES: net after discounts (owner 2026-08-07)
     const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
       p_doc_no: docNo,
       p_source_doc_no: sourceDocNo,
-      p_delivery_fee_sen: fee.total,
+      p_delivery_fee_sen: netFeeSen,
       p_rows: rows,
     });
     if (rebuildErr) {
@@ -6504,15 +6507,15 @@ async function recomputeDeliveryFeeCore(
          line edit and would otherwise flood the timeline). Best-effort by
          recordSoAudit's design; the fee is already committed either way. */
       const priorFeeSen = deliveryLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
-      if (priorFeeSen !== fee.total) {
+      if (priorFeeSen !== netFeeSen) {
         await recordSoAudit(sb, {
           docNo,
-          action: priorFeeSen === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
+          action: priorFeeSen === 0 ? 'ADD_LINE' : (netFeeSen === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
           source: 'automation',
           note: 'Auto: delivery fee lines re-derived',
           fieldChanges: [
             { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeSen', from: priorFeeSen, to: fee.total },
+            { field: 'deliveryFeeSen', from: priorFeeSen, to: netFeeSen },
           ],
         });
       }

@@ -207,7 +207,7 @@ the money version of this shape, and it is closed on all three write paths — s
 `docs/unlinked-line-duplicate-coe.md` §5a.
 
 **3. On this side of the chain the same edit-path door is still open.**
-`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`PATCH /grns/:id/items/:itemId` rewrites a line's `item_code` and never calls
 `findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
 (correctly allowed) can afterwards be retyped onto one it does — the refused shape,
 assembled in two legal steps, with `purchase_order_item_id` still null so
@@ -349,7 +349,7 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 |-------|------|
 | `scm.grns` | GRN header. `grn_number` (UNIQUE), `purchase_order_id`, `supplier_id`, **`warehouse_id`** (where the IN lands), `received_at`, `delivery_note_ref`, `status`, `currency`, **`exchange_rate`**, **`allocation_method`**, `subtotal_sen` / `tax_sen` / `total_sen`, `posted_at`, `company_id`. |
 | `scm.grn_items` | GRN lines. `purchase_order_item_id` (the PO link that drives `received_qty`, the batch and the receiving warehouse), `material_kind/code/name`, `supplier_sku`, `qty_received`, **`qty_accepted`** (the qty that actually becomes stock), `qty_rejected`, `rejection_reason`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, **`allocated_charge_sen`**, **`invoiced_qty`** / **`returned_qty`** (downstream consumption), `delivery_date`, `rack_id`, variant columns. |
-| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `product_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
+| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `item_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
 | `scm.inventory_balances` | Read by `grnReverseWouldGoNegative` (`:788-792`) to decide whether a reversal is safe. |
 | `scm.purchase_order_items` | Upstream: `received_qty` is written by this module (`recomputePoReceived`, `:672`). |
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
@@ -643,6 +643,42 @@ estimate).
 failed read leaves the header unchanged instead of zeroing it.
 
 ---
+
+## 7b. The AutoCount outbox helper — and why its client is explicit
+
+`queueAcGrnEdit` is the thin wrapper every GRN write uses to tell AutoCount the
+document changed. Four call sites: the header PATCH, line add, line edit, line
+delete.
+
+It lives in **`backend/src/scm/lib/ac-grn-outbox.ts`**, not in `grns.ts`. It was
+moved out on 2026-08-20 because the file-size ratchet refused the growth its
+explanatory comment added — and the gate's own message names moving new code
+into a module as the way out, which is the better answer anyway: the next GRN
+route to be converted imports the same helper instead of re-deriving the rule.
+
+**Its signature is `(c, sb, id, retire)` and the `sb` is REQUIRED.** It used to
+read `enqueueEdit(c.get('supabase'), …)` — it reached past its caller for the
+ordinary PostgREST client.
+
+That is invisible and harmless while every caller is an ordinary route body. It
+stops being harmless the moment a caller runs inside `runScmPgCommand`: the GRN
+row would be written INSIDE the transaction while the outbox row committed
+OUTSIDE it, so a rollback leaves AutoCount instructed to edit a line that still
+exists. The two must land together or not at all.
+
+Required rather than optional is deliberate, per `CLAUDE.md`: a parameter that
+DECIDES something is never optional. This one decides which transaction the row
+belongs to, and optional would let a future transactional caller silently keep
+the wrong client with no compile error — the `optional-param-noop` class at the
+top of `BUG-HISTORY.md`.
+
+Two checks watch this and both have already fired on it:
+`backend/tests/autocountWritebackCells.test.ts` pins the ARGUMENTS of all four
+call sites (a signature change cannot slip past), and `audit:ac-coverage`
+regenerates `docs/generated/autocount-coverage.md` from where the calls actually
+live.
+
+Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
 ## 8. Desktop and mobile files that must change together
 
