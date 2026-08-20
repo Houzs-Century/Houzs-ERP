@@ -62,11 +62,12 @@ by asserting the READ on both routes rather than one. `composeSoToPo` also
 now REFUSES a payload whose `DtlKeys` and `Details` counts differ, an invariant
 its doc comment had claimed without enforcing — and that refusal is WIRED into
 `noteReadFailure`'s list, because an error missing from that list is not handled
-elsewhere, it is dropped: the enqueue answers false with no outbox row and
+elsewhere, it is dropped: the enqueue answers "not queued" with no outbox row and
 nothing an operator can read. It was missing for six commits of this change
 while its own class comment promised a readable row. It also has a sentence in
 `acNotSentProblems`, so the person holding the document is told and not only the
-engineer reading the queue.
+engineer reading the queue — and those two `instanceof` chains are now pinned
+against each other, because both were short of the same class on the same day.
 
 **Still open.** `/edit`'s header allow-list has no `PurchaseLocation`, so moving
 a written purchase order's ship-to warehouse in the ERP does not reach the book
@@ -75,8 +76,11 @@ a written purchase order's ship-to warehouse in the ERP does not reach the book
 **Ref.** this PR, 2026-08-20. Pinned by `/so-to-po carries the whole master` in
 `backend/src/services/autocount-writeback.contract.test.ts` (key parity between
 the two arms, so a new create field that misses the transfer fails the day it is
-added) and by `describe('composeSoToPo')` in
-`backend/src/services/autocount-writeback.test.ts`. Guide §7c3b-i / §7c3b-ii.
+added), by `describe('composeSoToPo')` in
+`backend/src/services/autocount-writeback.test.ts`, and by 'every refusal reaches
+BOTH the queue and the operator' in `backend/src/scm/lib/ac-preflight.test.ts`.
+Guide §7c3b-i / §7c3b-ii, and `docs/modules/purchase-order.md` for the buyer's
+sentence.
 **The host binary must be rebuilt** (`deploy-on-host.ps1`) for the `Agent` half —
 the ERP half is Worker-side and lands with the merge.
 ## Raising a Purchase Invoice answered 500, and went on answering it [high]
