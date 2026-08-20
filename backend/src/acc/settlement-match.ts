@@ -166,6 +166,33 @@ export function matchStatement(
         continue;
       }
       if (hits.length > 1) {
+        /* SEVERAL payments carrying the SAME reference, adding up to the line
+           EXACTLY — one swipe that the till split across several documents,
+           and the strongest evidence this module ever gets. The owner, asked
+           how it should behave: 多张 so 那边放的 approval code 都一样，然后加起来
+           金额是对的上卡机报告的，你不能自动核对吗.
+           He is right, and this used to fall through to "pick the right one" —
+           asking a person to choose between payments that are not alternatives
+           at all, but parts of one payment.
+           Only when they ALL add up: if some subset does and the rest do not,
+           the remainder is unexplained money wearing the same reference, and
+           that is exactly a line a person should look at. */
+        const together = hits.reduce((s, p) => s + p.amountSen, 0);
+        if (together === row.grossSen) {
+          for (const p of hits) claimed.add(key(p));
+          decisions.push({
+            row,
+            bucket: 'MATCHED',
+            matchReason: 'ref',
+            matched: hits,
+            candidates: [],
+            comboHints: [],
+            suggested: [],
+            clue: `Reference ${row.ref} matches ${hits.length} payments that add up to it exactly`
+              + ` — ${hits.map((p) => p.docNo).join(' + ')}`,
+          });
+          continue;
+        }
         decisions.push({
           row,
           bucket: 'NEEDS_CONFIRM',
@@ -174,7 +201,12 @@ export function matchStatement(
           candidates: hits,
           comboHints: exactPairs(hits, row.grossSen),
           suggested: [],
-          clue: `${hits.length} payments carry reference ${row.ref} — pick the right one`,
+          /* Say BOTH numbers. A reference shared by payments that do not add up
+             is either a mis-keyed code or a document missing from the swipe,
+             and the difference is the clue to which. */
+          clue: `${hits.length} payments carry reference ${row.ref}, but they add up to `
+            + `${(together / 100).toFixed(2)} and this line is ${(row.grossSen / 100).toFixed(2)}`
+            + ' — pick the ones that belong to it.',
         });
         continue;
       }

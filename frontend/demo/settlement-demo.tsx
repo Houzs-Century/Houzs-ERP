@@ -107,6 +107,7 @@ const SAMPLES = [
   { name: 'HLB-Aug.csv', label: 'HLB（日期没有年份 → 会问你是哪个月）' },
   { name: 'AEON-Aug.csv', label: 'AEON（xlsx 那种，还有一笔报表自己的收费）' },
   { name: 'PBB-2990HOME-Jun.csv', label: 'PBB（2990 的，收钱银行跟 Houzs 不同）' },
+  { name: 'MBB-one-swipe-two-orders.csv', label: '一次刷卡还两张单（两张 SO 同一个 approval code → 自动对上）' },
   { name: 'wrong-file.csv', label: '传错的档案（应该被指名拒绝）' },
   { name: 'BANK-MBB-Aug.csv', label: '银行月结单（第二页 Bank statement 用；MBB 真实格式）' },
 ];

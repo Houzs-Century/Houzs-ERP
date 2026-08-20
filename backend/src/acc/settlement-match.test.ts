@@ -218,3 +218,74 @@ describe('pre-ticking the set that adds up', () => {
     expect(d.clue).toMatch(/set\(s\) of payments add up to this amount — pick the right one/);
   });
 });
+
+/* 多张 so 那边放的 approval code 都一样，然后加起来金额是对的上卡机报告的，你不能
+   自动核对吗 (owner, 2026-08-20). He is right: one reference shared by several
+   payments that add up to the line exactly is one swipe the till split across
+   documents — the strongest evidence this module ever gets, and it used to be
+   sent to a human as "pick the right one", asking him to choose between things
+   that are not alternatives. */
+describe('one swipe, one reference, several documents', () => {
+  const pay = (id: string, sen: number, code: string | null): PaymentCandidate =>
+    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: code, customerName: null });
+
+  const decide = (grossSen: number, pool: PaymentCandidate[], ref = 'A123') => matchStatement(
+    { code: 'MBB', has_unique_ref: true, date_tolerance_days: 3 },
+    [{ lineNo: 1, txnDate: '2026-08-01', ref, grossSen, feeSen: 0, netSen: grossSen }],
+    pool, new Set<string>(),
+  )[0]!;
+
+  it('auto-matches when they carry the same code and add up exactly', () => {
+    const d = decide(125000, [pay('a', 80000, 'A123'), pay('b', 45000, 'A123')]);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matchReason).toBe('ref');
+    expect(d.matched.map((p) => p.id)).toEqual(['a', 'b']);
+    expect(d.clue).toMatch(/matches 2 payments that add up to it exactly/);
+    expect(d.clue).toMatch(/SO-a \+ SO-b/);
+  });
+
+  it('takes three the same way', () => {
+    const d = decide(150000, [pay('a', 80000, 'A123'), pay('b', 45000, 'A123'), pay('c', 25000, 'A123')]);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched).toHaveLength(3);
+  });
+
+  /* If only SOME of them add up, the remainder is unexplained money wearing
+     the same reference — a person should see that, not have it hidden by an
+     auto-match of the convenient subset. */
+  it('will not auto-match when they do not all add up, and names both numbers', () => {
+    const d = decide(125000, [pay('a', 80000, 'A123'), pay('b', 45000, 'A123'), pay('c', 30000, 'A123')]);
+    expect(d.bucket).toBe('NEEDS_CONFIRM');
+    expect(d.clue).toMatch(/add up to 1550\.00 and this line is 1250\.00/);
+    /* And the pair that DOES make it is still pointed at. */
+    expect(d.comboHints).toContainEqual(['a', 'b']);
+  });
+
+  /* The claim is on all of them: a second line of the same file must not take
+     a payment this one already used. */
+  it('claims every payment it took', () => {
+    const ds = matchStatement(
+      { code: 'MBB', has_unique_ref: true, date_tolerance_days: 3 },
+      [
+        { lineNo: 1, txnDate: '2026-08-01', ref: 'A123', grossSen: 125000, feeSen: 0, netSen: 125000 },
+        { lineNo: 2, txnDate: '2026-08-01', ref: 'A123', grossSen: 125000, feeSen: 0, netSen: 125000 },
+      ],
+      [pay('a', 80000, 'A123'), pay('b', 45000, 'A123')],
+      new Set<string>(),
+    );
+    expect(ds[0]!.bucket).toBe('MATCHED');
+    expect(ds[1]!.bucket).not.toBe('MATCHED');
+  });
+
+  /* An acquirer that sends no unique reference may never auto-match, whatever
+     the till happened to key in — the brief forbids it outright. */
+  it('never auto-matches for an acquirer with no unique reference', () => {
+    const d = matchStatement(
+      { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
+      [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A123', grossSen: 125000, feeSen: 0, netSen: 125000 }],
+      [pay('a', 80000, 'A123'), pay('b', 45000, 'A123')],
+      new Set<string>(),
+    )[0]!;
+    expect(d.bucket).toBe('NEEDS_CONFIRM');
+  });
+});

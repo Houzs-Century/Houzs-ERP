@@ -222,6 +222,13 @@ const seed = () => ({
     // Card money nobody has settled — this is watchlist 1.
     soPay('m3', 'SO-2608-042', '2026-08-15T10:40:00', 100000, '536320', 'MBB'),   // T41AX  Amex
     soPay('m4', 'SO-2608-043', '2026-08-15T15:55:00', 258800, '969745', 'MBB'),   // DVS04E debit
+    /* ONE SWIPE, TWO ORDERS, ONE APPROVAL CODE — the owner's case (2026-08-20:
+       多张 so 那边放的 approval code 都一样，然后加起来金额是对的上卡机报告的).
+       The till put the same code on both documents because there was only one
+       swipe. Together they are RM 1,250.00, which is what the statement line
+       for 771234 says. */
+    soPay('m5', 'SO-2608-060', '2026-08-15T11:20:00', 70000, '771234', 'MBB'),
+    soPay('m6', 'SO-2608-061', '2026-08-15T11:20:00', 55000, '771234', 'MBB'),
     // Card money nobody has settled — this is watchlist 1.
     soPay('m5', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
     soPay('h1', 'SO-2608-020', '2026-08-16T11:15:00', 180000, '663554', 'HLB'),
@@ -253,6 +260,7 @@ const seed = () => ({
     ['SO-2608-030', 'Ooi Sze Ling'], ['SO-2608-040', 'Chan Wai Keong'],
     ['SO-2608-041', 'Nurhaliza Yusof'], ['SO-2608-042', 'Lim Chee Keong'],
     ['SO-2608-043', 'Sarah Abdullah'], ['SO-2607-088', 'Wong Mei Ling'],
+    ['SO-2608-060', 'Tan Mei Fong'], ['SO-2608-061', 'Tan Mei Fong'],
   ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
   sales_invoices: [
     { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
