@@ -119,6 +119,7 @@ export function buildDeliveryRebuildRows(
  * mismatch under the lock is answered with `stale` rather than a write (0314).
  */
 export async function applyDeliveryFeeRebuild(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM supabase client is `any` throughout this module tree (PostgREST builder or the pg transaction shim); typing it here alone would only move the cast to every call site.
   sb: any,
   args: {
     docNo: string;

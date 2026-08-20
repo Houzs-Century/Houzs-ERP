@@ -6476,9 +6476,13 @@ async function recomputeDeliveryFeeAttempt(
 async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<DeliveryFeeCoreResult> {
-  void DELIVERY_REBUILD_MAX_ATTEMPTS; // the retry lands in the next commit
-  const res = await recomputeDeliveryFeeAttempt(sb, docNo, sourceDocNo, c);
-  return res === STALE_DERIVATION ? null : res;
+  for (let attempt = 1; attempt <= DELIVERY_REBUILD_MAX_ATTEMPTS; attempt += 1) {
+    const res = await recomputeDeliveryFeeAttempt(sb, docNo, sourceDocNo, c);
+    if (res !== STALE_DERIVATION) return res;
+  }
+  /* eslint-disable-next-line no-console */
+  console.error('[so-redetect] delivery fee NOT re-derived — the fee lines moved under every attempt:', docNo);
+  return null;
 }
 
 /* Re-detect the cross-category delivery fee against a (re-resolved) customer —

@@ -360,8 +360,8 @@ export const pgTransactionSupabase = (sql: Sql) => ({
          under attempt two. Returned as `data` rather than raised, precisely so a
          stale derivation does not roll the whole command back. */
       try {
-        const rows = await sql.unsafe<Array<{ rebuild_mfg_so_delivery_lines: boolean }>>(
-          'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb, $5::jsonb) AS rebuild_mfg_so_delivery_lines',
+        const rows = await sql.unsafe(
+          'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb, $5::jsonb) AS rebuilt',
           [
             args.p_doc_no,
             args.p_source_doc_no,
@@ -377,11 +377,15 @@ export const pgTransactionSupabase = (sql: Sql) => ({
             // value once with OID 3802 — the exact fix commandParameter() above
             // already applies to every other jsonb column on this shim.
             sql.json((args.p_rows ?? []) as never),
-            // Same rule for the expectation object. null means "do not check".
+            /* Same rule for the expectation object. null means "do not check". */
+            // eslint-disable-next-line no-restricted-syntax -- sql.json's parameter is JSONValue and p_expect_state arrives as unknown off the rpc args bag; this is the same cast the p_rows line above already needs, for the same reason.
             args.p_expect_state == null ? null : sql.json(args.p_expect_state as never),
           ] as never[],
         );
-        return { data: rows[0]?.rebuild_mfg_so_delivery_lines ?? true, error: null };
+        /* Optional on purpose: a driver that returns no row must read as "it
+           wrote", never as "it refused" — a silent no-op is not a refusal. */
+        const rebuilt = (rows as Array<{ rebuilt?: boolean }>)[0]?.rebuilt;
+        return { data: rebuilt ?? true, error: null };
       } catch (e) {
         return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
       }
