@@ -18,7 +18,7 @@ name: Re-raise HC-PO-2608-001 into AutoCount (PLAN by default)
 #
 # Access path: DATABASE_URL, the only database secret this repo holds. Copied
 # from why-so-line-not-purchasable.yml, which runs. NOT from
-# recompute-2990-so-allocation.yml, which is wired to SUPABASE_URL +
+# recompute-2990-so-allocation.yml (DELETED 2026-08-20), which was wired to SUPABASE_URL +
 # SUPABASE_SERVICE_ROLE_KEY, neither of which exists here, and has never run.
 #
 # It runs under `npx tsx` rather than plain node because it imports the REAL
