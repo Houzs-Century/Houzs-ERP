@@ -531,7 +531,18 @@ jobs:
     # the frontend leg can fail today: the backend leg runs `-- --advisory` and
     # exits 0 while its 16 over-ceiling pairs are paid down. When that flag comes
     # off, the backend leg starts blocking here with no further change.
-    needs: [backend-typecheck, backend-tests, lint]
+    # file-size and e2e-contract join `lint` here for the same reason: a job
+    # absent from a roll-up's `needs` cannot block a merge, and both judge
+    # OBJECTIVE facts (a file grew past its ceiling; the e2e contract drifted),
+    # so there is no judgement call to leave with a human.
+    #
+    # backend-postgres is DELIBERATELY NOT HERE, and the number is this file's
+    # own: "backend-postgres  34 success  4 FAILURE" over the sample recorded
+    # above. Roughly one run in ten is red without the code being wrong. A gate
+    # that blocks one honest PR in ten gets routed around, then deleted - which
+    # is how secret-hygiene.yml died and let a credential back in. It stays
+    # advisory until that rate is fixed, and fixing the rate is the real task.
+    needs: [backend-typecheck, backend-tests, lint, file-size, e2e-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -550,8 +561,12 @@ jobs:
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
           echo "lint:              ${{ needs.lint.result }}"
           ok backend-typecheck "${{ needs.backend-typecheck.result }}"
+          echo "file-size:         ${{ needs.file-size.result }}"
+          echo "e2e-contract:      ${{ needs.e2e-contract.result }}"
           ok backend-tests "${{ needs.backend-tests.result }}"
           ok lint "${{ needs.lint.result }}"
+          ok file-size "${{ needs.file-size.result }}"
+          ok e2e-contract "${{ needs.e2e-contract.result }}"
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,

@@ -1110,12 +1110,20 @@ readers; they are not what drives this.)
 Owner, 2026-07-31: **"我们的 item 都不会有仓库, 还是跟着 SO 的"** — an item never
 carries a warehouse of its own; the warehouse comes from the Sales Order.
 
-**There is NO warehouse FK on `scm.mfg_sales_orders`.** This is the surprising
-part and the reason people look in the wrong place. The header records its
-warehouse as the free-text **`sales_location`**, written by `warehouseLabel()`
-(`lib/warehouse-label.ts` — the warehouse CODE when there is one, else the
-name), which is itself derived from `customer_state` through
-`state_warehouse_mappings`. So the SO's warehouse resolves as:
+**The header's warehouse is the free-text `sales_location` snapshot, with a
+canonical `warehouse_id` alongside it since mig 0309.** For most of this
+module's life there was NO warehouse FK on the header at all — that is why people
+look in the wrong place — and `sales_location` (written by `warehouseLabel()`,
+`lib/warehouse-label.ts`: the warehouse CODE when there is one, else the name,
+itself derived from `customer_state` through `state_warehouse_mappings`) is still
+the value every reader/writer resolves through. Mig 0309 (batch-3 naming
+unification) ADDED a nullable header `warehouse_id uuid -> scm.warehouses(id)`
+and backfilled it from `sales_location` (code-then-name, company-scoped, only
+where exactly one warehouse matches — 2772 of 2823 rows; the 51 unresolved
+`"SLGR WAREHOUSE"` orders in company 2 stay on `sales_location`). It is a
+SNAPSHOT that mirrors the per-line binding, NOT yet a read path: `sales_location`
+remains the source of truth and is not being dropped. So the SO's warehouse
+still resolves as:
 
 ```
 sales_location  ->  warehouses.code / warehouses.name    (what the SO says)
@@ -2080,7 +2088,9 @@ familiar RM250), decomposed into line specs by `buildDeliveryFeeServiceLines`
 (`scm/shared/service-lines.ts` — Σ lines === fee.total by construction), and
 written by exactly one primitive: the atomic RPC
 `scm.rebuild_mfg_so_delivery_lines` (migration **0214**: per-doc advisory xact
-lock, delete → insert → header stamp in one call — the duplicate-fee race fix).
+lock, re-derive → header stamp in one call — the duplicate-fee race fix;
+migration **0310** made the re-derive REUSE its rows, see "the line keeps its
+identity" below).
 
 **Path inventory — how each SO-producing path satisfies the ruling:**
 
@@ -2115,7 +2125,7 @@ the rebuild derives the price, one truth — and until this date the discount
 road was silently dead too: the line PATCH accepted a bounded discount on a
 delivery line, and the very next rebuild wrote `discount_sen: 0` over it. An
 operator who typed 250 → 125 watched the line "nuke to 0 and disappear"
-(the rebuild deletes and re-inserts the `SVC-DELIVERY*` set). Now the rebuild
+(the rebuild deleted and re-inserted the `SVC-DELIVERY*` set). Now the rebuild
 recovers each fee line's discount by `item_code`, clamps it to the rebuilt
 line's own total (a fee line can never go negative), and re-applies it — so
 the SO prints unit 250 / discount 125 / total 125, which is how every other
@@ -2125,6 +2135,27 @@ from unit × qty rather than `total_sen`, or a discounted ADD line would
 compound the reduction on every save. A component that disappears on rebuild
 (the base swapping to CROSS on a follow-up change) drops its discount rather
 than migrating it to money it never named.
+
+**The line keeps its identity (2026-08-20, migration 0310).** The rebuild now
+UPDATEs the fee lines in place instead of deleting and re-inserting them
+(`backend/src/db/migrations-pg/0310_scm_rebuild_so_delivery_lines_keeps_identity.sql`
+— this module owns that RPC; the earlier bodies are 0214 and 0305).
+This is not tidiness — **a Delivery Order can carry a delivery-fee line**
+(`routes/delivery-orders-mfg.ts` records Nico's DO for 2990-SO-2606-034, blocked
+on `SVC-DISPOSE-SOFA` and `SVC-DELIVERY-CROSS` being "short" at BALAKONG), and
+`delivery_order_items.so_item_id` is **ON DELETE SET NULL** (0235). So every
+single fee change used to blank the link of any DO that had shipped that fee,
+and left an SO that still showed a delivery line — a *different row wearing the
+same `item_code`*, which is why an investigator checking "is the line still
+there?" sees yes. That appearance is why 0302 set the FK theory aside; only
+`created_at` distinguishes the two, and `scm.mfg_so_item_deletions` now records
+the deletes directly. Rows are matched per `item_code` by their **position in
+the specs array**, because `buildDeliveryFeeServiceLines` emits
+`SVC-DELIVERY-CROSS` twice on a follow-up that also crosses categories — so
+keep that order stable. A component that genuinely disappears is still deleted,
+and still takes its link, which is correct: the line it named is gone. This is
+also the precondition for ever exposing an editable delivery charge — without
+it, every edit manufactures an orphan.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
