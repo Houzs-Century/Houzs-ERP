@@ -1255,11 +1255,14 @@ describe('/so-to-po carries the whole master', () => {
 
     /* A key present with a different value is the same failure wearing a
        disguise — `Description: null` on a purchase order the ERP describes is
-       exactly what the owner saw. Ref is the one header field a transfer is
-       allowed to differ on: `readPoEnqueueShape` (autocount-read.ts:199-203)
-       puts the source SO numbers in a CREATE's Ref because AutoCount has no
-       DocTransfer link to carry them, and leaves a transfer's null because it
-       does. So compare it only when the create's is null too. */
+       exactly what the owner saw.
+
+       `Ref` IS ABSENT FROM THIS LIST ON PURPOSE, and it is the only one:
+       `readPoEnqueueShape` (autocount-read.ts:201-203) puts the source sales
+       order numbers in a CREATE's Ref because AutoCount has no DocTransfer
+       link to carry them, and leaves a transfer's null because it does. The
+       KEY must still be carried — the parity test above enforces that — but
+       the two documents legitimately hold different values there. */
     for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description', 'UDF']) {
       expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
     }
