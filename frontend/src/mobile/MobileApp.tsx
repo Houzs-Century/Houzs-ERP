@@ -90,7 +90,11 @@ type Screen =
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
-  | { t: "pod"; docNo: string }
+  /* `from` is the return address. Back/Done out of POD normally drops to the
+     tab, which is right when POD was opened from a document card — but the
+     delivery-planning board sends the driver here MID-RUN, and dumping them on
+     the home tab loses the run sheet they were working through. */
+  | { t: "pod"; docNo: string; from?: "delivery-planning" }
   /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
@@ -822,10 +826,15 @@ function MobileAppInner() {
         onSaved={() => setScreen({ t: "module", key: screen.key, title })} />
     );
   }
-  else if (screen.t === "pod") overlay = <MobilePOD docNo={screen.docNo} onBack={back} onDone={back} />;
+  else if (screen.t === "pod") {
+    const leavePod = screen.from === "delivery-planning"
+      ? () => setScreen({ t: "delivery-planning" })
+      : back;
+    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={leavePod} />;
+  }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
-  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
+  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
