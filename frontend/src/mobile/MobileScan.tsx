@@ -618,11 +618,20 @@ export function MobileScan({
      their own rule file. */
   const [salesperson, setSalesperson] = useState((user?.name || user?.email || "").trim());
   const [knownReps, setKnownReps] = useState<string[]>([]);
+  /* The list failing must not take the screen down — the field is free-text
+     either way — but the failure is SAID, not swallowed: an empty datalist and a
+     refused read look identical, and "the names stopped appearing" with no
+     reason is the shape CLAUDE.md calls worse than a crash. */
+  const [repsUnavailable, setRepsUnavailable] = useState(false);
   useEffect(() => {
     let alive = true;
     authedFetch<unknown>(SCAN_SALESPEOPLE_PATH)
-      .then((r) => { if (alive) setKnownReps(normalizeScanSalespeople(r)); })
-      .catch(() => { /* the datalist is a convenience — the field stays free-text */ });
+      .then((r) => { if (alive) { setKnownReps(normalizeScanSalespeople(r)); setRepsUnavailable(false); } })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setRepsUnavailable(true);
+        console.warn("[scan] salesperson list unavailable:", e instanceof Error ? e.message : e);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -1405,6 +1414,11 @@ export function MobileScan({
             <datalist id="mobile-scan-salespeople">
               {knownReps.map((r) => <option key={r} value={r} />)}
             </datalist>
+            {repsUnavailable && (
+              <div style={{ marginTop: 5, fontSize: 11, color: "#a16a2e" }}>
+                Couldn&apos;t load the salesperson list — type the name instead.
+              </div>
+            )}
 
             {submitting && (
               <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "#767b6e" }}>
