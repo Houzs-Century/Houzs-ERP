@@ -187,6 +187,9 @@ jobs:
       # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
       - run: npm run audit:bug-index
       - run: npm run audit:map
+      # Transaction-workflow drift tripwire: fails if any transaction document's
+      # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).
+      - run: npm run audit:workflow-consistency
       - run: npm run audit:doc-refs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests

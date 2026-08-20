@@ -54,6 +54,7 @@
     "check:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs",
     "audit:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs --strict",
     "audit:date-format": "node scripts/check-date-formatting.mjs --strict",
+    "audit:workflow-consistency": "node scripts/check-workflow-consistency.mjs",
     "check:company-scope": "node scripts/check-company-scope.mjs",
     "audit:company-scope": "node scripts/check-company-scope.mjs --strict",
     "audit:company-scope:ratchet": "node scripts/check-company-scope.mjs --check",
