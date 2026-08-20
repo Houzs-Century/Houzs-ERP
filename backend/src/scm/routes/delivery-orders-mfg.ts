@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
-  DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES,
+  DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
   DO_STATUSES as SHARED_DO_STATUSES,
 } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
@@ -2307,9 +2307,9 @@ export async function soLineDeliveries(
   const doMeta = new Map<string, { doNumber: string; status: string }>();
   for (const d of (dos ?? []) as Array<{ id: string; do_number: string | null; status: string | null }>) {
     const st = (d.status ?? '').toUpperCase();
-    // LEAK GUARD (DRAFT): a DRAFT DO hasn't shipped — exclude from the "Delivered"
-    // display (mirrors soDeliverableRemaining so the two never disagree).
-    if (st === 'CANCELLED' || st === 'DRAFT') continue;
+    // LEAK GUARD (PRE-SHIP): a DO that hasn't shipped is out of the "Delivered"
+    // display (mirrors soDeliverableRemaining — true only since both learned LOADED).
+    if (!doCountsAsDelivered(d.status)) continue;
     doMeta.set(d.id, { doNumber: d.do_number ?? '—', status: st });
   }
   for (const r of rows) {

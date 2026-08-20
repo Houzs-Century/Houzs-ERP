@@ -26,6 +26,7 @@
 // separate `scm.warehouse.adjustments` permission — see that file + scm/index.ts.
 // ----------------------------------------------------------------------------
 
+import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -442,11 +443,12 @@ async function deliveredReturnedBySoItem(
     const { data: dos } = await chunkIn<{ id: string; status: string | null }>(doIds, (batch, from, to) =>
       sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
     for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-      // DRAFT DO hasn't shipped and hasn't moved stock — excluding it (like
-      // soDeliverableRemaining's LEAK GUARD) keeps its units in Reserved so a
-      // free-to-sell KPI can't be inflated into over-sell. (DRs have no DRAFT.)
-      const st = (d.status ?? '').toUpperCase();
-      if (st !== 'CANCELLED' && st !== 'DRAFT') activeDoIds.add(d.id);
+      // A PRE-SHIP DO hasn't shipped and hasn't moved stock — excluding it
+      // (like soDeliverableRemaining's LEAK GUARD) keeps its units in Reserved
+      // so a free-to-sell KPI can't be inflated into over-sell. DRAFT *and*
+      // LOADED: this read named only DRAFT until 2026-08-20. (DRs have no
+      // DRAFT.)
+      if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
     }
   }
   for (const l of doLineRows) {

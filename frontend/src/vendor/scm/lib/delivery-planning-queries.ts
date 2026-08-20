@@ -11,10 +11,12 @@
 // HOUZS VENDOR NOTE: the source has NO `import { supabase } from './supabase'`
 // to drop (it only used authedFetch). Everything else is copied verbatim.
 
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
+import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
 
 export const DELIVERY_STATES = [
   'PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED',
@@ -840,6 +842,39 @@ export type ConvertSoResult = {
    into a burst of Worker subrequests. */
 export function useConvertSosToDo() {
   const qc = useQueryClient();
+
+  /* ONE IDEMPOTENCY KEY PER SALES ORDER, held across the whole mount.
+     Cutting a DO is a stock write, so a double-fire is a double shipment — the
+     shape of the SO-2606-019 double-ship already on record. Mobile's identical
+     call carries a key; this one did not, and it is fired from BOTH a single-row
+     action and a 4-at-a-time bulk bar.
+
+     Keyed by DOC NO, not by mount, and that is not a variation on mobile's
+     scheme — it is what mobile's own comment instructs. Its key is per-mount
+     only because MobileDeliveryPlanning renders StopDetail behind an early
+     return, so a mount is exactly one stop: "If that early return is ever
+     replaced ... this key MUST move onto the order identity". This board is
+     precisely that case — one mount converts many SOs — so the identity is the
+     SO. A single per-mount key here would post SO #2 under SO #1's claim with a
+     different payload and be answered `idempotency_key_reused`, converting the
+     first order and failing the rest of the bulk selection.
+
+     Minted lazily on first use and NEVER rotated for the life of the mount, per
+     the module's rule that a key is retired by the INTENT ending, not by the
+     write succeeding: the two halves of a double-click must find the same key,
+     so the retry replays the first DO instead of cutting a second. A genuine
+     later re-convert of the same SO (its DO was cancelled, restoring remaining)
+     carries a different payload and is refused rather than silently replayed —
+     the safe direction, and a board refresh mints fresh keys. */
+  const keys = useRef(new Map<string, string>());
+  const keyFor = (docNo: string): string => {
+    const existing = keys.current.get(docNo);
+    if (existing) return existing;
+    const minted = newIdempotencyKey();
+    keys.current.set(docNo, minted);
+    return minted;
+  };
+
   return useMutation<ConvertSoResult, Error, { docNos: string[] }>({
     mutationFn: async ({ docNos }) => {
       const wanted = [...new Set(docNos.filter(Boolean))];
@@ -874,7 +909,7 @@ export function useConvertSosToDo() {
           try {
             const res = await authedFetch<{ id: string; doNumber: string }>(
               `/delivery-orders-mfg/from-sos`,
-              { method: 'POST', body: JSON.stringify({ picks }) },
+              idempotentInit(keyFor(docNo), { method: 'POST', body: JSON.stringify({ picks }) }),
             );
             out.converted.push({ docNo, doNumber: res.doNumber });
           } catch (e) {

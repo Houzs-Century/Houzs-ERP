@@ -106,6 +106,750 @@ that screen, so it is the owner's call rather than a provable defect. Flagged
 here rather than changed.
 
 **Ref.** PR #PR2, 2026-08-20.
+## A pre-rule sofa-mix order could not be edited AT ALL from the phone [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 后台只挡「这一次改动才制造出混单」（沙发不能跟床架／床褥同单），**旧单一律
+放行**；电脑版 #2395 已经改成一样的问法。手机版还留着旧的「只要有混单就挡」，而且这个
+检查摆在编辑分支的**上面** —— 于是销售在手机上打开一张旧的混单，连**改个电话号码**都
+存不下去，弹出来的理由还是后台自己早就不管的那条规则。现在手机改成跟电脑、跟后台同一
+个问法：只有**这次改动新造出**混单才挡。开新单的行为完全没变。
+
+**Symptom.** On a Sales Order written before the sofa-exclusivity rule existed,
+a rep on the phone cannot save ANY change — not a phone number, not an address,
+not a delivery date. The message names a rule the server itself grandfathers.
+
+**Root cause.** `MobileNewSO.save()` ran the FLAT `hasSofaMixConflict` over the
+edited lines. That is the CREATE path's question ("does this set mix?"), and the
+guard sits ABOVE the edit branch inside `save()`, so it fired on edits too. The
+server asks a different one: its three line paths call `mainMixIntroduced` and
+refuse only a change that INTRODUCES the mix. Desktop's `SalesOrderDetail` was
+moved to the matching differential form in #2395; mobile was not, so the client
+refused saves the server would have accepted.
+
+**Fix.** `frontend/src/mobile/MobileNewSO.tsx` now calls the same shared
+`sofaMixIntroduced(storedGroups, editedGroups)` desktop calls
+(`vendor/shared/so-variant-rule.ts`), with `origItems` — the persisted lines —
+as the "before" set. On a create `origItems` is empty, so `sofaMixIntroduced`
+degrades to exactly the flat question and the create path is unchanged.
+
+**Test.** `frontend/src/mobile/mobile-so-sofa-mix-edit.test.ts`. Source-text
+contract over `save()`, the idiom `so-slip-optional-contract.test.ts` already
+justifies for this 3,700-line screen: it pins WHICH predicate the guard runs and
+that the "before" set is `origItems` (a differential guard fed the edited set
+twice is the flat guard wearing a new name). Run RED first — it reported
+`expected 'async function save(asDraft = false) …' to contain 'sofaMixIntroduced('`.
+
+---
+
+## The phone did not recognise most salespeople as themselves [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 140 个 `scm.staff` 里只有 18 个填了 email，102 个有 `user_id`，而后台认人
+用的就是 `user_id`。电脑版 #2049 已经改成**先比 `user_id`**。手机版还是先比 email
+再比名字，所以**大部分销售员**在手机上都不被认成自己 —— 掉进 `__self__` 这个占位值，
+然后在确认订单时被「Pick a salesperson before confirming this order」直接挡掉。旁边
+那句注解还写着「by id / email / name」，可是程式根本没比过 id。现在两边共用同一段
+`resolveSelfStaff`，注解也改成实话。
+
+**Symptom.** A salesperson whose `scm.staff` row carries no email is not
+detected as themselves on the phone. The Salesperson field falls back to the
+UI-only `__self__` placeholder, and the confirm guard in `save()` can refuse the
+order outright.
+
+**Root cause.** `MobileNewSO`'s `selfStaffMatch` matched email, then name. The
+string `userId` did not appear anywhere in the file, while its own comment
+advertised an id match it never ran. `user_id` is the ONLY link that actually
+exists on this data (102/140 rows, measured on production 2026-08-12 and quoted
+in #2049) and is what the backend resolves the caller by (`resolveOwnerStaffId`
+joins `staff.user_id`), so the frontend and the backend disagreed about whether
+the caller had a staff row at all.
+
+**Fix.** New SHARED `frontend/src/vendor/scm/lib/self-staff.ts` —
+`resolveSelfStaff(staffList, me)`, ladder user_id → bridge staff id → email →
+name, with a null caller id never matching a null `userId`. `MobileNewSO` and
+desktop `SalesOrderNew` both call it. The desktop ladder was moved VERBATIM, so
+that screen behaves exactly as before; the mobile one gains the `user_id` step.
+The lying comment is gone.
+
+**Test.** `frontend/src/vendor/scm/lib/self-staff.test.ts` — a real unit test of
+the resolver (including the production case: IT Admin, `user_id` 4, email NULL,
+which id/email/name all missed) plus a contract that both New-SO surfaces read
+the module and no fourth copy is written. Run RED first: `Failed to resolve
+import "./self-staff"`.
+
+**Found while fixing it, NOT fixed here.** `SalesOrderDetail.tsx:551` keeps a
+THIRD copy (id → email → name, no `user_id`). It only defaults the Add-Payment
+"Collected By" picker, so its failure mode is a blank cell rather than a blocked
+save, and switching it would CHANGE that screen's behaviour — it would start
+matching people it does not match today. That is a decision, not a defect fix.
+
+---
+
+## Scanning a colleague's slip on the phone read it as the scanner's handwriting [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 扫描单据时送出去的那个「销售员」名字，是 **OCR 的学习 key**：后台会拿**那个
+人**的笔迹规则和范例去读这张单（`loadPromptInjections(svc, job.salesperson)`），读完的
+学习样本也归档在那个名字底下，「最近扫描」也是照它筛。电脑版的扫描窗口把它预设成登入的
+人（多数情况没错），但**留着可以改**，后面接 `GET /scan-so/salespeople` 的名单 ——
+因为常常有人帮同事扫。手机版那格是写死的登入者：没有输入框、没有名单。办公室的人一叠
+同事的单扫下去，每一张都用**自己**的笔迹习惯去读，同事的更正也全教进自己的规则档。
+现在手机那格跟电脑一样可以改，名单也是同一个。
+
+**这一格不是佣金。** 订单自己的 `salesperson_id` 是**后台**照登入者盖的
+（`resolveScanUploaderStaffId`，`scan-so.ts:4270` → `scan_jobs.salesperson_id`），
+两个界面都一样、都不信任 client 传来的值。把这条讲成「修好佣金」是这棵树支撑不了的说法。
+
+**Symptom.** An office person working through a stack of colleagues' slips can
+name the writer at the desk and cannot on the phone, so every slip in the stack
+is read against the scanner's own handwriting rules.
+
+**Root cause.** `MobileScan.tsx` had `const salesperson = (user?.name ||
+user?.email || "").trim();` — a constant, no setter, no known-reps list — and
+that single value rides both `/scan-so/extract` and `/scan-so/enqueue`.
+
+**What it actually decides, traced rather than assumed.** `repGiven` (the field)
+feeds `loadPromptInjections` on both the synchronous `/extract` path (`:3061`)
+and the background job (`:3973`, off `scan_jobs.salesperson` written at `:4303`),
+keys the `so_scan_samples` row (`:3072`), and filters `GET /scan-so/jobs`. The
+SO's own salesperson is NOT caller-trusted on either surface — `salesperson_id`
+comes from `resolveScanUploaderStaffId` on the authed request.
+
+**Fix.** `MobileScan` now holds it as state, defaulted to the signed-in user and
+editable against the SAME list desktop offers. `SCAN_SALESPEOPLE_PATH` and
+`normalizeScanSalespeople` were added to the already-shared
+`vendor/scm/lib/scan-jobs.ts` (the module both scan surfaces already read for
+the jobs poll) and `ScanOrderModal` was moved onto them, so the endpoint is
+named once and neither surface can offer a different list. A malformed answer is
+an empty datalist and never a throw — the field is free-text either way.
+
+**Test.** `frontend/src/mobile/mobile-scan-attribution.test.ts` — unit tests for
+the normaliser plus a source contract that the mobile value is editable state
+rather than a constant off the signed-in user, and that both surfaces read the
+one endpoint constant. Run RED first: `MobileScan still hard-codes the scanner
+as the salesperson`.
+
+---
+
+## A slip scanned on the phone produced an order with no slip photo [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** `/scan-so/extract` 已经把它刚上传的两张照片的 R2 key（`imageKey` /
+`receiptImageKey`）传回来了。手机的 client 建单路径两个都没送出去，电脑版两个都送
+（`slip_image_key` / `receipt_image_key`，mig 0033 / 0034）。手机订单详情本来就有一张
+「扫描照片」卡片在等这两个值，所以那张卡片对手机扫出来的单永远是空的。
+
+**范围要讲清楚**：手机**主要**的扫描路径是 `/scan-so/enqueue`，草稿是**后台**建的，
+后台本来就有带这两个 key。缺的是 client 那条 —— `/enqueue` 回 404（旧版 worker）时
+走的 `submitLegacy`。所以这是补一条 fallback 路径，不是「每一张手机扫的单都丢了照片」。
+
+**Symptom.** An order created by the phone's client-side scan path shows an
+empty "Scanned photos" card on `MobileSODetail`, which is built to display
+exactly those keys.
+
+**Root cause.** `MobileScan.buildPrefill` dropped `d.imageKey` and
+`d.receiptImageKey` from the extract response, so `MobileScanPrefill` never
+carried them and `createDraftFromPrefill`'s create body sent neither.
+`SalesOrderNew` sends both.
+
+**Fix.** `MobileScanPrefill` carries `slipImageKey` / `receiptImageKey`,
+`buildPrefill` fills them from the extract response, and
+`createDraftFromPrefill` spreads them into the create body — omitted rather than
+`""` when the photo does not exist, because the create handler stores the value
+verbatim.
+
+**HONEST SCOPE.** The PRIMARY path (`POST /scan-so/enqueue`) mints the draft
+server-side and `backend/src/scm/routes/scan-so.ts` already sets both keys.
+This closes the CLIENT path (`submitLegacy`, reached on a 404 from a stale
+worker), which re-implemented the same create and lost the provenance.
+
+**Test.** `frontend/src/mobile/mobile-scan-slip-provenance.test.ts` drives the
+real exported `createDraftFromPrefill` with `authedFetch` faked and asserts the
+POST body. Run RED first: `expected undefined to be 'scan-slips/abc'`.
+
+---
+
+## A zero-cost goods receipt was a dead end on the phone [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 后台拒绝零成本收货时讲得很清楚，而且给了两条出路：填上供应商送货单上的单价，
+或者在**那一行**打勾「Received free」并写原因。电脑版两样都有。手机版**一样都没有**
+—— `zeroCostAck` 在整个 `frontend/src/mobile` 里一次都没出现过，收货画面只有「Post」和
+「Cancel」，连转单精灵的提示都写着「open the receipt on desktop」。仓库地面上拿着手机的
+收货员，看到一个正确、看得懂、指名两个修法的拒绝讯息，而那两个修法都不在他手上那台
+机器里，只能去找电脑。拒绝讯息本身两边都显示正常 —— 缺的是**补救的界面**。
+
+**这不是一键豁免。** 每一行各自决定：填价，或打勾＋写原因；只要还有一行没交代，
+Post 就不放行。`docs/modules/grn.md` 已经写明这个逃生口**故意**放在行上而不是对话框上，
+「一键把整张单说成免费」正是这道闸要防的反射动作。
+
+**Symptom.** `PATCH /scm/grns/:id/post` answers 409 `zero_cost_receipt`, naming
+the offending lines and both remedies. On the phone neither remedy exists.
+
+**Root cause.** Two halves. (a) `MobileModuleDetail`'s `grns` case offers only
+Post and Cancel, and no mobile file mentions `zeroCostAck`. (b) `authed-fetch`
+parsed the refusal body, composed the operator's sentence and threw the parse
+away, so a surface could show the refusal and nothing else.
+
+**Fix.** New shared `frontend/src/vendor/scm/lib/zero-cost-refusal.ts` —
+`parseZeroCostRefusal` / `zeroCostRefusalText` / `zeroCostRefusalFrom`.
+`authed-fetch` now composes the SAME sentence through it (moved, not rewritten)
+and attaches `status` + the raw `body` to the thrown error, exactly as its
+terminal error path already does. New `frontend/src/mobile/MobileGrnZeroCost.tsx`
+turns that into a per-line bottom sheet: a unit price, or a "Received free" tick
+with its reason, written through the same
+`PATCH /grns/:id/items/:itemId` desktop uses (the only route that clears the gate
+without inventing a price — the three ack columns move together server-side in
+`zeroCostAckColumns`), then the original `PATCH /grns/:id/post` runs again.
+`MobileModuleDetail`'s action footer captures the refusal and opens it; the
+convert wizard's message no longer sends the receiver to a PC.
+
+**Test.** `frontend/src/vendor/scm/lib/zero-cost-refusal.test.ts` (parser +
+sentence) and `frontend/src/mobile/MobileGrnZeroCost.test.tsx`, which drives the
+real sheet with `authedFetch` faked and pins both writes, the second refusal
+being shown rather than swallowed, and that Post stays disabled while any line
+is unanswered. Run RED first: `Failed to resolve import "./zero-cost-refusal"`
+— neither module existed.
+
+---
+## The announcements banner polled every 30-60s from every page — 3x more often than it needs [medium]
+
+<!-- area: Mail, search, notifications -->
+
+**白话.** 公告横幅（还有通知铃）每 30~60 秒就去后台问一次「有没有新公告」，一个
+session 打了 70 多次，每次约 0.36 秒（命中缓存）到 1 秒（没命中）。公告不是即时聊天，
+不用问这么勤。放慢到每 3 分钟，请求量降到约三分之一，人看公告的体验没变。
+
+**Symptom + what was RULED OUT (measured on prod 2026-08-20, not guessed).** The
+`/banner` call was the single busiest endpoint in a session (76 calls). Probing
+the app's own requests: a cache **hit** is ~360ms, a **miss** ~950ms, and the
+backend cache **does work** — a natural poll was caught returning
+`x-config-cache: hit`. So the earlier "691ms avg / 5.5s max" was cold-start +
+pre-deploy outliers, NOT a broken cache. Also ruled out: the `announcement_acks`
+query is indexed (`idx_announcement_acks_user`, mig 0058), and `SESSION_CACHE` is
+bound — neither was the cause. The real waste was simply CALL VOLUME: three
+pollers (desktop banner `POLL_MS`, `NotificationBell` scope=system, mobile
+`useAnnouncementUnread`) all firing every 30-60s.
+
+**Fix.** Slow all three pollers to 3 min. The backend already caches per-user for
+5 min (`CONFIG_CACHE_TTL_SECONDS.banner = 300`), so a 3-min poll lands mostly on
+hits and only re-pays the DB round trip about once per 5 min. Announcements are
+not time-critical, so up-to-3-min freshness is fine. Also corrected the stale
+`/banner` comment (it claimed "60s TTL … polls at 30s"; TTL is 300s, polls now
+180s). The deeper ~360ms hit floor is app-wide per-request overhead (auth + edge
++ KV), not banner-specific, and is out of scope here.
+
+**Verified against.** frontend `tsc -b` clean; no test asserts these intervals.
+
+Ref: 2026-08-20.
+## The phone ISSUED a customer-facing invoice in three taps, while the desktop made it a deliberate act [high]
+
+<!-- area: Frontend + mobile -->
+
+The owner, 2026-08-20: **「以电脑为准 —— 手机也先出草稿」** — the desktop is the
+standard, and the phone drafts first too.
+
+**Symptom.** On the phone, DO -> Sales Invoice was: open the convert wizard, pick
+the delivery order, press Create. The invoice that came out was **SENT** — issued
+to the customer, dated today, with `sent_at` and `confirmed_at` stamped and
+revenue posted. No due date, no terms, no review step, and no way back except
+cancelling a document the customer may already have been given. Nothing on the
+screen said an invoice was about to be issued rather than drafted; the button
+said "Create Sales Invoice", the same words the other three targets use.
+
+**Root cause (traced, not guessed).** `MobileConvertWizard.tsx`'s `si` arm posted
+`{ picks }` and nothing else. `POST /sales-invoices/from-dos` reads its draft flag
+STRICTLY — `const isDraft = body.asDraft === true` — and then lands
+`status: isDraft ? 'DRAFT' : 'SENT'` with `sent_at` / `confirmed_at` set from
+`nowIso` and `invoice_date: todayMyt()`. So an ABSENT flag is not a neutral
+default; it is the issue path. The desktop never hit this because it cannot reach
+that endpoint at all: it goes `SalesInvoiceFromDo` -> `SalesInvoiceNew` ->
+`POST /` with a ~30-key header form, which IS the review step. (`useConvertDosToSi`
+in `vendor/scm/lib/sales-invoice-queries.ts` is the hook that would have used the
+convert endpoint from the desktop; it has zero consumers.)
+
+The same wizard's GRN arm already had the correct answer for the identical
+question — it sends `asDraft: true`, with a comment reasoning that posting writes
+stock and should not happen automatically. Issuing an invoice writes AR and
+revenue on confirm, so the argument transfers with money in place of stock. One
+arm of one component had the reasoning and the arm beside it did not.
+
+**Fix.** The `si` arm sends `asDraft: true`, mirroring the GRN arm. The operator
+confirms from the document — the mobile detail screen already offered
+`Confirm Invoice` (DRAFT -> SENT) and Cancel on a DRAFT, and the wizard already
+returned to the convert home screen for every target including the draft GRN, so
+no navigation assumed a sent invoice and nothing else had to move. Confirm stays
+the single AR/revenue-writing chokepoint, exactly as `/post` is for a GRN.
+
+**Test.** `frontend/src/mobile/mobileConvertDraftInvoice.test.tsx` drives the REAL
+wizard with only `authedFetch` faked and asserts the POSTED BODY, not the source
+text — a source assertion would pass on a flag some branch never reaches. Proven
+red first: on the pre-fix tree `postedBody().asDraft` was `undefined`.
+
+**Ref:** PR feat/owner-policy-rulings, 2026-08-20. Module guide:
+`docs/modules/sales-invoice.md` "THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE".
+## A delivery order marked "Loaded" could not be dispatched — it counted its own goods as already delivered [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 一张交货单一旦被标成「已装车 (Loaded)」，就再也按不出货了 —— 按下去只会跳
+错，说「这批货会送超过订单的数量」。其实超送的那一张，就是它自己：系统在算「这张订单
+已经送了多少」的时候，把这张还在车上的单也算成「送了」，然后再拿它自己去比，当然就超
+了。只要是整单一次送完，一定中招。
+
+后果比按不出货更麻烦：货其实还没从系统里扣掉（扣库存是在「已出车」那一刻才发生的），
+所以库存看起来比实际多，MRP 不会叫补货，同一批货还可能再卖一次。同事的自然反应是「取
+消这张，重开一张」—— 那正是以前造成同一张订单送两次 (DO-005) 的那条路。
+
+**已经查过生产资料：目前一张都没有卡住**（2026-08-20 的读取检查，两间公司都是 0）。
+所以这是趁还没出事先补起来，不是在救火。
+
+**Symptom.** A Delivery Order in `LOADED` refuses to move to `DISPATCHED` with
+409 `over_delivery` — *"This delivery would ship more than the Sales Order
+ordered — another DO already covers it."* There is no other DO. Reproduced in
+`doOverDeliveryUnlinkedRoute.test.ts`: one SO ordering 2, one LOADED DO carrying
+both, nothing else shipped.
+
+**Root cause (traced, not guessed).** `DO_PRESHIP_STATES` is `{DRAFT, LOADED}` —
+"no stock has left our hands yet" — and the confirm gate admits both
+(`delivery-orders-mfg.ts`, `SHIPPED_STATES.includes(toStatus) &&
+DO_PRESHIP_STATUSES.has(prevStatus)`). But every engine that sums what a Sales
+Order has already been delivered skipped only CANCELLED and DRAFT. So a LOADED
+DO's own lines were already inside the delivered sum, `remaining` came back as
+`ordered − own_qty`, and `findOverDeliveredSoItems` refused the moment
+`own_qty > ordered − own_qty` — i.e. whenever `2 × own_qty > ordered_qty`, which
+is every full delivery.
+
+It was written by hand in NINE places and every one of them spelled it the same
+wrong way:
+
+    lib/do-unlinked-coverage.ts   (linked sum, and the unlinked header read)
+    lib/so-delivery-sync.ts       (CONFIRMED -> DELIVERED)
+    lib/so-stock-allocation.ts    (the allocation job)
+    lib/do-line-remaining.ts      (the invoice/return candidate pool, twice)
+    routes/inventory.ts           (free-to-sell KPI)
+    routes/delivery-orders-mfg.ts (the "Delivered" display)
+    scripts/check-do-integrity.mjs (six SQL predicates)
+
+Two of those nine were found by the guard test written for this fix, not by
+reading — which is the argument for the guard test.
+
+`routes/unbilled-deliveries.ts` is the TELL. It consumes the same engine and had
+already added LOADED to its own list BY HAND, with a comment saying a LOADED DO
+is still on the lorry and billing it would be the bug. One consumer had it right,
+eight had it wrong, and nothing anywhere said so.
+
+**Business consequence, beyond the refusal.** The inventory OUT fires only on
+ENTRY to a shipped state, so while the DO is stuck the units never leave the
+books: stock on hand reads too high, MRP does not reorder, and the same units can
+be promised twice. The operator's natural workaround is cancel-and-re-raise —
+the exact path that minted the DO-005 duplicate delivery.
+
+**Is it live? PROVEN NO, today.** `check-do-integrity.mjs` R4/R4b, dispatched
+against production (run 32368212535, 2026-08-20T12:19Z): **0 delivery orders in
+LOADED, in either company, and 0 that the gate would refuse.** Nothing is stuck.
+That is not proof the state is unreachable — `delivery_orders.status` is
+`DEFAULT 'LOADED' NOT NULL` (`2990s-full-schema.sql:199`) while both create paths
+write DRAFT or DISPATCHED explicitly, so an import, a hand repair, or
+`PATCH /:id/status` (whose guard accepts every `DO_STATUSES` member) all reach
+it. A blind spot closed before it costs a dispatch rather than after.
+
+**Fix.** One home: `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES`
+(= `DO_PRESHIP_STATES` + CANCELLED) in `shared/do-shipped-states.ts`, plus the
+PostgREST literal `DO_NOT_DELIVERED_IN_LIST` and a `.mjs` mirror for the audits —
+all BUILT from the array, not typed beside it. Every site above now calls the
+predicate, including `unbilled-deliveries.ts`, which stops holding its own
+correct copy.
+
+`routes/delivery-planning.ts` deliberately keeps the two-state pair and says so
+in a comment: it asks "which DO is the LIVE one for this order" so a board write
+lands somewhere, not "has this DO shipped", and a LOADED delivery IS live.
+
+**What stops the tenth copy.** `tests/doDeliveredOneHome.test.ts` scans
+`backend/src/scm` and fails on a hand-typed CANCELLED/DRAFT pair whose
+surrounding window is about delivery orders — per MATCH, not per file, because
+the same pair on a sales-order or invoice status is correct and a checker that
+cries wolf is a checker nobody reads. It self-tests its own regexes first
+(a verdict computed over nothing must not read as a pass) and pins the single
+allowed exemption BY NAME, including the sentence that explains it.
+
+**Ref.** fix/do-loaded-preship-coverage, 2026-08-20. Same family as the
+2026-08-01 audit D5 leak guard, which made the rule consistent everywhere while
+the rule itself was still missing a state.
+## The phone re-implemented three Mail Center rules the desktop imports from a shared module [high]
+
+<!-- area: Mail, search, notifications -->
+
+**What staff saw.** Three separate complaints, one cause. "Reply all" on the
+phone answered ONE person on a mail that had copied four. Someone holding
+`finance@`, `hr@` and their own mailbox composed from `finance@` every time
+without noticing. And when the system's invoice email to a customer FAILED,
+nobody on the road could see it — they told the customer it had been sent.
+
+**One root cause, three symptoms: mobile re-implemented what desktop imports.**
+`frontend/src/mobile/MobileMailCenter.tsx` is the phone twin of
+`frontend/src/pages/MailCenter/`. Where desktop calls a shared module, mobile
+had written its own version of the same rule — and each copy was missing the
+half that had been fixed on desktop after the owner reported it.
+
+| | desktop | mobile, before |
+|---|---|---|
+| reply-all | posts `{ text, ...(replyAll ? { replyAll: true } : {}) }` (`Thread.tsx`) | posted `{ text, fromAddress }` — no `replyAll` key on any path |
+| compose From | `ownAlias \|\| pickDefaultFromAddress(activeAddresses, user)` (`Compose.tsx`, `mail-from-default.ts`) | `addresses[0]?.address` |
+| auto-sent log | "Auto-sent" folder over `fetchOutbox` / `fetchOutboxDetail` (`Inbox.tsx`, `mail-actions.ts`) | folder list was a fixed six entries; the folder did not exist |
+
+**Why each one is silent, which is what makes them expensive.**
+
+1. **Reply-all.** `backend/src/routes/mail-center.ts` rebuilds Cc from the
+   newest inbound message's To + Cc **only when it sees `replyAll`**. Without
+   the key `ccList` stays empty and the reply goes to the last inbound sender
+   alone. The button was on screen and did nothing different from "Reply".
+   This is the SAME bug the owner reported on 2026-08-03 (*"然后那些人回复我的
+   话，我要怎么回复他?"*) — it was fixed on desktop then, and mobile was never
+   part of that fix.
+2. **From default.** `GET /api/mail-center/addresses` is `ORDER BY address ASC`,
+   so `addresses[0]` is the **alphabetically** first mailbox, never a personal
+   one. `mail-from-default.ts` exists precisely so both surfaces share the real
+   rule (assignedUserId → exact login email → local-part); its own header says
+   so. Mobile never imported it.
+3. **Alias-only members could not send at all.** Desktop splices
+   `users.email_alias` into the From list as "My email". `getMailScope` builds
+   `addresses` only from `email_addresses` rows, so a member whose only sending
+   identity is their alias gets `[]` — the backend's `canSendFrom` would have
+   accepted the alias, but the phone never offered it and dead-ended on "Choose
+   a mailbox to send from."
+
+**The fix.** Mobile now imports the same modules desktop does — no logic was
+re-derived. `replyAll` is threaded from the thread footer through `MailReply` as
+a REQUIRED prop, and `defaultFrom` is a REQUIRED prop on `MailCompose`: an
+optional one would let a caller silently fall back to `addresses[0]`, which is
+the defect. Backend untouched — all three were client-side payload/UI.
+
+**Why CI never caught any of it.** `MobileMailCenter.test.tsx` covered
+pagination and search only. Nothing exercised compose, reply, the From default
+or the outbox, so there was no assertion to go red. Eight tests now cover them,
+each proven failing against the unfixed tree first: reply-all posted
+`undefined` where `true` was expected, the From default resolved
+`finance@houzs.test` instead of `zoe@houzs.test`, the alias-only member's picker
+held only a blank "No mailbox available" option, and "Auto-sent" was not a
+button on the screen.
+
+**Ref.** PR #2556 (2026-08-20), branch `fix/mobile-mail-parity`.
+
+## One rule, two homes, no referee — the class the owner named, and the audit script that now looks for it [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**The ask (owner, 2026-08-18).** *"同一条规则两个家 —— 又是今天那个形状 … 那这一个要
+统一一下吧。然后系统也是要查看这些类型的问题，要统一掉."* Unify the instances, and
+make the system check for the class.
+
+**The shape.** One business question, answered independently in more than one
+place. Nobody is careless: the second copy gets written because the first was in
+the wrong layer to reach, or because a new path was added by somebody who did not
+know the rule existed. Then it drifts, and the failure is always the same — the
+rule is enforced at N-1 of N places and the missing one is invisible, because
+nothing errors. Four instances in three days: the both-dates-or-neither rule in
+FIVE files with the CO header PATCH carrying no copy at all; the unlinked-line
+money guard on the INSERT path of five chains and the EDIT path of none (#2374);
+the typographic-quote normaliser added to the pricing engine and never to the
+allowed-options gate (#2379); the stock-readiness label built twice, so one
+screen printed a retired label as a group header over rows using the corrected
+one.
+
+**What now exists.** `backend/scripts/check-duplicated-decisions.mjs`, wired as
+`audit:duplicated-decisions` into the REQUIRED `backend-typecheck` job. Three
+detectors:
+
+- **D1** fingerprints every string-literal array (this covers `new Set([...])`,
+  `as const` tuples and inline PostgREST `.in('status', [...])` filters) and
+  every named enum-keyed constant map, and reports a fingerprint carried by two
+  or more FILES. This is the class `check-shared-mirrors.mjs` declares itself
+  blind to at its own lines 32-35 — a rule re-implemented under a different
+  filename. **130 groups on main** (re-measured 2026-08-20; it was 124 when this was written).
+- **D2** compares those fingerprints pairwise and reports NEAR MISSES (Jaccard
+  ≥ 0.75, not identical) with the exact differing members. This is what sees a
+  rule enforced at N-1 of N. **96 pairs on main**, among them the three live
+  answers to "which SO statuses are done" — FOUR and FIVE as two constants with
+  the SAME NAME and different contents inside `routes/inventory.ts`, and SIX in
+  `shared/so-terminal-states.ts`.
+- **D3** asserts a configured guard symbol appears inside the BALANCED-BRACE
+  slice of each sibling route handler. The slice is the point: a file-level grep
+  passes while the guard sits in a neighbouring handler, which is the
+  INSERT-guarded / EDIT-unguarded shape behind #2374. It is the only one of the
+  three that catches an ABSENCE.
+
+**A REVIEWED ALLOWLIST, not a meaning detector** — the mechanism
+`check-empty-state-claims.mjs` already uses. 226 entries, each with a reason a
+person wrote; a NEW hit fails until somebody decides about it; a stale entry
+prints and never fails, because a gate that punishes the fix is a gate that
+stops fixes. Pre-existing hits pass, so nobody is failed for a duplicate they did
+not write. **The seeding pass IS the census the owner asked for**, and it is the
+deliverable rather than a side effect.
+
+**What it found while being built.**
+
+- `soMainMixIntroduced` guards BOTH the add and the edit path of a sales order
+  and NEITHER path of a consignment order, while `ConsignmentOrderNew.tsx`
+  enforces the same rule client-side via `hasSofaMixConflict` — which exists
+  only in the vendored frontend `so-variant-rule.ts` and has no backend
+  counterpart. So the sofa-mix rule is enforced at the form and nowhere behind
+  it. Recorded as a dated question, not fixed: whether a consignment order may
+  mix a sofa with a bedframe is the owner's call.
+- `EXPLICIT_APPROVAL_KEYS` (the permission keys a `*` wildcard must NOT satisfy)
+  and the Assistant's known/denied position lists are unrefereed cross-tree
+  twins whose frontend copies call themselves mirrors. Recorded; each is the
+  same twenty-line pin as the password pair.
+- The **common-password check in `passwordStrength.ts` is unreachable.** The
+  four character-class gates run first, so anything reaching the dictionary is
+  ≥12 chars with an uppercase, a lowercase, a digit and a symbol; of the ~290
+  entries the only one with a symbol is 8 characters and the only two of 12+
+  characters carry neither a digit nor a symbol. Found by the drift test's own
+  vacuity guard, which demanded every refusal message and could not produce the
+  seventh. Recorded and pinned, not fixed — changing it is a password-policy
+  decision.
+
+**`check-shared-mirrors.mjs` widened, and a defect in it fixed.** It read
+`backend/src/scm/shared` alone while the frontend vendors from `vendor/shared`
+AND `vendor/scm/lib`, so every `scm/lib` pair was invisible to the one check
+whose whole job is this class. Walking both directories took it from 48 modules
+to 226 — and the first new pair exposed a bug in the extractor: for any function
+whose RETURN TYPE contains a brace (`rulesByCategory(): Array<{ … }>`) it sliced
+the type annotation instead of the body. That can report DIVERGED over two
+spellings of a type alias, and — the dangerous direction — COSMETIC over two
+genuinely different bodies under one identical annotation. Fixed, with a
+self-test probe for the braced-return-type form. Baseline before: rc=0, 0
+DIVERGED, 12 COSMETIC, 8 IDENTICAL. After: rc=0, 0 DIVERGED, 13 COSMETIC, 8
+IDENTICAL, 2 NO-OVERLAP (`costing-enabled` and `slip` — filename collisions,
+read by hand, not copies).
+
+**What the FIRST HONEST RUN found, after `main` moved under it (2026-08-20).**
+The gate went red on 25 findings. Two were real and are FIXED here; the rest were
+the allowlist rotting, and one was this PR pinning a rule `main` has since
+reversed.
+
+- **Two lock-label maps re-typed beside the rulebook that exports them.**
+  `document-policy.ts` calls itself "the single source" for which header columns
+  freeze once a document has a live child, and both `grn-inherited-lock.ts` and
+  `po-identity-lock.ts` already import their COLUMN set from it — then declare
+  their own local `label` map of the human names for those same columns. Add a
+  column to the rulebook and the refusal message reads "cost allocation method"
+  in the PCO's 409 and a raw `allocation_method` in the GRN's. Latent today
+  because the copies still agree; the N-1-of-N shape exactly. Both now read
+  `GRN_LOCK_LABELS` / `PO_LOCK_LABELS` from the rulebook, and D1 stopped
+  reporting them, which is the detector confirming its own finding.
+- **Sixteen allowlist keys rotted on the `_centi` -> `_sen` money rename.** The
+  key is the fingerprint's VALUES, so renaming 251 columns re-spelled every
+  money-shaped entry and 16 recorded decisions read as brand-new findings while
+  their originals read as stale. Re-keyed with the reason preserved, and the ten
+  `why` texts that still named `deposit_centi` corrected too — a reason that
+  cites a column which no longer exists is the same rot one layer up.
+- **PIN 4 pinned the losing side of a ruling.** It asserted `computeVariantKey`
+  must NEVER fold typographic inch marks. #2430 shipped exactly that fold on
+  2026-08-18 and gave its reason: a curly `12"` priced correctly and then
+  allocated to a bucket nothing could match, so the same physical item never
+  pooled. The assertion is flipped and annotated, never deleted, plus a
+  non-vacuity test proving the two keys are equal by FOLDING rather than by both
+  collapsing to empty.
+
+**One finding is NOT resolved and is the owner's**, recorded in the allowlist as
+open rather than decided: the consignment order's identity lock still freezes
+`salesperson_id`, and the Sales Order's stopped (owner 2026-08-17 — a DO or SI
+snapshots the customer, the addresses and the money, never who sold it, and
+freezing it stranded a resigning salesperson's delivered orders where the
+replacement could not even see them). Whether that ruling extends to consignment
+orders is a business judgement, so it is raised, not guessed.
+
+**The pins, for rules that must keep two homes.**
+`backend/tests/duplicatedDecisionPins.test.ts` and
+`backend/tests/passwordStrengthDrift.test.ts` feed ONE corpus through BOTH
+implementations and compare. The password pair is imported on both sides and run
+over 26 cases; the crew-scope predicate likewise over 18 (position, permissions)
+pairs. The SO "done" disagreement is pinned at exact membership for all three
+spellings and fails if a FOURTH appears — the count cannot quietly grow while
+the owner's ruling on DRAFT and SHIPPED is outstanding. `so-terminal-states.ts`
+and `inventory.ts` both already say in prose that this must not be merged
+without that ruling; the test is what makes saying it enough. The PO receivable
+threshold (`['SUBMITTED','PARTIALLY_RECEIVED']` at four homes) is TWO members,
+below the detector's floor and invisible to it — pinned by test instead, which
+is the honest division of labour between the two mechanisms.
+
+**One behaviour fix.** The desktop projects filter bar decided "is this user
+force-scoped crew" with `/\bhelper\b/i || /storekeeper/i` and no permission
+escape, while the server matches the EXACT position name against a three-entry
+set and exempts anyone holding `*` or `projects.write`
+(`services/projectGates.ts:30-45`, whose own comment forbids substring matching
+because position names are owner-editable free text). Two consequences, neither
+of which errors: an owner-created position like "Warehouse Helper" caged the UI —
+slimmed filter bar, "You see your own events" — while the server returned
+everything; and an admin holding the Storekeeper position lost controls the
+server would have allowed, because `permissions.includes("*")` fed only
+`_isDirector`, which gates `_isSalesExec` and not the crew arm. The predicate now
+lives in `frontend/src/auth/crewScope.ts`, exact-match plus escape, and the pin
+runs both copies over one corpus. `MobilePMS.tsx`'s `_isCrew` is deliberately
+NOT changed: it folds drivers in, so it answers the filter-bar cohort question,
+not this one.
+
+**What the gate cannot catch, stated in its own header so a green run is not
+over-read.** (1) A semantic duplicate whose copies share no literal — the
+total-height family (divan + leg + gap, sixteen surfaces) shares every literal
+and every regex and diverges only in CONTROL FLOW, so D1 and D2 call those copies
+identical. (2) A rule expressed once in TypeScript and once in SQL. (3) Whether a
+flagged pair is even the same QUESTION — `hr-commission.ts`'s
+`COMMISSION_EXCLUDED_STATUSES` has the same three members as the SO deliverable
+threshold and is a different question; that judgement is what the allowlist
+`why` field exists to record. (4) Anything assembled at runtime, and anything
+below the three-member floor. Test files are not scanned, deliberately: a test
+that pins a set's membership is the REMEDY for this class.
+
+**Proved not vacuous, ten times.** A violation was planted for each mechanism,
+watched fail, removed, and watched pass: D1 (a fourth home for
+`DRAFT/CANCELLED/ON_HOLD` → rc 1, and it re-opened the already-reviewed group by
+naming the NEW home); D2 (a set one member off → rc 1, naming the differing
+member); D3 (the guard deleted from ONE of the two guarded handlers in
+`mfg-sales-orders.ts` → rc 1, while the symbol was still present twice elsewhere
+in the same file, which a grep would have passed); the mirror widening (the same
+planted `scm/lib` divergence is rc=0 with ZERO mentions on `origin/main`'s
+checker and rc=1 DIVERGED on the widened one); and each of the six pins. The new
+script's own startup self-test also fired twice for real during development,
+refusing to report a number: once because the array parser dropped a member
+carrying an escaped quote, and once because it dropped `["12'", …]` entirely —
+the other quote character inside a literal defeated the regex, and a dropped
+array is a duplicate the gate would then swear does not exist.
+## Converting a Sales Order on the PHONE shipped the goods on the spot [critical]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 手机上把销售单转成送货单，货就直接出了 —— 库存立刻扣、销售单直接变成
+「已送达」、客户还收到邮件。中间没有任何复核，也没有撤销。桌面版不是这样：桌面只
+是个选行的画面，选完跳到新增送货单表单，那边有「存为草稿」的开关。同一个精灵里的
+收货 (GRN) 那一支早就写了 `asDraft: true`，还留了注解说不要自动过账库存 —— 送货单
+这一支单纯漏掉了。改法：送货单也送 `asDraft: true`，落成草稿，由人确认后才出货。
+
+**Symptom.** `MobileConvertWizard` with `target="do"` posted
+`POST /delivery-orders-mfg/from-sos` with `{ picks }` and nothing else. One tap
+on a phone — commonly in a customer's driveway — and the stock was out, the
+Sales Order was advanced to delivered, and the customer delivery email was sent.
+There was no review step between picking the lines and the goods leaving the
+building, and no undo: reversing it means cancelling the DO, which is the path
+whose own reversal defect is recorded two entries below (DO-2607-005).
+
+**Root cause (traced).** `from-sos` is born SHIPPED unless the caller opts out.
+In `createDoFromSoLinesHandler`
+(`backend/src/scm/routes/delivery-orders-mfg.ts`):
+
+    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+
+and the same flag gates the entire write half —
+`if (body.asDraft !== true) { deductInventoryForDo(...);
+syncSoDeliveredFromDo(...); maybeSendDeliveryOrderEmail(...) }`. So OMITTING the
+field is not "leave it to the server", it is an affirmative "ship it now". The
+mobile DO arm omitted it.
+
+This was never a form-factor decision, and the proof is in the same file: the
+wizard's GRN arm deliberately does NOT use the auto-posting `/grns/from-pos`
+endpoint, and posts `asDraft: true` to the generic create instead, with a
+comment reasoning explicitly about not auto-posting stock and about the operator
+posting from the receipt. Desktop never had the shortcut at all —
+`DeliveryOrderFromSo.tsx` is only a line picker that navigates into
+`DeliveryOrderNewV2.tsx`, which carries a "Save as draft" toggle and sends
+`asDraft`. Three of the four surfaces agreed; the mobile DO arm was the outlier.
+
+**Fix.** The DO arm sends `asDraft: true`, mirroring the GRN arm in the same
+file: the phone CREATES the document, a human CONFIRMS it, and that confirm
+(`PATCH /:id/status`) is the single stock-writing chokepoint. The button label
+follows the behaviour — "Create draft Delivery Order", the wording the GRN arm
+already uses — because a CTA promising a Delivery Order while parking one is the
+same misstatement pointed the other way. The short-stock pre-flight is
+deliberately left running on the draft: it is not gated on `asDraft` server-side,
+and it also resolves the incoming-PO commitments, so the "Ship anyway?" decision
+is still taken once, by the operator who picked the lines.
+
+Pinned by `frontend/src/mobile/mobileConvertWizardDraft.test.tsx`, whose fake
+server is that ternary in miniature and counts stock movements rather than the
+flag. Verified RED on the unfixed tree (`expected 'DISPATCHED' to be 'DRAFT'`).
+
+**Surface change** — the mobile SO→DO convert now lands a DRAFT and the CTA says
+so; `docs/modules/delivery-order.md` updated in the same PR.
+
+**Ref.** fix/stock-movement-parity, 2026-08-20.
+
+## Desktop bulk "Convert to DO" carried no Idempotency-Key while mobile's identical call did [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 桌面「送货规划」板上的「转成送货单」，同一个 API、同一个扣库存后果，手机
+那边有防重复的钥匙 (Idempotency-Key)，桌面这边没有 —— 而桌面才是那个一次可以框选
+四张单批量转的画面。补上钥匙，并且钥匙是「每张销售单一把」，不是「每次开画面一把」。
+
+**Symptom.** `useConvertSosToDo` (`delivery-planning-queries.ts`) posted
+`/delivery-orders-mfg/from-sos` as a bare
+`{ method: 'POST', body: JSON.stringify({ picks }) }`. The idempotency
+middleware is OPT-IN (`backend/src/middleware/idempotency.ts`) — a pure
+pass-through unless the client sends the header — so this call had none of it,
+while the mobile board's identical call (`MobileDeliveryPlanning.tsx`) did. The
+desktop call is fired from BOTH a single-row action and a bulk bar that converts
+four SOs at a time (`DeliveryPlanning.tsx`).
+
+**HONEST SCOPE — this was depth, not an open double-ship.** Stated plainly
+because the audit that raised it framed it as an unguarded double-deduction, and
+that overstates what the tree does. Three defences already existed and were read
+before changing anything:
+
+1. the client disables the button on `convertSos.isPending` and `runConvert`
+   returns early while pending, so a literal double-click is largely absorbed;
+2. Phase B's `over_remaining` check refuses a SEQUENTIAL duplicate outright;
+3. **Edge #E** re-derives remaining AFTER inserting the DO lines and rolls the
+   document back with 409 `race_conflict` when any line has gone negative — and
+   it runs BEFORE `deductInventoryForDo`, so the concurrent read-then-write race
+   does not reach the stock ledger.
+
+No scenario was found in this tree where the missing header alone deducts stock
+twice, and none is claimed. What the key adds is a decision the CLIENT can make:
+under Edge #E a true tie rolls BOTH inserts back, so two racing clicks can
+convert NOTHING and report `race_conflict`; with a key the retry REPLAYS the
+first DO instead of racing for a rollback. That, plus removing a mobile/desktop
+divergence on a stock-writing call, is the whole of the justification.
+
+**Root cause (traced).** The idempotency module was introduced for money-
+mutating writes and rolled out call site by call site; this one was simply never
+visited. Its own header states the scope it should have caught — "MINTS A SOURCE
+DOCUMENT money hangs off" — and a DO is exactly that.
+
+**Fix.** `useConvertSosToDo` mints keys through the existing
+`newIdempotencyKey` / `idempotentInit` helpers — no second scheme — held in a
+ref `Map` keyed by SO **doc_no**.
+
+Per-ORDER, not per-mount, and that is mobile's own instruction rather than a
+variation on it. `MobileDeliveryPlanning`'s key is per-mount only because
+StopDetail sits behind an early return, so a mount is exactly one stop; its
+comment says "If that early return is ever replaced ... this key MUST move onto
+the order identity". The desktop board IS that case — one mount, many SOs — so a
+copied per-mount key would post SO #2 under SO #1's claim with a different
+payload, be answered `idempotency_key_reused`, and break bulk convert by
+converting the first order and failing the rest. A test pins that specifically.
+
+Keys are never rotated for the life of the mount, per the module's rule that a
+key is retired by the INTENT ending and not by the write succeeding: the two
+halves of a double-fire must find the SAME key. A genuine later re-convert of the
+same SO (its DO cancelled, remaining restored) carries a different payload and is
+refused rather than silently replayed — the safe direction, and a board refresh
+mints fresh keys.
+
+Pinned by `frontend/src/vendor/scm/lib/delivery-planning-idempotency.test.tsx`.
+Verified RED on the unfixed tree (two concurrent converts created 2 DOs; a retry
+created a second; all keys were `undefined`).
+
+**No surface change** — no new route, permission, status or required field; the
+board behaves identically for every non-duplicate conversion.
+
+**Ref.** fix/stock-movement-parity, 2026-08-20.
 
 ## BUG CLASS - unscoped-query-by-omission: forgetting the company predicate and choosing to omit it are the same text [high]
 

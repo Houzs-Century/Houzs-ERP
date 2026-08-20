@@ -121,6 +121,13 @@ key off the older `is_showroom` flag and will migrate to `type` incrementally:
   `is_showroom = true`.
 - **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
   rows into the balances read so consignment/showroom stock stays visible.
+- **Free-to-sell** (`inventory.ts`, `deliveredReturnedBySoItem`) subtracts a
+  Sales Order line's delivered qty, and only counts a DO whose status is NOT in
+  `DO_NOT_DELIVERED_STATES`. **That set gained LOADED on 2026-08-20** — a
+  delivery still on the lorry was taking its units OUT of Reserved before any
+  stock had moved, which inflates free-to-sell towards over-sell. One predicate
+  now (`doCountsAsDelivered`); the trace is in `docs/modules/delivery-order.md`
+  under *"Has this delivery counted?" is ONE predicate now*.
 - **FIFO lot feeds carry the consignment verdict on the ROW** (2026-08-20).
   `GET /inventory/lots/:itemCode` now stamps `is_consignment` on every lot, the
   way `GET /inventory/reservations` already did, from the one classifier

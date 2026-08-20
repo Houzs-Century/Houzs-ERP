@@ -10,11 +10,17 @@
 // deposit shortfall; it just never reported more than one at a time. This
 // re-expresses the gates the routes already compute as a flat problem list.
 //
-// PRESENTATION ONLY. It changes NOTHING about what counts as valid: the same
-// category-mandatory variant axes (so-variant-rule), the same deposit threshold
-// (order-rules — per company since 2026-07-31: Houzs 30%, 2990 50%), the same
-// past-date / processing-≤-delivery date
-// rules. It only aggregates + names them. Pure — no I/O, no DB, no Hono.
+// PRESENTATION ONLY, with ONE exception recorded below. It changes nothing
+// about what counts as valid: the same category-mandatory variant axes
+// (so-variant-rule), the same past-date / processing-≤-delivery date rules. It
+// only aggregates + names them. Pure — no I/O, no DB, no Hono.
+//
+// THE EXCEPTION: the deposit is no longer a condition of the Processing-Date
+// gate at all (owner ruling 2026-08-20, 「以电脑为准 —— 两边都不查」). That is a
+// rule change, not a presentation change, and it is stated at step 2 of
+// collectProcessingGateProblems. The deposit still has words here — the PROCEED
+// refusal at the bottom of this file renders them — but the save gate has no
+// money condition to report.
 //
 // SINCE 2026-08-18 it also builds the PROCEED refusal (collectProceedGateProblems
 // / proceedGateUnmetBody, at the bottom of this file). Same reason, same shape:
@@ -166,14 +172,12 @@ export type ProcessingGateFacts = {
    *  when procDate is null, and clearing the date never blocks), so editing
    *  e.g. a remark on an old KIV order still works. */
   kivOffenders?: readonly ColourKivOffenderLike[];
-  /** Deposit-vs-total for the 30% gate, SAME unit on both sides (centi on the
-   *  server). Omit / null when the gate doesn't apply on this path (the
-   *  consignment mirror has no deposit gate). The shortfall is reported only
-   *  when a processing date is actually being set. */
-  deposit?: { paidSen: number; totalSen: number } | null;
-  /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
-   *  falls back to the looser 30%; see processingDateThresholdFor. */
-  companyCode?: string | null;
+  /* NO `deposit`, AND NO `companyCode` — owner ruling 2026-08-20, 「以电脑为准
+     —— 两边都不查」. The money condition used to live here and it is GONE, not
+     merely unfed: see "THE DEPOSIT IS NOT A CONDITION OF THIS GATE" in the
+     collector below for why the field was deleted rather than left accepted-and-
+     ignored. `companyCode` went with it — it existed only to pick the deposit
+     fraction (processingDateThresholdFor), and nothing else here reads it. */
   /** Customer / delivery completeness, for the UNIFIED gate (owner 2026-07-31:
    *  Processing Date IS Proceed, one rule). These were required to Proceed but
    *  NOT to set a Processing Date; now both ask the same question. Email is
@@ -190,10 +194,13 @@ export type ProcessingGateFacts = {
 
 /** Every reason THIS save fails its Processing-Date gates, in the order the
  *  operator reads them: the concrete line+axis variant gaps first, then the
- *  money gate, then the date rules. [] = the save clears every gate.
+ *  customer/delivery completeness, then the date rules. [] = the save clears
+ *  every gate.
  *
- *  Each gate here is the SAME predicate the routes used to `return` on — see the
- *  per-branch comments. Nothing new is rejected; failures are just collected. */
+ *  There is no money step. Step 2 is where the deposit condition WAS, and it
+ *  states the owner's 2026-08-20 ruling that removed it — kept as a numbered
+ *  step so the next reader learns the gate lost a condition on purpose rather
+ *  than wondering why the list jumps from 1c to 3. */
 export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveProblem[] {
   const out: SaveProblem[] = [];
 
@@ -254,16 +261,38 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
     if (!facts.delivDate) out.push(completenessProblem('delivery_date', 'processing_date'));
   }
 
-  // 2. Deposit — a Processing Date releases the order to purchasing to go and
-  //    order the goods, so it can't be set until >=30% is collected. Reported with the concrete
-  //    amount + threshold. The SAME predicate the Proceed gate weighs
-  //    (meetsDepositGate) — one deposit rule, since setting the date IS
-  //    proceeding. Only fires when a date is actually being set.
-  if (facts.deposit && facts.procDate) {
-    const { paidSen, totalSen } = facts.deposit;
-    const shortfall = depositProblem(paidSen, totalSen, facts.companyCode, 'processing_date');
-    if (shortfall) out.push(shortfall);
-  }
+  /* 2. THE DEPOSIT IS NOT A CONDITION OF THIS GATE — owner ruling, 2026-08-20.
+     ────────────────────────────────────────────────────────────────────────
+     His words: 「以电脑为准 —— 两边都不查」. The desktop is the standard, and
+     NEITHER surface checks the money any more.
+
+     This step used to weigh the company's deposit fraction (Houzs 30%, 2990
+     50%) and refuse `processing_date_unpaid`. What that produced in practice
+     was a rule that depended on WHICH SCREEN you were on rather than on the
+     order: the desktop New-SO screen sent a bare `manualEntry: true` on every
+     create and had the condition dropped for it, the phone sent nothing and was
+     refused the identical order, and the header-edit path waived nothing at all
+     — so a desktop-created RM 0 order saved on Monday and was refused on its
+     first edit on Tuesday, with no hint why.
+
+     DELETED, NOT DISABLED, and the difference is the point. Leaving
+     `ProcessingGateFacts.deposit` in place with nobody feeding it would leave a
+     live-looking money gate and three callers passing null — the exact shape a
+     future edit "restores" by accident. The condition is removed HERE, where it
+     was decided, so both surfaces get the same answer from one place and a
+     reader can see it was a decision rather than an omission.
+
+     WHAT IS DELIBERATELY UNCHANGED. The other four conditions below and above
+     still refuse: an order with no customer, no address line 1, no postcode or
+     no delivery date still cannot carry a Processing Date. The owner removed
+     the money condition, not the releasable-order conditions — purchasing
+     ordering goods for an address nobody has is a different failure.
+
+     `depositProblem` above is still live: `collectProceedGateProblems` renders
+     it for the proceed refusal. That path is an ORPHAN (soProceedGateBlocked
+     has had no callers since 2026-08-18) so it refuses nothing today, and it is
+     out of this ruling's scope — but it IS the trap for whoever wires a future
+     proceed path, and it is flagged in docs/modules/sales-order.md. */
 
   // 3. Date rules. A freshly-typed / moved past date is rejected; an unchanged
   //    already-past date is grandfathered (proc/deliv !== their originals).
