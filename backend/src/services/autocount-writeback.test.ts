@@ -62,7 +62,7 @@ const header: ErpSoHeader = {
   venue: 'KSL CITY MALL', address1: 'A1', address2: 'A2', address3: null, address4: null,
   city: null, postcode: null, customer_state: null,
   phone: '0123', emergency_contact_phone: null,
-  ref: 'REF', po_doc_no: 'CUST-PO-7', customer_po: null, customer_so_no: null,
+  ref: 'REF', customer_so_no: 'CUST-PO-7',
 };
 
 const line = (over: Partial<ErpLine> = {}): ErpLine => ({
@@ -179,7 +179,7 @@ describe('composeCreateSo', () => {
 
   test('a blank UDF is dropped, not sent as an empty option', () => {
     const p = createSo(
-      { ...header, branding: null, venue: null, po_doc_no: null, customer_po: null, customer_so_no: null },
+      { ...header, branding: null, venue: null, customer_so_no: null },
       [line()], SALESPERSON, opts,
     );
     expect(p.UDF).toEqual({});
@@ -623,28 +623,27 @@ describe('BRANDING — the header column is empty on every ERP-created order (fi
   });
 });
 
-describe('ToPONo — the composer read a column PR #140 stopped writing (finding 7)', () => {
-  /* No Houzs surface writes po_doc_no or customer_po since PR #140 dropped the
-     Customer PO card; the operator's reference lands in customer_so_no, which
-     SO_HEADER_COLS did not even select. */
-  test('falls through to customer_po and then to customer_so_no', () => {
+describe('ToPONo — the customer reference now lives only in customer_so_no', () => {
+  /* po_doc_no and customer_po held it once; both were 0%-filled and DROPPED from
+     scm.mfg_sales_orders by migration 0310. The operator's reference lands in
+     customer_so_no, which is the only column SO_HEADER_COLS still selects. */
+  test('reads the customer reference from customer_so_no', () => {
     const at = (over: Partial<ErpSoHeader>) =>
-      createSo({ ...header, po_doc_no: null, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
-    expect(at({ customer_po: 'CP-1', customer_so_no: 'CSO-1' })).toBe('CP-1');
-    expect(at({ customer_po: null, customer_so_no: 'CSO-1' })).toBe('CSO-1');
-    expect(at({ customer_po: null, customer_so_no: null })).toBeUndefined();
+      createSo({ ...header, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
+    expect(at({ customer_so_no: 'CSO-1' })).toBe('CSO-1');
+    expect(at({ customer_so_no: null })).toBeUndefined();
   });
 
-  test('a cutover-imported order keeps AutoCount"s own text', () => {
-    expect(soCustomerRef({ po_doc_no: 'PO-OLD', customer_po: 'CP', customer_so_no: 'CSO' }))
-      .toBe('PO-OLD');
+  test('soCustomerRef resolves to customer_so_no', () => {
+    expect(soCustomerRef({ customer_so_no: 'CSO' })).toBe('CSO');
+    expect(soCustomerRef({ customer_so_no: null })).toBeNull();
   });
 
   /* `ref` goes out as the document's Ref. Sending it here too would put the
      same string in two AutoCount fields. */
   test('the document Ref is NOT reused as the customer reference', () => {
     const p = createSo(
-      { ...header, po_doc_no: null, customer_po: null, customer_so_no: null, ref: 'REF' },
+      { ...header, customer_so_no: null, ref: 'REF' },
       [line()], SALESPERSON, opts,
     );
     expect(p.Ref).toBe('REF');

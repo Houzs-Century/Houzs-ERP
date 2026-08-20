@@ -329,10 +329,10 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    ERP-created order: address3 and address4 were written ONLY by the cutover
    import, so without these three the AutoCount document carried the street
    lines and nothing else (soInvoiceAddress packs the five into four).
-   customer_po / customer_so_no are the other two columns that have held the
-   customer's own reference — PR #140 left `customer_so_no` as the only one any
-   surface still writes, so reading po_doc_no alone sent ToPONo nowhere
-   (soCustomerRef). */
+   customer_so_no is the customer's own reference; po_doc_no / customer_po were
+   the other two columns that once held it, both 0%-filled and DROPPED from
+   scm.mfg_sales_orders by migration 0310 — `customer_so_no` is the only one any
+   surface still writes, and it is what ToPONo reads (soCustomerRef). */
 /* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
    Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
    the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
@@ -345,7 +345,7 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    the gross total on every edit, and it is the column the cutover's UDF_BALANCE
    landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
