@@ -44,9 +44,12 @@ describe('SO total floor removed', () => {
     /* 2026-08-19 — the route no longer spells `!posTablet` inline: both line
        writes ask `erpLineTrust`, which owns the negation (mfg-pricing-recompute).
        The invariant is unchanged and the assertion follows it to its new home —
-       every call must still HAND it the POS flag, or the withholding is gone. */
+       every call must still HAND it the POS flag, or the withholding is gone.
+       2026-08-20 — SO CREATE joined them as the THIRD caller. It used to compute
+       one boolean for the whole request and so never read a line's zero-price
+       claim; see zeroPriceCreatePath.test.ts. */
     const calls = SO.match(/erpLineTrust\([A-Za-z]*[Pp]osTablet\b/g) ?? [];
-    expect(calls.length, 'a line write stopped passing the POS flag').toBe(2);
+    expect(calls.length, 'a line-pricing path stopped passing the POS flag').toBe(3);
     expect(RECOMPUTE_SRC).toMatch(/!posTablet/);
   });
 

@@ -2879,6 +2879,45 @@ on one click and silently replaced on another. The amendment path has no
 `zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
 the split above rather than joining this table.
 
+**SO CREATE joined the same table on 2026-08-20, and until then it was not in it
+at all.** `erpLineTrust` was wired into the two LINE writes only; create computed
+one boolean for the whole request (`!(await isPosTabletCaller(c))`) and handed
+the same value to every line's recompute, so `zeroPriceIntended` was never read
+there. A line staff marked FREE on a NEW order was therefore silently re-priced
+to the catalogue figure on **both** surfaces, and the customer was invoiced for
+it; editing the line afterwards fixed it only at the desk.
+
+| | new SO line at RM 0 | existing SO line edited to RM 0 |
+|---|---|---|
+| desktop, before | reverted to catalogue | 0 sticks |
+| mobile, before | reverted to catalogue | reverted to catalogue |
+| both, now | 0 sticks when the operator typed it | 0 sticks |
+
+**The claim is now made from ONE place, and its second argument is the safety.**
+`frontend/src/vendor/scm/lib/zeroPriceClaim.ts` — `zeroPriceClaim(unitPriceSen,
+authored)` — replaces the arrow that lived inside `SalesOrderDetail.tsx` and was
+therefore unavailable to create and to the whole of mobile. `authored` is
+REQUIRED and has no default:
+
+- **true** — the operator typed into the price box on this line, OR the line
+  already exists and its 0 is its PERSISTED price being carried through an edit
+  (a qty-only edit re-sends the price, so withholding the claim there would
+  re-price a free line). A line seeded from a persisted row — desktop
+  copy-to-new-SO, mobile edit-prefill — is authored by construction; the mobile
+  edit-DRAFT road re-CREATES the order, so without that seed a free line would go
+  back to the catalogue.
+- **false** — the client could not resolve a price. An unpriced catalogue SKU,
+  and every sofa build (the server prices those from the Model's module SKUs at
+  save), reaches the wire at 0. **Claiming those would persist RM 0 instead of
+  pricing them**, which is a far worse defect than the one this closes — the
+  trust arm wins over the server's own module arithmetic. That is why a blanket
+  "claim every 0" is wrong and why the signal is threaded from the price INPUT
+  (`priceAuthored`, client-only, never persisted) rather than inferred.
+
+Pinned by `backend/tests/zeroPriceCreatePath.test.ts` (the wiring plus what the
+helper answers) and `frontend/src/vendor/scm/lib/zeroPriceClaimWiring.test.ts`
+(which surface makes which claim, and with which fact).
+
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after
 `hasHouzsPerm(c, approveKey)` and the transition check. With `approval === null`

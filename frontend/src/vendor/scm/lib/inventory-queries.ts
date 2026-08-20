@@ -189,6 +189,12 @@ export type InventoryLot = {
   received_at: string;
   source_doc_type: string | null;
   source_doc_no: string | null;
+  /* Server-stamped consignment verdict (scm/routes/inventory.ts), derived from
+     the lot's SOURCE by the one classifier isConsignmentLotSource — never from
+     the warehouse's own is_consignment flag, which a mis-posted PC Receive
+     defeats. Optional only for a cached payload that predates the stamp; a
+     consumer must treat "absent" as unknown, not as owned. */
+  is_consignment?: boolean;
 };
 
 export type CogsEntry = {
@@ -456,9 +462,24 @@ export type InventoryReservation = {
    totals with consignment excluded from value (owner rule: show consignment
    quantity, keep it out of inventory value). FIFO order (oldest received first)
    is preserved as the backend returns it. Null-safe throughout. */
-export type StockBreakdown = {
-  ownedLots: InventoryReservation[];
-  consignmentLots: InventoryReservation[];
+/* The MINIMUM a row must carry to be split and valued. Structural on purpose:
+   the SAME transform now serves two different lot feeds — /inventory/reservations
+   (InventoryReservation, richer) and /inventory/lots/:itemCode (InventoryLot,
+   the FIFO drilldown the desktop Stock Card reads). Both carry the qty, the unit
+   cost and the server-stamped consignment verdict, which is all this needs; the
+   generic keeps each caller its own row type on the way out. Adding a THIRD
+   filter for the second feed is what produced the defect this closes. */
+export type StockLotLike = {
+  qty_remaining: number;
+  unit_cost_sen: number;
+  is_consignment?: boolean;
+  assigned_qty?: number;
+  free_qty?: number;
+};
+
+export type StockBreakdown<T extends StockLotLike = InventoryReservation> = {
+  ownedLots: T[];
+  consignmentLots: T[];
   ownedQty: number;
   ownedValueSen: number;
   consignmentQty: number;
@@ -472,17 +493,17 @@ export type StockBreakdown = {
 
 /* Per-lot on-hand split, null-safe: a lot with no MRP fields (older/degraded
    payload) is treated as fully FREE (assigned 0), matching the endpoint. */
-export function lotAssignedQty(l: InventoryReservation): number {
+export function lotAssignedQty(l: StockLotLike): number {
   return Math.max(0, Math.round(l.assigned_qty ?? 0));
 }
-export function lotFreeQty(l: InventoryReservation): number {
+export function lotFreeQty(l: StockLotLike): number {
   const qty = l.qty_remaining ?? 0;
   return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
 }
 
-export function buildStockBreakdown(
-  rows: InventoryReservation[] | null | undefined,
-): StockBreakdown {
+export function buildStockBreakdown<T extends StockLotLike>(
+  rows: T[] | null | undefined,
+): StockBreakdown<T> {
   const list = rows ?? [];
   const ownedLots = list.filter((l) => !l.is_consignment);
   const consignmentLots = list.filter((l) => l.is_consignment);
