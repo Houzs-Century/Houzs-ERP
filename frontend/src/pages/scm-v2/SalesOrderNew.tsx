@@ -55,6 +55,7 @@ import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -580,7 +581,14 @@ export const SalesOrderNew = () => {
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
-  const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
+  // Debounce before hitting the server: debtorName updates on every keystroke,
+  // so passing it raw fired one /debtors/search per character. Measured on prod
+  // 2026-08-20, one customer name = 35 requests and the serialized API answered
+  // 34 of them 503 (silent — the suggestion list just stayed empty). The
+  // consignment sibling (ConsignmentOrderDetail) already debounces at 200ms;
+  // match it so a name is 2-3 requests, not one per keystroke.
+  const debouncedDebtorName = useDebouncedValue(debtorName, 200);
+  const debtors = useDebtorSearch(debouncedDebtorName.trim().length >= 2 ? debouncedDebtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
   /* Portalled, because this module has no `.field { position: relative }` and
      `.card { overflow: hidden }` left 130px of room for a 260px list. */
