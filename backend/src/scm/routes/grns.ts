@@ -32,6 +32,7 @@ import {
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { grnInheritedFieldChanges, grnInheritedLockedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -2897,8 +2898,7 @@ grns.post('/:id/items', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
@@ -3147,8 +3147,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
@@ -3157,19 +3156,17 @@ grns.patch('/:id/items/:itemId', async (c) => {
       message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
   }
 
-  /* The audited columns as well as the ones the stock/money logic below reads:
-     this row is also the BEFORE half of every from->to pair recorded after the
-     update lands. `variants` and `purchase_order_item_id` are business-logic
-     only and are deliberately not in GRN_LINE_AUDIT_FIELDS — variants render
-     into description2, which IS audited. */
+  /* Audited columns + the ones the stock/money logic reads; also the BEFORE half
+     of every from->to audit pair. `variants` / `purchase_order_item_id` are
+     business-logic only (not in GRN_LINE_AUDIT_FIELDS — variants render into the
+     audited description2). */
   const { data: prevRow } = await sb.from('grn_items')
     .select(GRN_LINE_AUDIT_SELECT + ', variants, purchase_order_item_id')
     .eq('id', itemId).maybeSingle();
   if (!prevRow) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
-  /* Cast through `unknown`: a .select() built from a concatenated string infers
-     as GenericStringError on the SupabaseClient<any> the scm client is, so the
-     row shape only exists after this. Project-wide pattern (see ITEM / HEADER
-     elsewhere in this file). */
+  /* Cast through `unknown`: a concatenated-string .select() infers as
+     GenericStringError on the scm client, so the row shape only exists after
+     this (project-wide pattern). */
   const prev = prevRow as unknown as Record<string, unknown>;
 
   // The editable quantity is qty_received (also keep qty_accepted in lockstep).
@@ -3188,9 +3185,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const qtyReceived = parsedQty.nums.qty as number;
 
   /* Over-receipt guard on edit — a PO-linked line can't be raised past the PO
-     line's headroom = qty - (received_qty - this line's current receipt). The
-     stored received_qty already includes this line, so we add its old qty back
-     before comparing. Manual (no PO link) lines are uncapped. */
+     line's headroom; stored received_qty already includes this line, so add its
+     old qty back before comparing. Manual (no PO link) lines are uncapped. */
   {
     const poItemId = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
@@ -3212,46 +3208,10 @@ grns.patch('/:id/items/:itemId', async (c) => {
     patchCode: it.itemCode,
   });
   if (repoint) return refuseWithoutWriting(c, repoint, 409);
-
-  /* Inherited-field lock (owner 2026-08-20: "PO 开成 GR 就不可以在 GR 里改 variant
-     — 要 cancel GR 再去 PO 改"). A GRN line LINKED to a PO line inherits its
-     identity + spec from that PO: the item, its category and its VARIANT are
-     what the supplier was told to make. They are READ-ONLY on the receipt. Only
-     this line's own receipt data (qty / cost / batch / delivery) is editable
-     here. To change an inherited field, cancel this GRN (which reverses the
-     stock) and edit the PO, then receive again. Manual (unlinked) GRN lines are
-     ad-hoc and keep editing their own spec — the guard is skipped for them.
-
-     Variant equality is compared on the rendered SUMMARY, not raw JSON, so a
-     re-serialised-but-unchanged payload (key order, a recomputed totalHeight)
-     from the editor never false-trips this; only a real spec change refuses. */
-  {
-    const linkedPoItem = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
-    if (linkedPoItem) {
-      const storedCode = String((prev as { item_code: string | null }).item_code ?? '').trim().toUpperCase();
-      const storedGroup = (prev as { item_group?: string | null }).item_group ?? null;
-      const storedVariants = (prev as { variants?: Record<string, unknown> | null }).variants ?? null;
-      const nextGroup = it.itemGroup !== undefined ? (it.itemGroup as string | null) : storedGroup;
-      const nextVariants = it.variants !== undefined ? (it.variants as Record<string, unknown> | null) : storedVariants;
-
-      const changed: string[] = [];
-      if (it.itemCode !== undefined && String(it.itemCode ?? '').trim().toUpperCase() !== storedCode) changed.push('product');
-      if (String(nextGroup ?? '') !== String(storedGroup ?? '')) changed.push('category');
-      if (buildVariantSummary(String(nextGroup ?? ''), nextVariants) !== buildVariantSummary(String(storedGroup ?? ''), storedVariants)) {
-        changed.push('product options (variant)');
-      }
-      if (changed.length > 0) {
-        return refuseWithoutWriting(c, {
-          error: 'grn_inherited_field_locked',
-          message:
-            `The ${[...new Set(changed)].join(', ')} on this line comes from its Purchase Order, so it `
-            + 'cannot be changed on the goods receipt. To change it, cancel this GRN (that reverses the '
-            + 'received stock) and edit the PO, then receive it again.',
-        }, 409);
-      }
-    }
-  }
-
+  // Inherited-field lock — a PO-linked GRN line's item/variant is read-only
+  // (owner 2026-08-20; grn-inherited-lock.ts). Cancel the GRN, edit the PO.
+  const grnLockChanges = grnInheritedFieldChanges(prev as GrnLinePrev, it as GrnLinePatch, buildVariantSummary);
+  if (grnLockChanges.length > 0) return refuseWithoutWriting(c, grnInheritedLockedRefusal(grnLockChanges), 409);
   const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : ((prev as { discount_sen: number }).discount_sen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
@@ -3482,8 +3442,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();

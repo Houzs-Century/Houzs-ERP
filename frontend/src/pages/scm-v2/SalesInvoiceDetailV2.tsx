@@ -70,6 +70,7 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { useSiRelationshipMap } from "./sales-doc-relationship-map";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import {
@@ -689,7 +690,7 @@ export function SalesInvoiceDetailV2() {
   const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
   const startEditHeader = () => {
     if (!salesInvoice) return;
-    setHdrInvoiceDate((salesInvoice.invoice_date ?? "").slice(0, 10));
+    setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));
     setHdrDueDate((salesInvoice.due_date ?? "").slice(0, 10));
     setHdrNotes(salesInvoice.note ?? salesInvoice.notes ?? "");
     setEditingHeader(true);
@@ -710,7 +711,7 @@ export function SalesInvoiceDetailV2() {
       {
         onSuccess: () => {
           setEditingHeader(false);
-          notify({ title: "Invoice updated", tone: "info" });
+          void notify({ title: "Invoice updated", tone: "info" });
         },
         onError: (err) =>
           notify({ title: "Update failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }),
@@ -1266,7 +1267,7 @@ export function SalesInvoiceDetailV2() {
         {/* Header-only edit panel (owner 2026-08-20). Lines stay read-only — an
             invoice's lines are what the DO shipped. Only invoice date (DRAFT
             only), due date and notes are editable here. */}
-        {editingHeader && salesInvoice && (
+        {editingHeader && (
           <div ref={headerSectionRef} className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-stone">
             <div className="mb-3 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
               Edit invoice header
@@ -1276,22 +1277,16 @@ export function SalesInvoiceDetailV2() {
                 <span className="text-[12px] text-ink-muted">
                   Invoice date{!siIsDraft && <span className="italic"> (locked once issued)</span>}
                 </span>
-                <input
-                  type="date"
+                <DateField
+                  fullWidth
                   value={hdrInvoiceDate}
                   disabled={!siIsDraft}
-                  onChange={(e) => setHdrInvoiceDate(e.target.value)}
-                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px] disabled:opacity-60"
+                  onChange={(iso) => setHdrInvoiceDate(iso)}
                 />
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[12px] text-ink-muted">Due date</span>
-                <input
-                  type="date"
-                  value={hdrDueDate}
-                  onChange={(e) => setHdrDueDate(e.target.value)}
-                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px]"
-                />
+                <DateField fullWidth value={hdrDueDate} onChange={(iso) => setHdrDueDate(iso)} />
               </label>
               <label className="flex flex-col gap-1 sm:col-span-3">
                 <span className="text-[12px] text-ink-muted">Notes</span>

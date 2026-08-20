@@ -33,8 +33,8 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
-import { missingVariantAxes } from '../shared/so-variant-rule';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
+import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
@@ -1118,16 +1118,10 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
   const supplierId = body.supplierId as string | undefined;
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
 
-  // PR #157 — Commander 2026-05-26: Expected Delivery + Purchase Location are
-  // required on submit. Both fields fan out to per-line warehouse + delivery
-  // date and are required downstream for GRN.
-  //
-  // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO.
-  // It stays populated (it still fans out to per-line delivery_date / GRN), but a
-  // blank now defaults to today — the same auto-today treatment po_date already
-  // gets — instead of a 400. dateOrNull("") → null, so absent and empty both fall
-  // to todayMyt(). Purchase Location stays required (it fans to per-line warehouse
-  // = stock location, an integrity field, not a pure-date nicety).
+  // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO —
+  // a blank defaults to today (like po_date) instead of a 400; it still fans out
+  // to per-line delivery_date / GRN. Purchase Location stays required (it fans to
+  // per-line warehouse = stock location, an integrity field).
   const expectedAt = dateOrNull(body.expectedAt) ?? todayMyt();
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
@@ -2596,15 +2590,9 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     if (body[from] !== undefined) updates[to] = body[from];
   }
 
-  /* Tier-2 downstream-lock — now FIELD-LEVEL (owner 2026-08-20, §8 GAP-1). The PO
-     header used to freeze WHOLESALE once a non-cancelled GRN existed, so even a
-     supplier remark or a pushed delivery date was refused. Only the columns a GRN
-     inherits (supplier / currency / purchase location) freeze; the PO's own dates
-     + notes stay editable with a GRN present. Pay for the downstream read ONLY
-     when an inherited column actually changes — a dates/notes-only PATCH never
-     queries it. To change an inherited field, cancel the GRN and edit the PO.
-     (Line add/edit/delete stays whole-locked below — a line IS what was ordered.
-     Convert-to-GRN / partial receiving is NOT routed here.) */
+  /* Tier-2 lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1; po-identity-lock.ts):
+     only GRN-inherited columns freeze once a GRN exists; dates + notes stay
+     editable. Downstream read paid only when an inherited column changes. */
   const lockedChanges = changedPoIdentityLockCols(updates, before);
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
     return c.json(poIdentityLockedRefusal(lockedChanges), 409);
@@ -4029,55 +4017,6 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
    is missing its warehouse when the header purchase_location_id is blank AND at
    least one line has no warehouse_id of its own. Returns the offending line
    codes so the operator knows what to fix. */
-async function poWarehouseGap(
-  sb: Variables['supabase'],
-  poId: string,
-): Promise<{ missing: true; codes: string[] } | { missing: false }> {
-  const { data: hdr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
-  const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
-  if (headerWh) return { missing: false }; // header default covers every line
-  const { data: lines } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
-  const bad = ((lines ?? []) as Array<{ item_code: string | null; warehouse_id: string | null }>)
-    .filter((l) => !l.warehouse_id);
-  if (bad.length === 0) return { missing: false };
-  return { missing: true, codes: bad.map((l) => l.item_code ?? '?') };
-}
-const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
-  error: 'purchase_location_id_required',
-  message:
-    'This PO has no ship-to warehouse, so its goods would be received into the wrong place. Set the ship-to warehouse (or each line\'s warehouse) before it can go live.',
-  lines: codes.slice(0, 20),
-});
-
-/* PO variant gate (owner 2026-08-20). A supplier cannot make a sofa/bedframe
-   without the spec, so CONFIRMING a PO requires the core variant axes on every
-   such goods line — the SAME shared rule (missingVariantAxes) the SO proceed
-   gate and the PO form use, so the three surfaces can never drift. Special
-   Orders (variants.specials) is NOT an axis, so it stays optional by design.
-   This is the BACKEND half of the gate: the PO form already blocks it, but a
-   direct-API confirm bypassed the form. Every incomplete line is collected —
-   never one-at-a-time (owner "一次过全部爆出来").
-
-   Fails CLOSED: a lines read that ERRORS refuses the confirm rather than
-   confirming on a check that never ran (owner fail-closed ruling; mirrors
-   so-confirm-gate). A genuinely line-less / variant-less PO returns no gaps. */
-async function poVariantGaps(
-  sb: Variables['supabase'],
-  poId: string,
-): Promise<{ checkFailed: string } | { gaps: Array<{ code: string; miss: string[] }> }> {
-  const { data, error } = await sb
-    .from('purchase_order_items')
-    .select('item_code, item_group, variants')
-    .eq('purchase_order_id', poId);
-  if (error) return { checkFailed: error.message };
-  const gaps = ((data ?? []) as Array<{ item_code: string | null; item_group: string | null; variants: Record<string, unknown> | null }>)
-    .map((l) => ({
-      code: (l.item_code ?? '').trim(),
-      miss: missingVariantAxes(l.item_group, l.variants, l.item_code ?? null).map((a) => a.label),
-    }))
-    .filter((x) => x.code && x.miss.length > 0);
-  return { gaps };
-}
 
 /* PATCH /:id/submit was DELETED on 2026-08-18. It had no write path: it read
    the row, echoed an already-SUBMITTED PO, 409'd on a missing warehouse and then
@@ -4121,38 +4060,12 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
     return c.json({ error: 'cannot_confirm', message: `Only a draft PO can be confirmed (this is ${curStatus})` }, 409);
   }
 
-  /* Owner 2026-08-02 — a warehouse-less PO cannot become live supply / GRN-
-     receivable: the receive would land its goods in the wrong warehouse.
-     Owner 2026-08-20 — a supplier cannot make the item without its spec, so a
-     PO with incomplete core variants cannot go live either. Both are collected
-     and shown together (never fix-one-retry-one): when variants are missing the
-     refusal lists every incomplete line AND the warehouse gap if that is also
-     open; a warehouse-only gap keeps its existing 409 contract unchanged. */
+  /* Confirm gates (owner 2026-08-20): core variants + a ship-to warehouse, shown
+     together, variant check fails CLOSED. See po-gates.ts. */
   const variantCheck = await poVariantGaps(supabase, id);
-  if ('checkFailed' in variantCheck) {
-    return c.json({
-      error: 'variant_check_failed',
-      message:
-        'Could not check this PO against the product-options rule, so it is left as a draft '
-        + `rather than confirmed on a check that never ran — try again (${variantCheck.checkFailed}).`,
-    }, 503);
-  }
+  if ('checkFailed' in variantCheck) return c.json(poVariantCheckFailedBody(variantCheck.checkFailed), 503);
   const gap = await poWarehouseGap(supabase, id);
-  if (variantCheck.gaps.length > 0) {
-    const lines = variantCheck.gaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`);
-    const whTail = gap.missing
-      ? `\n\nThe ship-to warehouse is also missing (${gap.codes.slice(0, 20).join(', ')}) — set it too.`
-      : '';
-    return c.json({
-      error: 'variants_required',
-      message:
-        'Complete the product options before confirming this PO:\n'
-        + lines.join('\n')
-        + '\n\nThe supplier needs these to know what to make. (Special Orders stay optional.)'
-        + whTail,
-      lines: variantCheck.gaps.slice(0, 20),
-    }, 422);
-  }
+  if (variantCheck.gaps.length > 0) return c.json(poVariantConfirmRefusal(variantCheck.gaps, gap), 422);
   if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
 
   const { error: updErr } = await scopeToCompanyId(supabase
