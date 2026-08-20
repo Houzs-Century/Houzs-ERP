@@ -101,10 +101,9 @@ import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
-import { ACCESS_RANK } from "../types";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -6394,6 +6393,9 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
+            {/* Both items POST /:id/archive|/unarchive = projects.manage. Their
+                `disabled` is STATE, never permission; the button carries the gate. */}
+            {can("projects.manage") && (
             <div className="relative">
               <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
                 {p.archived_at ? "Restore" : "Archive"} <ChevronDown size={12} />
@@ -6444,6 +6446,7 @@ function ProjectDetailContent({
                 </>
               )}
             </div>
+            )}
             <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
@@ -6462,7 +6465,9 @@ function ProjectDetailContent({
               ]}
               onPrint={projectPrint.handlers.onPrint}
             />
-            {!p.archived_at && (
+            {/* PATCH /:id = projects.write; canEditDetail is the PMS-EDIT term
+                mobile also carries (owner 2026-07-20) and was never applied here. */}
+            {can("projects.write") && canEditDetail && !p.archived_at && (
               <ProjectStatusSelect
                 value={p.status}
                 disabled={transitioning}
@@ -6482,8 +6487,6 @@ function ProjectDetailContent({
         ) : undefined
       }
     >
-      {/* DetailLayout owns the loading/error chrome — keep this no-op for legacy in-page loading hint */}
-      {false && <div className="hidden">noop</div>}
       {detail.loading && (
         <div className="space-y-4 p-6">
           <Skeleton className="h-6 w-1/3" />
@@ -6559,7 +6562,6 @@ function ProjectDetailContent({
                 projectId={id}
                 projectCode={p.code}
                 projectName={p.name}
-                canWrite={can("sales.write")}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
                 onTotalSaved={() => detail.reload()}
@@ -12719,7 +12721,6 @@ function ProjectSalesEntriesSection({
   projectId,
   projectCode,
   projectName,
-  canWrite,
   canManage,
   currentTotalSales,
   onTotalSaved,
@@ -12728,7 +12729,6 @@ function ProjectSalesEntriesSection({
   projectId: number;
   projectCode: string | null;
   projectName: string;
-  canWrite: boolean;
   canManage: boolean;
   currentTotalSales: number | null;
   onTotalSaved: () => void;
@@ -12737,18 +12737,18 @@ function ProjectSalesEntriesSection({
   const dialog = useDialog();
   const auth = useAuth();
   const meId = auth.user?.id;
-  // Sales-section visibility (owner 2026-07): mirror the backend read gate
-  // (requirePageAccessOrSalesView("sales")) exactly so the query fires iff it
-  // would be authorised — the "sales" page-access matrix ≥ partial OR a
-  // code-keyed Sales-staff / director. A Sales Director (no matrix "sales" row)
-  // now qualifies and gets data; a user who genuinely can't access sales
-  // neither renders this section nor fires the request (off, not hide) — no
-  // render-then-403.
+  // Three gates, three DIFFERENT server rules — they were two, and the write
+  // half asked for the flat sales.write key, which neither write route reads.
+  //   view  GET  /api/sales/entries        requirePageAccessOrSalesView("sales")
+  //   log   POST /api/sales/entries        requirePageAccess("sales")
+  //   total PATCH /api/projects/:id/finance  projects.write + denyFinance
+  // The org-position arm belongs to the READ gate only (owner 2026-07: a Sales
+  // Director has no matrix "sales" row and must still see the list), so it is
+  // ORed on canViewSales alone — off, not hide, and no render-then-403.
   const salesLevel = usePageAccess("sales");
-  const canViewSales =
-    ACCESS_RANK[salesLevel] >= ACCESS_RANK["partial"] ||
-    isSalesStaff(auth.user) ||
-    isDirectorUser(auth.user);
+  const canLogSale = canLogSalesEntry(salesLevel);
+  const canSetTotalSales = canWriteProjectFinance(auth.user, auth.can);
+  const canViewSales = canLogSale || isSalesStaff(auth.user) || isDirectorUser(auth.user);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<SalesEntry | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -12937,7 +12937,7 @@ function ProjectSalesEntriesSection({
           >
             <Download size={11} /> Export
           </button>
-          {canWrite && (
+          {canSetTotalSales && (
             <button
               onClick={() => {
                 setQtValue(
@@ -12956,7 +12956,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Total Sales
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setQuickLogOpen((v) => !v)}
               className={cn(
@@ -12970,7 +12970,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Quick Log
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setCreating(true)}
               className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-accent/40 bg-accent-soft/60 px-2 text-[10.5px] font-semibold text-accent hover:bg-accent hover:text-white"
@@ -13095,7 +13095,7 @@ function ProjectSalesEntriesSection({
           compact
           message="No sales drafted yet for this exhibition."
           cta={
-            canWrite
+            canLogSale
               ? { label: "Draft your first sale", onClick: () => setCreating(true) }
               : undefined
           }
@@ -13148,7 +13148,7 @@ function ProjectSalesEntriesSection({
                           <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
                             Quick log
                           </span>
-                          {canWrite && (
+                          {canLogSale && (
                             <button
                               onClick={() => setEditing(e)}
                               className="text-[10px] font-semibold text-accent hover:underline"
