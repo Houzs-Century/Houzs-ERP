@@ -1273,8 +1273,11 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
-  /* Through the same map the LINE locations go through (composeDetails:1000), so
-     the header and its lines cannot end up spelling one warehouse two ways. */
+  /* Through the same map the LINE locations go through — the
+     `bookSpellingOrOwn(..., LOCATION_MAP)` in `composeDetails` below — so the
+     header and its lines cannot end up spelling one warehouse two ways. A line
+     number is deliberately not cited: it is the same file, and every edit to it
+     would move one. */
   const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
     DocNo: header.po_number,
