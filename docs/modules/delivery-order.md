@@ -35,9 +35,42 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
-| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status`. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
+| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + GPS, through the **shared hook** (`useUpdateMfgDeliveryOrderStatus`, `evidence` parameter). It used a raw `authedFetch` until 2026-08-21; see "Who may attach proof of delivery" below. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
 | Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). Posts **`asDraft: true`** → the DO lands DRAFT and the operator confirms it; the phone never ships. Same shape as the wizard's GRN arm. CTA reads "Create draft Delivery Order". |
-| Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | |
+| Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | Driver run-sheet. "Take POD photo — complete" **navigates to Mobile POD** (`onPod`); it does not write a status. It used to PATCH `DELIVERED` directly with no evidence, while telling the driver to "open the order afterwards to attach the POD photo" — which MobilePOD refuses once the DO is delivered. |
+
+### Who may attach proof of delivery (2026-08-21)
+
+`delivery_orders` carries six evidence columns — `signature_data`, `pod_r2_key`,
+`pod_lat`, `pod_lng`, `pod_accuracy_m`, `pod_located_at` — and the status PATCH
+has accepted all six since migration 0249, writing each **only when present** so
+a plain status change never blanks a POD already on the row.
+
+Reaching them from the client is the shared hook's `evidence` parameter
+(`DoDeliveryEvidence` in `vendor/scm/lib/delivery-order-queries.ts`). Before that
+parameter existed the hook was typed `{ id, status }`, which is why MobilePOD
+bypassed it with a raw fetch and why every other surface closed deliveries with
+nothing attached.
+
+| Surface | Captures evidence? | On closing without it |
+|---|---|---|
+| Mobile POD | **Yes** — pad, photo, GPS | Confirm says "No customer signature has been captured." Still allowed. |
+| Mobile planning board | Routes to Mobile POD | n/a — it no longer writes a status |
+| Desktop detail / list drawer | No — the office is not at the door | `window.confirm` carrying `doCloseWithoutEvidenceWarning`. Still allowed. |
+| Mobile shell action bar | No | **Known open** — "Mark Signed" writes `SIGNED` (which counts as delivered) with no evidence. `docs/bugs/0481`. |
+
+Evidence is **allowed everywhere and required nowhere**, on purpose. The office
+legitimately closes deliveries it did not attend — 2990's imported deliveries
+have no POD step at all — the server itself drops a bad GPS reading rather than
+refusing the write, and the standing rule for this system is to loosen rather
+than restrict. The defect was never the permissiveness; it was that no screen
+said which of the two things you were about to do.
+
+Census of the historical population: `backend/scripts/check-pod-evidence.mjs`,
+dispatchable via the **DO integrity check (read-only)** workflow. It counts
+`SIGNED + DELIVERED + INVOICED` (all three are closed) and reports signature
+BYTE LENGTH, because `signature_data IS NOT NULL` overstates the evidence — the
+pre-`hasSignature` blank-pad bug stored a valid but empty PNG on every delivery.
 
 Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and
