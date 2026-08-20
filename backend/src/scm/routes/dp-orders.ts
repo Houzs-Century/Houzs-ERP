@@ -28,6 +28,7 @@ import {
   snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
   snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
+import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { dpLorryBlockReason } from '../lib/dp-lorry-block';
@@ -530,6 +531,17 @@ dpOrders.post('/:id/schedule', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const denied = await denyIfNotOwnDpJob(c, sb, id);
   if (denied) return denied;
+
+  /* THE TRIP IS A BODY FIELD. The dp_order itself is proved ours above, but
+     `p.tripId` was used unchecked to read the trip's stops and then to INSERT a
+     trip_stop stamped with OUR company_id — putting our job on the other
+     company's driver route, as a row their own scoped reads cannot explain.
+     Trips are the cross-company shared queue, so the predicate is the caller's
+     ALLOWED set, not the active company (trips.ts:423 reads them the same way).
+     See lib/ref-in-company.ts. Before the dp_no is minted, so a bad trip id
+     never burns a number. */
+  const tripCheck = await assertTripInAllowedCompanies(sb, p.tripId ?? null, c);
+  if (!tripCheck.ok) return c.json(tripCheck.body, tripCheck.status);
 
   const plate = await plateForLorry(sb, p.lorryId);
   if (!plate) return c.json({ error: 'lorry_not_found' }, 404);
