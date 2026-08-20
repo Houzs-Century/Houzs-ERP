@@ -42,13 +42,17 @@
      delete + the grand total; the document-number evidence; a KEEP sample with
      HC row counts (proving they survive); and the UNSURE list. WRITES NOTHING.
    MODE=apply: requires CONFIRM="WIPE HOUZS-CENTURY TRANSACTIONS". Dumps backup,
-     deletes children-before-parents in one transaction (the six TMS tables FIRST,
-     before the DO/SO deletes, so no ON DELETE SET NULL orphans an HC stop), then
-     — still INSIDE the transaction — re-counts every CLEAR table for 2990 and
-     ROLLS BACK if any 2990 row count moved (a trip_stops->trips CASCADE could
-     otherwise delete a 2990 stop riding on an HC trip). After commit it re-reads
-     on a FRESH connection and ASSERTS: every CLEAR table has 0 HC rows; 2990 row
-     counts UNCHANGED (incl. the TMS tables); KEEP-sample tables UNCHANGED.
+     then deletes in ONE transaction using an FK-CORRECT order computed at run time
+     — every FK among the CLEAR tables is read from pg_constraint and the tables
+     are TOPOLOGICALLY SORTED so each is deleted before anything it references
+     (children first). This is provably safe regardless of family grouping and
+     also deletes HC trip_stops before HC delivery_orders, so no ON DELETE SET NULL
+     orphans an HC stop. Still INSIDE the transaction it re-counts every CLEAR
+     table for 2990 and ROLLS BACK if any 2990 row count moved (a trip_stops->trips
+     CASCADE could otherwise delete a 2990 stop riding on an HC trip). After commit
+     it re-reads on a FRESH connection and ASSERTS: every CLEAR table has 0 HC
+     rows; 2990 row counts UNCHANGED (incl. the TMS tables); KEEP-sample UNCHANGED.
+     A true FK cycle among CLEAR tables makes apply REFUSE before any delete.
 
    RE-RUN: idempotent. A second plan run just re-counts. A second apply run finds
      0 HC rows on the CLEAR tables (already wiped) and is a no-op that still
@@ -86,19 +90,17 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
    delete set and FLAGGED rather than deleted unscoped). Schema is 'scm' unless
    noted. A table absent from the live DB is skipped with a note. */
 const CLEAR = [
-  // ── TMS / delivery-planning — DELETED FIRST, before DO/SO ──────────────────
-  // Ordered ahead of delivery_orders + mfg_sales_orders on purpose: trip_stops
-  // has `do_id -> scm.delivery_orders(id) ON DELETE SET NULL` (mig 0053:99) and a
-  // bare `so_id` with no FK, and delivery_legs has a bare polymorphic `source_id`
-  // — so deleting the DO/SO first would leave HC trip_stops / legs / dp_orders as
-  // orphaned rows with NULL or dangling links. Removing HC's TMS rows first means
-  // no ON DELETE SET NULL ever fires on an HC stop and no HC orphan is created.
-  // Children-before-parent within TMS: trip_stops / trip_locations / delivery_legs
-  // all reference scm.trips (CASCADE / SET NULL) so they go before scm.trips.
-  // (The unavoidable residual — a 2990-owned stop that points at an HC DO getting
-  // its do_id SET NULL when the HC DO is later deleted — is measured by the census
-  // below; it touches no 2990 ROW count, only a column, and the in-transaction
-  // 2990 guard rolls the whole wipe back if any 2990 row count moves.)
+  // ── TMS / delivery-planning ────────────────────────────────────────────────
+  // The DELETE ORDER is NOT the order of this list — it is computed at run time by
+  // a topological sort of the live FK graph (section 3b). Because trip_stops has
+  // `do_id -> scm.delivery_orders(id)` (mig 0053:99) and trip_stops/trip_locations/
+  // delivery_legs reference scm.trips, the topo sort already deletes HC trip_stops
+  // before HC delivery_orders and before scm.trips — so no ON DELETE SET NULL
+  // orphans an HC stop and no HC orphan is created, without relying on hand order.
+  // (The unavoidable residual — a 2990-owned stop pointing at an HC DO getting its
+  // do_id SET NULL when the HC DO is deleted — is measured by the census below; it
+  // touches no 2990 ROW count, only a column, and the in-transaction 2990 guard
+  // rolls the whole wipe back if any 2990 row count moves.)
   ['scm', 'trip_stops', 'tms'],           // child of trips; do_id -> DO SET NULL
   ['scm', 'trip_locations', 'tms'],       // child of trips (CASCADE)
   ['scm', 'delivery_legs', 'tms'],        // trip_id -> trips SET NULL; source_id bare
@@ -259,6 +261,40 @@ const KEEP_SAMPLE = [
 
 const qi = (s) => { if (!ident.test(s)) throw new Error(`unsafe identifier: ${s}`); return s; };
 
+/* FK-correct delete order via topological sort. `nodes` are the tables to delete;
+   `edges` are [child, parent] meaning child has a FK REFERENCING parent, so child
+   must be deleted BEFORE parent. Produces a children-first order (a table with no
+   remaining referencing child comes out last). Self-edges are dropped by the
+   caller (a single company-scoped DELETE satisfies a NO ACTION self-FK at
+   statement end). Kahn's algorithm; `remaining` is non-empty ONLY if a true
+   multi-table cycle exists among `nodes` — the caller reports it and refuses. */
+function topoDeleteOrder(nodes, edges) {
+  const nodeSet = new Set(nodes);
+  const out = new Map(nodes.map((n) => [n, []]));   // child -> [parents]
+  const indeg = new Map(nodes.map((n) => [n, 0]));  // parent's indeg = # children referencing it
+  const seen = new Set();
+  for (const [child, parent] of edges) {
+    if (child === parent || !nodeSet.has(child) || !nodeSet.has(parent)) continue;
+    const ek = `${child}|${parent}`;
+    if (seen.has(ek)) continue;
+    seen.add(ek);
+    out.get(child).push(parent);
+    indeg.set(parent, indeg.get(parent) + 1);
+  }
+  const order = [];
+  const queue = nodes.filter((n) => indeg.get(n) === 0); // pure children first, stable in nodes order
+  while (queue.length) {
+    const n = queue.shift();
+    order.push(n);
+    for (const parent of out.get(n)) {
+      indeg.set(parent, indeg.get(parent) - 1);
+      if (indeg.get(parent) === 0) queue.push(parent);
+    }
+  }
+  const placed = new Set(order);
+  return { order, remaining: nodes.filter((n) => !placed.has(n)) };
+}
+
 // A duplicate CLEAR entry would double-count in the plan total and then make the
 // apply's `deletedTotal !== total` guard roll the whole wipe back — fail loud now.
 {
@@ -341,6 +377,56 @@ async function main() {
   if (unscopable.length) {
     note(`\n  ⚠ CLEAR tables present but WITHOUT company_id — NOT deleted, FLAGGED for review: ${unscopable.length}`);
     for (const k of unscopable) note(`     - ${k}`);
+  }
+
+  // ── 3b. FK-CORRECT DELETE ORDER — topologically sorted from the LIVE graph ──
+  // The earlier family-grouped order was fragile and broke once: it deleted
+  // purchase_orders while grns (grns.purchase_order_id -> purchase_orders) still
+  // referenced them. Instead of a hand order, read EVERY foreign key among the
+  // resolved CLEAR tables from pg_constraint and topologically sort so each table
+  // is deleted BEFORE anything it references (children first, referenced parents
+  // last). Provably correct regardless of family grouping; self-heals on schema
+  // change. pg_constraint (not information_schema) = one clean row per FK.
+  const fkRows = await sql`
+    SELECT ns.nspname AS cs, cl.relname AS ct, fns.nspname AS ps, fcl.relname AS pt
+      FROM pg_constraint con
+      JOIN pg_class cl      ON cl.oid  = con.conrelid
+      JOIN pg_namespace ns  ON ns.oid  = cl.relnamespace
+      JOIN pg_class fcl     ON fcl.oid = con.confrelid
+      JOIN pg_namespace fns ON fns.oid = fcl.relnamespace
+     WHERE con.contype = 'f' AND ns.nspname IN ('scm','public')`;
+  const resolvedKeys = resolved.map((r) => `${r.schema}.${r.table}`);
+  const resolvedKeySet = new Set(resolvedKeys);
+  const clearKeySet = new Set(CLEAR.map(([s, t]) => `${s}.${t}`));
+  const intraEdges = [];       // [child, parent] both being deleted -> child first
+  const selfRefs = [];         // table with a FK to itself (handled by one DELETE)
+  const externalInbound = [];  // a table NOT on CLEAR references a table we DELETE
+  for (const r of fkRows) {
+    const child = `${r.cs}.${r.ct}`;
+    const parent = `${r.ps}.${r.pt}`;
+    if (child === parent) { if (resolvedKeySet.has(child)) selfRefs.push(child); continue; }
+    if (resolvedKeySet.has(child) && resolvedKeySet.has(parent)) intraEdges.push([child, parent]);
+    else if (resolvedKeySet.has(parent) && !clearKeySet.has(child)) externalInbound.push([child, parent]);
+  }
+  const { order: topoOrder, remaining: cycleMembers } = topoDeleteOrder(resolvedKeys, intraEdges);
+  const resolvedByKey = new Map(resolved.map((r) => [`${r.schema}.${r.table}`, r]));
+  // Delete order = topo order (children first). Any cycle members (should be none)
+  // are appended so nothing is silently dropped; apply REFUSES if the cycle is real.
+  const deleteOrder = [...topoOrder, ...cycleMembers].map((k) => resolvedByKey.get(k));
+
+  note(`\n=== FK-CORRECT DELETE ORDER (topological, children before parents) ===`);
+  note(`  ${new Set(intraEdges.map((e) => e.join('|'))).size} FK edge(s) among the ${resolvedKeys.length} resolved CLEAR tables; computed order:`);
+  topoOrder.forEach((k, i) => note(`  ${String(i + 1).padStart(2)}. ${k}`));
+  if (selfRefs.length) note(`  self-referencing (handled by one scoped DELETE, not ordered): ${[...new Set(selfRefs)].join(', ')}`);
+  if (cycleMembers.length) {
+    bad(`  CYCLE among CLEAR tables (${cycleMembers.length}): ${cycleMembers.join(', ')} — APPLY WILL REFUSE. Break the cycle (defer the FK, or NULL the linking column) before applying.`);
+  } else {
+    note(`  no cycles — order is provably FK-safe for a single-transaction delete.`);
+  }
+  if (externalInbound.length) {
+    const uniq = [...new Set(externalInbound.map(([c, p]) => `${c} -> ${p}`))].sort();
+    note(`\n  ⚠ ${uniq.length} FK edge(s) from a NON-CLEAR table INTO a table we delete — a potential apply blocker IF the non-CLEAR side holds HC rows referencing these (the in-transaction rollback would catch it safely):`);
+    for (const e of uniq) note(`     ${e}`);
   }
 
   // ── 4. Document-number evidence (what resets to 001) ─────────────────────
@@ -441,6 +527,13 @@ async function main() {
   }
 
   // ── 9. APPLY: backup, then delete children->parents in ONE transaction ────
+  // Refuse if the FK graph among CLEAR tables has a real cycle — deleting in a
+  // wrong order would FK-fail (safe rollback), but refusing up front is honest.
+  if (cycleMembers.length) {
+    bad(`refusing to apply: FK cycle among CLEAR tables (${cycleMembers.join(', ')}). Break it first.`);
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   note(`\n=== BACKUP — dumping HC CLEAR rows to ${BACKUP_DIR} before deleting ===`);
   const manifest = { company: { id: HC_ID, code: hc[0].code, name: hc[0].name }, when: new Date().toISOString(), tables: {} };
@@ -458,7 +551,8 @@ async function main() {
   let deletedTotal = 0;
   const deletedByTable = new Map();
   await sql.begin(async (tx) => {
-    for (const r of resolved) {
+    // FK-correct order: children before the parents they reference (section 3b).
+    for (const r of deleteOrder) {
       // company_id predicate is the ONLY isolation (service-role bypasses RLS).
       const del = await tx`DELETE FROM ${tx(qi(r.schema))}.${tx(qi(r.table))} WHERE company_id = ${HC_ID}`;
       deletedByTable.set(`${r.schema}.${r.table}`, del.count);
