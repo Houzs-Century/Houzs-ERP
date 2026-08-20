@@ -76,6 +76,7 @@ import {
   KeylessLineError,
   MissingAgentError,
   MissingCreditorError,
+  AcSoToPoAlignmentError,
   MissingLocationError,
   MissingSalesLocationError,
   SofaCollapseError,
@@ -97,6 +98,7 @@ import { soEditHeader } from './so-edit-header';
    reason mastersOf was: this file is at the 2,000-line cap. */
 import {
   AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
+  readWarehouseCode,
 } from './autocount-read';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
@@ -362,7 +364,11 @@ const SO_ITEM_COLS =
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
-const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+/* purchase_location_id is the PO's OWN ship-to warehouse (PR #77); AutoCount has
+   the same header field and the ERP had never sent one, so the book defaulted it
+   on every purchase order it has written. Guide §7c3b-ii. */
+const PO_HEADER_COLS =
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
@@ -588,7 +594,11 @@ async function noteReadFailure(
     || e instanceof MissingLocationError
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
-    || e instanceof MissingCreditorError;
+    || e instanceof MissingCreditorError
+    /* THE LIST IS THE WHOLE MECHANISM: an error missing from it is SWALLOWED by
+       the early return below — no row, no log line, nothing to read. Pinned
+       against acNotSentProblems' twin chain in ac-preflight.test.ts. */
+    || e instanceof AcSoToPoAlignmentError;
   if (!refused && !(e instanceof AcReadError)) return [];
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -714,6 +724,8 @@ async function readPoHeader(sb: Sb, poId: string) {
       sb.from('suppliers').select('code, name').eq('id', String(h.supplier_id)).maybeSingle())
     : null;
   const s = supplier as { code?: string | null; name?: string | null } | null;
+  /* The same id -> code hop withLocations does for the lines, one row not a set. */
+  const purchaseLocation = await readWarehouseCode(sb, h.purchase_location_id);
   return {
     id: String(h.id ?? poId),
     /* Carried for the binding lookup, which narrows by the PO's OWN supplier:
@@ -728,6 +740,7 @@ async function readPoHeader(sb: Sb, poId: string) {
     agent: AC_PURCHASE_AGENT,
     ref: null,
     notes: (h.notes as string | null) ?? null,
+    purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
   };
 }
@@ -768,25 +781,17 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest.
-
-           THE SUPPLIER IS NOT IN "the rest", and that was the defect: on the
-           host 2026-08-17 09:15, `CreditorCode required for /so-to-po`.
-           composeSoToPo returns { DtlKeys, Details } and nothing else, so the
-           whole master went missing the moment the shape was a transfer —
-           `body`, built three lines up by composeCreatePo and carrying the
-           creditor, is thrown away on this branch. No join is needed to fix it:
-           readPoHeader resolved suppliers.code for the binding lookup above.
-           Guide §7c3a.
-
-           NEITHER WAS THE NUMBER: `DocNo` went out with the same throw-away, so
-           the first successful /so-to-po landed as `PO-009968` and not
-           `HC-PO-2608-001`. Divergence D5, closed — guide §7c3b. */
+        /* ONE MASTER, TWO SHAPES. FromDocNo resolves at DRAIN; everything else
+           a transfer sends is `body`, the object composeCreatePo built two lines
+           up, because composeSoToPo takes it and spreads it. That is the fix and
+           the reason it is not a third field: this branch used to build its own
+           master, and twice a field the create had was missing from it — the
+           creditor (host 2026-08-17 09:15, reported as FK_PO_DisplayTerm) and
+           the number (10:15, `PO-009968` for `HC-PO-2608-001`, divergence D5).
+           Both were patched one at a time and FIVE were still missing after.
+           Guide §7c3a, §7c3b, §7c3b-i. */
         body: (shape.kind === 'transfer'
-          ? { ...composeSoToPo(header.po_number, shape.dtlKeys, details), ...present({
-            CreditorCode: header.creditor_code,
-            CreditorName: header.creditor_name,
-          }) }
+          ? composeSoToPo(body, shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */

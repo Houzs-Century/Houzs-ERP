@@ -951,6 +951,29 @@ describe('a document opens every master it names — warehouse and dropdowns too
     expect(m.Locations.map((l) => l.Location).sort()).toEqual(['KL', 'PG']);
   });
 
+  test('the PURCHASE header\'s warehouse too, not only the sales header\'s', () => {
+    /* The service applies PurchaseLocation through Set(), which SWALLOWS —
+       both copies, `CreatePo`'s (AcSyncService.cs:935) and `PurchaseHeader`'s
+       (:2457) — so a warehouse code dbo.Location does not
+       have would leave the purchase order looking saved and carrying no
+       location at all — the silent half of the failure the owner reported on
+       2026-08-19. Opening the master is what makes the value land. */
+    const m = mastersOf({
+      PurchaseLocation: 'PG',
+      Details: [{ ItemCode: 'A', Location: 'PG' }],
+    }) as { Locations: Array<Record<string, unknown>> };
+    expect(m.Locations.map((l) => l.Location)).toEqual(['PG']);
+
+    const headerOnly = mastersOf({
+      PurchaseLocation: 'HQ',
+      Details: [{ ItemCode: 'A' }],
+    }) as { Locations: Array<Record<string, unknown>> };
+    expect(
+      headerOnly.Locations.map((l) => l.Location),
+      'the header alone must open it — a PO whose lines inherit name it nowhere else',
+    ).toEqual(['HQ']);
+  });
+
   test('a RETIRED line names no warehouse — it is leaving, not arriving', () => {
     const m = mastersOf({
       Details: [{ DtlKey: 1, ItemCode: 'A', Location: 'NOWHERE', Retire: true }],
