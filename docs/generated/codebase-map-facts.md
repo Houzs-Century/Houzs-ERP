@@ -139,7 +139,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
 | `backend/src/scm/routes/so-amendments.ts` | 9 | 1227 |
-| `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 302 |
+| `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 2 | 214 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 284 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
@@ -176,7 +176,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1575 files, 602529 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1576 files, 602677 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
