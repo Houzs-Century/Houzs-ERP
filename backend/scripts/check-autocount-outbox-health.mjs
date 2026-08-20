@@ -422,7 +422,7 @@ try {
      whether the ERP's OWN records already claim that number, which is the
      difference between a guess and a lead. */
   const names = await pg`
-    SELECT o.id, o.doc_type, o.doc_no, o.op, o.status, o.attempts,
+    SELECT o.id, o.doc_type, o.doc_no, o.op, o.status, o.attempts, o.created_at,
            o.payload -> 'body' ->> 'DocNo'              AS sent_doc_no,
            jsonb_exists(o.payload -> 'body', 'DocNo')   AS carries_doc_no,
            o.ac_doc_no,
@@ -451,14 +451,35 @@ try {
     const soNos = names.filter((r) => r.doc_type === 'SO').map((r) => r.doc_no);
     const poNos = names.filter((r) => r.doc_type === 'PO').map((r) => r.doc_no);
     const links = await pg`
-      SELECT 'SO' AS doc_type, h.doc_no AS doc_no, h.linked_ac_docno AS linked
+      SELECT 'SO' AS doc_type, h.doc_no AS doc_no, h.linked_ac_docno AS linked,
+             h.created_at AS created
         FROM scm.mfg_sales_orders h
        WHERE h.doc_no = ANY(${soNos}::text[])
       UNION ALL
-      SELECT 'PO' AS doc_type, p.po_number AS doc_no, p.linked_ac_docno AS linked
+      SELECT 'PO' AS doc_type, p.po_number AS doc_no, p.linked_ac_docno AS linked,
+             p.created_at AS created
         FROM scm.purchase_orders p
        WHERE p.po_number = ANY(${poNos}::text[])`;
-    const linkOf = new Map(links.map((r) => [`${r.doc_type}:${r.doc_no}`, r.linked]));
+    /* WHEN the ERP document itself was raised, which is the field that decides
+       the REMEDY and not just the diagnosis. A number the book already holds is
+       one problem with two completely different fixes:
+
+         the ERP document is the ORIGINAL   its counterpart in the book IS this
+                                            document. Nothing is wrong in the
+                                            book; the ERP simply lost the link
+                                            and is asking for a document it
+                                            already has. The repair is to record
+                                            the link, never to write again.
+         the ERP document is NEWER          the ERP minted a number the book had
+                                            already given to a DIFFERENT
+                                            document. Recording the link would
+                                            point this document at somebody
+                                            else's, so the fix is a number, not
+                                            a link.
+
+       Both look identical from `Primary Key Error`, and picking the wrong one
+       either duplicates a live accounting document or mislabels one. */
+    const linkOf = new Map(links.map((r) => [`${r.doc_type}:${r.doc_no}`, r]));
 
     notice(
       `DOCUMENT NUMBER ON THE STUCK ROWS — ${names.length} row(s). ` +
@@ -467,7 +488,8 @@ try {
     for (const r of names) {
       const key = `${r.doc_type}:${r.doc_no}`;
       const known = linkOf.has(key);
-      const linked = linkOf.get(key);
+      const linked = linkOf.get(key)?.linked ?? null;
+      const raised = linkOf.get(key)?.created ?? null;
       notice(
         `  - ${r.doc_type} ${r.doc_no} (${r.op}, ${r.status}, ${r.attempts} attempt(s)): ` +
           `sentAs=${r.carries_doc_no ? JSON.stringify(r.sent_doc_no) : 'KEY ABSENT — AutoCount auto-numbers'} ` +
@@ -475,6 +497,8 @@ try {
             ? `DIFFERS FROM ERP doc_no ${JSON.stringify(r.doc_no)} `
             : '') +
           `erpLink=${known ? JSON.stringify(linked) : 'DOCUMENT NOT FOUND in the ERP table'} ` +
+          (raised ? `erpRaised=${new Date(raised).toISOString().slice(0, 16)} ` : '') +
+          `queued=${new Date(r.created_at).toISOString().slice(0, 16)} ` +
           `sentBefore=${r.n_sent ?? 0}` +
           (r.n_sent ? ` AS ${r.sent_as}` : ''),
       );
@@ -483,7 +507,7 @@ try {
        something together and a reader at 11pm should not have to combine them. */
     for (const r of names) {
       const key = `${r.doc_type}:${r.doc_no}`;
-      const linked = linkOf.get(key);
+      const linked = linkOf.get(key)?.linked ?? null;
       if ((r.n_sent ?? 0) > 0) {
         notice(
           `  !! ${r.doc_type} ${r.doc_no}: this queue has ALREADY sent this exact number ` +
