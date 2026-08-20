@@ -107,7 +107,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4573 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 1 | 195 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11946 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11942 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1615 |
@@ -125,7 +125,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1341 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1136 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2446 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2422 |
 | `backend/src/scm/routes/purchase-returns.ts` | 13 | 1671 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -169,19 +169,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 309 | `0311_scm_so_mirror_skips.sql` (0311) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 310 | `0312_scm_drop_dead_customer_po.sql` (0312) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1508 files, 590435 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1515 files, 591577 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15126 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11946 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11942 |
 | `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5628 |
@@ -377,7 +377,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAutoCountSync.tsx` | 665 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1096 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1145 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2435 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
