@@ -38,6 +38,7 @@
 // Supabase read around it.
 // ----------------------------------------------------------------------------
 
+import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { chunkIn, paginateAll } from './paginate-all';
 import { readFailureError } from './read-failure';
 
@@ -188,11 +189,14 @@ export async function netDeliveredBySoItem(
   const deliveredBySoItem = new Map<string, number>();
   for (const l of doLines) {
     if (!l.so_item_id || !l.parent) continue;
-    /* LEAK GUARD (DRAFT): a DRAFT DO hasn't shipped — it must NOT consume the
-       SO line's deliverable remaining (else the real DO can't be raised and
-       the picker shows phantom-delivered qty). Treated like CANCELLED here. */
-    const st = (l.parent.status ?? '').toUpperCase();
-    if (st === 'CANCELLED' || st === 'DRAFT') continue;
+    /* LEAK GUARD (PRE-SHIP): a DO that has not shipped must NOT consume the SO
+       line's deliverable remaining (else the real DO can't be raised and the
+       picker shows phantom-delivered qty). That is DRAFT *and* LOADED — this
+       line named only DRAFT until 2026-08-20, so a LOADED DO counted its own
+       lines as delivered and the confirm gate then refused it against itself.
+       doCountsAsDelivered is the one home; see its block in
+       shared/do-shipped-states.ts. */
+    if (!doCountsAsDelivered(l.parent.status)) continue;
     doLineToSoItem.set(l.id, l.so_item_id);
     deliveredBySoItem.set(l.so_item_id, (deliveredBySoItem.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
   }
@@ -251,12 +255,12 @@ export async function loadUnlinkedDoCoverage(
     const docByDoId = new Map<string, string>();
     for (const h of headers ?? []) {
       if (!h.so_doc_no) continue;
-      /* The same gate the linked sum applies, in JS with the same compare: a
-         CANCELLED delivery took nothing back out of stock and a DRAFT has not
-         shipped at all. Wrong in the lenient direction, a draft would mark an
-         order DELIVERED — the leak the linked path already documents. */
-      const st = (h.status ?? '').toUpperCase();
-      if (st === 'CANCELLED' || st === 'DRAFT') continue;
+      /* The same gate the linked sum applies, through the same predicate: a
+         CANCELLED delivery took nothing back out of stock and a PRE-SHIP one
+         (DRAFT or LOADED) has not shipped at all. Wrong in the lenient
+         direction, a draft would mark an order DELIVERED — the leak the linked
+         path already documents. */
+      if (!doCountsAsDelivered(h.status)) continue;
       docByDoId.set(h.id, h.so_doc_no);
     }
     if (docByDoId.size === 0) return [];

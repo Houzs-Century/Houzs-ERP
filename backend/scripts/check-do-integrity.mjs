@@ -14,9 +14,13 @@
 //       produces, and each such line means stock was deducted more than once.
 //       "delivered" and "returned" use the SAME definition the app itself uses
 //       in soDeliverableRemaining (delivery-orders-mfg.ts): a DO line counts
-//       only when its parent DO status is NOT CANCELLED and NOT DRAFT; a return
-//       counts only when its parent DR status is NOT CANCELLED. So this report
-//       and the app's "deliverable remaining" can never disagree.
+//       only when its parent DO status is not one of DO_NOT_DELIVERED_STATES
+//       (CANCELLED plus the pre-ship pair DRAFT and LOADED); a return counts
+//       only when its parent DR status is NOT CANCELLED. The set is IMPORTED
+//       from the mirror rather than typed here, so this report and the app's
+//       "deliverable remaining" cannot disagree — which is a stronger claim
+//       than the one this comment used to make while both sides were spelling
+//       the rule with two states instead of three (2026-08-20).
 //
 //   R2  SHIPPED-BUT-NOT-READY  (candidates, NOT proof)
 //       An SO line that has a live (non-cancelled/non-draft) DO but whose
@@ -53,6 +57,12 @@
 // scm, and migrations-pg create scm.*). All tables below are scm-qualified.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+// The SAME set the app reads (src/scm/shared/do-shipped-states.ts), through the
+// .mjs mirror an audit can import. Hand-typing it here is how a report and the
+// code it reports on come to disagree — which is exactly what happened: this
+// file said "this report and the app's deliverable remaining can never
+// disagree" while both were spelling a three-state rule with two states.
+import { DO_NOT_DELIVERED_SQL_IN } from "./lib/do-shipped-states.mjs";
 
 // Same resolution order as pg-migrate.mjs: env wins so CI needs no .dev.vars.
 function resolveUrl() {
@@ -90,7 +100,7 @@ try {
       FROM scm.delivery_order_items doi
       JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
       WHERE doi.so_item_id IS NOT NULL
-        AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     ),
     returned AS (
@@ -101,7 +111,7 @@ try {
       JOIN scm.delivery_order_items doi ON doi.id = dri.do_item_id
       JOIN scm.delivery_orders d      ON d.id  = doi.delivery_order_id
       WHERE upper(coalesce(dr.status::text, '')) <> 'CANCELLED'
-        AND upper(coalesce(d.status::text, ''))  NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, ''))  NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     )
     SELECT soi.doc_no,
@@ -148,7 +158,7 @@ try {
     JOIN scm.delivery_order_items doi ON doi.so_item_id = soi.id
     JOIN scm.delivery_orders d        ON d.id = doi.delivery_order_id
     WHERE soi.cancelled = false
-      AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+      AND upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       AND upper(coalesce(soi.stock_status, '')) <> 'READY'
     GROUP BY soi.doc_no, soi.item_code, soi.qty, soi.stock_status
     ORDER BY soi.doc_no`;
@@ -169,7 +179,7 @@ try {
       FROM scm.delivery_order_items doi
       JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
       WHERE doi.so_item_id IS NOT NULL
-        AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     ),
     returned AS (
@@ -179,7 +189,7 @@ try {
       JOIN scm.delivery_order_items doi ON doi.id = dri.do_item_id
       JOIN scm.delivery_orders d        ON d.id  = doi.delivery_order_id
       WHERE upper(coalesce(dr.status::text, '')) <> 'CANCELLED'
-        AND upper(coalesce(d.status::text, ''))  NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, ''))  NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     ),
     over_lines AS (
@@ -243,7 +253,7 @@ try {
       FROM scm.delivery_order_items doi
       JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
       WHERE doi.so_item_id IS NOT NULL
-        AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     ),
     returned AS (
@@ -253,7 +263,7 @@ try {
       JOIN scm.delivery_order_items doi ON doi.id = dri.do_item_id
       JOIN scm.delivery_orders d        ON d.id  = doi.delivery_order_id
       WHERE upper(coalesce(dr.status::text, '')) <> 'CANCELLED'
-        AND upper(coalesce(d.status::text, ''))  NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, ''))  NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
       GROUP BY doi.so_item_id
     )
     SELECT d.id, d.do_number, coalesce(d.company_id::text, '?') AS company_id
