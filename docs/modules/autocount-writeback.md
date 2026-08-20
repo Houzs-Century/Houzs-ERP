@@ -1148,7 +1148,7 @@ The second half of the owner's 2026-08-19 report, and it is **not** transfer-onl
 
 | | |
 |---|---|
-| AutoCount | `PurchaseHeader` assigns `doc.PurchaseLocation`, and it is the header function BOTH `/create-po` and `/so-to-po` call. Its own comment in `AcSyncService.cs` records that the field "has never been sent" |
+| AutoCount | The purchase documents carry `PurchaseLocation`. It is assigned in **two** places, because the purchase side does NOT share one header function: `CreatePo` sets its own master, and `PurchaseHeader` is what `/so-to-po` and the four conversions apply. `PurchaseHeader`'s own comment in `AcSyncService.cs` records that the field "has never been sent" |
 | the ERP | `scm.purchase_orders.purchase_location_id` (PR #77) — the PO's own ship-to warehouse, which `/submit` REFUSES a purchase order without unless every line names its own |
 
 So AutoCount was **defaulting** the purchase location on every ERP-written
@@ -1164,13 +1164,22 @@ header warehouse set, no per-line override — was refused with
 `MissingLocationError`. A line with neither is still refused, because then
 nobody has said where the goods go.
 
-**Sent OMITTED, never null.** The service's guard on this one key is
-`ContainsKey` AND non-empty, because a blank `PurchaseLocation` is its own
-foreign key error rather than an empty field. `mastersOf` opens it as a stock
-location for the same reason it opens `SalesLocation`: `PurchaseHeader` applies
-it through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does
-not hold would leave the purchase order looking saved and carrying no location
-at all.
+**Sent OMITTED, never null.** The service's guard on this one key — in both
+copies — is `ContainsKey` AND non-empty, because a blank `PurchaseLocation` is
+its own foreign key error rather than an empty field. `mastersOf` opens it as a
+stock location for the same reason it opens `SalesLocation`: it is applied
+through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does not
+hold would leave the purchase order looking saved and carrying no location at
+all.
+
+**TWO ASSIGNMENTS, AND THE FIRST DRAFT OF THIS FIX HAD ONE.** `CreatePo` does
+not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
+`Ref`, `Description` and the UDFs itself. Adding `PurchaseLocation` only to
+`PurchaseHeader` left the CREATE arm sending a key the host never read — the
+same *carrying is not landing* trap this section warns about for `Agent`, walked
+into two paragraphs later. The contract test now asserts the key is READ on
+**both** routes (`headerKeys(CS_CREATE_PO)` and
+`headerKeys(CS_PURCHASE_HEADER)`), which is what caught it.
 
 **STILL OPEN: the PO EDIT cannot change it.** `/edit`'s header allow-list in
 `AcSyncService.cs` does not contain `PurchaseLocation`, so moving a purchase

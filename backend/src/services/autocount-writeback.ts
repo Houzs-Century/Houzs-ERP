@@ -1290,12 +1290,14 @@ export function composeCreatePo(
        `defaultLocation` is resolved below said the opposite: "a purchase order
        has no location of its own". Both sides say otherwise.
 
-       AUTOCOUNT: `PurchaseHeader` assigns `doc.PurchaseLocation`
-       (AcSyncService.cs:2446-2447) and is the one header function BOTH
-       /create-po (:1225) and /so-to-po (:2349) call, so the field is reachable
-       on every purchase document this service writes. Its own comment records
-       that it "has never been sent" — so AutoCount has been defaulting the
-       purchase location on every ERP-written purchase order since the cutover.
+       AUTOCOUNT: the purchase documents carry `PurchaseLocation`, and it is
+       assigned in TWO places because /create-po does not share a header
+       function with the rest — `CreatePo` sets its own master
+       (AcSyncService.cs:926), and `PurchaseHeader` (:2447) is what /so-to-po
+       (:2349) and the four conversions apply. `PurchaseHeader`'s own comment
+       records that the ERP "has never been sent" one, so AutoCount has been
+       defaulting the purchase location on every ERP-written purchase order
+       since the cutover.
 
        THE ERP: `scm.purchase_orders.purchase_location_id`, which /submit
        REFUSES a purchase order without (mfg-purchase-orders.ts:1138,

@@ -34,9 +34,11 @@ successful transfer landed as `PO-009968` instead of `HC-PO-2608-001`). A third
 one-field patch was the wrong fix.
 
 Purchase Location is a **second, wider** bug, and not transfer-only.
-`AcSyncService.PurchaseHeader` — the one header function BOTH `/create-po` and
-`/so-to-po` call — assigns `doc.PurchaseLocation`, and its own comment records
-that the ERP "has never been sent" one. The ERP's counterpart is
+AutoCount's purchase documents carry `PurchaseLocation`, and it is assigned in
+TWO places because the purchase side does not share one header function:
+`CreatePo` sets its own master, `PurchaseHeader` is what `/so-to-po` and the four
+conversions apply. `PurchaseHeader`'s own comment records that the ERP "has never
+been sent" one. The ERP's counterpart is
 `scm.purchase_orders.purchase_location_id`, which `/submit` refuses a purchase
 order without unless every line names its own. So AutoCount had been defaulting
 the purchase location on every ERP-written purchase order since the cutover.
@@ -52,8 +54,11 @@ landing it. `readPoHeader` selects `purchase_location_id` and resolves it to the
 `dbo.Location` code, `composeCreatePo` sends it as `PurchaseLocation` and uses it
 as the LINE default — the ERP's own precedence, `warehouse_id ??
 po.purchase_location_id` — so a PO the ERP considers complete is no longer
-refused with `MissingLocationError`. `mastersOf` opens it, since
-`PurchaseHeader` applies it through `Set()`, which swallows. `composeSoToPo` also
+refused with `MissingLocationError`. `mastersOf` opens it, since the service
+applies it through `Set()`, which swallows. Assigned on BOTH service routes: the
+first draft added it only to `PurchaseHeader` and left `/create-po` sending a key
+the host never read — the same *carrying is not landing* trap as `Agent`, caught
+by asserting the READ on both routes rather than one. `composeSoToPo` also
 now REFUSES a payload whose `DtlKeys` and `Details` counts differ, an invariant
 its doc comment had claimed without enforcing.
 

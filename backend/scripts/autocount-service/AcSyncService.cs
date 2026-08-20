@@ -923,6 +923,16 @@ class AcSyncService {
     po.DocDate = Date(p, "DocDate") ?? DateTime.Today;
     po.CreditorCode = Str(p, "CreditorCode");
     po.CreditorName = Str(p, "CreditorName");
+    /* THE SHIP-TO WAREHOUSE ON THE HEADER. This route does NOT go through
+       PurchaseHeader - it sets its own master, which is exactly why the field
+       had to be added in two places and not one. Same guard as PurchaseHeader's
+       copy and for the same reason: ContainsKey AND non-empty, because "" is
+       not a row in dbo.Location and a blank here is a foreign key error rather
+       than an empty field. The ERP sends it from
+       scm.purchase_orders.purchase_location_id and omits the key when it has
+       none, so the guard is the ERP's contract read back. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => po.PurchaseLocation = Str(p, "PurchaseLocation"));
     Set(() => po.Agent = Str(p, "Agent"));
     Set(() => po.Ref = Str(p, "Ref"));
     Set(() => po.Description = Str(p, "Description"));

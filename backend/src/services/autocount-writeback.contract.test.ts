@@ -166,8 +166,14 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
   });
 
   test('/create-po', () => {
+    /* PurchaseLocation joined this list on 2026-08-20. It is AutoCount's own
+       header ship-to warehouse and the ERP had never sent one, so the book
+       defaulted it on every purchase order the ERP has written. Assigned HERE
+       as well as in PurchaseHeader because /create-po does not go through that
+       function — it sets its own master. */
     expect(headerKeys(CS_CREATE_PO)).toEqual(
-      ['Agent', 'CreditorCode', 'CreditorName', 'Description', 'Details', 'DocDate', 'DocNo', 'Ref'].sort(),
+      ['Agent', 'CreditorCode', 'CreditorName', 'Description', 'Details', 'DocDate', 'DocNo',
+        'PurchaseLocation', 'Ref'].sort(),
     );
     expect(detailKeys(CS_CREATE_PO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
@@ -1260,15 +1266,21 @@ describe('/so-to-po carries the whole master', () => {
   });
 
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {
-    /* AcSyncService's `PurchaseHeader` — the one function BOTH /create-po and
-       /so-to-po call for the header (AcSyncService.cs:1225 and :2349) — reads
-       `PurchaseLocation` off the payload (:2446) and its own comment says the
-       field "has never been sent". The ERP's counterpart is
-       `scm.purchase_orders.purchase_location_id`, the per-PO ship-to warehouse
-       that /submit REFUSES a purchase order without
-       (mfg-purchase-orders.ts:1138). Owner 2026-08-19: 「它的 Purchase Location
-       也不对」 — because AutoCount was defaulting it. */
-    expect(headerKeys(CS_PURCHASE_HEADER)).toContain('PurchaseLocation');
+    /* THE ERP'S COUNTERPART is `scm.purchase_orders.purchase_location_id`, the
+       per-PO ship-to warehouse that /submit REFUSES a purchase order without
+       (mfg-purchase-orders.ts:1138). AutoCount's is `PurchaseLocation`, and
+       `PurchaseHeader`'s own comment says it "has never been sent" — which is
+       why the book was defaulting it. Owner 2026-08-19: 「它的 Purchase
+       Location 也不对」.
+
+       BOTH ROUTES ARE ASSERTED, because the purchase side does NOT share one
+       header function: `CreatePo` sets its own master and `PurchaseHeader` is
+       what /so-to-po and the four conversions apply. Reading only
+       PurchaseHeader would have passed while /create-po silently ignored the
+       key — the same "carrying is not landing" trap as Agent below, and the
+       first draft of this fix walked into it. */
+    expect(headerKeys(CS_CREATE_PO), 'the create route reads it').toContain('PurchaseLocation');
+    expect(headerKeys(CS_PURCHASE_HEADER), 'the transfer route reads it').toContain('PurchaseLocation');
 
     const c = createPoSb();
     await enqueue(c);
