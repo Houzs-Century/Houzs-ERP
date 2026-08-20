@@ -300,6 +300,59 @@ no DO yet (one SO).
 four consignment pairs, all four purchase-consignment pairs, the Delivery
 Planning bulk convert, and MRP → PO. **Mobile-only pairs: none.**
 
+### The wizard's picker reads are wired into the shared invalidation (2026-08-21)
+
+The wizard keys its three reads under private roots it invented —
+`["convert-source", …]`, `["convert-lines", …]`, `["convert-grn-lines", …]` —
+and until 2026-08-21 they were in **nobody's** invalidation set. A convert
+completed anywhere else (a desktop picker, another mobile flow, or this wizard a
+moment earlier) therefore left a MOUNTED phone wizard still offering lines that
+had already been consumed: `over_remaining` on submit at best, and where the
+pool had only partly shrunk, a wrong quantity going through instead.
+
+All three now ride `invalidateConvertShared` (`frontend/src/mobile/sharedInvalidate.ts`,
+`CONVERT_PICKER_ROOTS`), which every convert already calls. **Add a picker root
+there, never a fourth private key at the call site** — inventing the key locally
+is what produced the first three. Pinned by
+`frontend/src/mobile/convertWizardInvalidation.test.tsx`.
+
+> **Limit, stated plainly.** This covers converts inside ONE browser, plus other
+> TABS via the BroadcastChannel in `lib/cross-tab-sync.ts`. A convert on a
+> physically different DEVICE still cannot reach the phone until the query goes
+> stale on its own — there is no server push, and `refetchOnWindowFocus` is what
+> actually rescues that case. The server's own `over_remaining` / `409` refusal
+> remains the real guard, and it always was.
+
+### 6b. Why the other six pairs are still NOT on the wizard (assessed 2026-08-21)
+
+The wizard covers four of the ten desktop `*From*` pickers. The remaining six
+were each assessed against three questions — does a convert endpoint exist that
+takes the wizard's shape, can the document be raised as a DRAFT, and is it work
+done away from a desk. **All six fail on the DRAFT question, and that is not a
+mobile problem — it is the shape of those documents.**
+
+The wizard's rule, bought by defect #2555 (the DO arm shipped without `asDraft`
+and a phone convert dispatched stock immediately): **an arm that cannot send a
+draft flag must not exist.** A phone convert parks a document for review; it does
+not move stock or post to the ledger on a tap.
+
+| Pair | Convert endpoint | Draft possible? | Verdict |
+|---|---|---|---|
+| DO → **Delivery Return** | `POST /delivery-returns/from-do` — takes `picks:[{doItemId, qty, condition}]`, i.e. exactly the wizard's shape | **No.** `grep -c DRAFT backend/src/scm/routes/delivery-returns.ts` = **0**. Hardcodes `status: 'RECEIVED'` and calls `increaseInventoryForReturn` in the same request. | **Closest to accidental, and still blocked.** The endpoint fits; the document has no draft state at all, so a phone tap would move stock straight back into inventory with no review. Needs a backend DRAFT state first — an owner decision, not a UI change. |
+| GRN → **Purchase Invoice** | `POST /purchase-invoices/from-grn-items` (line-level), `/from-grn` (whole) | **No.** Both hardcode `status: 'POSTED'` + `posted_at`. The BARE `POST /` does support `asDraft`, but the convert handlers never read it. | Not added. Posting a supplier invoice to AP is also desk work — it is matching a supplier's paperwork against a receipt, not something done in a warehouse aisle. |
+| PCO → **PC Receive** | `POST /purchase-consignment-receives/from-pcos` | **No, explicitly.** `if (body.status === 'DRAFT') return … 'draft_status_not_supported'` — *"Consignment receives post immediately on create."* | Not added. Also takes WHOLE orders (`purchaseConsignmentOrderIds[]`), so the wizard's line+qty step would have nothing to drive. |
+| PC Receive → **PC Return** | `POST /purchase-consignment-returns/from-pc-receives` | **No, explicitly** — same refusal. | Not added. Same whole-document shape (`pcReceiveIds[]`). |
+| CO → **Consignment Note** | **None.** `GET /consignment-notes/deliverable-order-lines` exists (the picker read), but creation is `POST /` then `POST /:id/items`. | n/a | Not added. Would need a new backend converter, which is a backend change with its own consume-accounting decisions, not a wizard arm. |
+| CN → **Consignment Return** | **None.** `GET /consignment-returns/returnable-note-lines` exists; creation is `POST /` then `POST /:id/items`. | n/a | Not added. Same as above. |
+
+**So zero arms were added, deliberately.** Adding any of them today ships a phone
+button that writes stock or the ledger with no draft and no undo — the #2555
+defect, reintroduced five more times. The unblocking work is backend
+(a DRAFT state for delivery returns; `asDraft` honoured by the PI convert
+handlers; line-level + draft-capable converters for the two consignment pairs),
+and each is a judgement call for the owner rather than a provable defect.
+
+
 ---
 
 ## 6a. Every picker row shows its VARIANTS (owner rule, 2026-08-19)
