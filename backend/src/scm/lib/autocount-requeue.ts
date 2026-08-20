@@ -1191,10 +1191,18 @@ export async function sendOutboxRowNow(
      re-reading one row is cheaper than threading it out of every branch. */
   let said = '';
   try {
-    const { data } = await sb.from('autocount_outbox')
+    const { data, error } = await sb.from('autocount_outbox')
       .select('last_error').eq('id', base.rowId).eq('company_id', base.companyId).maybeSingle();
-    said = String((data as { last_error?: string | null } | null)?.last_error ?? '');
-  } catch { /* the verdict below stands without it */ }
+    /* BIND THE ERROR AND SAY SO. supabase-js does not throw, so an unbound
+       `error` here would make a failed read indistinguishable from a row whose
+       reason is genuinely blank — and this string IS the diagnosis the operator
+       gets back. Silently empty would land him on a refusal that explains
+       nothing, which is the failure class this repo names by name. */
+    if (error) said = `the row was updated but its reason could not be read back: ${error.message}`;
+    else said = String((data as { last_error?: string | null } | null)?.last_error ?? '');
+  } catch (e) {
+    said = `the row was updated but its reason could not be read back: ${e instanceof Error ? e.message : String(e)}`;
+  }
 
   if (outcome === 'sent') return { ...base, outcome: 'sent-now', detail: '' };
   if (outcome === 'waiting') return { ...base, outcome: 'send-now-waiting', detail: said };
