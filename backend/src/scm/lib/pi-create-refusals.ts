@@ -74,8 +74,12 @@ export const insertFailed = (reason: string | undefined, error = 'insert_failed'
 export const loadFailed = (reason: string, what: string) => ({
   error: 'load_failed',
   message:
-    `Could not ${what}, so this invoice was NOT saved — the check that protects the `
-    + 'receipt from being billed twice could not run. Please try again.',
+    /* 200 characters is a CLIFF on the client, not a taper, and the first draft
+       of this sentence came out at 201 with the longest `what` any call site
+       passes — one word from being discarded exactly like the refusal it
+       explains. pi-create-refusals.test.ts measures it rather than trusting it. */
+    `Could not ${what}, so this invoice was NOT saved — the check that stops a `
+    + 'receipt being billed twice could not run. Please try again.',
   reason,
 });
 
