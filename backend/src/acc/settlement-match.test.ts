@@ -145,7 +145,7 @@ describe('watchlist 1 — recorded, not arrived', () => {
    for pairs and nothing else. Both are the same act. */
 describe('one swipe settling several orders', () => {
   const pay = (id: string, sen: number): PaymentCandidate =>
-    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null });
+    ({ source: 'SOPAY', id, docNo: `SO-`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null, customerName: null });
 
   const line = (grossSen: number) => matchStatement(
     { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
@@ -190,7 +190,7 @@ describe('one swipe settling several orders', () => {
    swipe was found and then not offered. */
 describe('pre-ticking the set that adds up', () => {
   const pay = (id: string, sen: number): PaymentCandidate =>
-    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null });
+    ({ source: 'SOPAY', id, docNo: `SO-`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null, customerName: null });
 
   const decide = (grossSen: number, pool: PaymentCandidate[]) => matchStatement(
     { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
