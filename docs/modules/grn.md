@@ -680,6 +680,40 @@ live.
 
 Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
+## 7c. Line DELETE runs in a TRANSACTION — the first GRN route that does
+
+`DELETE /:id/items/:itemId` is wrapped in `runScmPgCommand`, so everything it
+writes — the line delete, the reversing stock OUT, the entity audit, the
+AutoCount outbox row and the SO-allocation recompute request — **commits
+together or not at all**.
+
+**What that fixes.** The recompute used to be a best-effort call after the
+write: `recomputeSoStockAllocation(sb)` in a try/catch. A Worker that died
+between the stock reversal and that call left stock moved and SO lines still
+marked READY, with **no queue row and no retry** — wrong, silently, until an
+unrelated mutation happened to sweep. Now the queue row is written by
+`scheduleStockAllocationAfterCommand` inside the same transaction, so that state
+is unreachable.
+
+**What it costs.** `runScmPgCommand` answers **503 `scm_pg_command_required`**
+where `DATABASE_URL` is absent. Deliberate: refusing is the honest failure when
+the alternative is half-writing a stock reversal.
+
+**Where the body lives.** In `deleteGrnLineCommandHandler`, above the route,
+which is now one line. Two tests anchor on that function name rather than on the
+route — `autocountWritebackCells.test.ts` for the outbox row and the retired-key
+read.
+
+**Proof.** `backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` drives real
+Postgres: commit leaves the line gone AND the request queued; a throw after the
+enqueue leaves **neither**; a throw before it leaves the line intact; and the
+queue stays a singleton across two deletes.
+
+**The other five GRN routes are unchanged** and still best-effort — header
+PATCH, line add, line edit, and the two create paths, with `postGrnHandler`
+deliberately last because it is the largest handler in the file. One PR each.
+`docs/ALLOCATION-DURABILITY-PLAN.md`.
+
 ## 8. Desktop and mobile files that must change together
 
 | Concern | Desktop | Mobile |
