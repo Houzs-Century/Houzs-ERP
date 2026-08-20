@@ -1595,7 +1595,11 @@ export const SalesOrderNew = () => {
         /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
            not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
-        manualEntry: true, // hand-keyed: backend drops the deposit condition only
+        /* `manualEntry: true` stood here — a bare literal on EVERY create, which
+           the backend read as "drop the deposit condition for this screen". The
+           phone sent nothing and was refused the identical order. Owner ruling
+           2026-08-20 (「以电脑为准 —— 两边都不查」) removed the condition itself,
+           so there is nothing left to waive and no flag to send. */
         debtorName,
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
