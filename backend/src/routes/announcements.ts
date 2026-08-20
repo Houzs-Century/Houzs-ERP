@@ -620,10 +620,11 @@ app.get("/banner", async (c) => {
   // and the slice. The family version orphans every user's entry on any
   // broadcast-shaped mutation (create/edit/delete/remind below); per-user
   // changes (own ack, a private notice) bust BOTH of that user's slices.
-  // 60s TTL matches the desktop poll and sessionCache's freshness window for
-  // role/dept edits — the mobile bell polls at 30s, so it may serve up to
-  // TTL-stale, the same trade the human slice already makes. Best-effort: any
-  // KV trouble serves the live build.
+  // TTL is CONFIG_CACHE_TTL_SECONDS.banner (300s / 5 min); the desktop + mobile
+  // pollers run at 3 min (as of 2026-08-20), so a poll lands mostly on a cache
+  // hit and only re-pays the DB round trip once per ~5 min. A reader may serve up
+  // to TTL-stale, the trade the human slice already makes. Best-effort: any KV
+  // trouble serves the live build.
   const bannerVersion = await configCacheVersion(c.env, "banner");
   // Both slices now take the cached path (the key carries the slice). The only
   // bypass is a best-effort one: an UNUSABLE cache version (KV unbound /

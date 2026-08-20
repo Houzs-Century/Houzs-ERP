@@ -54,6 +54,7 @@ import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
@@ -995,33 +996,21 @@ export const SalesOrderNew = () => {
      id; when no staff row matches we synthesize a UI-only "self" option from
      the Houzs auth user so their NAME is always selectable + shown. */
   const SELF_SALESPERSON = '__self__';
-  const selfStaffMatch = useMemo(() => {
-    /* user_id FIRST. It is the only link that actually exists on this data (102
-       of 140 staff rows carry it; 18 carry an email), and it is what the backend
-       already resolves the caller by — resolveOwnerStaffId joins staff.user_id.
-       Matching the frontend to the backend's own key is what stops the two
-       disagreeing about whether the caller has a staff row at all: the IT Admin
-       HAS one (user_id 4, email NULL), yet id/email/name all missed it, so the
-       page offered a synthesized self-option the create path then discarded. */
-    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
-    const byUserId = selfUserId != null
-      ? staffList.find((s) => s.userId != null && Number(s.userId) === selfUserId)
-      : undefined;
-    if (byUserId) return byUserId;
-    const byId = currentStaff?.id
-      ? staffList.find((s) => s.id === currentStaff.id)
-      : undefined;
-    if (byId) return byId;
-    const email = (currentUser?.email ?? '').trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? '').trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const name = (currentUser?.name ?? currentStaff?.name ?? '').trim().toLowerCase();
-    return name
-      ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
-      : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id]);
+  /* The ladder itself is the SHARED `resolveSelfStaff` (vendor/scm/lib) — user_id
+     FIRST, then the bridge staff id, then email, then name. It was written here
+     and mobile MobileNewSO carried a THIRD, older copy that stopped at
+     email-then-name; one module is what stops them disagreeing again. Behaviour
+     is unchanged on this screen: same order, same inputs. */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      staffId: currentStaff?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id],
+  );
 
   /* The creator's display name for the synthesized self-option (only used when
      selfStaffMatch is undefined — i.e. they have no scm.staff row). */
