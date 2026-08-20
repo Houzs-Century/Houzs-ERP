@@ -37,6 +37,13 @@ export interface AssrStageDef {
   long: string;
   /** Responsible role (drives the "next-stage owner" hint on the advance sheet). */
   owner: string;
+  /** One-line caption under the funnel dot on the desktop detail (Nick
+   *  2026-07-23: 在 stage funnel 每个 stage 加上 description). Desktop is the
+   *  only surface that renders it today, but it lives on the row it captions:
+   *  the desktop table that used to hold it also held its own `long` words, and
+   *  four of them had drifted from the canonical ones by the time anyone
+   *  compared. A column, not a table. */
+  desc: string;
 }
 
 /* `long` is READ from the shared stage-label table, never retyped. This table
@@ -46,15 +53,15 @@ export interface AssrStageDef {
    had to bolt a literal "Voided — Not Valid" on top of this table while the
    customer portal's own copy printed the raw slug. */
 export const ASSR_STAGES: AssrStageDef[] = [
-  { key: "pending_review",           short: "Review",      long: ASSR_STAGE_LABEL.pending_review,           owner: "Service Admin" },
+  { key: "pending_review",           short: "Review",      long: ASSR_STAGE_LABEL.pending_review,           owner: "Service Admin", desc: "New case — first review" },
   // Order change (Nico 2026-08-11): Solution comes BEFORE Verification —
   // decide the fix first, then inspect/verify.
-  { key: "pending_solution",         short: "Solution",    long: ASSR_STAGE_LABEL.pending_solution,         owner: "Service Admin" },
-  { key: "under_verification",       short: "Verify",      long: ASSR_STAGE_LABEL.under_verification,       owner: "Service Admin" },
-  { key: "pending_supplier_pickup",  short: "Supplier",    long: ASSR_STAGE_LABEL.pending_supplier_pickup,  owner: "Service Admin" },
-  { key: "pending_item_ready",       short: "Pending Item Ready", long: ASSR_STAGE_LABEL.pending_item_ready, owner: "Service Admin" },
-  { key: "pending_delivery_service", short: "Delivery",    long: ASSR_STAGE_LABEL.pending_delivery_service, owner: "Logistic Admin" },
-  { key: "completed",                short: "Completed",   long: ASSR_STAGE_LABEL.completed,                owner: "System" },
+  { key: "pending_solution",         short: "Solution",    long: ASSR_STAGE_LABEL.pending_solution,         owner: "Service Admin", desc: "Decide fix & assign supplier" },
+  { key: "under_verification",       short: "Verify",      long: ASSR_STAGE_LABEL.under_verification,       owner: "Service Admin", desc: "Inspect & verify the issue" },
+  { key: "pending_supplier_pickup",  short: "Supplier",    long: ASSR_STAGE_LABEL.pending_supplier_pickup,  owner: "Service Admin", desc: "Item with supplier for repair" },
+  { key: "pending_item_ready",       short: "Pending Item Ready", long: ASSR_STAGE_LABEL.pending_item_ready, owner: "Service Admin", desc: "Repair done — QC check" },
+  { key: "pending_delivery_service", short: "Delivery",    long: ASSR_STAGE_LABEL.pending_delivery_service, owner: "Logistic Admin", desc: "Schedule return delivery" },
+  { key: "completed",                short: "Completed",   long: ASSR_STAGE_LABEL.completed,                owner: "System", desc: "Closed & rated" },
 ];
 
 export const ASSR_STAGE_INDEX: Record<string, number> = Object.fromEntries(
