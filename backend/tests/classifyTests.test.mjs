@@ -252,6 +252,12 @@ const MUST_GATE_MERGE = [
      version of it passed on an unfixed tree, so a merge that reintroduces an
      uncoerced date write has to be STOPPED, not reported after the fact. */
   "tests/dateWriteCoercion.test.ts",
+  /* Import-once on the 2990 receiver. A regression here does not break a
+     screen: it silently replays 2990's older copy over an order the owner
+     edited in Houzs and blanks every Delivery Order line that pointed at those
+     SO lines. The deploy stays perfectly healthy while edits quietly revert,
+     which is precisely the shape that has to stop a MERGE. */
+  "tests/soMirrorImportOnce.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

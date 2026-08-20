@@ -94,7 +94,7 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
@@ -1386,16 +1386,25 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    if (!debtorName.trim()) {
-      void notify({ title: 'Customer name is required.', tone: 'error' });
-      return;
-    }
-    if (!phone.trim()) {
-      void notify({
-        title: 'Phone number is required',
-        body: 'every sales order must have a contact number.',
-        tone: 'error',
-      });
+    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
+       — the form popped ONE missing field per click). Collect EVERY always-required
+       field the operator is missing and show them together. The CONDITIONAL guards
+       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
+       "State has no warehouse" config case, payment sub-fields) still run one at a
+       time, because each only applies once an earlier choice is made. Shared with
+       mobile via soRequiredFieldErrors so the required set can't drift. */
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    const missingRequired = soRequiredFieldErrors({
+      customerName: debtorName,
+      phone,
+      hasNamedLine: validLines.length > 0,
+      asDraft,
+      hasVenue: !!effectiveVenueId,
+      hasSalesperson: !!salespersonId,
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+    });
+    if (missingRequired.length > 0) {
+      void notify({ ...soRequiredFieldsMessage(missingRequired), tone: 'error' });
       return;
     }
     // Date sanity (set-together / not-past / processing≤delivery) — shared with
@@ -1403,11 +1412,6 @@ export const SalesOrderNew = () => {
     const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
     if (dateErr) {
       void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
-    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    if (validLines.length === 0) {
-      void notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
       return;
     }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
@@ -1482,26 +1486,11 @@ export const SalesOrderNew = () => {
       }
     }
     /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. The backend enforces both
-       (validation_failed); the pre-checks just say it in one sentence before
-       the round-trip. The SELF sentinel counts as a salesperson: the backend
-       stamps the caller's own staff row for it. */
-    if (!asDraft && !effectiveVenueId) {
-      void notify({
-        title: 'Pick a venue before confirming this order.',
-        body: 'The venue follows the picked salesperson. A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
-    if (!asDraft && !salespersonId) {
-      void notify({
-        title: 'Pick a salesperson before confirming this order.',
-        body: 'A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
+       salesperson; drafts stay freely saveable. Both are now collected in the
+       one-pass required-field check above (soRequiredFieldErrors), so the backend
+       stays the authoritative gate and the operator sees them alongside the other
+       missing fields rather than in two more separate dialogs. The SELF sentinel
+       counts as a salesperson: the backend stamps the caller's own staff row. */
     /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
        ship from a warehouse or AutoCount refuses the whole document. SHARED
        with mobile via soStockLocationError; the backend is the authoritative

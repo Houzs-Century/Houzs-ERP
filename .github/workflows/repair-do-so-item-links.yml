@@ -1,0 +1,68 @@
+name: Repair DO->SO line links (DRY-RUN gated)
+
+# Re-points delivery lines that lost the Sales-Order line they were raised from
+# (`delivery_order_items.so_item_id IS NULL` under a DO whose header still names
+# the order). That column is the only key MRP's delivered-netting and the
+# CONFIRMED -> DELIVERED flip resolve on, so an orphaned line reads as goods
+# never shipped while the stock has already left.
+#
+# The script is backend/scripts/repair-do-so-item-links.mjs and the DECISION is
+# pure and unit-tested (scripts/lib/do-so-link-repair.mjs). A link is offered
+# only when it is FORCED — same item code, same qty, exactly one candidate, no
+# competing claim — and everything else is REFUSED with a reason and left for a
+# human, because a wrong link is worse than a missing one. The known refusal is
+# 2990-DO-2607-013's NTYR pillow, whose SO line is already fully delivered by
+# another document; it is the orphan sentinel's committed baseline of 1 and it
+# must stay refused.
+#
+# ORDER MATTERS. Run this only AFTER the cause is closed. Repairing while a
+# live path is still blanking links just re-breaks the rows on the next sync —
+# the 2990 SO mirror was doing exactly that until it became import-once
+# (so-mirror.ts, 2026-08-20).
+#
+# DRY-RUN unless mode=apply, which also needs the confirm phrase. Every change
+# runs inside a transaction, is verified against a FRESH connection, and is
+# rolled back on any mismatch. Re-running after a successful apply reports
+# CLEAN.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only — type: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-do-so-item-links
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-do-so-item-links.mjs
+        env:
+          # The script keys on APPLY === 'true'; anything else is a dry run, so
+          # the plan default cannot write even if the confirm phrase is filled.
+          APPLY: ${{ inputs.mode == 'apply' }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

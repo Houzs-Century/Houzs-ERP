@@ -84,6 +84,160 @@ and no row content reaches the payload. Proven not vacuous by mutation — forci
 verdict to `CORRECT`, treating inconclusive rungs as evidence, and dropping the gate
 each turn exactly one case red.
 
+## The 2990 mirror kept overwriting Houzs edits, and blanked the delivery links every time [high]
+
+<!-- area: Cutover + migrated data -->
+
+**白话.** 2990 的单现在是在 Houzs 开的、也只在 Houzs 改。可是旧的同步还开着：2990 那
+边每传一次，系统就把这张单整组行删掉再放回去，等于把老板刚改的东西盖回旧的样子。老板把
+运费 250 改成 125，等一会儿又变回 250，那张单还「变成 0 件」—— 就是这样来的。更麻烦的
+是，行一被删，送货单就不记得自己送的是销售单的哪一行，MRP 会以为还没出货，叫采购再买一
+次。现在改成「同一张单只收第一次」：这张单 Houzs 已经有了，就完全不动它；2990 那边要删
+这张单，也不理它。已经断掉的 10 条送货行，另外用修复程序接回去。
+
+**Symptom.** Two faces of one cause. The owner's: editing the delivery fee 250 →
+125 on a 2990 Sales Order "nuked the line to 0" and the order went to 0 items —
+the edit simply came back as 2990 last knew it. The silent one: 10 delivery
+lines across 4 documents carrying `so_item_id IS NULL` under a DO whose header
+still named the order, measured by the orphan sentinel on 2026-08-20 (run
+32321165432) against a committed baseline of 1. `so_item_id` is the key MRP's
+delivered-netting and the CONFIRMED → DELIVERED flip resolve on.
+
+**Root cause (traced in source, and the competing theory refuted by
+measurement).** `routes/so-mirror.ts` was written before the cutover, as a live
+one-way replica: on EVERY inbound message it upserted the header and then
+replaced the whole item and payment set with a DELETE-then-INSERT. That was
+correct while 2990 owned its own orders. It stopped being correct on 2026-07-21,
+when `HOUZS_OWNS_2990="true"` made Houzs the writer — the POS creates `2990-`
+orders here, Houzs mints their numbers, and the readonly wall in
+`mfg-sales-orders.ts` lifts so staff can edit them. The receiver went on
+replaying 2990's copy over those edits, and because
+`delivery_order_items.so_item_id` is `ON DELETE SET NULL`, each replay also
+blanked every DO line pointing at the SO lines it had just deleted and
+re-inserted with the same ids. **The route's own header comment still described
+the pre-cutover contract, which is how a live overwrite path stayed invisible
+for a month.**
+
+The leading alternative — that the `SVC-DELIVERY` fee rebuild did it — was
+REFUTED by the same run: it predicts delivery-charge lines only, and the ten
+orphans are sofas, a mattress and a pillow as well, with whole documents
+orphaned together (2990-DO-2607-012, -015 and 2990-DO-2608-009 lost all three of
+their lines at once). A per-line fee rebuild cannot do that; replacing an
+order's entire item set can. That rebuild was a real mechanism and was closed
+separately by #2514.
+
+**Fix.** The receiver is IMPORT-ONCE. A `doc_no` company 2 does not hold is
+imported exactly as before; a `doc_no` it already holds is not touched at all
+(200 + `skipped_existing`); `deleted:true` on an order Houzs holds is refused
+(200 + `refused_delete`), because Houzs owns these orders' lifecycle now. Every
+refusal is a 2xx on purpose — 2990's pg_cron drainer keys on HTTP status, so a
+non-2xx would keep the outbox row PENDING and wedge the queue behind it. The
+first import writes the header LAST-CHANCE style: if any part of it throws, the
+header it created is removed before the 500, so the retry redoes the whole
+document instead of finding a header-only order and skipping it. The 10 broken
+links are repaired separately by `repair-do-so-item-links.mjs` (workflow **Repair
+DO->SO line links**), AFTER this shipped — repairing first only re-breaks on the
+next sync. The NTYR pillow on 2990-DO-2607-013 stays unrepaired by design: its SO
+line is already fully delivered by another document, so re-linking would report 2
+delivered against 1 ordered.
+
+**Ref.** so-mirror import-once, 2026-08-20. Pinned by
+`backend/tests/soMirrorImportOnce.test.ts` (in `MUST_GATE_MERGE`, so a
+regression stops a merge rather than a deploy). Sentinel:
+`.github/workflows/do-link-sentinel.yml`.
+
+## New Sales Order create popped ONE missing required field per click [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 开一张新 Sales Order 的时候,系统是**一个一个**地报缺的字段:填了客户名 → 点建单 → 「要填电话」→ 填了 → 「要选场地」→ 「要选销售员」→ 「要选交货 State」…… 得来回填五次才建得成。老板现场试的时候直接问:「**为什么要慢慢爆呢**」。现在改成**一次把所有缺的字段一起列出来**,一个弹窗看完。
+
+**Symptom.** Desktop `SalesOrderNew` submit ran a chain of `if (!x) { notify(); return; }`, so it surfaced only the FIRST missing field and returned. On a fresh order the operator hit five sequential dialogs (customer name → phone → venue → salesperson → delivery State), each a fix-and-retry. Confirmed in live QA 2026-08-20 on the Houzs Century company; the same one-at-a-time shape exists on the PO create form.
+
+**Root cause (traced).** First-error short-circuit by construction — each required-field guard was its own early-return, and the delivery-State guard lived in a separate shared lib (`so-form-validate.ts` `soStockLocationError`) not even adjacent to the others, so nothing ever reported the full set at once.
+
+**Fix.** New pure `soRequiredFieldErrors()` + `soRequiredFieldsMessage()` in `so-form-validate.ts` collect EVERY always-required missing field (customer name, phone, ≥1 product line, and for a confirm: venue, salesperson, delivery State) and render them in one message. Desktop `SalesOrderNew` calls it first; the conditional/sequential guards (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the "State has no warehouse" config case, payment sub-fields) still run after, since each only applies once an earlier choice is made. Behaviour-preserving on the required SET (same fields enforced; the backend stays the authoritative gate) — pinned by new tests in `so-form-validate.test.ts` (28 pass). Not a correctness bug: orders always saved correctly once all fields were filled.
+
+**Scope.** Desktop SO create done here. Mobile `MobileNewSO` already batches its customer group (`missingCustomerMsg` collects name/phone/email together) so it never had the worst of this; extending the shared collector across mobile + the PO/DO/GR/PI create forms (they share the tech) is the tracked follow-up. Not claimed as "every surface" — this PR is the desktop SO create.
+
+**Ref.** this PR, 2026-08-20.
+## The delivery-fee rebuild replaced its lines, so a shipped fee lost its DO link [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 运费那一行是系统算出来的。以前每次重算，系统会把整组运费行删掉，再插入新的一
+组，新行的 id 是新的。可是送货单上也可能有一行运费，它用 `so_item_id` 指着销售单的那一
+行；外键是 ON DELETE SET NULL，所以那一删，送货单就不记得自己送的是哪一行了。销售单上
+看起来运费行还在 —— 其实是新的一行，只是代号一样，所以之前查「行还在不在」的人都看不出
+问题，只有 `created_at` 会露馅。现在重算改成原地更新，id 不变，链接也就留住了。
+
+**Symptom.** Silent. A `delivery_order_items` row whose `so_item_id` is NULL
+while its DO header still names the Sales Order. `so_item_id` is the key MRP's
+delivered-netting and the CONFIRMED → DELIVERED flip resolve on, so a shipment
+that loses it is invisible to both. The symptom itself is covered twice over
+(#2225 closed the write-side hole, #2355 gave both engines a second reading off
+the DO header), which is exactly what makes the remaining mechanism hard to
+see.
+
+**Root cause (traced in source).** Three facts that only bite in combination:
+
+1. A Delivery Order **can carry a delivery-fee line**. `routes/delivery-orders-mfg.ts`
+   records a live one: Nico's DO for 2990-SO-2606-034 was blocked on
+   `SVC-DISPOSE-SOFA` and `SVC-DELIVERY-CROSS` being "short" at BALAKONG
+   (2026-08-03). Service lines are skipped for STOCK, not excluded from a DO.
+2. `scm.rebuild_mfg_so_delivery_lines` (0214, re-created by 0305) re-derived the
+   fee by `DELETE … WHERE item_code IN ('SVC-DELIVERY','SVC-DELIVERY-CROSS','SVC-DELIVERY-ADD')`
+   followed by an INSERT. New rows, new ids.
+3. `delivery_order_items.so_item_id` is **ON DELETE SET NULL** (0235).
+
+So a fee change on an SO blanked the link of a DO that had shipped that fee —
+and left an SO that still displayed a delivery line, because a replacement row
+was inserted wearing the same `item_code`. Anyone checking "is the SO line still
+there?" sees yes.
+
+**What this does NOT claim.** It does not explain the 26 orphans of 2026-08-17.
+0302's header sets the FK theory aside because the SO lines "are all still
+THERE, carrying their original `created_at`", and its own example
+(2990-SO-2607-012, seven lines all stamped the second the order was created) is
+evidence that order was never rebuilt. Delete-and-reinsert reproduces the
+*appearance* 0302 describes but not that `created_at`. So this closes a
+mechanism that is real, reachable from the UI, and independently checkable —
+`scm.mfg_so_item_deletions` (0302) has been recording since 2026-08-18, and
+rows there with an `SVC-DELIVERY%` item_code are the direct proof. An empty
+result there stays a real answer, in 0302's own framing.
+
+**Fix.** 0310 replaces the function body with match → update → delete → insert.
+Incoming rows are numbered per `item_code` by their position in `p_rows`; live
+`SVC-DELIVERY*` lines are numbered per `item_code` by id; equal `(item_code,
+seq)` updates that row in place, so the id and any DO link pointing at it
+survive. A component with no counterpart is still deleted and still drops its
+link — correct, the line it named is gone. Cancelled fee lines never match, so
+they are purged and replaced live, as before. An empty `p_rows` still clears the
+set.
+
+The per-`item_code` sequence is load-bearing: `buildDeliveryFeeServiceLines`
+emits `SVC-DELIVERY-CROSS` twice on a follow-up order that also crosses
+categories, so `item_code` alone cannot identify a row. Both orderings are
+stable inside the transaction, and the DELETE removes only the tail of each
+group, so the numbering the INSERT sees is the numbering the UPDATE matched on.
+
+**The lock is untouched, deliberately.** 0214 records two live double-billings
+(SO-2606-043 2026-06-28, SO-2607-010 2026-07-12) from rebuilds interleaving as
+delete/delete/insert/insert under READ COMMITTED. The advisory xact lock is
+still taken first, on the same key, before any read. A pg test races two real
+connections and asserts one line survives.
+
+**Why it matters beyond the orphan.** This is the precondition for letting an
+operator reduce a delivery charge at all. #2490 made a line discount survive the
+rebuild, but the discount has no input in the SO screen yet; adding one on top
+of a replacing rebuild would have manufactured an orphan on each edit.
+
+Seven cases in `tests-pg/deliveryRebuildKeepsIdentity.pg.test.ts`, including the
+DO-link survival, the duplicate `SVC-DELIVERY-CROSS` pairing, the cancelled-line
+replacement and the two-connection race.
+
+**Ref.** fix/delivery-rebuild-keeps-line-identity, 2026-08-20. Follows #2490
+(discount survives) and the 2026-08-07 "every ringgit is a LINE" ruling.
 ## The working-agreement gate's rule 4 read narration as a prescription, and turned `main` red [medium]
 
 **Symptom.** Hours after the Chinese patterns landed, every PR failed
