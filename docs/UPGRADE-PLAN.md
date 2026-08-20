@@ -94,7 +94,7 @@ On `feat/user-mgmt-uplift`, building on what's there (invites+name/role, forgot-
 ---
 
 ## 3. Copy-directly-from-Hookka shortlist (least effort, high value)
-- `scripts/apply-postgres-migrations-incremental.mjs` → P0 #3.
+- `scripts/apply-postgres-migrations-incremental.mjs` [external] → P0 #3.
 - `src/api/lib/auth-totp.ts` + `rate-limit.ts` → P1 #6/#7.
 - `src/api/lib/kv-cache.ts` (KV SWR) → P1 #8.
 - `migrations-postgres/0150_search_trgm.sql` [renumbered] pattern → already done (our 0001_search_trgm).

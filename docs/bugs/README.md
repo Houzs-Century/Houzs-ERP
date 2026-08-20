@@ -73,6 +73,7 @@ git, ours or GitHub's, to call a conflict.
 | `npm --prefix backend run audit:bug-history` | a file here that is not exactly one entry: no `## ` heading on line 1, two headings in one file, or a filename that is not `NNNN-slug.md`. Charged to the change that introduced it, never to whoever is holding the branch |
 | `npm --prefix backend run audit:bug-index` | an `<!-- area: ... -->` tag that names no area, and a generator that parses zero entries |
 | `scripts/check-working-agreement.mjs` | a PR that reads as a fix, changed code, and added no NEW file here. Waived by the `no-bug-history-needed` label, which prints the violation it waives |
+| `npm --prefix backend run audit:bug-signpost` | ledger content back at the OLD path. `BUG-HISTORY.md` is a signpost: no `## ` heading, no line that IS one of these entries' titles, and it must still name `docs/bugs`. Added 2026-08-21 after a merge put the whole 24,129-line ledger back there with nothing red — see `0482-the-bug-ledger-came-back-…` |
 
 ## The migration, and its proof
 
@@ -103,6 +104,23 @@ normalisation, is identical, so nothing the first could have hidden survives it.
 The comparison was re-run against `origin/main`'s ledger after each merge while
 the branch was open, and matched every time — the last at `bc2c1afb7`, 475
 entries, `fda791dd…` both sides.
+
+## The one way this layout can be undone
+
+A branch that forked before the split carries `BUG-HISTORY.md merge=union` in **its
+own** `.gitattributes`, and a merge applies the attributes of the tree it runs IN.
+So on such a branch `git merge origin/main` resolves the ledger hunk by keeping
+both sides, prints `Auto-merging BUG-HISTORY.md`, and **exits 0** — putting the
+whole old ledger back. It happened on 2026-08-20 (#2568) and was not noticed until
+the next day, because that PR's own entry then existed only in the resurrected
+file.
+
+Removing the attribute from `main` does not prevent it and neither does adding
+`BUG-HISTORY.md -merge` there — both were measured against a reproduction of the
+merge and changed nothing, because nothing on `main` reaches into another tree.
+What refuses the result is `audit:bug-signpost`, inside the required
+`backend-typecheck` job. **If you forked before 2026-08-20, check
+`BUG-HISTORY.md` after every merge of `main`; that merge exits 0.**
 
 **From here on the guard is a test, not a paste.**
 `backend/tests/bugLedgerRoundTrip.test.mjs` renders these files into one document,
