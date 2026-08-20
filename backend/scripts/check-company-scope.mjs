@@ -52,11 +52,11 @@
 //     companyContext middleware).
 //
 // Usage:
-//   node backend/scripts/check-company-scope.mjs           # report
-//   node backend/scripts/check-company-scope.mjs --strict  # exit 1 on WRITE findings
-//   node backend/scripts/check-company-scope.mjs --check   # RATCHET: exit 1 on a
-//                                                          # NEW unscoped handler
-//                                                          # (one not in the baseline)
+//   node backend/scripts/check-company-scope.mjs           # report (never gates)
+//   node backend/scripts/check-company-scope.mjs --strict  # RATCHET gate: exit 1 on a
+//   node backend/scripts/check-company-scope.mjs --check   # NEW finding (write OR read)
+//                                                          # not in the baseline. --strict
+//                                                          # and --check are the SAME gate.
 //   node backend/scripts/check-company-scope.mjs --update  # rewrite the baseline,
 //                                                          # SHRINK-only (refuses to grow)
 //   ... --check --ratchet-against origin/main              # also fail if the
@@ -85,10 +85,21 @@
 //     merge base and fails if it grew. This is exactly check-release-discipline's
 //     `--ratchet-against` guard.
 //
-// This does NOT replace `--strict`. --strict enforces the stronger invariant
-// that handler WRITE findings stay at ZERO (writes are the worst class and there
-// are none today); the ratchet grandfathers the read-side backlog and locks the
-// whole set against growth. Both run in CI.
+// RECONCILED 2026-08-20: `--strict` and `--check` are ONE gate.
+// `--strict` was round2's "handler WRITE findings must stay at ZERO" invariant.
+// It hard-failed on 32 write findings (natural-key / upsert-key / rpc in
+// mfg-sales-orders, consignment-orders, fabric-tracking, delivery-orders-mfg
+// crew, fleet-maintenance, so-amendments) and on 21 unscoped read handlers that
+// the read-side ratchet had not yet grandfathered. The owner's decision was to
+// SHIP the real leak fixes now and GRANDFATHER those as tracked debt — the same
+// ratchet posture #2484 introduced for the read side — pending per-site review.
+// So the two verbs converge on the ratchet: the current unscoped set must be a
+// SUBSET of the baseline, a NEW finding (write OR read) fails, and the set may
+// only SHRINK. The shape-pass WRITES join the baseline (they are the worst
+// class and must be blockable when new); the shape-pass SET-READS stay
+// informational, exactly as before. Both `--strict` (required backend-typecheck)
+// and `--check` (non-required company-scope-ratchet, + the growth guard) run in
+// CI.
 // ----------------------------------------------------------------------------
 import fs from "node:fs";
 import path from "node:path";
@@ -111,7 +122,16 @@ const ROUTE_DIRS = [
 ];
 const strict = process.argv.includes("--strict");
 const jsonOut = process.argv.includes("--json");
-const checkMode = process.argv.includes("--check");
+/* --strict AND --check are the SAME gate now (2026-08-20 reconciliation). Both
+   run the ratchet: PASS when the current unscoped set is a SUBSET of the
+   committed baseline, FAIL on a NEW finding (write OR read). --strict was
+   round2's writes-must-stay-ZERO gate; the owner grandfathered today's 32 write
+   findings + 21 read handlers as tracked debt and asked for the ratchet posture
+   over the whole set instead (block NEW, let the existing set only SHRINK), so
+   the two verbs converge. --check additionally accepts --ratchet-against. The
+   required backend-typecheck job runs `--strict`; the non-required
+   company-scope-ratchet job runs `--check` + the growth guard. */
+const checkMode = process.argv.includes("--check") || strict;
 const updateMode = process.argv.includes("--update");
 const ratchetAgainst = (() => {
   const i = process.argv.indexOf("--ratchet-against");
@@ -136,6 +156,15 @@ const BASELINE_PATH = path.join(backendRoot, "scripts", "company-scope-baseline.
    `<file> :: lib(<key>)`. These are the two shapes the two finding sets carry. */
 const handlerKeyOf = (f) => `${f.file} :: ${f.handler}`;
 const libKeyOf = (f) => `${f.file} :: lib(${f.key})`;
+/* SHAPE-FINDING key. The three-shapes pass (set-read / natural-key / upsert-key
+   / rpc) is anchored on a HANDLER + a KIND, not on a row-by-id, so it keys the
+   same way the by-id pass does — file + route identity — plus the kind, and
+   NEVER a line number. Several statements of the same kind in one handler
+   collapse to one key on purpose: the same per-handler granularity the by-id
+   ratchet uses, so a merge that shifts a 12,000-line router cannot turn a
+   grandfathered write into a "new" one. The ` [${…}]` suffix keeps these keys
+   disjoint from the by-id `handlerKeyOf` space. */
+const shapeKeyOf = (f) => `${f.file} :: ${f.handler} [${f.kind}]`;
 const newAgainst = (keys, baseSet) => keys.filter((k) => !baseSet.has(k));
 
 /* SELF-TEST the ratchet primitives, same rule as the pattern self-tests below:
@@ -145,11 +174,14 @@ const newAgainst = (keys, baseSet) => keys.filter((k) => !baseSet.has(k));
 {
   const hk = handlerKeyOf({ file: "backend/src/scm/routes/x.ts", handler: "PATCH /:id" });
   const lk = libKeyOf({ file: "backend/src/scm/lib/y.ts", key: "code" });
-  const base = new Set([hk, lk, "kept-a"]);
+  const sk = shapeKeyOf({ file: "backend/src/scm/routes/x.ts", handler: "PATCH /:id", kind: "natural-key" });
+  const base = new Set([hk, lk, sk, "kept-a"]);
   const ok =
     hk === "backend/src/scm/routes/x.ts :: PATCH /:id" &&
     lk === "backend/src/scm/lib/y.ts :: lib(code)" &&
-    newAgainst([hk, "kept-a"], base).length === 0 &&              // subset -> no new
+    sk === "backend/src/scm/routes/x.ts :: PATCH /:id [natural-key]" &&
+    sk !== hk &&                                                  // disjoint from by-id space
+    newAgainst([hk, sk, "kept-a"], base).length === 0 &&          // subset -> no new
     newAgainst([hk, "brand-new"], base).join() === "brand-new";   // one NEW -> named
   if (!ok) {
     console.error("check-company-scope: RATCHET self-test FAILED - not reporting.");
@@ -1051,9 +1083,26 @@ const KIND_LABEL = {
    route handlers (read + write) and library writes. Nothing here re-decides
    what is scoped — that is the whole matcher above; this only compares the keys
    it produced against the grandfather baseline. */
-const currentKeys = [...findings.map(handlerKeyOf), ...libFindings.map(libKeyOf)].sort();
+/* Shape-pass WRITES join the ratchet; shape-pass SET-READS do not.
+   The 32 write findings (natural-key / upsert-key / rpc) are the ones --strict
+   used to hard-fail on, and the owner grandfathered exactly those, so they must
+   be representable in the baseline. The 89 set-read findings were never gated by
+   any mode (they are printed as leads, judged per-statement, and the owner's
+   grandfather decision named "32 writes + 21 reads", not the set-reads); folding
+   them in would grandfather ~89 more as debt nobody asked to lock, so they stay
+   informational — exactly their status quo. This does NOT drop the shape scan:
+   every shape finding is still detected and printed below. */
+const shapeWriteFindings = shapeFindings.filter((f) => f.writes);
+const currentKeys = [
+  ...new Set([
+    ...findings.map(handlerKeyOf),
+    ...shapeWriteFindings.map(shapeKeyOf),
+    ...libFindings.map(libKeyOf),
+  ]),
+].sort();
 const detailFor = new Map([
   ...findings.map((f) => [handlerKeyOf(f), `${f.writes ? "WRITE" : "read "} L${f.line}  ${f.hits.map((h) => `L${h.line}`).join(" ")}`]),
+  ...shapeWriteFindings.map((f) => [shapeKeyOf(f), `WRITE ${f.kind} L${f.line}  ${f.text}`]),
   ...libFindings.map((f) => [libKeyOf(f), `WRITE L${f.line} by '${f.key}'`]),
 ]);
 
@@ -1295,16 +1344,13 @@ if (jsonOut) {
   }
 }
 
-/* --strict gates on the WRITE findings only.
-   A cross-company WRITE corrupts the other company's data; a read-side finding
-   is a disclosure and often a deliberate cross-company surface, so gating a PR
-   on the raw count would fail on legitimate code — and a gate that cries wolf is
-   a gate someone switches off. The read findings are still printed above.
-   Sibling checks make the same split: check-silent-mutations gates on SILENT
-   (not CAUGHT/UNRESOLVED), check-shared-mirrors on DIVERGED (not COSMETIC). */
-const writeFindings =
-  findings.filter((f) => f.writes).length + shapeFindings.filter((f) => f.writes).length;
-/* `process.exitCode`, NOT `process.exit()`. Found 2026-08-18 by a test that
+/* THE REPORT / --json PATH NEVER GATES. --strict and --check both route into
+   the ratchet block above and exit there; only the human report and --json fall
+   through to here, and neither fails a build. WRITE findings remain the worst
+   class — which is why the shape-pass WRITES (not the set-reads) are folded into
+   the ratchet's currentKeys above, so a NEW cross-company write is BLOCKED by
+   --strict/--check while today's are grandfathered as tracked debt.
+   `process.exitCode`, NOT `process.exit()`. Found 2026-08-18 by a test that
    ran this script and read its stdout: when stdout is a PIPE (a shell
    redirect, `| grep`, execFileSync, a CI log collector) Node's writes are
    ASYNCHRONOUS, and `process.exit()` tears the process down before the buffer
@@ -1313,5 +1359,5 @@ const writeFindings =
    new-shapes section and the suppression ledger simply missing. A gate that
    prints less than it found, only when a machine is reading it, is the same
    class of fault as the one this script exists to catch. Setting exitCode lets
-   node exit naturally once stdout has flushed; the exit STATUS is unchanged. */
-process.exitCode = strict && writeFindings ? 1 : 0;
+   node exit naturally once stdout has flushed; the report never fails a build. */
+process.exitCode = 0;

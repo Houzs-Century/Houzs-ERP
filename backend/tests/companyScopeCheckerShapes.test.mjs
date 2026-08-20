@@ -84,9 +84,32 @@ describe("check-company-scope reports the shapes ID_PREDICATE cannot see", () =>
     expect(guards).toContain("salesDocOutOfScope");
   });
 
-  test("--strict gates on the NEW writes too, not only the by-id ones", () => {
+  test("--strict and --check are the SAME ratchet gate (reconciled 2026-08-20)", () => {
+    // --strict was round2's writes-must-stay-ZERO gate; the owner grandfathered
+    // today's write + read backlog and asked for the ratchet posture over the
+    // whole set. The two verbs now converge, so --strict routes into checkMode.
     expect(source).toMatch(
-      /const writeFindings =\s*\n?\s*findings\.filter\(\(f\) => f\.writes\)\.length \+ shapeFindings\.filter\(\(f\) => f\.writes\)\.length;/,
+      /const checkMode = process\.argv\.includes\("--check"\) \|\| strict;/,
     );
+  });
+
+  test("shape-pass WRITES feed the ratchet; SET-READS stay informational", () => {
+    // The 32 write findings (natural-key / upsert-key / rpc) must be
+    // grandfatherable, so they join the ratchet's stable keys via shapeKeyOf.
+    // The set-reads were never gated and stay out — folding them in would
+    // grandfather ~89 more as debt nobody asked to lock.
+    expect(source).toContain("const shapeWriteFindings = shapeFindings.filter((f) => f.writes);");
+    expect(source).toMatch(/\.\.\.shapeWriteFindings\.map\(shapeKeyOf\)/);
+    // shapeKeyOf is line-free (file + handler + kind), same rule as handlerKeyOf.
+    expect(source).toMatch(/const shapeKeyOf = \(f\) => `\$\{f\.file\} :: \$\{f\.handler\} \[\$\{f\.kind\}\]`;/);
+  });
+
+  test("the reconciled gate is GREEN on the committed baseline — subset passes", () => {
+    // Behavioural, not a count: --strict must exit 0 while every current finding
+    // is grandfathered. A NEW unscoped handler that nobody baselines flips this
+    // to exit 1 (execFileSync throws), which is the whole point of the ratchet.
+    expect(() =>
+      execFileSync(process.execPath, [script, "--strict"], { encoding: "utf8" }),
+    ).not.toThrow();
   });
 });
