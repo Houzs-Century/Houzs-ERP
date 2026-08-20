@@ -25,6 +25,7 @@ import {
   setItemQty,
   setItemCartonQty,
 } from "../services/assr";
+import { normalizeSlaHours } from "../services/assrSla";
 import { runSlaEscalation } from "../services/assrEscalation";
 import { issueStaffToken, issueSalesToken, revokeCaseTokens } from "../services/caseTracking";
 import { sendEmail, publicUrl } from "../services/email";
@@ -371,6 +372,7 @@ function lookupTable(kind: string): string | null {
   return (LOOKUP_TABLES as Record<string, string>)[kind] ?? null;
 }
 
+
 app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   const kind = c.req.param("kind");
   const table = lookupTable(kind);
@@ -410,7 +412,10 @@ app.post("/lookups/:kind", requirePermission("service_cases.manage"), async (c) 
   );
   const sortOrder = Number.isFinite(body.sort_order) ? Number(body.sort_order) : 0;
   if (kind === "priorities") {
-    const sla = Number.isFinite(body.sla_hours) ? Number(body.sla_hours) : null;
+    const sla = normalizeSlaHours(body.sla_hours);
+    if (sla === false) {
+      return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+    }
     await c.env.DB.prepare(
       `INSERT INTO assr_priorities (slug, name, sort_order, sla_hours)
        VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -441,6 +446,15 @@ app.patch("/lookups/:kind/:id", requirePermission("service_cases.manage"), async
   const binds: any[] = [];
   for (const k of allowed) {
     if (k in body) {
+      if (k === "sla_hours") {
+        const sla = normalizeSlaHours(body.sla_hours);
+        if (sla === false) {
+          return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+        }
+        sets.push("sla_hours = ?");
+        binds.push(sla);
+        continue;
+      }
       sets.push(`${k} = ?`);
       binds.push(body[k] ?? null);
     }

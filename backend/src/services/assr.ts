@@ -1,4 +1,8 @@
 import type { Env } from "../types";
+// Case-level SLA clock — its own module (see assrSla.ts header). Re-exported
+// because callers and tests have imported slaHoursFor from here since mig 065.
+import { slaHoursFor, slaHoursForPriority } from "./assrSla";
+export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
 import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
@@ -70,18 +74,6 @@ export type Stage =
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-// Default SLA in hours per priority — single source of truth.
-// Mirrors the backfill in 012_assr_sla.sql so new + historical rows align.
-const SLA_HOURS_BY_PRIORITY: Record<Priority, number> = {
-  urgent: 24,
-  high: 72,
-  normal: 168,  // 7 days
-  low: 336,     // 14 days
-};
-
-export function slaHoursFor(priority: string | null | undefined): number {
-  return SLA_HOURS_BY_PRIORITY[(priority as Priority) || "normal"] ?? 168;
-}
 
 // Maps stage → user-facing status (backward compat for legacy list
 // renderers that still read `status`).
@@ -379,11 +371,13 @@ export async function createAssrCase(
   // Use first item_code for the legacy column
   const firstItem = input.items[0]?.item_code ?? null;
 
-  // SLA window from the case's priority (defaults to 'normal' = 168h
-  // when intake didn't pick one). Priority is stored as the slug on
-  // assr_cases.priority; mig 082 also drives per-stage targets off it.
+  // SLA window from the case's priority (defaults to 'normal' when intake
+  // didn't pick one). Read from assr_priorities on every create so a Service
+  // Maintenance edit takes effect without a deploy — same reason the default
+  // assignee below is read here rather than cached. Priority is stored as the
+  // slug on assr_cases.priority; mig 082 also drives per-stage targets off it.
   const prioritySlug = input.priority ?? "normal";
-  const slaHours = slaHoursFor(prioritySlug);
+  const slaHours = await slaHoursForPriority(env, prioritySlug);
   const deadlineAt = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
 
   // Optional default assignee — admin sets this in Settings → Service.
@@ -1171,7 +1165,7 @@ export async function patchAssrCase(
   // same request), recompute deadline_at off the case's created_at so the
   // SLA clock tracks the new priority band.
   if ("priority" in body && !("deadline_at" in body) && !("sla_hours" in body)) {
-    const newHours = slaHoursFor(body.priority);
+    const newHours = await slaHoursForPriority(env, body.priority);
     const row = await env.DB.prepare(
       `SELECT created_at FROM assr_cases WHERE id = ?`
     )
