@@ -94,7 +94,7 @@ const qi = (s) => {
 const DOC_COLS = [
   "doc_no", "po_number", "do_number", "grn_number", "invoice_number",
   "return_number", "pv_number", "pc_number", "take_no", "transfer_no",
-  "trip_no", "je_no", "quote_no", "quotation_no",
+  "trip_no", "je_no", "quote_no", "quotation_no", "receive_number",
 ];
 
 /* The minters we KNOW own a column, so a discovered column with no entry here
@@ -118,7 +118,7 @@ const REG = new Map(Object.entries({
   "scm.consignment_delivery_returns.return_number": "consignment-returns.ts:116 (CRN)",
   "scm.purchase_consignment_orders.pc_number": "purchase-consignment-orders.ts:342 (PCO)",
   "scm.purchase_consignment_returns.return_number": "purchase-consignment-returns.ts:231 (PCT)",
-  "scm.purchase_consignment_receives.return_number": "purchase-consignment-receives.ts:296 (PCR, dynamic col)",
+  "scm.purchase_consignment_receives.receive_number": "purchase-consignment-receives.ts:824 (PCR)",
   "scm.journal_entries.je_no": "doc-no.ts:203 nextJeNo (JE, 4-pad)",
 }));
 
@@ -188,6 +188,20 @@ try {
   }
   const hasCol = (s, t, c) => has.get(`${s}.${t}`)?.has(c) === true;
 
+  /* Sample columns for printing an offending row. `id` is NOT universal —
+     public.order_details and the ac_snapshot_* mirrors key on the document
+     number itself — and assuming it crashed this script's first production run
+     with `column "id" does not exist`. Build the list from what the table
+     actually has, and always include the doc-number column so a row is
+     identifiable even when nothing else is available. */
+  const sampleCols = (s, t, c) => {
+    const out = [];
+    if (hasCol(s, t, "id")) out.push("id");
+    out.push(c);
+    for (const k of ["company_id", "status", "created_at"]) if (hasCol(s, t, k)) out.push(k);
+    return [...new Set(out)];
+  };
+
   log("");
   log(`--- doc-number columns discovered: ${found.length} ---`);
   const unattributed = [];
@@ -214,6 +228,7 @@ try {
   let dupColumns = 0;
   let dupValues = 0;
   let dupExtraRows = 0;
+  const dirty = new Map(); // "s.t.c" -> number of duplicated values
   for (const r of found) {
     const S = qi(r.s), T = qi(r.t), C = qi(r.c);
     const dups = await pg`
@@ -227,15 +242,13 @@ try {
     if (!dups.length) continue;
     dupColumns += 1;
     dupValues += dups.length;
+    dirty.set(`${r.s}.${r.t}.${r.c}`, dups.length);
     for (const d of dups) dupExtraRows += d.n - 1;
     warn(`  DUPLICATES in ${r.s}.${r.t}.${r.c} — ${dups.length} number(s) held by more than one row`);
     for (const d of dups.slice(0, 50)) {
       warn(`      ${d.doc_no}  x${d.n}`);
       // Print the offending rows so the owner can see WHICH documents they are.
-      const cols = ["id"];
-      if (hasCol(r.s, r.t, "company_id")) cols.push("company_id");
-      if (hasCol(r.s, r.t, "status")) cols.push("status");
-      if (hasCol(r.s, r.t, "created_at")) cols.push("created_at");
+      const cols = sampleCols(r.s, r.t, r.c);
       const rows = await pg`
         SELECT ${pg(cols.map(qi))}
           FROM ${pg(S)}.${pg(T)}
@@ -357,13 +370,10 @@ try {
     const hits = [];
     for (const r of found) {
       const S = qi(r.s), T = qi(r.t), C = qi(r.c);
-      const cols = ["id"];
-      if (hasCol(r.s, r.t, "company_id")) cols.push("company_id");
-      if (hasCol(r.s, r.t, "status")) cols.push("status");
-      if (hasCol(r.s, r.t, "created_at")) cols.push("created_at");
+      const cols = sampleCols(r.s, r.t, r.c);
       const rows = await pg`
         SELECT ${pg(cols.map(qi))} FROM ${pg(S)}.${pg(T)} WHERE ${pg(C)} = ${docNo} LIMIT 5`;
-      for (const x of rows) hits.push({ col: `${r.s}.${r.t}.${r.c}`, ...x });
+      for (const x of rows) hits.push({ col: `${r.s}.${r.t}.${r.c}`, id: x.id ?? "-", ...x });
     }
     if (!hits.length) {
       log(`  ${docNo.padEnd(16)} book=${bookDate} (${op})  ERP: NO ROW — the book holds a number the ERP no longer has.`);
@@ -435,15 +445,49 @@ try {
     ? "  NONE — every series' creation order matches its numbering order."
     : `  ${inversions} inversion(s). Not proof on its own — a backfill or a restore reorders created_at too.`);
 
-  /* ═════ VERDICT ═══════════════════════════════════════════════════════════ */
+  /* ═════ VERDICT ═══════════════════════════════════════════════════════════
+     The discovery in this script is deliberately WIDE — it matches on column
+     NAME, so it picks up reference columns as well as identity ones. A SO line
+     and a status-change row both carry `doc_no`, and both SHOULD repeat it:
+     that is the parent they belong to, not a number they own. Counting those as
+     "duplicate documents" would answer the owner's question wrongly and loudly.
+
+     So the verdict splits them. A column is IDENTITY if a minter is known to
+     write it (REG) or the database enforces it unique — either is a statement
+     that the value names one document. Everything else is a REFERENCE column
+     and its repeats are the schema working. */
   log("");
   log("=== VERDICT ===");
-  log(dupColumns === 0
-    ? "  Q1 NO two ERP documents share a document number today."
-    : `  Q1 YES — ${dupValues} number(s) are held by more than one row. SEE SECTION A.`);
-  log(`  ${unprotected.length === 0
-    ? "  Every doc-number column is protected by a full unique index, so a collision cannot be committed."
-    : `${unprotected.length} doc-number column(s) have NO full unique index — a collision there would commit silently.`}`);
+  const identity = found.filter((r) => {
+    const k = `${r.s}.${r.t}.${r.c}`;
+    return REG.has(k) || !unprotected.some((u) => u.startsWith(k));
+  });
+  const identityDirty = identity
+    .map((r) => `${r.s}.${r.t}.${r.c}`)
+    .filter((k) => dirty.has(k));
+  const referenceDirty = [...dirty.keys()].filter((k) => !identityDirty.includes(k));
+
+  log(`  ${identity.length} IDENTITY doc-number column(s) (a minter owns it, or the DB enforces it unique).`);
+  if (identityDirty.length === 0) {
+    log("  Q1 ANSWER: NO. No two ERP documents share a document number.");
+    log("             Zero duplicates on any identity column.");
+  } else {
+    warn(`  Q1 ANSWER: YES — ${identityDirty.length} IDENTITY column(s) hold a repeated number:`);
+    for (const k of identityDirty) warn(`             ${k}  (${dirty.get(k)} number(s)) — SEE SECTION A`);
+  }
+  const regUnprotected = [...REG.keys()].filter(
+    (k) => discovered.has(k) && unprotected.some((u) => u.startsWith(k)),
+  );
+  log(regUnprotected.length === 0
+    ? "  Every column a minter owns is backed by a full unique index, so a collision cannot commit."
+    : `  ${regUnprotected.length} minter-owned column(s) have NO full unique index: ${regUnprotected.join(", ")}`);
+  if (referenceDirty.length) {
+    log("");
+    log(`  ${referenceDirty.length} REFERENCE column(s) repeat a number, which is what they are for`);
+    log("  (lines, audit rows and queue rows all name their parent document):");
+    for (const k of referenceDirty) log(`             ${k}  (${dirty.get(k)} number(s))`);
+  }
+  log("");
   log(`  ${reissued} known AutoCount number(s) are carried by a NEWER ERP row (section D).`);
 } catch (err) {
   console.error(`check-doc-no-reissue FAILED to read the database: ${err?.message ?? err}`);
