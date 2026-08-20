@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /* GET /fabric-tracking/lite is the openRead display/pick read (SO fabric dropdown
@@ -14,14 +15,16 @@ import { fileURLToPath } from 'node:url';
  * These pin the invariant at the source, and pin that the guard actually opens
  * the lite path (openReadPaths) while the full read stays gated. */
 
-const routeSrc = readFileSync(
-  fileURLToPath(new URL('./fabric-tracking.ts', import.meta.url)),
-  'utf8',
-);
-const indexSrc = readFileSync(
-  fileURLToPath(new URL('../index.ts', import.meta.url)),
-  'utf8',
-);
+/* IT LIVES IN tests/ AND NOT NEXT TO THE ROUTE because backend/tsconfig.json sets
+ * `types: ["@cloudflare/workers-types"]` and includes only `src/**`; a test under
+ * src/ has no node:fs and cannot read a file at all — `tsc --noEmit -p .` fails it
+ * outright (TS2307 on node:fs, TS2339 on import.meta.url). Same reason, and same
+ * shape, as tests/assrStageLabelOneHome.test.ts. */
+const BACKEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const read = (rel: string): string => readFileSync(path.join(BACKEND, rel), 'utf8');
+
+const routeSrc = read('src/scm/routes/fabric-tracking.ts');
+const indexSrc = read('src/scm/index.ts');
 
 // Isolate the /lite handler body (from its registration to the next route
 // registration) so the assertions cannot accidentally read the FULL GET '/'

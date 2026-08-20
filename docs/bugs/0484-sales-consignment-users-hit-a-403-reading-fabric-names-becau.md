@@ -36,3 +36,25 @@ a tier is a pricing CLASS, not a cost.
 sensitive column and pins that the guard opens ONLY the lite path.
 
 Ref: 2026-08-20.
+
+**Correction, 2026-08-21 (added when this entry was re-filed here).** Two things
+above were wrong at the time they were written, and are left standing so the
+record shows what was claimed:
+
+- "`backend tsc --noEmit` clean" was NOT true. The test was written at
+  `src/scm/routes/fabric-tracking.lite-safe.test.ts`, and `backend/tsconfig.json`
+  sets `types: ["@cloudflare/workers-types"]` over `include: ["src/**/*.ts"]` — so
+  `node:fs`, `node:url` and `import.meta.url` do not exist there. `npm --prefix
+  backend run typecheck` failed it with four errors (TS2307 x2, TS2339 x2), and CI
+  run 32401994191 went red on this branch.
+- The test now lives at `backend/tests/fabricTrackingLiteSafe.test.ts`, which is
+  where every other source-slice test in this repo lives and for exactly this
+  reason (see the same note in `tests/assrStageLabelOneHome.test.ts`). Only its two
+  file reads changed, from `new URL(..., import.meta.url)` to a path off the
+  backend root; all five assertions are unchanged. Observed after the move: 5
+  passed, and proved RED by adding `soh_sen` back to the `/lite` SELECT
+  ("lite must not select soh_sen"), then reverted.
+- `npm --prefix backend run audit:routes` was also red — the branch adds
+  `GET /api/scm/fabric-tracking/lite` and changes the mount gate, and
+  `docs/generated/route-capability-matrix.csv` had not been regenerated. It has
+  been, and the diff is confined to the fabric-tracking mount.
