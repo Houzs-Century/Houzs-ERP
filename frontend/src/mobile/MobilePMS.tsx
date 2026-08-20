@@ -982,12 +982,12 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   };
   const visibleChecklist = (data?.checklist ?? []).filter((it) => !itemHidden(it));
   // Owner 2026-07-21 (re-reversed): the Filled floorplan tile is hidden from
-  // crew again — their Floor Plans card keeps Display (banner), Unfilled
+  // crew again — their Floor Plans card keeps Display (tile), Unfilled
   // (view/download) and the stock-transfer records (view/download).
   const hideFilledPlan = isDriverCrew || isStorekeeper;
   // Owner 2026-07-23: the Unfilled/Filled floorplan tiles are for sales,
   // sales director, management and BD only — the ops/office cohort keeps the
-  // card (display banner, 3D/2D design, stock records) without them.
+  // card (Display tile, 3D/2D design, stock records) without them.
   const hidePlanTiles = cohortOps || isPurchaserView;
 
   // ── Owner 2026-07-23 card respec — tile sets for the two new cohorts ──
@@ -3927,81 +3927,51 @@ function FloorPlans({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => void openPlan(displayPlanFiles, "Display")}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openPlan(displayPlanFiles, "Display"); } }}
-          style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, background: "#15161a", borderRadius: 12, padding: "13px 14px", marginBottom: 9, cursor: "pointer" }}
-        >
-          <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(216,168,90,.18)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#d8a85a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8l-9-5-9 5v8l9 5Z" /><path d="M3 8l9 5 9-5M12 13v8" /></svg>
-          </span>
-          <span style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#fff" }}>Display floor plan</span>
-            <span style={{ display: "block", fontSize: 10.5, color: displayPlanFiles.length ? "#7ed6a7" : "#8c968a" }}>
-              {displayPlanFiles.length
-                ? `${displayPlanFiles.length} file${displayPlanFiles.length === 1 ? "" : "s"} · tap to view / download`
-                : "Not uploaded yet"}
-            </span>
-          </span>
-          <span style={{ color: "#8c968a" }}>›</span>
-        </div>
-        {/* Display Floor Plan review (owner 2026-07-29) — approve/reject for a
-            holder/approver once it's uploaded + submitted. */}
-        {/* State for every viewer (approved / pending / not approved); buttons
-            stay approver-gated inside. Nothing renders on an empty document. */}
-        {displayItem && (displayItem.review_status || displayPlanFiles.length > 0) && (
-          <div style={{ marginTop: -3, marginBottom: 10 }}>
-            <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} item={displayItem} hasFiles={displayPlanFiles.length > 0} /></div>
-            {checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0) && (
-              <ReviewButtons item={displayItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
-            )}
-          </div>
-        )}
-
-        {/* Unfilled / Filled plan tiles — tap to view the stored floorplan.
+        {/* Owner 2026-07-31: the Display floor plan is a NORMAL tile now — the
+            black banner is gone and it shows its own preview like every other
+            tile. Order is Display → 3D + 2D → Unfilled + Filled; Display spans
+            the full width so the two design tiles stay paired on their own row.
             Filled plan is hidden from driver/helper/storekeeper (owner
             2026-07-16); BOTH plan tiles are hidden from the ops/office cohort
-            (owner 2026-07-23: sales/SD/mgt/BD only). 3D + 2D design tiles
-            joined the grid the same day (view/download for everyone who sees
-            this card). */}
+            (owner 2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {([
-            ["Unfilled", unfilledFiles, "DRAFT", "#f6efd9", "#6e4d12"],
-            ["Filled", filledFiles, "PLACED", "#e2f0e9", "#2f8a5b"],
-            ["3D Design", threeDFiles, "3D", "#e9e6f4", "#5b4b8a"],
-            ["2D Design", twoDFiles, "2D", "#e2ecf5", "#2f5c8a"],
-          ] as const).filter(([label]) =>
-            !(hideFilledPlan && label === "Filled") &&
-            !(hidePlanTiles && (label === "Unfilled" || label === "Filled"))
-          ).map(([label, files, badge, badgeBg, badgeCol]) => {
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
+            { key: "Filled", label: "Filled plan", files: filledFiles, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
+          ] as const).filter((t) =>
+            !(hideFilledPlan && t.key === "Filled") &&
+            !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
+          ).map((t) => {
+            const files = t.files;
             const latest = files[files.length - 1];
-            // 3D / 2D Design are reviewable (owner 2026-07-29); the plan tiles
-            // (Unfilled/Filled) are not.
-            const tileItem = label === "3D Design" ? threeDItem : label === "2D Design" ? twoDItem : undefined;
+            // Display / 3D / 2D are reviewable (owner 2026-07-29); the
+            // Unfilled / Filled plan tiles are not.
+            const tileItem = t.item;
             const tileCanReview = checklistReviewVisible(user?.permissions, tileItem, files.length > 0);
             return (
               <div
-                key={label}
+                key={t.key}
                 role="button"
                 tabIndex={0}
-                onClick={() => void openPlan(files, label)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openPlan(files, label); } }}
-                style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", cursor: "pointer" }}
+                onClick={() => void openPlan(files, t.label)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openPlan(files, t.label); } }}
+                style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", cursor: "pointer", background: "#fff", ...(t.full ? { gridColumn: "1 / -1" } : {}) }}
               >
                 {latest && /^image\//.test(latest.content_type ?? "")
-                  ? <R2Thumb r2Key={latest.r2_key} style={{ width: "100%", height: 80 }} />
-                  : <div className="ph" style={{ height: 80 }} />}
+                  ? <R2Thumb r2Key={latest.r2_key} style={{ width: "100%", height: t.mediaH }} />
+                  : <div className="ph" style={{ height: t.mediaH }} />}
                 <div style={{ padding: "7px 9px" }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{label === "Unfilled" || label === "Filled" ? `${label} plan` : label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{t.label}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                    <span className="rbadge" style={{ background: latest ? badgeBg : "#f0f1ed", color: latest ? badgeCol : "#9aa093" }}>
-                      {latest ? `${badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
+                    <span className="rbadge" style={{ background: latest ? t.bg : "#f0f1ed", color: latest ? t.col : "#9aa093" }}>
+                      {latest ? `${t.badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
                     </span>
                     {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
                   </div>
-                  {label === "Filled" && canWrite && filledPlanTaskId != null && (
+                  {t.key === "Filled" && canWrite && filledPlanTaskId != null && (
                     <button
                       className="tinybtn"
                       style={{ marginTop: 6, width: "100%" }}
@@ -4027,6 +3997,18 @@ function FloorPlans({
           <div style={{ border: "1px solid #e3e6e0", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
             {stockOutAtts.map((a, i) => (
               <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
+                {/* Owner 2026-07-31: show the record itself, not just its file
+                    name — a tappable thumbnail opens the same viewer as View.
+                    Non-images (PDFs) keep the hatched placeholder. */}
+                <span
+                  role="button"
+                  onClick={() => setDocView({ r2_key: a.r2_key, content_type: a.mime_type ?? mimeFromKey(a.r2_key), caption: a.file_name ?? "Stock transfer record" })}
+                  style={{ flex: "none", width: 54, height: 44, borderRadius: 7, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer", display: "block" }}
+                >
+                  {/^image\//.test(a.mime_type ?? mimeFromKey(a.r2_key) ?? "")
+                    ? <R2Thumb r2Key={a.r2_key} style={{ width: 54, height: 44 }} />
+                    : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
+                </span>
                 <span className="rbadge" style={{ background: "#e2f0e9", color: "#2f8a5b" }}>OUT</span>
                 <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "#414539" }}>
                   {[a.file_name || "Record", a.uploader_name || null, a.uploaded_at ? dm(a.uploaded_at) : null].filter(Boolean).join(" · ")}
