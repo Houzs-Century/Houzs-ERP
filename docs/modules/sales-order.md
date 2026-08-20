@@ -12,7 +12,9 @@
 > `warehouse_id` (the header's free-text `sales_location` snapshot is being
 > unified onto it by a staged backfill migration), and the customer's own
 > reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
-> fallback and `po_doc_no`/`customer_po*` are dead columns pending a staged drop).
+> fallback and the dead `po_doc_no` / `customer_po` / `customer_po_id` /
+> `customer_po_date` columns — 0%-filled, census-verified — are DROPPED from the
+> SO header by migration 0310).
 > No column was renamed in this registration — the two renames are reviewed
 > follow-ups because they need a backfill / a view-guarded drop.
 
@@ -2284,6 +2286,19 @@ blank or unreadable box writes nothing**, because `Number('')` is 0 and that
 would read as charge-nothing and waive the fee on the way to retyping it. A real
 waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
 unit price, on the same `canEditPrice` gate.
+
+**Only once the fee EXISTS (2026-08-20, same day).** The cell reads as
+"amount to charge" only when the line already carries a gross. A delivery-fee
+line added by hand on a NEW SO starts at 0, and there the operator is AUTHORING
+the fee: reading 250 as a target booked a discount of `max(0 - 250, 0)` = 0,
+never wrote the price, and the box snapped back to RM 0. That matters more than
+it sounds, because `applyDeliveryFee` — the create flag that makes the server
+derive a fee — is sent ONLY by the POS handover (`git grep applyDeliveryFee --
+frontend/src` returns nothing; see `mfg-sales-orders.ts:4477`), so a
+Houzs-authored SO has always had its fee typed in as a unit price. The rule is
+`editsFeeAsDiscount(isFeeCode, grossSen)`: no gross, plain unit price. The GROSS
+decides and not the net, so a fee waived to zero keeps fee semantics rather than
+flipping the cell's meaning under the operator's hands.
 
 **All three faults were on THIS side — it was not the mirror.** An earlier draft
 of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
