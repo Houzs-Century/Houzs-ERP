@@ -20,7 +20,7 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import {
-  findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
+  coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -34,6 +34,8 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
+/* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
+import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
 /* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
    blocks only — every guard stayed, because the unlinked-line suite proves them
    per HANDLER against this router's own source text. */
@@ -67,83 +69,10 @@ const ITEM =
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
 
-/* ── The 500 bodies that used to say nothing ────────────────────────────────
-   `{ error, reason }` and no sentence. `reason` is whatever the driver said —
-   "null value in column …", "relation … does not exist" — and the client's
-   hygiene filter drops exactly that vocabulary, so the operator was left with
-   the status line and no idea whether the invoice had been saved. That is the
-   half of the 2026-08-19 report that survived the cause: whatever produced the
-   500, the screen could not say it.
-
-   `reason` is KEPT, unchanged, for the log and for anyone reading the response
-   — the sentence is added beside it, not instead of it. The wording says the
-   one thing an operator has to know before deciding what to do next: whether
-   there is now an invoice. */
-const insertFailed = (reason: string | undefined, error = 'insert_failed') => ({
-  error,
-  message:
-    'The invoice could not be saved, so nothing was recorded and the receipt is still '
-    + 'waiting to be billed. Please try again, and tell IT if it happens twice.',
-  reason: reason ?? null,
-});
-
-const loadFailed = (reason: string, what: string) => ({
-  error: 'load_failed',
-  message:
-    `Could not ${what}, so this invoice was NOT saved — the check that protects the `
-    + 'receipt from being billed twice could not run. Please try again.',
-  reason,
-});
-
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
-
-/* ── coveredGrnIds — EVERY receipt a purchase invoice bills ──────────────────
-   The header's `grn_id` is only the PRIMARY ref. `/from-grn-items` says so where
-   it stamps it — "PRIMARY note ref … the line-level grn_item_id is the
-   authoritative linkage" — because one supplier invoice may cover several notes
-   (owner 2026-08-06, migration 0267). This file already walks
-   `grn_item_id -> grn_items.grn_id` twice for READS (the detail's `sourceGrns`,
-   the linked-docs fan-out); the unlinked-line GUARD was the one place still
-   trusting the header ref alone, so a hand-added line billing a SECONDARY note's
-   material passed the very check written to refuse it.
-
-   Every read binds its error and the result carries `error`, because the CALLER
-   is a money guard: an id list short by one receipt is a door left open, and it
-   is indistinguishable from a receipt that legitimately has no lines. */
-async function coveredGrnIds(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sb: any,
-  args: {
-    /** The header's primary ref, when there is one. */
-    headerGrnId?: string | null;
-    /** Walk this invoice's OWN lines for the receipts they descend from. */
-    piId?: string | null;
-    /** Receipt LINE ids from the request body (a create has no invoice yet). */
-    grnItemIds?: Array<string | null | undefined>;
-  },
-): Promise<{ ids: string[]; error: string | null }> {
-  const grnItemIds = [...(args.grnItemIds ?? [])];
-  if (args.piId) {
-    const { data, error } = await sb.from('purchase_invoice_items')
-      .select('grn_item_id').eq('purchase_invoice_id', args.piId);
-    if (error) return { ids: [], error: `invoice lines: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ grn_item_id: string | null }>) grnItemIds.push(r.grn_item_id);
-  }
-  const lineIds = uniq(grnItemIds);
-  const out = uniq([args.headerGrnId ?? null]);
-  if (lineIds.length > 0) {
-    const { data, error } = await sb.from('grn_items').select('grn_id').in('id', lineIds);
-    if (error) return { ids: [], error: `receipt lines: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ grn_id: string | null }>) {
-      if (r.grn_id && !out.includes(r.grn_id)) out.push(r.grn_id);
-    }
-  }
-  return { ids: out, error: null };
-}
-
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   const d = new Date();
@@ -764,32 +693,9 @@ purchaseInvoices.get('/:id/linked', async (c) => {
   });
 });
 
-/* ── POST / — and the dead end every one of its refusals used to be ──────────
-   PurchaseInvoiceNew sends ONE Idempotency-Key per page mount, so a refused
-   Save CLAIMS that key against the payload it was refused for. The middleware
-   then persists EVERY terminal response, "not only 2xx"
-   (middleware/idempotency.ts:363-373), and replays it for the identical payload
-   (:289-296). Two consequences, both reported from production on 2026-08-19
-   while raising a Purchase Invoice from a Goods Receipt:
-
-     · the operator presses Save again unchanged -> the FIRST refusal is served
-       back from the store and the handler never runs, so a transient
-       fail-closed 500 becomes a permanent one. That is the "it keeps
-       happening" in the message the screen shows.
-     · the operator does what the refusal asked and corrects the payload -> the
-       hash no longer matches a claimed key -> 409 idempotency_key_reused. The
-       only way out is a page reload, which throws away the typed invoice.
-
-   grns.ts closed exactly this on 2026-08-17; lib/no-write-refusal.ts carries
-   the trace and the contract. This router had `refuseWithoutWriting` zero
-   times, so the step AFTER the receipt kept the dead end the receipt lost.
-
-   THE BOUNDARY, drawn the way grns.ts draws its own: every refusal at or above
-   the FIRST mutating call (`insertWithDocNoRetry`, below) is on the safe side
-   by construction and releases. The three that sit past it are commented
-   individually where they are, and two of them release only on a rollback that
-   was PROVEN, not assumed — releasing a claim wrongly costs a duplicate
-   payable, which is not comparable to costing a retype. */
+/* Every refusal here releases the request's idempotency claim, so a corrected
+   Save reaches the handler instead of replaying the first one — rule 1 of
+   lib/pi-create-refusals.ts, which also draws the boundary this follows. */
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
@@ -979,30 +885,19 @@ purchaseInvoices.post('/', async (c) => {
     created_by: user.id,
     }).select(HEADER).single(),
   );
-  /* PAST THE FIRST MUTATING CALL — but nothing survived it. insertWithDocNoRetry
-     returns the LAST attempt's error, and an attempt that errored wrote no row;
-     the earlier attempts only minted doc numbers, which are derived from the
-     table and leave nothing behind. So the claim is released here too, and the
-     operator's next Save reaches the handler instead of being handed this 500
-     back out of the store for the rest of the page's life. */
+  // Past the first write, but nothing survived it: an attempt that errored wrote
+  // no row, and the earlier ones only minted doc numbers. So this releases too.
   if (hErr) return refuseWithoutWriting(c, insertFailed(hErr.message), 500);
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
   const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
   if (iErr) {
-    /* The rollback's own error is BOUND, and it decides whether the claim may be
-       released. A header left behind by a failed delete is a real invoice with
-       no lines; releasing the key there would let the corrected resubmit mint a
-       SECOND one beside it. Proven rollback -> release (the operator can retry);
-       unproven -> keep the claim, which costs a retype and nothing else. */
-    const { error: rbErr } = await sb.from('purchase_invoices').delete().eq('id', h.id);
-    if (rbErr) {
-      /* eslint-disable-next-line no-console */
-      console.error(`[pi create] line insert failed AND rollback failed — header retained: ${h.invoice_number}`);
-      return c.json(insertFailed(iErr.message, 'items_insert_failed'), 500);
-    }
-    return refuseWithoutWriting(c, insertFailed(iErr.message, 'items_insert_failed'), 500);
+    // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
+    // released one over a surviving header would mint a second invoice.
+    const b = insertFailed(iErr.message, 'items_insert_failed');
+    if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 500);
+    return refuseWithoutWriting(c, b, 500);
   }
 
   /* Post-insert over-invoice verification (race guard) — the pre-check above is
@@ -1017,16 +912,10 @@ purchaseInvoices.post('/', async (c) => {
     if (verify.error) console.error(`[pi over-invoice verify] ${h.invoice_number}: ${verify.error}`);
     const over = verify.over;
     if (over.length > 0) {
-      /* Same rule as the items-insert rollback above: the claim follows the
-         PROOF, not the intent. This refusal's remedy is "bill less and try
-         again", which needs the retry to be possible. */
-      const { error: rbErr } = await sb.from('purchase_invoices').delete().eq('id', h.id);
-      if (rbErr) {
-        /* eslint-disable-next-line no-console */
-        console.error(`[pi create] over-invoice rollback failed — invoice retained: ${h.invoice_number}`);
-        return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
-      }
-      return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
+      // Same rule as the items-insert rollback: release only on a proven undo.
+      const b = { error: 'qty_exceeds_remaining', lines: over };
+      if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 409);
+      return refuseWithoutWriting(c, b, 409);
     }
   }
 
@@ -1035,36 +924,10 @@ purchaseInvoices.post('/', async (c) => {
      the header, so from here every exit is a success and this CREATE row is
      true. Written before the DRAFT-dependent side-effects so both statuses
      record exactly one. */
-  /* ── FROM HERE THE INVOICE EXISTS, SO FROM HERE THE ANSWER IS 201 ──────────
-     Everything below is best-effort BY CONTRACT — each of recordPiCreate,
-     recordParentlessCreate, reallocatePiCharges, recomputeGrnInvoiced and
-     recostForPi says in its own docblock that it never throws into its caller,
-     and each carries its own try/catch to keep that promise. The promise is not
-     the same thing as a guarantee: a TypeError above a catch, a subrequest cap
-     reached mid-cascade, an `sb` call that rejects rather than resolving with an
-     `error` — any of those unwinds past all of them into app.onError, which
-     answers 500 `Something went wrong. Please try again.`
-
-     That 500 would be a LIE ABOUT MONEY. The invoice, its lines, its audit row
-     and its AutoCount ledger row are already committed; the operator is told the
-     save failed and does the only sensible thing, which is press Save again. The
-     one thing standing between that and a second payable is the idempotency
-     claim, and this handler now RELEASES that claim on its refusals — so the
-     lie and the release must not be able to meet.
-
-     So the tail is wrapped: committed means 201, whatever happens after. The
-     failure is logged with the document number, which is what makes it findable,
-     and every one of these self-heals on the next touch (the counters are
-     recounted from scratch, the recost re-derives, the outbox is replayed). */
-  try {
-    await runPiCreateSideEffects();
-  } catch (e) {
-    /* eslint-disable-next-line no-console */
-    console.error(`[pi create] post-commit side-effects failed for ${h.invoice_number} — the invoice IS saved:`, e);
-  }
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
-
-  async function runPiCreateSideEffects(): Promise<void> {
+  /* Committed => 201, whatever happens after. A throw ABOVE one of these five
+     catches would report a SAVED invoice as a 500, which is the one shape that
+     books a second payable now that a refusal releases the key — rule 2. */
+  await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
   /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
@@ -1104,7 +967,8 @@ purchaseInvoices.post('/', async (c) => {
     // billed price (or its later correction) in real time.
     await recostForPi(sb, h.id);
   }
-  }
+  });
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
 });
 
 /* ── PATCH /:id/post — CONFIRM transition (DRAFT → POSTED) ───────────────────

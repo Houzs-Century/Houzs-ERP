@@ -74,16 +74,27 @@ body.forEach((text, i) => {
 const isRefusal = (e: Exit) => e.status !== '200' && e.status !== '201';
 const beforeFirstWrite = (e: Exit) => firstWrite === -1 || e.lineNo - start - 1 <= firstWrite;
 
-/* An exit that sits LEXICALLY past the first write. Each needs a reason a
-   reader can check — and the two rollbacks release only on a delete whose error
-   came back null, which is stricter than "we called delete". */
+/* An exit that sits LEXICALLY past the first write may still release, but only
+   with something a reader can check. There are two admissible proofs.
+
+   The MECHANICAL one, preferred because it cannot go stale: the exit is
+   immediately preceded by a `rollbackPi(...)` guard, which deletes the header
+   and answers whether the delete actually succeeded — the releasing branch is
+   then the one reached only when the undo is PROVEN. Keying that on the exit's
+   text would be worthless anyway, since `return refuseWithoutWriting(c, b, 500)`
+   says nothing about what happened above it.
+
+   The WRITTEN one, for an exit with no rollback to point at. */
+const PROVEN_ROLLBACK = /rollbackPi\(/;
 const PAST_A_WRITE: Record<string, string> = {
   'if (hErr) return refuseWithoutWriting(c, insertFailed(hErr.message), 500);':
     'insertWithDocNoRetry returns the LAST attempt\'s error, and an attempt that errored wrote no row; the earlier attempts only minted doc numbers, which are derived from the table.',
-  'return refuseWithoutWriting(c, insertFailed(iErr.message, \'items_insert_failed\'), 500);':
-    'the header is deleted two lines above and the delete\'s OWN error is bound — an unproven rollback takes the other branch and keeps the claim.',
-  'return refuseWithoutWriting(c, { error: \'qty_exceeds_remaining\', lines: over }, 409);':
-    'the PI is deleted (cascading its lines) with the delete\'s error bound, and this is still above recordPiCreate, so no audit row or outbox row exists yet.',
+};
+
+/** The two non-blank lines above an exit — where its rollback proof would be. */
+const precededByRollback = (e: Exit) => {
+  const idx = e.lineNo - start - 1;
+  return body.slice(Math.max(0, idx - 2), idx).some((l) => PROVEN_ROLLBACK.test(l));
 };
 
 describe('every refusal POST /purchase-invoices can emit releases the claim', () => {
@@ -102,7 +113,7 @@ describe('every refusal POST /purchase-invoices can emit releases the claim', ()
   it('a refusal past the first write releases only with a written reason', () => {
     const unexplained = exits
       .filter(isRefusal).filter((e) => !beforeFirstWrite(e)).filter((e) => e.releases)
-      .filter((e) => !PAST_A_WRITE[e.text])
+      .filter((e) => !PAST_A_WRITE[e.text] && !precededByRollback(e))
       .map((e) => `${e.lineNo}: ${e.text}`);
     expect(unexplained).toEqual([]);
   });
