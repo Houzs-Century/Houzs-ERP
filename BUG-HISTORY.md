@@ -1,6 +1,6 @@
 ## A GRN header could change its supplier or currency after it was invoiced, silently diverging from the Purchase Invoice billed against it [medium]
 
-<!-- area: Procurement + GRN -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **白话.** 一张收货单（GRN）已经开了采购发票之后，还可以在收货单上改供应商或货币 —— 系统
 完全没挡。发票是照着原本的供应商和货币开的，收货单一改，两张单就对不上了，而且没有任何提示。
