@@ -2,8 +2,8 @@
 
 <!-- area: Mail, search, notifications -->
 
-**白话.** 通知铃每 30 秒去后台问一次，`GET /api/notifications` 在「慢调用」遥测里出现过。
-铃不是即时聊天，放慢到 60 秒，后台负载减半，人看不出差别。
+**白话.** 通知铃每 30 秒去后台问一次,`GET /api/notifications` 在「慢调用」遥测里出现过。
+铃不是即时聊天,放慢到 60 秒,后台负载减半,人看不出差别。
 
 **Symptom (measured).** The Client Errors telemetry (`GET /api/notifications` in the
 `[slow 800ms+]` slice) plus `[slow 800ms+] GET /api/presence` (5 signatures). Both
@@ -23,4 +23,4 @@ its standing per-tab cost; a bell is not real-time chat, so 60s freshness is fin
 
 **Verified against.** frontend `tsc -b` clean; no test asserts the interval.
 
-**Ref.** perf/presence-notifications-poll, 2026-08-20.
+Ref: 2026-08-20.
