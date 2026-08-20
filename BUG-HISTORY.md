@@ -45,6 +45,96 @@ red first: on the pre-fix tree `postedBody().asDraft` was `undefined`.
 **Ref:** PR feat/owner-policy-rulings, 2026-08-20. Module guide:
 `docs/modules/sales-invoice.md` "THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE".
 
+## The GRN line DELETE's "durable" allocation enqueue was swallowed by a best-effort catch [medium]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 删掉收货单的一行，系统会把那笔货退出库存，然后本来要叫「重算订单可出货
+状态」。那句叫重算的指令被包在一个「出错就当没事」的壳里 —— 一旦它出错，货已经退
+出去了，订单那边却还标着可以出，而且没有任何声音。旁边的注解偏偏写着「这句不会被
+吞掉」，所以看代码的人只会更放心。
+
+**Symptom.** No incident reported. Found while converting the NEXT GRN route to
+the same pattern: the line-delete route shipped the day before carried the
+comment *"DURABLE: queues with the OUT above, and is NOT caught - a failed
+enqueue must fail the delete"*, and the statement it described sat inside a
+`try { ... } catch { /* best-effort */ }`.
+
+**Root cause, traced.** `grns.ts`'s `DELETE /:id/items/:itemId` reverses a
+posted line's receipt inside a best-effort block — the reversing OUT must never
+block the delete — and `scheduleStockAllocationAfterCommand` was written on the
+line after `writeMovements`, INSIDE that block. Read top-down the comment is
+true of the line beside it; read for reachability, the enclosing `catch` eats a
+throw from the enqueue and the request goes on to return 204. The transaction
+then COMMITS the stock reversal with no queue row — which is the exact state
+(`stock moved, no recompute, no retry`) the PG-command conversion exists to make
+unreachable. Confirmed by brace nesting, not by inference: the `try` opens at
+the `qty_accepted > 0` branch and its `catch` closes after the `if (warehouseId)`
+block that holds the enqueue.
+
+**Why nothing caught it.** `stockAllocationDurabilityScope.test.ts` counts the
+CALL, not its reachability; `grnLineDeleteAtomicity.pg.test.ts` injects a throw
+AFTER the enqueue rather than making the enqueue itself fail; and the comment
+made a reviewer's read agree with the intent.
+
+**Fix.** Both GRN transactional routes now set a `stockReversed` flag inside the
+best-effort block and call `scheduleStockAllocationAfterCommand` AFTER it, so a
+failed enqueue propagates and rolls the whole command back. The new
+`tests-pg/grnCancelAtomicity.pg.test.ts` adds the assertion that was missing —
+it renames the queue table out from under the enqueue mid-transaction, so the
+real upsert really fails, and asserts the CANCEL did not survive.
+
+**Class.** A comment is not a control-flow proof. Where a guarantee depends on a
+statement NOT being caught, put the statement outside the `try` where a reader
+can see it, rather than asserting it in prose next to a line that is inside one.
+
+**Ref.** 2026-08-20.
+## The two CONSIGNMENT return docs let an unlinked line be re-pointed at the parent's own goods by editing the code — GAP-2 edit back door [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 寄售退货（consignment return）和采购寄售退货（purchase consignment return）
+这两张退货单，之前可以这样钻空子：先加一条源单里没有的货（系统允许，因为那是正常的
+临时/赠品行），存一次；再把这条行的货号改成源单本来就有的货，第二次存。改完之后这条行
+和源单的行还是没连上（link 还是空），而所有"这批货退过没有"的核对全都是看这个 link 的，
+所以同一批货可以退第二次——寄售退货是把货收回来（IN），采购寄售退货是把货送出去（OUT），
+两边都会重复动库存。GRN / 采购退货 / 交货退货 / 销售发票这四张单早就堵了这个洞，就差这
+两张寄售退货没堵。
+
+**Symptom.** `PATCH /consignment-returns/:id/items/:itemId` and
+`PATCH /purchase-consignment-returns/:id/items/:itemId` mapped `item_code` /
+`variants` straight into the update with no guard. An operator could add a line
+whose code is NOT on the parent document (correctly allowed — the ad-hoc /
+goodwill carve-out), then edit that line's code to one the parent DOES carry.
+
+**Root cause (traced).** The stored link column stays NULL through that edit
+(`consignment_do_item_id` for the CN return, `pc_receive_item_id` for the PC
+return), and every cap + recount on both chains is gated on that link being
+non-null: the consignment-return over-return cap (`checkCrOverRemaining`, gated
+on `noteItemId`) and its inventory resync, and the purchase-consignment-return
+qty cap (`qtyCapRefusal` on `purchase_consignment_receive_items`, gated on
+`receiveItemId`) and `adjustPcReceiveReturnedQty`. So a re-pointed unlinked line
+counts against no parent line and the same goods can be returned twice. Identical
+to the GRN / purchase-return / delivery-return / sales-invoice edit hole closed
+2026-08-17; these two routes were added without the guard and nobody noticed —
+the exact "a rule at N call sites ends up at N-1" failure the shared guard exists
+to prevent.
+
+**Fix.** Wired `unlinkedEditRefusal` (`scm/lib/unlinked-line-edit-guard.ts`) into
+both line-PATCH handlers, after the qty/over-return cap and before the update,
+with two new chains in its CHAINS map: `'consignment-return'` (parent = the
+Consignment Note, codes from `consignment_delivery_order_items` via new
+`cnItemCodesOf`) and `'purchase-consignment-return'` (parent = the PC Receive,
+codes from `purchase_consignment_receive_items` via new `pcReceiveItemCodesOf`).
+Same narrow rule as the other four: refused only on the transition
+not-on-parent -> on-parent (409 `unlinked_line_repoint`); a genuinely ad-hoc
+code, a linked line, and a code-untouched qty edit all still pass; a failed
+parent read fails CLOSED (`unlinked_check_failed`). Tests added to
+`unlinked-line-edit-guard.test.ts` (exploit refuse per chain, parent-from-header
+resolution, ad-hoc allow, linked-qty allow, fail-closed) plus both handlers
+added to the source-slice WIRING assertion.
+
+**Ref.** refactor/txn-consignment-return-guard, 2026-08-20.
 ## A second line in the SAME Save silently put the delivery fee back to 250 [high]
 
 <!-- area: Sales orders + pricing -->
