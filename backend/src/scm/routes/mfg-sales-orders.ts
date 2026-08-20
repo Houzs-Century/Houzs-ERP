@@ -3615,6 +3615,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      PWP voucher binding below — all of which previously saw a permanently-null
      customer_id (the POS never sent one). */
   let orderCustomerId: string | null = null;
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* Scan blank-draft shell (owner 2026-07-04) — a scan that could not read the
      customer's name/phone still lands a draft the rep completes by hand, but it
      carries PLACEHOLDER name/phone. Resolving a customer identity off those
@@ -3626,7 +3627,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       p_name:  customerName,
       p_phone: normPhone,
       p_email: typeof body.email === 'string' && body.email.trim() ? body.email.trim() : null,
-      p_company_id: activeCompanyId(c) ?? null,  // mig 0164 — scope resolve to the active company
+      p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
     });
     if (customerErr) {
       console.error('[mfg-so] customer resolve failed:', customerErr.message ?? customerErr);
@@ -3694,12 +3695,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!code) continue;
     const reject = (reason: string) =>
       pwpRejections.push({ idx, itemCode: String(it?.itemCode ?? ''), code, reason });
+    // HAZARD 2 (see the guide): claiming nothing is safe; claiming theirs is not.
+    if (companyId == null) { reject('cannot tell which company this order belongs to — reload and try again'); continue; }
+    const pwpCompanyId: number = companyId;
     if (seenPwpCodes.has(code)) { reject('code is already applied to another line on this order'); continue; }
     seenPwpCodes.add(code);
-    /* One code = one redemption = ONE unit (Loo 2026-06-12, POS line-quantity).
-       A reward line with qty > 1 would price every unit at the PWP grant off a
-       single voucher. The POS stepper + cart store pin reward lines to 1; this
-       is the authority. */
+    /* One code = one redemption = ONE unit (Loo 2026-06-12); qty>1 would price every unit off one voucher. POS pins reward lines to 1. */
     if (Number(it?.qty ?? 1) !== 1) { reject('a PWP reward line must be quantity 1'); continue; }
     const product = lineProducts[idx];
     if (!product) { reject('unknown item code'); continue; }
@@ -3809,19 +3810,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
+      // HAZARD 2 (see the guide) — both halves of the key
       .eq('code', code).eq('company_id', pwpCompanyId);
-    // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
-    // dead doc_no) so a parallel legitimate redemption can't be hijacked.
+    // Orphaned-USED re-claim matches the orphan row exactly (USED + same dead doc_no) so a live redemption can't be hijacked.
     claimQ = orphanedUsed
       ? claimQ.eq('status', 'USED').eq('redeemed_doc_no', cRow.redeemed_doc_no)
       : claimQ.in('status', ['RESERVED', 'AVAILABLE']);
     const { data: claimed } = await claimQ.select('code').maybeSingle();
     if (!claimed) { reject('code was just claimed by another order — try again'); continue; }
-    /* prevStatus drives the rollback restore. For an orphan re-claim the true
-       pre-incident status is unknown (the dead attempt never rolled back), so
-       restore to the most plausible redeemable state — RESERVED when the code
-       has an owner (same-cart voucher), else AVAILABLE — never back to the
-       bricked USED. */
+    /* prevStatus drives the rollback restore. An orphan re-claim's true prior status is unknown, so restore the plausible redeemable state — RESERVED when owned, else AVAILABLE — never the bricked USED. */
     const prevStatus = orphanedUsed
       ? (cRow.owner_staff_id ? 'RESERVED' : 'AVAILABLE')
       : cRow.status;
@@ -3829,9 +3826,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (grantSofaComboIds) pwpSofaByIdx.set(idx, grantSofaComboIds);
     else pwpBaseByIdx.set(idx, grantPwpPrice);
   }
-  /* Restore claimed codes to their prior state when the request is rejected
-     after the claim (drift 400 / insert failure) so a failed order never
-     silently burns a voucher. */
+  /* Restore claimed codes to their prior state on a post-claim rejection (drift 400 / insert failure) so a failed order never burns a voucher. */
   const rollbackPwpClaims = async () => {
     for (const { code, prevStatus } of claimedPwpCodes) {
       const patch: Record<string, unknown> = {
@@ -3839,14 +3834,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId);
+      await sb.from('pwp_codes').update(patch)  // HAZARD 2: code alone un-burns theirs
+        .eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId);
     }
   };
 
-  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05). Without
-     this the refused line silently repriced at full price and the order died
-     later as a bare pricing_drift — undebuggable from the tablet. Codes that
-     DID claim for other lines are rolled back so nothing burns. */
+  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05); otherwise the line silently repriced full and died later as a bare pricing_drift. Claimed codes are rolled back so nothing burns. */
   if (pwpRejections.length > 0) {
     await rollbackPwpClaims();
     return c.json({
@@ -7241,6 +7234,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   updates.edit_lease_token = operationLeaseToken;
   updates.edit_lease_expires_at = leaseExpiryIso;
 
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* The header CAS and every version-bound follower commit in ONE PostgreSQL
      transaction. A follower exception rolls the header back as well; there is
      no longer a committed-header / failed-cascade split brain. */
@@ -7261,7 +7255,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
-    p_company_id: activeCompanyId(c) ?? null,
+    p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
   });
   if (casError) return c.json({ error: 'update_failed', reason: casError.message }, 500);
   const cas = (Array.isArray(casRows) ? casRows[0] : casRows) as
@@ -10144,16 +10138,19 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
   }
   if (rewardCtx) {
+    // HAZARD 2 again: these RELEASE a voucher — unfiltered hands theirs back to stock.
+    const rewardCompanyId = activeCompanyId(c);
+    if (rewardCompanyId == null) throw new Error('TBC sofa reward code write refused: company unresolved');
     if (rewardComboMatch) {
       const { error } = await sb.from('pwp_codes')
         .update({ redeemed_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code re-point failed');
       if (error) console.error('[tbc-swap-sofa] reward code re-point failed:', error.message); // eslint-disable-line no-console
     } else {
       const { error } = await sb.from('pwp_codes')
         .update({ status: 'AVAILABLE', redeemed_doc_no: null, redeemed_item_code: null, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code release failed');
       if (error) console.error('[tbc-swap-sofa] reward code release failed:', error.message); // eslint-disable-line no-console
       else pwpVoucherReleased = rewardCtx.code;
@@ -11198,10 +11195,12 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  const { data: deleted, error } = await scopeToCompany(sb.from('mfg_sales_order_payments').delete()
+  // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
+  const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
+  const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)
-    .eq('version', expectedVersion), c)
+    .eq('version', expectedVersion), delCo.companyId)
     .select('id')
     .maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);

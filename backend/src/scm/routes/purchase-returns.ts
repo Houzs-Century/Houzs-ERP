@@ -30,6 +30,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -1378,6 +1379,8 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   // GRN-linked line: cap qty at that GRN line's remaining (accepted - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'grn_items', id: grnItemId,
       capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
