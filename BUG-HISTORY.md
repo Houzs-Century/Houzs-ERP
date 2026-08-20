@@ -78,6 +78,218 @@ be satisfied from elsewhere in a 15,000-line file. Source-scanning follows
 page's router, lazy boundaries and query client.
 
 **Ref.** PR #2561, 2026-08-20.
+## A pre-rule sofa-mix order could not be edited AT ALL from the phone [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 后台只挡「这一次改动才制造出混单」（沙发不能跟床架／床褥同单），**旧单一律
+放行**；电脑版 #2395 已经改成一样的问法。手机版还留着旧的「只要有混单就挡」，而且这个
+检查摆在编辑分支的**上面** —— 于是销售在手机上打开一张旧的混单，连**改个电话号码**都
+存不下去，弹出来的理由还是后台自己早就不管的那条规则。现在手机改成跟电脑、跟后台同一
+个问法：只有**这次改动新造出**混单才挡。开新单的行为完全没变。
+
+**Symptom.** On a Sales Order written before the sofa-exclusivity rule existed,
+a rep on the phone cannot save ANY change — not a phone number, not an address,
+not a delivery date. The message names a rule the server itself grandfathers.
+
+**Root cause.** `MobileNewSO.save()` ran the FLAT `hasSofaMixConflict` over the
+edited lines. That is the CREATE path's question ("does this set mix?"), and the
+guard sits ABOVE the edit branch inside `save()`, so it fired on edits too. The
+server asks a different one: its three line paths call `mainMixIntroduced` and
+refuse only a change that INTRODUCES the mix. Desktop's `SalesOrderDetail` was
+moved to the matching differential form in #2395; mobile was not, so the client
+refused saves the server would have accepted.
+
+**Fix.** `frontend/src/mobile/MobileNewSO.tsx` now calls the same shared
+`sofaMixIntroduced(storedGroups, editedGroups)` desktop calls
+(`vendor/shared/so-variant-rule.ts`), with `origItems` — the persisted lines —
+as the "before" set. On a create `origItems` is empty, so `sofaMixIntroduced`
+degrades to exactly the flat question and the create path is unchanged.
+
+**Test.** `frontend/src/mobile/mobile-so-sofa-mix-edit.test.ts`. Source-text
+contract over `save()`, the idiom `so-slip-optional-contract.test.ts` already
+justifies for this 3,700-line screen: it pins WHICH predicate the guard runs and
+that the "before" set is `origItems` (a differential guard fed the edited set
+twice is the flat guard wearing a new name). Run RED first — it reported
+`expected 'async function save(asDraft = false) …' to contain 'sofaMixIntroduced('`.
+
+---
+
+## The phone did not recognise most salespeople as themselves [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 140 个 `scm.staff` 里只有 18 个填了 email，102 个有 `user_id`，而后台认人
+用的就是 `user_id`。电脑版 #2049 已经改成**先比 `user_id`**。手机版还是先比 email
+再比名字，所以**大部分销售员**在手机上都不被认成自己 —— 掉进 `__self__` 这个占位值，
+然后在确认订单时被「Pick a salesperson before confirming this order」直接挡掉。旁边
+那句注解还写着「by id / email / name」，可是程式根本没比过 id。现在两边共用同一段
+`resolveSelfStaff`，注解也改成实话。
+
+**Symptom.** A salesperson whose `scm.staff` row carries no email is not
+detected as themselves on the phone. The Salesperson field falls back to the
+UI-only `__self__` placeholder, and the confirm guard in `save()` can refuse the
+order outright.
+
+**Root cause.** `MobileNewSO`'s `selfStaffMatch` matched email, then name. The
+string `userId` did not appear anywhere in the file, while its own comment
+advertised an id match it never ran. `user_id` is the ONLY link that actually
+exists on this data (102/140 rows, measured on production 2026-08-12 and quoted
+in #2049) and is what the backend resolves the caller by (`resolveOwnerStaffId`
+joins `staff.user_id`), so the frontend and the backend disagreed about whether
+the caller had a staff row at all.
+
+**Fix.** New SHARED `frontend/src/vendor/scm/lib/self-staff.ts` —
+`resolveSelfStaff(staffList, me)`, ladder user_id → bridge staff id → email →
+name, with a null caller id never matching a null `userId`. `MobileNewSO` and
+desktop `SalesOrderNew` both call it. The desktop ladder was moved VERBATIM, so
+that screen behaves exactly as before; the mobile one gains the `user_id` step.
+The lying comment is gone.
+
+**Test.** `frontend/src/vendor/scm/lib/self-staff.test.ts` — a real unit test of
+the resolver (including the production case: IT Admin, `user_id` 4, email NULL,
+which id/email/name all missed) plus a contract that both New-SO surfaces read
+the module and no fourth copy is written. Run RED first: `Failed to resolve
+import "./self-staff"`.
+
+**Found while fixing it, NOT fixed here.** `SalesOrderDetail.tsx:551` keeps a
+THIRD copy (id → email → name, no `user_id`). It only defaults the Add-Payment
+"Collected By" picker, so its failure mode is a blank cell rather than a blocked
+save, and switching it would CHANGE that screen's behaviour — it would start
+matching people it does not match today. That is a decision, not a defect fix.
+
+---
+
+## Scanning a colleague's slip on the phone read it as the scanner's handwriting [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 扫描单据时送出去的那个「销售员」名字，是 **OCR 的学习 key**：后台会拿**那个
+人**的笔迹规则和范例去读这张单（`loadPromptInjections(svc, job.salesperson)`），读完的
+学习样本也归档在那个名字底下，「最近扫描」也是照它筛。电脑版的扫描窗口把它预设成登入的
+人（多数情况没错），但**留着可以改**，后面接 `GET /scan-so/salespeople` 的名单 ——
+因为常常有人帮同事扫。手机版那格是写死的登入者：没有输入框、没有名单。办公室的人一叠
+同事的单扫下去，每一张都用**自己**的笔迹习惯去读，同事的更正也全教进自己的规则档。
+现在手机那格跟电脑一样可以改，名单也是同一个。
+
+**这一格不是佣金。** 订单自己的 `salesperson_id` 是**后台**照登入者盖的
+（`resolveScanUploaderStaffId`，`scan-so.ts:4270` → `scan_jobs.salesperson_id`），
+两个界面都一样、都不信任 client 传来的值。把这条讲成「修好佣金」是这棵树支撑不了的说法。
+
+**Symptom.** An office person working through a stack of colleagues' slips can
+name the writer at the desk and cannot on the phone, so every slip in the stack
+is read against the scanner's own handwriting rules.
+
+**Root cause.** `MobileScan.tsx` had `const salesperson = (user?.name ||
+user?.email || "").trim();` — a constant, no setter, no known-reps list — and
+that single value rides both `/scan-so/extract` and `/scan-so/enqueue`.
+
+**What it actually decides, traced rather than assumed.** `repGiven` (the field)
+feeds `loadPromptInjections` on both the synchronous `/extract` path (`:3061`)
+and the background job (`:3973`, off `scan_jobs.salesperson` written at `:4303`),
+keys the `so_scan_samples` row (`:3072`), and filters `GET /scan-so/jobs`. The
+SO's own salesperson is NOT caller-trusted on either surface — `salesperson_id`
+comes from `resolveScanUploaderStaffId` on the authed request.
+
+**Fix.** `MobileScan` now holds it as state, defaulted to the signed-in user and
+editable against the SAME list desktop offers. `SCAN_SALESPEOPLE_PATH` and
+`normalizeScanSalespeople` were added to the already-shared
+`vendor/scm/lib/scan-jobs.ts` (the module both scan surfaces already read for
+the jobs poll) and `ScanOrderModal` was moved onto them, so the endpoint is
+named once and neither surface can offer a different list. A malformed answer is
+an empty datalist and never a throw — the field is free-text either way.
+
+**Test.** `frontend/src/mobile/mobile-scan-attribution.test.ts` — unit tests for
+the normaliser plus a source contract that the mobile value is editable state
+rather than a constant off the signed-in user, and that both surfaces read the
+one endpoint constant. Run RED first: `MobileScan still hard-codes the scanner
+as the salesperson`.
+
+---
+
+## A slip scanned on the phone produced an order with no slip photo [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** `/scan-so/extract` 已经把它刚上传的两张照片的 R2 key（`imageKey` /
+`receiptImageKey`）传回来了。手机的 client 建单路径两个都没送出去，电脑版两个都送
+（`slip_image_key` / `receipt_image_key`，mig 0033 / 0034）。手机订单详情本来就有一张
+「扫描照片」卡片在等这两个值，所以那张卡片对手机扫出来的单永远是空的。
+
+**范围要讲清楚**：手机**主要**的扫描路径是 `/scan-so/enqueue`，草稿是**后台**建的，
+后台本来就有带这两个 key。缺的是 client 那条 —— `/enqueue` 回 404（旧版 worker）时
+走的 `submitLegacy`。所以这是补一条 fallback 路径，不是「每一张手机扫的单都丢了照片」。
+
+**Symptom.** An order created by the phone's client-side scan path shows an
+empty "Scanned photos" card on `MobileSODetail`, which is built to display
+exactly those keys.
+
+**Root cause.** `MobileScan.buildPrefill` dropped `d.imageKey` and
+`d.receiptImageKey` from the extract response, so `MobileScanPrefill` never
+carried them and `createDraftFromPrefill`'s create body sent neither.
+`SalesOrderNew` sends both.
+
+**Fix.** `MobileScanPrefill` carries `slipImageKey` / `receiptImageKey`,
+`buildPrefill` fills them from the extract response, and
+`createDraftFromPrefill` spreads them into the create body — omitted rather than
+`""` when the photo does not exist, because the create handler stores the value
+verbatim.
+
+**HONEST SCOPE.** The PRIMARY path (`POST /scan-so/enqueue`) mints the draft
+server-side and `backend/src/scm/routes/scan-so.ts` already sets both keys.
+This closes the CLIENT path (`submitLegacy`, reached on a 404 from a stale
+worker), which re-implemented the same create and lost the provenance.
+
+**Test.** `frontend/src/mobile/mobile-scan-slip-provenance.test.ts` drives the
+real exported `createDraftFromPrefill` with `authedFetch` faked and asserts the
+POST body. Run RED first: `expected undefined to be 'scan-slips/abc'`.
+
+---
+
+## A zero-cost goods receipt was a dead end on the phone [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 后台拒绝零成本收货时讲得很清楚，而且给了两条出路：填上供应商送货单上的单价，
+或者在**那一行**打勾「Received free」并写原因。电脑版两样都有。手机版**一样都没有**
+—— `zeroCostAck` 在整个 `frontend/src/mobile` 里一次都没出现过，收货画面只有「Post」和
+「Cancel」，连转单精灵的提示都写着「open the receipt on desktop」。仓库地面上拿着手机的
+收货员，看到一个正确、看得懂、指名两个修法的拒绝讯息，而那两个修法都不在他手上那台
+机器里，只能去找电脑。拒绝讯息本身两边都显示正常 —— 缺的是**补救的界面**。
+
+**这不是一键豁免。** 每一行各自决定：填价，或打勾＋写原因；只要还有一行没交代，
+Post 就不放行。`docs/modules/grn.md` 已经写明这个逃生口**故意**放在行上而不是对话框上，
+「一键把整张单说成免费」正是这道闸要防的反射动作。
+
+**Symptom.** `PATCH /scm/grns/:id/post` answers 409 `zero_cost_receipt`, naming
+the offending lines and both remedies. On the phone neither remedy exists.
+
+**Root cause.** Two halves. (a) `MobileModuleDetail`'s `grns` case offers only
+Post and Cancel, and no mobile file mentions `zeroCostAck`. (b) `authed-fetch`
+parsed the refusal body, composed the operator's sentence and threw the parse
+away, so a surface could show the refusal and nothing else.
+
+**Fix.** New shared `frontend/src/vendor/scm/lib/zero-cost-refusal.ts` —
+`parseZeroCostRefusal` / `zeroCostRefusalText` / `zeroCostRefusalFrom`.
+`authed-fetch` now composes the SAME sentence through it (moved, not rewritten)
+and attaches `status` + the raw `body` to the thrown error, exactly as its
+terminal error path already does. New `frontend/src/mobile/MobileGrnZeroCost.tsx`
+turns that into a per-line bottom sheet: a unit price, or a "Received free" tick
+with its reason, written through the same
+`PATCH /grns/:id/items/:itemId` desktop uses (the only route that clears the gate
+without inventing a price — the three ack columns move together server-side in
+`zeroCostAckColumns`), then the original `PATCH /grns/:id/post` runs again.
+`MobileModuleDetail`'s action footer captures the refusal and opens it; the
+convert wizard's message no longer sends the receiver to a PC.
+
+**Test.** `frontend/src/vendor/scm/lib/zero-cost-refusal.test.ts` (parser +
+sentence) and `frontend/src/mobile/MobileGrnZeroCost.test.tsx`, which drives the
+real sheet with `authedFetch` faked and pins both writes, the second refusal
+being shown rather than swallowed, and that Post stays disabled while any line
+is unanswered. Run RED first: `Failed to resolve import "./zero-cost-refusal"`
+— neither module existed.
+
+---
 ## The announcements banner polled every 30-60s from every page — 3x more often than it needs [medium]
 
 <!-- area: Mail, search, notifications -->
