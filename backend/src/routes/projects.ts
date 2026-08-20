@@ -1354,10 +1354,19 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
 
   let showroomVenues: VenueOut[] = [];
   try {
+    /* Company-scoped, same rule as the project_venues half above. scm.warehouses
+       carries company_id (mig 0086; 0087 made its code unique per company), and
+       without the predicate a HOUZS user raising a project or an SO saw 2990's
+       showrooms in the venue picker. Owner 2026-08-19: "客人开单不能看到 2990 的
+       展厅啊。分开的公司都不一样啊，收入单也不一样。venue 都不一样啊" and "我们的
+       Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着看到自己公司的".
+       GET /staff/showrooms (scm/routes/staff.ts) already scoped its copy of this
+       same list; this one was the half that was missed. */
     const shRows = await c.env.DB.prepare(
       `SELECT id, code, name, venue_name FROM scm.warehouses
         WHERE is_showroom = true AND is_active = true
           AND venue_name IS NOT NULL AND btrim(venue_name) <> ''
+          ${activeCompanySql(c, "company_id")}
         ORDER BY venue_name`
     ).all();
     /* DEDUPE against the project venues by case-insensitive name. A showroom
@@ -4592,6 +4601,9 @@ app.get("/attachments/:key{.+}", async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      // Block MIME-sniffing the server-derived content-type back into
+      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });

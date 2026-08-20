@@ -34,6 +34,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { writeMovements, defaultWarehouseId, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { loadKnownPurchaseCostSen, normalizeMaterialCode } from '../lib/zero-cost-receipt-guard';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
@@ -42,10 +43,34 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { PCR_LOCK_COLS, PCR_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
 export const purchaseConsignmentReceives = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseConsignmentReceives.use('*', supabaseAuth);
+
+/* The IN cost for a consignment-receive line, in tiers (owner 2026-08-20). A
+ * consignment receive is legitimately 0-priced (the supplier still owns the
+ * goods until settlement), so we never BLOCK it the way GRN does; we resolve the
+ * missing cost instead of opening a 0-cost lot a later sale would under-cost on:
+ *   1. the line's own price, if any;
+ *   2. else the SKU's current on-hand weighted-avg cost (open lots);
+ *   3. else its last KNOWN historical purchase cost (any priced lot — covers a
+ *      SKU that was priced but is now fully sold out, which tier 2 misses);
+ *   4. else 0 — a genuinely never-priced SKU, same as GRN allows.
+ * `undefined` (not 0) means "no value at this tier": a present-but-0 on-hand cost
+ * wins over the historical tier, preserving the pre-existing `?? ` semantics. */
+export function resolvePcReceiveUnitCostSen(
+  lineCostSen: number,
+  onHandBucketCostSen: number | undefined,
+  historicalCostSen: number | undefined,
+): number {
+  if (lineCostSen > 0) return lineCostSen;
+  if (onHandBucketCostSen !== undefined) return onHandBucketCostSen;
+  if (historicalCostSen !== undefined) return historicalCostSen;
+  return 0;
+}
 
 /* ── Shared helper: post a PC Receive + roll up to PC Order items ──────────
    Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
@@ -136,13 +161,34 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     // current on-hand weighted-avg cost instead of opening a 0-cost FIFO lot a
     // later sale would consume and under-state COGS on. Same fix the sales-side
     // consignment-returns.ts got for BUG-2026-06-07-001; this in-path was missed.
+    //
+    // Owner 2026-08-20 — the on-hand fallback misses a SKU that WAS priced but is
+    // now fully sold out (resolveWarehouseLotCosts reads only OPEN lots), so a
+    // repeat 0-price consignment receipt of it still opened a 0-cost lot. This is
+    // the residual the "match GRN" review flagged — but the right fix is NOT
+    // GRN's block-and-ack (a consignment receive is LEGITIMATELY 0-priced, so
+    // blocking every one would fight the normal case): it is a second, silent
+    // cost tier. Below the on-hand cost we consult the SKU's last KNOWN historical
+    // purchase cost (the same inventory_lots lookup GRN's guard uses), so a
+    // known-cost SKU never opens a 0-cost lot, with zero operator friction. A
+    // genuinely never-priced SKU still books at 0 — same as GRN lets it.
     const costByBucket = await resolveWarehouseLotCosts(sb, warehouseId);
+    const zeroPricedCodes = ((lines ?? []) as Array<{ item_code: string; unit_price_sen: number | null }>)
+      .filter((l) => !(Number(l.unit_price_sen ?? 0) > 0))
+      .map((l) => l.item_code);
+    const histCost = zeroPricedCodes.length
+      ? await loadKnownPurchaseCostSen(sb, zeroPricedCodes, (header as { company_id?: number | null }).company_id ?? null)
+      : new Map<string, number>();
     for (const it of ((lines ?? []) as Array<{ item_code: string; material_name: string | null; qty_accepted: number | null; unit_price_sen: number | null; item_group: string | null; variants: unknown }>)) {
       const qty = Number(it.qty_accepted ?? 0);
       if (qty <= 0) continue;
       const vk = computeVariantKey(it.item_group, (it.variants as VariantAttrs | null) ?? null);
       const lineCost = Number(it.unit_price_sen ?? 0);
-      const unitCost = lineCost > 0 ? lineCost : (costByBucket.get(`${it.item_code}::${vk}`) ?? 0);
+      const unitCost = resolvePcReceiveUnitCostSen(
+        lineCost,
+        costByBucket.get(`${it.item_code}::${vk}`),
+        histCost.get(normalizeMaterialCode(it.item_code)),
+      );
       const k = `${it.item_code}::${vk}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
@@ -419,6 +465,12 @@ export async function recomputePcoReceived(
    lines has a downstream PC Return (returned_qty > 0). There is no PC invoice in
    scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
    the receive is free to edit. */
+/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — supplier + currency freeze
+   once a PC Return exists. Column set + labels come from the ONE rulebook
+   (shared/document-policy.ts) so they can't drift from the siblings. */
+const PCR_IDENTITY_LOCK_COLS = PCR_LOCK_COLS;
+const PCR_IDENTITY_LABELS = PCR_LOCK_LABELS;
+
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_consignment_receive_items')
     .select('returned_qty').eq('pc_receive_id', receiveId);
@@ -1114,6 +1166,21 @@ purchaseConsignmentReceives.patch('/:id', async (c) => {
   /* A cleared received-date posts "" and this loop wrote it through to the
      date column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
+  /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1): supplier + currency
+     freeze once a live PC Return exists; received date / delivery-note ref / notes
+     stay editable. This header previously had no downstream guard at all. */
+  {
+    const { data: before, error: bErr } = await scopeToCompanyId(sb.from('purchase_consignment_receives')
+      .select('supplier_id, currency').eq('id', id), co.companyId).maybeSingle();
+    if (bErr) return c.json({ error: 'update_failed', reason: bErr.message }, 500);
+    const locked = before ? changedLockedCols(PCR_IDENTITY_LOCK_COLS, updates, before as Record<string, unknown>) : [];
+    if (locked.length > 0 && (await pcReceiveHasDownstream(sb, id))) {
+      return c.json(identityLockedRefusal({
+        error: 'pc_receive_identity_locked', fields: locked, labels: PCR_IDENTITY_LABELS,
+        what: 'PC Receive', child: 'PC Return', ownFields: 'received date, delivery-note ref and notes',
+      }), 409);
+    }
+  }
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_receives').update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);

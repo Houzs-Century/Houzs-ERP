@@ -53,6 +53,8 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import styles from './SalesOrderDetail.module.css';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -118,6 +120,7 @@ type DraftLine = {
 
 export const PurchaseInvoiceNew = () => {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [params] = useSearchParams();
   const grnId    = params.get('grnId');
   // fromPicks = arrived from the GRN→PI review picker: build ONLY the ticked
@@ -502,6 +505,11 @@ export const PurchaseInvoiceNew = () => {
         // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
         await post.mutateAsync(createRes.id);
       }
+      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — and on a purchase
+         invoice the field most likely to be missing is the SUPPLIER'S OWN
+         invoice number, which is the one accounts will ask about. Same shared
+         frame as every other surface. Never blocks; the liability is booked. */
+      await notifyAcNotSent(notify, createRes, 'Purchase invoice');
       setDialog({
         title: `PI ${createRes.invoiceNumber} created`,
         body: asDraft

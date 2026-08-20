@@ -609,6 +609,30 @@ throughout — it logs and skips, because the primary write already committed.
 
 ---
 
+### The Main Supplier column, and the convert's `missing_bindings`
+
+Both read `supplier_material_bindings` for every code in the picker, and both
+now go through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) rather than their own query —
+`backend/src/scm/routes/mfg-purchase-orders.ts` at the SO->PO picker, the
+convert body and the append-to-PO pricing path, plus `reviseBoundPo` in
+`backend/src/scm/lib/so-revision.ts`.
+
+The two failures are not the same size. On the picker a binding that does not
+arrive is a blank **"— none —"** cell. In the convert body it is a **400**: the
+SKU comes back as `missing_bindings`, i.e. the operator is told a bound SKU
+"isn't bound to a supplier yet" and cannot raise the order at all. The shared
+reader chunks the IN-list by URL bytes, pages past PostgREST's 1,000-row
+response cap, and orders totally (`is_main_supplier DESC, item_code, id`) — the
+last of which is what decides which alternate wins when a code is bound to
+several suppliers.
+
+A supplier's own detail page (`suppliers.get('/:id')`,
+`backend/src/scm/routes/suppliers.ts`) had no `.range()` at all and is now paged
+by `paginateAll` for the same reason: production carries 2,660 bindings across
+43 suppliers, so a large supplier could show a subset of its own SKUs and report
+nothing.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL: `backend/scripts/scm-schema/2990s-full-schema.sql:1150`
@@ -898,3 +922,62 @@ Three things it will not do, and the reasons are the rule rather than caution:
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+---
+
+## When the accounts will not take the order, the buyer is told at save
+
+Owner 2026-08-19. The rule and the block-or-warn reasoning live in
+`docs/modules/autocount-writeback.md` §6b; the sentences in
+`backend/src/scm/lib/ac-preflight.ts`.
+
+`ac-preflight.ts` carries a SECOND verdict from 2026-08-20, and it is not this
+one. `AC_NOT_SENT` means *the accounts do not have this document*;
+`AC_SENT_INCOMPLETE` (`acNotCarriedProblems`) means *they DO have it, and a
+field on it did not come with it* — the case that only arises on the four
+TRANSFERRED documents, whose route applies a strictly narrower header than an
+edit does. Two codes and not one, because filing the second under the first
+would tell an operator their goods receipt is ERP-only when the book already
+holds it, which sends them to raise it twice. Nothing on a sales order or a
+purchase order raises `AC_SENT_INCOMPLETE`; it is named here only so the two
+are not confused when reading that module.
+See `docs/modules/autocount-writeback.md` §7c5.
+
+
+All three PO create anchors — `POST /` (`createMfgPurchaseOrderHandler`),
+`POST /from-sos` (per created PO), and `PATCH /:id/confirm` — now return
+`acNotSent: SaveProblem[]` when the AutoCount composer refused the order. The key
+is ABSENT when the order composed cleanly. `POST /from-sos` carries it per PO
+inside `created[]`, because that route raises several and which one was refused
+is the whole point.
+
+**It never refuses the save**, and that is a decision, not an omission. Every live
+cause on this side needs master data a buyer does not own:
+
+| Cause | What the buyer is told to do |
+|---|---|
+| The ERP code maps to several AutoCount items and this order's supplier owns none of them | raise the order against the supplier the product is actually bought from, or ask for the duplicate AutoCount item to be retired |
+| `scm.suppliers.code` is empty — no AutoCount creditor | ask accounts to give the supplier its creditor code, then re-raise |
+| **Added 2026-08-20** — the order was raised FROM a sales order and one of its sofa builds does not line up with how the accounts already hold that build (`AcSoToPoAlignmentError`) | ask for that build's line keys to be checked, then re-raise |
+
+That third cause has the same shape as the first two — master data a buyer does
+not own — and it is the only one whose refusal is about the SO-to-PO transfer
+rather than the order's own contents. `docs/modules/autocount-writeback.md`
+§7c3b-i has what "does not line up" means and which sofa build reaches it.
+
+**A refusal is surfaced TWICE and the two lists must agree**: `noteReadFailure`
+(the durable outbox row, for an engineer) and `acNotSentProblems` (the sentence,
+for the buyer) are two `instanceof` chains someone has to remember to extend, and
+both were short of the same class on the day it was added. They are now pinned
+against each other in `backend/src/scm/lib/ac-preflight.test.ts`, which reads the
+two sources and names whichever side is missing a class.
+
+Blocking any of them would stop procurement over an accounting-map defect and blame
+the person who cannot fix it. Measured against the compiled cutover map: 117
+ambiguous ERP codes, all 117 refused under a creditor that owns none of their
+candidates — this is the purchase side's problem alone, because a sales order
+names no supplier and resolves to the ERP's own code.
+
+Surfaced on `frontend/src/pages/scm-v2/PurchaseOrderNew.tsx`, before the
+navigation so the page change cannot swallow it. `PurchaseOrderFromSo.tsx` is
+NOT wired yet and still saves in silence.

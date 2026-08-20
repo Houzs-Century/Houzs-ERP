@@ -45,6 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
+import { readMfgProductBindings } from './supplier-bindings';
 import {
   rederiveDeliveryFee,
   deriveCountryFromState,
@@ -1256,13 +1257,18 @@ export async function reviseBoundPo(
     )];
     const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
     if (codes.length > 0) {
-      let q = sb.from('supplier_material_bindings')
-        .select('item_code, supplier_id, supplier_sku, is_main_supplier')
-        .in('item_code', codes)
-        .eq('material_kind', 'mfg_product')
-        .order('is_main_supplier', { ascending: false });
-      if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
-      const { data: bRows, error: bErr } = await q;
+      /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
+         TOTALLY ordered. The order matters more than the size does here — the
+         loop below takes "the first row seen per code" as that code's main
+         supplier, and `is_main_supplier DESC` alone leaves every tie in
+         planner order, so which alternate wins was never decided by this file. */
+      const { data: bRows, error: bErr } = await readMfgProductBindings<{
+        item_code: string; supplier_id: string; supplier_sku: string | null;
+      }>(sb, {
+        codes,
+        companyId: soCompanyId,
+        select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+      });
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
       for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {

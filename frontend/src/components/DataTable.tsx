@@ -582,8 +582,8 @@ function DebouncedSearchInput({
 
 /**
  * Hydration writes the account's saved layout into the same localStorage keys
- * the table reads ONCE, at mount (useLocalStorage is lazy by design — that is
- * what makes the first paint correct). Remounting on the store's epoch is how a
+ * the table reads ONCE per key (useLocalStorage re-reads only when the key
+ * itself moves, never on a same-key write). Remounting on the epoch is how a
  * table already on screen when the boot fetch lands picks the layout up. The
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.

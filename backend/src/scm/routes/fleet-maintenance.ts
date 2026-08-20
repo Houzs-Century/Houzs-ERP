@@ -183,7 +183,7 @@ type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
   sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
 
-/* UNIFIED FLEET — nothing here scopes a row to the company; the
+/* company-scope-file: UNIFIED FLEET — nothing here scopes a row to the company; the
    `// company-scope:` annotations on the by-id writers below point at this note.
 
    The authority is the migration header plus the READ path, NOT the column list.

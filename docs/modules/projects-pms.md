@@ -124,6 +124,27 @@ showroom rows get synthetic ids `showroom:<uuid>` (`:987`) and are de-duplicated
 case-insensitively against the project venues (`:972-978`, `:996`). There is no
 mobile venue-management screen; the mobile venue surface is the SO form.
 
+**BOTH halves of that merge are company-scoped** — the showroom half only since
+2026-08-20. This paragraph used to say "`GET /venues` filters by the active
+company" a few lines below and that was true of the `project_venues` half ONLY:
+the showroom half read `scm.warehouses WHERE is_showroom = true AND is_active =
+true` with no `company_id` predicate, so every company's venue picker listed
+every company's showrooms. Measured on prod before the fix: HOUZS's picker
+carried 2990's `PJ SHOWROOM` / venue `2990s PJ`. Owner's ruling — *"客人开单不能
+看到 2990 的展厅啊…我们的 Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着
+看到自己公司的"*. The showroom SELECT now carries
+`activeCompanySql(c, "company_id")`, and `backend/tests/showroomVenueCompanyScope.test.ts`
+fails if either half loses its predicate. `GET /staff/showrooms`
+(`backend/src/scm/routes/staff.ts`) had already scoped its copy of the same list;
+this was the half that was missed.
+
+The SO **active-venue autofill** carries the same lock since the same date:
+`GET /mfg-sales-orders/active-venue` maps the resolved venue TEXT onto a
+`project_venues` id by name, and that lookup is now scoped too — venue names are
+not unique across the two masters, so an unscoped match could hand one company
+the other's venue id. A name this company does not master still resolves to
+`venueId: null` with the TEXT standing, which is the documented fallback.
+
 **Venue writes are company-scoped** (fix `fix/venue-save-company-scope`,
 2026-07-24), the same lock the sibling `/brands` handlers already carry.
 `GET /venues` filters by the active company (`company_id`, PG mig 0093), so every
@@ -255,6 +276,11 @@ here, and it is highly regular:**
 | Checklist ticking | `requireAnyPermission(["projects.write","projects.checklist.tick"])` | `PATCH /checklist/:itemId` `:2792`, `/status` `:2843`, `/review` `:2887`, attachments `:3071`, `:3170`, `:3215` |
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
+
+**The attachment stream (`GET /attachments/:key{.+}`) sends
+`X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
+content-type cannot be MIME-sniffed into html/svg — parity with
+`mail-center.ts`'s INLINE_SAFE serve.
 
 **`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
 caller (2026-08-14).** The project is loaded with the `activeCompanySql`

@@ -181,11 +181,16 @@ still need `edit` on `scm.sales.delivery`.
   **DISPATCHED** (`:2785`) and stock is deducted immediately (`:2842-2855`). The
   create path also fires `syncSoDeliveredFromDo` and the customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
-- **Header PATCH** (`:3450`). Locked once a DR/SI exists (`:3544`). Strips the
-  three amend fields out of the DO update and mirrors them onto the parent SO
-  instead, writing a separate audit row on the **SO's** timeline
-  (`prepareSoAmendMirrorAudit`, `:221-260`). `delivery_substatus` is whitelisted
-  against `HC_SUBSTATUS_VALUES` (`:209-212`).
+- **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
+  live DR/SI no longer freezes the whole header — only the columns that child
+  snapshots freeze (`DO_IDENTITY_LOCK_COLS` in `lib/do-audit-fields.ts` =
+  `debtor_code` / `debtor_name` / `currency` / `sales_location` / `branding`),
+  via `changedLockedCols` (`shared/header-inherited-lock.ts`) + `doHasDownstream`,
+  409 `do_identity_locked`. The DO's own delivery dates, dispatch/POD, addresses
+  and notes stay editable with a child present. Strips the three amend fields out
+  of the DO update and mirrors them onto the parent SO instead, writing a separate
+  audit row on the **SO's** timeline (`prepareSoAmendMirrorAudit`, `:221-260`).
+  `delivery_substatus` is whitelisted against `HC_SUBSTATUS_VALUES` (`:209-212`).
 - **Line add** (`:3636`). Item-code guard, then `doHasDownstream`. If the DO is
   already shipped, the new line ships immediately via resync, so a stock
   availability check runs first unless the caller passes `confirmShortStock`
@@ -268,7 +273,7 @@ Refusals the operator sees, in the order they fire:
 |---|---|
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
-| over-delivery re-check on first ship | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
@@ -364,8 +369,33 @@ about-to-ship qty exceeds its live remaining. This closes the DRAFT door: the
 create-path cap is gated `if (body.asDraft !== true)`, so a DRAFT DO lands its
 full qty uncapped — without this recheck, confirming it (or a second full draft)
 shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
-`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
-stay uncapped, exactly as at create.
+`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`).
+
+Since 2026-08-20 (PR #2522) the same block ALSO runs the unlinked check
+(`findOverDeliveredUnlinkedItems`, keyed by `item_code`), so an unlinked line
+for an item the named SO already fully delivered is refused too — see the
+now-CLOSED blind-spot note below. A genuinely ad-hoc unlinked line (a code the
+SO never ordered) still stays uncapped, exactly as at create.
+
+> **Unlinked-line blind spot at this same chokepoint — CLOSED (wired 2026-08-20,
+> PR #2522).** `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with
+> NONE contributes nothing to the linked tally and is invisible to it, even
+> though it still ships stock. That is the `2990-DO-2607-005` shape: six lines,
+> all `so_item_id = null`, none counted against `2990-SO-2606-019`, so the
+> order's own goods went out twice (`docs/unlinked-line-duplicate-coe.md`). The
+> **create** and **add-line** paths already refused this (`findUnlinkedSoLines`);
+> the **CONFIRM** path now does too. The Status PATCH builds
+> `unlinkedByItemCode` from the DO's lines WITHOUT `so_item_id`, computes
+> `openByItemCode` by aggregating `soDeliverableRemaining` for the header's named
+> SO per ordered `item_code` (that engine excludes DRAFT + CANCELLED deliveries,
+> so THIS draft being confirmed is already out of the tally), and calls
+> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)` alongside
+> the existing linked check — returning **409 `over_delivery`** on either. An
+> unlinked line is flagged only when the named SO ordered that item code AND has
+> no open qty left, so a legitimate partial / multi-DO split still ships and an
+> ad-hoc line the SO never ordered is never flagged. Pinned end-to-end by
+> `backend/tests/doOverDeliveryUnlinkedRoute.test.ts` (the pure guard by
+> `lib/do-over-delivery.test.ts`).
 
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
@@ -822,3 +852,26 @@ absence is a known gap rather than a silent one:
   (`delivery-orders-mfg.ts:640-768`): it logs divergences to
   `entity_audit_log` and binds nothing — stored-link resolution still decides.
   (PR #1681 to flip it live is DRAFT, owner-gated.)
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

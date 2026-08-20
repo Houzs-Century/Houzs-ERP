@@ -46,20 +46,23 @@ const between = (hay: string, startAnchor: string, endAnchor: string): string =>
 
 describe('the six flows are hooked at the point the document becomes permanent', () => {
   test('1. SO create — queued after the CREATE audit row, before the 201, and NOT for a draft', () => {
-    const tail = between(soSource, "action: 'CREATE',", 'return c.json({ docNo }, 201);');
+    /* The 201 now carries `acNotSent` when the composer refused the order — the
+       refusal is computed in THIS request and used to be dropped on the floor
+       (see lib/ac-preflight.ts). The anchor moved with it; what it pins has not. */
+    const tail = between(soSource, "action: 'CREATE',", 'return c.json({ docNo, ...(acNotSent.length');
     expect(tail).toContain('enqueueSoCreate(sb, {');
     /* A draft is the scan job's guess awaiting an operator's verdict — it does
        not belong in a live account book. It is queued when it leaves DRAFT. */
-    expect(tail).toContain("if ((body as { asDraft?: unknown }).asDraft !== true) {");
+    expect(tail).toContain("(body as { asDraft?: unknown }).asDraft === true ? []");
     expect(between(soSource, 'post-status failed', 'Edge #B')).toContain("} else if (fromNorm === 'DRAFT') {");
   });
 
   test('2. PO create — queued before the 201, and NOT for a draft', () => {
-    const tail = between(poSource, 'await recordPoCreate(', 'return c.json({ id: header.id, poNumber: header.po_number }, 201);');
+    const tail = between(poSource, 'await recordPoCreate(', 'return c.json({ id: header.id, poNumber: header.po_number, ...(acNotSent.length');
     expect(tail).toContain('enqueuePoCreate(supabase, {');
-    expect(tail).toContain('if (!asDraft) {');
+    expect(tail).toContain('const acNotSent = asDraft ? [] :');
     // The confirm transition is where a drafted PO becomes real.
-    expect(between(poSource, "select('id, status, submitted_at')", "return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });"))
+    expect(between(poSource, "select('id, status, submitted_at')", "return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' }, ...(acNotSent.length"))
       .toContain('enqueuePoCreate(supabase, {');
   });
 
@@ -102,7 +105,10 @@ describe('the six flows are hooked at the point the document becomes permanent',
   });
 
   test('6. GRN -> Purchase Invoice — the whole-GRN and the per-line paths', () => {
-    const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);');
+    /* The end anchor stops at the RETURN, whatever that return now carries:
+       since 2026-08-20 it also spreads `acNotSent`, so anchoring on the whole
+       old line pinned a response shape this test has no opinion about. */
+    const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number');
     expect(wholeGrn).toContain("op: 'gr_to_pi'");
 
     const perLine = between(piSource, 'Converted from Goods Receipt ${bucket.grnNumbers', '// Consume the GRN lines');

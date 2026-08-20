@@ -49,6 +49,9 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { PCO_LOCK_COLS, PCO_LOCK_LABELS } from '../shared/document-policy';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -65,6 +68,11 @@ purchaseConsignmentOrders.use('*', supabaseAuth);
    apps/api/src/routes/mfg-purchase-orders.ts, but points at
    purchase_consignment_receives instead of the real grns table. Returns the
    blocking JSON, or null if the PC Order is free to edit. */
+/* Header field-level lock — column set + labels from the ONE rulebook
+   (shared/document-policy.ts); mirrors the mfg PO. */
+const PCO_IDENTITY_LOCK_COLS = PCO_LOCK_COLS;
+const PCO_IDENTITY_LABELS = PCO_LOCK_LABELS;
+
 async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string; message: string } | null> {
   const { count, error } = await sb.from('purchase_consignment_receives')
     .select('id', { head: true, count: 'exact' })
@@ -302,8 +310,11 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const supplierId = body.supplierId as string | undefined;
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
 
-  const expectedAt = body.expectedAt as string | undefined;
-  if (!expectedAt) return c.json({ error: 'expected_at_required' }, 400);
+  // Owner 2026-08-20 ("越松越好"): mirror PO — Expected Delivery must not block
+  // opening a purchase-consignment order. Blank defaults to today (still fans out
+  // downstream) instead of a 400. Purchase Location stays required (per-line
+  // warehouse = stock location).
+  const expectedAt = dateOrNull(body.expectedAt) ?? todayMyt();
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
 
@@ -434,10 +445,6 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Tier 2 downstream-lock — header is read-only once a non-cancelled PC Receive
-     exists. */
-  const childLock = await pcoHasDownstream(sb, id);
-  if (childLock) return c.json(childLock, 409);
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of [
     ['poDate', 'po_date'], ['expectedAt', 'expected_at'], ['currency', 'currency'],
@@ -450,9 +457,23 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
     if (body[from] !== undefined) updates[to] = body[from];
   }
   /* A cleared supplier date posts "" and this loop wrote it through to a date
-     column, which Postgres rejects and 500s the save (the same shape confirmed
-     in production on the mfg Purchase Order PATCH). */
+     column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
+  /* Tier-2 lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1): once a live PC Receive
+     exists only the columns it inherits (supplier / currency / purchase location)
+     freeze; the PCO's own dates + notes stay editable. Mirrors the mfg PO. */
+  {
+    const { data: before, error: bErr } = await scopeToCompanyId(sb.from('purchase_consignment_orders')
+      .select('supplier_id, currency, purchase_location_id').eq('id', id), co.companyId).maybeSingle();
+    if (bErr) return c.json({ error: 'update_failed', reason: bErr.message }, 500);
+    const locked = before ? changedLockedCols(PCO_IDENTITY_LOCK_COLS, updates, before as Record<string, unknown>) : [];
+    if (locked.length > 0 && (await pcoHasDownstream(sb, id))) {
+      return c.json(identityLockedRefusal({
+        error: 'pco_identity_locked', fields: locked, labels: PCO_IDENTITY_LABELS,
+        what: 'Purchase-Consignment Order', child: 'PC Receive', ownFields: 'dates and notes',
+      }), 409);
+    }
+  }
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_orders').update(updates).eq('id', id), co.companyId).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
