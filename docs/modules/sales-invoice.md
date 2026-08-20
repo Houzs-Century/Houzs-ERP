@@ -93,6 +93,25 @@ SOs; writes need `edit` on `scm.sales.invoices`.
 | POST | `/` | `:797` | Create. `asDraft: true` → DRAFT (no GL); else posts revenue at `:946`. |
 | POST | `/from-dos` | `:985` | Line-level batch convert from DO picks. |
 | POST | `/:id/items/from-do/:doId` | `:1216` | Append another DO's lines onto an existing invoice. |
+
+**Which deliveries may be invoiced — the server's answer, since 2026-08-18.** Both
+entry points above call `siTransferRefusal` (`scm/lib/do-line-remaining.ts`),
+which reads the one declaration `SI_TRANSFERABLE_DO_STATES`
+(`scm/shared/do-shipped-states.ts`). Before it, the rule lived only in clients and
+had four disagreeing spellings — this route refused just `CANCELLED`, so anything
+else went through from the API or a phone while the desktop greyed the button out.
+Three 409s, and the codes matter to API callers:
+
+| code | when |
+|---|---|
+| `do_cancelled` | the delivery was cancelled — raise a new one |
+| `do_not_confirmed` | still a DRAFT; #2485 keeps Confirm a prerequisite |
+| `do_not_transferable` | any other status, `INVOICED` included (nothing writes it, so the label means "somebody set it") |
+
+`LOADED` is deliberately NOT refused — #2485 widened the rule to every CONFIRMED
+delivery. The batch path's `DO_HEADER` projection must keep selecting `status`;
+it did not at first, and the guard then refused every batch invoice
+(`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:1426` / `:1515` / `:1632` | Line CRUD (frozen once issued). |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:1685` / `:1777` / `:1850` | Payments ledger. |
