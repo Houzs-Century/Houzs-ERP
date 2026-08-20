@@ -11,6 +11,7 @@ import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
 import { runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
@@ -116,19 +117,6 @@ const GRN_AUDIT_SELECT =
    line in hand but not the parent. Best-effort by design: the writer is
    fail-open, so an unresolved doc number costs the row its human key and
    nothing else. */
-async function loadGrnAuditMeta(
-  sb: Variables['supabase'],
-  grnId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('grns')
-      .select('grn_number, company_id, status').eq('id', grnId).maybeSingle();
-    const row = (data ?? null) as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.grn_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
 
 /**
  * Record the CREATE of a GRN that has SURVIVED its handler.
