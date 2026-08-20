@@ -33,6 +33,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
    blocks only — every guard stayed, because the unlinked-line suite proves them
    per HANDLER against this router's own source text. */
@@ -65,6 +66,34 @@ const ITEM =
   'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
+
+/* ── The 500 bodies that used to say nothing ────────────────────────────────
+   `{ error, reason }` and no sentence. `reason` is whatever the driver said —
+   "null value in column …", "relation … does not exist" — and the client's
+   hygiene filter drops exactly that vocabulary, so the operator was left with
+   the status line and no idea whether the invoice had been saved. That is the
+   half of the 2026-08-19 report that survived the cause: whatever produced the
+   500, the screen could not say it.
+
+   `reason` is KEPT, unchanged, for the log and for anyone reading the response
+   — the sentence is added beside it, not instead of it. The wording says the
+   one thing an operator has to know before deciding what to do next: whether
+   there is now an invoice. */
+const insertFailed = (reason: string | undefined, error = 'insert_failed') => ({
+  error,
+  message:
+    'The invoice could not be saved, so nothing was recorded and the receipt is still '
+    + 'waiting to be billed. Please try again, and tell IT if it happens twice.',
+  reason: reason ?? null,
+});
+
+const loadFailed = (reason: string, what: string) => ({
+  error: 'load_failed',
+  message:
+    `Could not ${what}, so this invoice was NOT saved — the check that protects the `
+    + 'receipt from being billed twice could not run. Please try again.',
+  reason,
+});
 
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
@@ -735,12 +764,38 @@ purchaseInvoices.get('/:id/linked', async (c) => {
   });
 });
 
+/* ── POST / — and the dead end every one of its refusals used to be ──────────
+   PurchaseInvoiceNew sends ONE Idempotency-Key per page mount, so a refused
+   Save CLAIMS that key against the payload it was refused for. The middleware
+   then persists EVERY terminal response, "not only 2xx"
+   (middleware/idempotency.ts:363-373), and replays it for the identical payload
+   (:289-296). Two consequences, both reported from production on 2026-08-19
+   while raising a Purchase Invoice from a Goods Receipt:
+
+     · the operator presses Save again unchanged -> the FIRST refusal is served
+       back from the store and the handler never runs, so a transient
+       fail-closed 500 becomes a permanent one. That is the "it keeps
+       happening" in the message the screen shows.
+     · the operator does what the refusal asked and corrects the payload -> the
+       hash no longer matches a claimed key -> 409 idempotency_key_reused. The
+       only way out is a page reload, which throws away the typed invoice.
+
+   grns.ts closed exactly this on 2026-08-17; lib/no-write-refusal.ts carries
+   the trace and the contract. This router had `refuseWithoutWriting` zero
+   times, so the step AFTER the receipt kept the dead end the receipt lost.
+
+   THE BOUNDARY, drawn the way grns.ts draws its own: every refusal at or above
+   the FIRST mutating call (`insertWithDocNoRetry`, below) is on the safe side
+   by construction and releases. The three that sit past it are commented
+   individually where they are, and two of them release only on a rollback that
+   was PROVEN, not assumed — releasing a claim wrongly costs a duplicate
+   payable, which is not comparable to costing a retype. */
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
+  if (!body.supplierId) return refuseWithoutWriting(c, { error: 'supplier_required' }, 400);
   const items = body.items as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
+  if (!Array.isArray(items) || !items.length) return refuseWithoutWriting(c, { error: 'items_required' }, 400);
 
   /* DRAFT lifecycle (re-added per the full 6-doc Draft/Confirmed plan; reverses
      migration 0078's PI DRAFT removal). asDraft is opt-in per request — a normal
@@ -771,7 +826,7 @@ purchaseInvoices.post('/', async (c) => {
       headerGrnId: (body.grnId as string | undefined) ?? null,
       grnItemIds: items.map((it) => (it.grnItemId as string | undefined) ?? null),
     });
-    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    if (covered.error) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(covered.error), 500);
     const unlinked = await findUnlinkedPiLines(
       sb,
       covered.ids,
@@ -782,8 +837,8 @@ purchaseInvoices.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
-    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
+    if (!unlinked.ok) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return refuseWithoutWriting(c, unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   /* Over-invoice guard (mirrors /from-grn-items line ~432 + /:id/items): any
@@ -806,8 +861,8 @@ purchaseInvoices.post('/', async (c) => {
        fence. */
     {
       const mig = await migratedRefusalForGrnItems(sb, gids);
-      if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
-      if (mig.refusal) return c.json(mig.refusal, 409);
+      if (!mig.ok) return refuseWithoutWriting(c, loadFailed(mig.reason, 'check whether this receipt was carried over from the account book'), 500);
+      if (mig.refusal) return refuseWithoutWriting(c, mig.refusal, 409);
     }
     if (gids.length > 0) {
       /* The parent GRN rides the embed for the guard below: these grn_item ids
@@ -824,19 +879,19 @@ purchaseInvoices.post('/', async (c) => {
       const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
       // isCrossCompanySource is false for a null company_id, so a hit is never null.
       const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
-      if (foreign) return c.json(crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
+      if (foreign) return refuseWithoutWriting(c, crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
       const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
         giList.map((g) => [g.id, g]),
       );
       const over: Array<{ grnItemId: string; requested: number; remaining: number }> = [];
       for (const [gid, want] of wantByGrnItem.entries()) {
         const g = byId.get(gid);
-        if (!g) return c.json({ error: 'item_not_found', grnItemId: gid }, 400);
+        if (!g) return refuseWithoutWriting(c, { error: 'item_not_found', grnItemId: gid, message: 'A line on this invoice points at a receipt line that is no longer there. Reopen the Goods Receipt and raise the invoice from it again.' }, 400);
         const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
         if (want > remaining) over.push({ grnItemId: gid, requested: want, remaining });
       }
       if (over.length > 0) {
-        return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+        return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
       }
     }
   }
@@ -854,7 +909,7 @@ purchaseInvoices.post('/', async (c) => {
     });
     if (!parsed.ok) {
       const b = invalidLineNumberBody(parsed.invalid);
-      return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
+      return refuseWithoutWriting(c, { ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
   const itemRows = items.map((it) => {
@@ -901,7 +956,7 @@ purchaseInvoices.post('/', async (c) => {
      inherit an exchange_rate already gated at GRN create, so they need no guard. */
   {
     const rateGuard = await assertForeignRatePostable(sb, { currency: piCurrency, operatorRate: body.exchangeRate, docLabel: 'purchase invoice' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
@@ -924,12 +979,31 @@ purchaseInvoices.post('/', async (c) => {
     created_by: user.id,
     }).select(HEADER).single(),
   );
-  if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
+  /* PAST THE FIRST MUTATING CALL — but nothing survived it. insertWithDocNoRetry
+     returns the LAST attempt's error, and an attempt that errored wrote no row;
+     the earlier attempts only minted doc numbers, which are derived from the
+     table and leave nothing behind. So the claim is released here too, and the
+     operator's next Save reaches the handler instead of being handed this 500
+     back out of the store for the rest of the page's life. */
+  if (hErr) return refuseWithoutWriting(c, insertFailed(hErr.message), 500);
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
   const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
-  if (iErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+  if (iErr) {
+    /* The rollback's own error is BOUND, and it decides whether the claim may be
+       released. A header left behind by a failed delete is a real invoice with
+       no lines; releasing the key there would let the corrected resubmit mint a
+       SECOND one beside it. Proven rollback -> release (the operator can retry);
+       unproven -> keep the claim, which costs a retype and nothing else. */
+    const { error: rbErr } = await sb.from('purchase_invoices').delete().eq('id', h.id);
+    if (rbErr) {
+      /* eslint-disable-next-line no-console */
+      console.error(`[pi create] line insert failed AND rollback failed — header retained: ${h.invoice_number}`);
+      return c.json(insertFailed(iErr.message, 'items_insert_failed'), 500);
+    }
+    return refuseWithoutWriting(c, insertFailed(iErr.message, 'items_insert_failed'), 500);
+  }
 
   /* Post-insert over-invoice verification (race guard) — the pre-check above is
      read-before-write; re-sum live invoiced per GRN line now that OUR lines are
@@ -943,8 +1017,16 @@ purchaseInvoices.post('/', async (c) => {
     if (verify.error) console.error(`[pi over-invoice verify] ${h.invoice_number}: ${verify.error}`);
     const over = verify.over;
     if (over.length > 0) {
-      await sb.from('purchase_invoices').delete().eq('id', h.id);
-      return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+      /* Same rule as the items-insert rollback above: the claim follows the
+         PROOF, not the intent. This refusal's remedy is "bill less and try
+         again", which needs the retry to be possible. */
+      const { error: rbErr } = await sb.from('purchase_invoices').delete().eq('id', h.id);
+      if (rbErr) {
+        /* eslint-disable-next-line no-console */
+        console.error(`[pi create] over-invoice rollback failed — invoice retained: ${h.invoice_number}`);
+        return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+      }
+      return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
     }
   }
 
@@ -953,6 +1035,36 @@ purchaseInvoices.post('/', async (c) => {
      the header, so from here every exit is a success and this CREATE row is
      true. Written before the DRAFT-dependent side-effects so both statuses
      record exactly one. */
+  /* ── FROM HERE THE INVOICE EXISTS, SO FROM HERE THE ANSWER IS 201 ──────────
+     Everything below is best-effort BY CONTRACT — each of recordPiCreate,
+     recordParentlessCreate, reallocatePiCharges, recomputeGrnInvoiced and
+     recostForPi says in its own docblock that it never throws into its caller,
+     and each carries its own try/catch to keep that promise. The promise is not
+     the same thing as a guarantee: a TypeError above a catch, a subrequest cap
+     reached mid-cascade, an `sb` call that rejects rather than resolving with an
+     `error` — any of those unwinds past all of them into app.onError, which
+     answers 500 `Something went wrong. Please try again.`
+
+     That 500 would be a LIE ABOUT MONEY. The invoice, its lines, its audit row
+     and its AutoCount ledger row are already committed; the operator is told the
+     save failed and does the only sensible thing, which is press Save again. The
+     one thing standing between that and a second payable is the idempotency
+     claim, and this handler now RELEASES that claim on its refusals — so the
+     lie and the release must not be able to meet.
+
+     So the tail is wrapped: committed means 201, whatever happens after. The
+     failure is logged with the document number, which is what makes it findable,
+     and every one of these self-heals on the next touch (the counters are
+     recounted from scratch, the recost re-derives, the outbox is replayed). */
+  try {
+    await runPiCreateSideEffects();
+  } catch (e) {
+    /* eslint-disable-next-line no-console */
+    console.error(`[pi create] post-commit side-effects failed for ${h.invoice_number} — the invoice IS saved:`, e);
+  }
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
+
+  async function runPiCreateSideEffects(): Promise<void> {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
   /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
@@ -992,7 +1104,7 @@ purchaseInvoices.post('/', async (c) => {
     // billed price (or its later correction) in real time.
     await recostForPi(sb, h.id);
   }
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
+  }
 });
 
 /* ── PATCH /:id/post — CONFIRM transition (DRAFT → POSTED) ───────────────────
