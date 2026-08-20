@@ -192,26 +192,33 @@ describe('cold-start resolution — a genuinely single-company install is NOT bl
 
 // ── last-known-good: a master blip AFTER a good load never falls open ─────────
 describe('last-known-good master survives a transient read failure', () => {
-  test('a 0-grant admin still resolves to ONE company (not all) during a post-load blip', async () => {
+  // Uses a GRANTED user (HOUZS-only), not a 0-grant admin: since the §6.1
+  // fail-CLOSED change (docs/TENANT-ISOLATION-ROOT-FIX.md), a resolved
+  // zero-grant multi-company user is restricted to `[]`, not handed the
+  // hostname default — so the last-known-good property (a master blip AFTER a
+  // good load never falls OPEN to every company) is now demonstrated through a
+  // user whose grant filter needs the master rows to resolve. The zero-grant
+  // fail-closed case itself is covered in companyContextZeroGrantFailClosed.test.ts.
+  test('a granted user still resolves to THEIR company (not all) during a post-load blip', async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(0);
       // Request 1: master reads OK -> cache + last-known-good populated.
-      const good = fakeEnv({ companies: COMPANIES, grants: {} });
-      const r1 = await buildApp(U_ADMIN, DOS).request('/echo', { headers: { host: 'erp.houzscentury.com' } }, good as never);
+      const good = fakeEnv({ companies: COMPANIES, grants: { [U_HOUZS]: [CO_A] } });
+      const r1 = await buildApp(U_HOUZS, DOS).request('/echo', { headers: { host: 'erp.houzscentury.com' } }, good as never);
       expect((await r1.json() as Row).companyId).toBe(CO_A);
 
       // Advance well past the healthy TTL so the next call re-queries the master.
       vi.setSystemTime(11 * 60 * 1000);
-      // The master now THROWS, but last-known-good is served, so the admin still
-      // resolves to ONE company (hostname default) — NOT the unresolved
-      // all-companies fail-open, and NOT an empty list.
-      const down = fakeEnv({ companies: 'throw', grants: {} });
-      const r2 = await buildApp(U_ADMIN, DOS).request('/echo', { headers: { host: 'erp.houzscentury.com' } }, down as never);
+      // The master now THROWS, but last-known-good is served, so the grant still
+      // maps to a real company and the user resolves to HOUZS — NOT the
+      // unresolved all-companies fail-open, and NOT an empty list.
+      const down = fakeEnv({ companies: 'throw', grants: { [U_HOUZS]: [CO_A] } });
+      const r2 = await buildApp(U_HOUZS, DOS).request('/echo', { headers: { host: 'erp.houzscentury.com' } }, down as never);
       const body = await r2.json() as Row;
       expect(body.companyId).toBe(CO_A);
-      expect(body.allowedCompanyIds).toEqual([CO_A, CO_B]);
-      const dos = await buildApp(U_ADMIN, DOS).request('/dos', { headers: { host: 'erp.houzscentury.com' } }, down as never);
+      expect(body.allowedCompanyIds).toEqual([CO_A]);
+      const dos = await buildApp(U_HOUZS, DOS).request('/dos', { headers: { host: 'erp.houzscentury.com' } }, down as never);
       expect((await dos.json() as Row).ids).toEqual(['do-a']); // scoped to HOUZS, not both
     } finally {
       vi.useRealTimers();

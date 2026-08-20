@@ -203,7 +203,7 @@ export function planUncostedRetrocost(
  *  plain-FIFO regardless of batch (see 0154). */
 export type UncostedBucket = {
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   variant_key: string;
 };
 
@@ -234,7 +234,7 @@ export async function reconcileUncostedOuts(
   // One call per distinct (warehouse, product, variant) bucket.
   const seen = new Set<string>();
   const distinct = buckets.filter((b) => {
-    const k = `${b.warehouse_id}::${b.product_code}::${b.variant_key ?? ''}`;
+    const k = `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -246,7 +246,7 @@ export async function reconcileUncostedOuts(
     try {
       const { data, error } = await sb.rpc('fn_reconcile_uncosted_out', {
         p_warehouse_id: b.warehouse_id,
-        p_product_code: b.product_code,
+        p_item_code: b.item_code,
         p_variant_key: b.variant_key ?? '',
         p_before_ts: cutoffTs,
         p_created_by: performedBy,
@@ -275,23 +275,23 @@ export async function reconcileUncostedOuts(
   const affectedDoIds = new Set<string>();
   if (reconciled > 0) {
     try {
-      const codes = [...new Set(distinct.map((b) => b.product_code))];
+      const codes = [...new Set(distinct.map((b) => b.item_code))];
       const whs = [...new Set(distinct.map((b) => b.warehouse_id))];
       const { data: outs } = await sb
         .from('inventory_movements')
-        .select('source_doc_type, source_doc_id, product_code, warehouse_id, variant_key, created_at')
+        .select('source_doc_type, source_doc_id, item_code, warehouse_id, variant_key, created_at')
         .eq('movement_type', 'OUT')
-        .in('product_code', codes)
+        .in('item_code', codes)
         .in('warehouse_id', whs)
         .lt('created_at', cutoffTs);
-      const bucketKeys = new Set(distinct.map((b) => `${b.warehouse_id}::${b.product_code}::${b.variant_key ?? ''}`));
-      for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null; product_code: string; warehouse_id: string; variant_key: string | null; created_at?: string | null }>) {
+      const bucketKeys = new Set(distinct.map((b) => `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}`));
+      for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null; item_code: string; warehouse_id: string; variant_key: string | null; created_at?: string | null }>) {
         if ((m.source_doc_type ?? '').toUpperCase() !== 'DO' || !m.source_doc_id) continue;
         // Belt-and-suspenders on the temporal window: never re-stamp a DO that
         // shipped at/after the receipt (the query already bounds this — re-check
         // in JS so a dropped filter can't widen a money re-stamp to a later order).
         if (m.created_at != null && m.created_at >= cutoffTs) continue;
-        const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}`;
+        const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}`;
         if (!bucketKeys.has(k)) continue;
         affectedDoIds.add(m.source_doc_id);
       }
@@ -337,7 +337,7 @@ export async function reconcileUncostedOuts(
 export type PostedMovementRow = {
   movement_type?: unknown;
   warehouse_id?: unknown;
-  product_code?: unknown;
+  item_code?: unknown;
   variant_key?: unknown;
   qty?: unknown;
 };
@@ -370,11 +370,11 @@ export async function reconcileUncostedAfterIn(
       const opensLot = type === 'IN' || (type === 'ADJUSTMENT' && Number(r?.qty ?? 0) > 0);
       if (!opensLot) continue;
       const warehouseId = typeof r?.warehouse_id === 'string' ? r.warehouse_id : '';
-      const productCode = typeof r?.product_code === 'string' ? r.product_code : '';
-      if (!warehouseId || !productCode) continue;
+      const itemCode = typeof r?.item_code === 'string' ? r.item_code : '';
+      if (!warehouseId || !itemCode) continue;
       buckets.push({
         warehouse_id: warehouseId,
-        product_code: productCode,
+        item_code: itemCode,
         variant_key: typeof r?.variant_key === 'string' ? r.variant_key : '',
       });
     }

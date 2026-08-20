@@ -16,7 +16,7 @@ import { writeFailed } from './mutation-error';
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
 
 /* Per-lorry metric row. Counts are integers; utilisation / orders_per_trip are
-   fractions/ratios already rounded server-side; *_centi are integer cents (null
+   fractions/ratios already rounded server-side; *_sen are integer cents (null
    when the denominator was zero → render "—"). */
 export type LorryCapacityRow = {
   lorry_id: string;
@@ -34,9 +34,9 @@ export type LorryCapacityRow = {
   setup_dismantle: number;
   pickups: number;
   services: number;
-  delivery_revenue_centi: number;
-  revenue_per_order_centi: number | null;
-  revenue_per_trip_centi: number | null;
+  delivery_revenue_sen: number;
+  revenue_per_order_sen: number | null;
+  revenue_per_trip_sen: number | null;
 };
 
 export type LorryCapacityTotals = {
@@ -45,9 +45,9 @@ export type LorryCapacityTotals = {
   available_days: number;
   utilisation: number | null;
   orders_per_delivery_trip: number | null;
-  delivery_revenue_centi: number;
-  revenue_per_order_centi: number | null;
-  revenue_per_trip_centi: number | null;
+  delivery_revenue_sen: number;
+  revenue_per_order_sen: number | null;
+  revenue_per_trip_sen: number | null;
 };
 
 export type LorryCapacityResponse = {

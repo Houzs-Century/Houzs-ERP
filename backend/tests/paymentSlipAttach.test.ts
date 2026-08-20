@@ -81,7 +81,7 @@ describe('payment proof attach route', () => {
     expect(updateAt).toBeGreaterThan(-1);
     const update = attach.slice(updateAt, attach.indexOf(".eq('id', id)", updateAt));
     expect(update).toContain('slip_key');
-    for (const moneyColumn of ['amount_centi', 'method', 'paid_at', 'collected_by']) {
+    for (const moneyColumn of ['amount_sen', 'method', 'paid_at', 'collected_by']) {
       expect(update, `${moneyColumn} must not move on a proof attach`).not.toContain(moneyColumn);
     }
   });

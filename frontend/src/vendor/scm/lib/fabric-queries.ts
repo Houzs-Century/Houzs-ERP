@@ -48,15 +48,15 @@ export type FabricTrackingRow = {
   price_tier: FabricTier | null;
   sofa_price_tier: FabricTier | null;
   bedframe_price_tier: FabricTier | null;
-  price_centi: number;
-  soh_centi: number;
-  po_outstanding_centi: number;
-  last_month_usage_centi: number;
-  one_week_usage_centi: number;
-  two_weeks_usage_centi: number;
-  one_month_usage_centi: number;
-  shortage_centi: number;
-  reorder_point_centi: number;
+  price_sen: number;
+  soh_sen: number;
+  po_outstanding_sen: number;
+  last_month_usage_sen: number;
+  one_week_usage_sen: number;
+  two_weeks_usage_sen: number;
+  one_month_usage_sen: number;
+  shortage_sen: number;
+  reorder_point_sen: number;
   supplier: string | null;
   supplier_code: string | null;
   lead_time_days: number;
@@ -265,7 +265,7 @@ export type NewFabric = {
   bedframePriceTier?: FabricTier;
   supplierCode?: string;
   series?: string;
-  priceCenti?: number;
+  priceSen?: number;
   // Migration 0124/0125 — also create the customer-pickable fabric_library entry.
   label?: string;
   colours?: Array<{ colourId?: string; label: string; swatchHex?: string }>;

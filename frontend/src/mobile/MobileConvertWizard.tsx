@@ -4,7 +4,7 @@ import { invalidateConvertShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
@@ -84,7 +84,7 @@ const META: Record<
 };
 
 // ── Money / helpers ────────────────────────────────────────────────────────
-// Money is integer *_centi → shared fmtCenti() (includes the "RM " symbol).
+// Money is integer *_sen → shared fmtSen() (includes the "RM " symbol).
 // Dates via the shared TZ-aware numeric DD/MM/YYYY helper.
 const dm = (d: string | null | undefined) => formatDate(d);
 /** First defined-and-non-empty of the candidates (pg driver camelCases result
@@ -108,25 +108,25 @@ const clampQty = (raw: string, max: number): number => {
 // ── Source-list row shapes (only the fields we read) ─────────────────────────
 type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null;
-  so_date: string | null; local_total_centi: number | null; total_revenue_centi: number | null;
+  so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
-  do_date: string | null; local_total_centi: number | null;
+  do_date: string | null; local_total_sen: number | null;
 };
 type PoListRow = {
   id: string; po_number: string; status: string | null; po_date: string | null;
-  total_centi: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
+  total_sen: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
 };
 
 // ── Convertible-line shapes (from the remaining GETs) ────────────────────────
 type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
-  qty: number; remaining: number; unitPriceCenti: number; debtorName: string | null;
+  qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
-  remaining: number; unitPriceCenti: number; debtorName: string | null;
+  remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 // SO→PO — the OUTSTANDING axis (qty − po_qty_picked + sofa MRP rollup), from
 // /mfg-purchase-orders/outstanding-so-items (the SAME stock-aware shortage view
@@ -135,7 +135,7 @@ type DoInvoiceableLine = {
 // picked SO's doc_no client-side.
 type OutstandingSoLine = {
   soItemId: string; soDocNo: string; itemCode: string; description: string | null;
-  qty: number; poQtyPicked: number; remainingQty: number; unitPriceCenti: number;
+  qty: number; poQtyPicked: number; remainingQty: number; unitPriceSen: number;
 };
 // GRN — outstanding PO lines (qty − received_qty > 0) from
 // /grns/outstanding-po-items (the SAME source as the desktop GrnFromPo picker).
@@ -148,7 +148,7 @@ type OutstandingPoLine = {
   supplierSku: string | null;
   description: string | null; itemGroup: string | null; variants: unknown;
   deliveryDate: string | null; warehouseLocationId: string | null;
-  qty: number; receivedQty: number; remainingQty: number; unitPriceCenti: number;
+  qty: number; receivedQty: number; remainingQty: number; unitPriceSen: number;
 };
 
 // A GRN pick line in the local UI — the outstanding PO line + a per-line
@@ -158,7 +158,7 @@ type OutstandingPoLine = {
 type GrnPickLine = {
   poItemId: string; poId: string; supplierId: string;
   itemCode: string; supplierSku: string | null; description: string | null; itemGroup: string | null;
-  variants: unknown; unitPriceCenti: number;
+  variants: unknown; unitPriceSen: number;
   origQty: number;       // ordered qty
   remaining: number;     // outstanding (qty − received_qty)
   checked: boolean;
@@ -171,7 +171,7 @@ type PickLine = {
   label: string;         // item code / description
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
-  unitPriceCenti: number;
+  unitPriceSen: number;
   checked: boolean;
   qty: string;           // as typed (the qty to convert this pass)
 };
@@ -323,7 +323,7 @@ export function MobileConvertWizard({
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
-            unitPriceCenti: Number(l.unitPriceCenti) || 0,
+            unitPriceSen: Number(l.unitPriceSen) || 0,
             checked: true,
             qty: String(Number(l.remainingQty) || 0),
           }));
@@ -337,7 +337,7 @@ export function MobileConvertWizard({
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
-          unitPriceCenti: Number(l.unitPriceCenti) || 0,
+          unitPriceSen: Number(l.unitPriceSen) || 0,
           checked: true,
           qty: String(Number(l.remaining) || 0),
         }));
@@ -353,7 +353,7 @@ export function MobileConvertWizard({
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
-        unitPriceCenti: Number(l.unitPriceCenti) || 0,
+        unitPriceSen: Number(l.unitPriceSen) || 0,
         checked: true,
         qty: String(Number(l.remaining) || 0),
       }));
@@ -373,8 +373,8 @@ export function MobileConvertWizard({
     () => lines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [lines],
   );
-  const pickedTotalCenti = useMemo(
-    () => picks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const pickedTotalSen = useMemo(
+    () => picks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [picks],
   );
 
@@ -417,7 +417,7 @@ export function MobileConvertWizard({
           description: (pick(r, "description") as string | undefined) ?? null,
           itemGroup: (pick(r, "itemGroup") as string | undefined) ?? null,
           variants: r.variants ?? null,
-          unitPriceCenti: Number(r.unitPriceCenti) || 0,
+          unitPriceSen: Number(r.unitPriceSen) || 0,
           origQty: Number(r.qty) || 0,
           remaining: Number(r.remainingQty) || 0,
           checked: true,
@@ -451,8 +451,8 @@ export function MobileConvertWizard({
     () => grnLines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [grnLines],
   );
-  const grnPickedTotalCenti = useMemo(
-    () => grnPicks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const grnPickedTotalSen = useMemo(
+    () => grnPicks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [grnPicks],
   );
 
@@ -522,12 +522,12 @@ export function MobileConvertWizard({
             return {
               purchaseOrderItemId: l.poItemId,
               materialKind: "mfg_product",
-              materialCode: l.itemCode,
+              itemCode: l.itemCode,
               materialName: l.description || l.itemCode,
               qtyReceived: q,
               qtyAccepted: q,
               qtyRejected: 0,
-              unitPriceCenti: l.unitPriceCenti,
+              unitPriceSen: l.unitPriceSen,
               itemGroup: l.itemGroup,
               variants: l.variants,
             };
@@ -695,12 +695,12 @@ export function MobileConvertWizard({
             {meta.hasLinePicker ? (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{picks.length} {picks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(pickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickedTotalSen)}</span>
               </>
             ) : (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{grnPicks.length} {grnPicks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(grnPickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(grnPickedTotalSen)}</span>
               </>
             )}
           </div>
@@ -761,7 +761,7 @@ function SourceStep({
                 <span className="so-k">Date</span>
                 <span className="so-v">{dm(r.po_date)}</span>
                 <span className="so-k">Total</span>
-                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(r.total_centi)}</span>
+                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(r.total_sen)}</span>
               </div>
               {on && <Check />}
             </div>
@@ -779,8 +779,8 @@ function SourceStep({
         const docNo = kind === "so" ? str(r.doc_no) : str(r.do_number);
         const date = kind === "so" ? r.so_date : r.do_date;
         const totalC = kind === "so"
-          ? (r.local_total_centi ?? r.total_revenue_centi)
-          : r.local_total_centi;
+          ? (r.local_total_sen ?? r.total_revenue_sen)
+          : r.local_total_sen;
         return (
           <div key={id} onClick={() => onPickSingle(id)} className="so-row">
             <div className="so-row-head">
@@ -797,7 +797,7 @@ function SourceStep({
               <span className="so-k">Date</span>
               <span className="so-v">{dm(date)}</span>
               <span className="so-k">Total</span>
-              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(totalC)}</span>
+              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(totalC)}</span>
             </div>
           </div>
         );
@@ -864,7 +864,7 @@ function LinesStep({
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -900,7 +900,7 @@ function LinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>
@@ -978,7 +978,7 @@ function GrnLinesStep({
                     </span>
                   )}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -1013,7 +1013,7 @@ function GrnLinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>

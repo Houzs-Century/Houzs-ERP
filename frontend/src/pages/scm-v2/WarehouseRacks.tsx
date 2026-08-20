@@ -73,7 +73,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 /* One clear description line for a rack item — never empty. */
 const itemDescription = (it: RackItem): string => {
-  const name = (it.product_name || it.product_code || '').trim();
+  const name = (it.product_name || it.item_code || '').trim();
   const size = (it.size_label || '').trim();
   return (size && !name.includes(size) ? `${name} ${size}`.trim() : name) || 'Item';
 };
@@ -339,7 +339,7 @@ function OverviewTab({
     if (!q) return true;
     if (r.rack.toLowerCase().includes(q)) return true;
     return (r.items || []).some((it) =>
-      [it.source_doc_no || '', it.customer_name || '', it.product_name || '', it.product_code || '']
+      [it.source_doc_no || '', it.customer_name || '', it.product_name || '', it.item_code || '']
         .join(' ').toLowerCase().includes(q));
   };
   const shown = useMemo(() => racks.filter(matches), [racks, q]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -612,7 +612,7 @@ function StockIoTab({
     stockIn.mutate(
       {
         rackId: siRack,
-        productCode: siCode.trim(),
+        itemCode: siCode.trim(),
         productName: siName.trim() || undefined,
         customerName: siCustomer.trim() || undefined,
         sourceDocNo: siDoc.trim() || undefined,
@@ -839,7 +839,7 @@ function MovementTable({ movements, isLoading }: { movements: RackMovement[]; is
           ),
         },
         { key: 'doc', label: 'Document', width: '140px', getValue: (m) => m.source_doc_no ?? '', render: (m) => m.source_doc_no ? <span className={styles.codeChip}>{m.source_doc_no}</span> : '—' },
-        { key: 'product', label: 'Product', getValue: (m) => m.product_name || m.product_code || '', render: (m) => m.product_name || m.product_code || '—' },
+        { key: 'product', label: 'Product', getValue: (m) => m.product_name || m.item_code || '', render: (m) => m.product_name || m.item_code || '—' },
         { key: 'qty', label: 'Qty', align: 'right', width: '90px', getValue: (m) => m.quantity, render: (m) => fmtQty(m.quantity) },
         { key: 'reason', label: 'Reason', getValue: (m) => m.reason ?? '', render: (m) => m.reason ?? '—' },
       ] satisfies Column<RackMovement>[]}

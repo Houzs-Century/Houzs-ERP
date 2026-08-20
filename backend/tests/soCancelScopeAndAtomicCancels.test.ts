@@ -216,7 +216,7 @@ describe('PATCH /mfg-sales-orders/:docNo/status is scoped to the caller\'s compa
 // ── 2. The two cancels that lacked the atomic gate ──────────────────────────
 describe('PO cancel is a single ACTIVE->CANCELLED transition', () => {
   const pos = (): Row[] => [
-    { id: 'po-a', po_number: 'PO-A-1', company_id: CO_A, status: 'SUBMITTED', total_centi: 1000 },
+    { id: 'po-a', po_number: 'PO-A-1', company_id: CO_A, status: 'SUBMITTED', total_sen: 1000 },
   ];
 
   test('the UPDATE carries the .neq(status, CANCELLED) gate', async () => {

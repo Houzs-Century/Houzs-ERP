@@ -26,7 +26,7 @@ export type CloseBucketRow = {
 
 /** Bucket a day's payment rows the way the drawer is counted. */
 export function bucketPayments(
-  rows: Array<{ method: string; merchant_provider: string | null; amount_centi: number }>,
+  rows: Array<{ method: string; merchant_provider: string | null; amount_sen: number }>,
 ): Map<string, number> {
   const buckets = new Map<string, number>();
   for (const r of rows) {
@@ -35,7 +35,7 @@ export function bucketPayments(
       r.method === 'cash' ? 'cash'
       : r.method === 'transfer' ? 'transfer'
       : (r.merchant_provider?.trim() || 'UNMAPPED');
-    buckets.set(key, (buckets.get(key) ?? 0) + Number(r.amount_centi || 0));
+    buckets.set(key, (buckets.get(key) ?? 0) + Number(r.amount_sen || 0));
   }
   return buckets;
 }
@@ -50,21 +50,21 @@ export async function systemTakings(
   const dayEnd = `${date}T23:59:59.999`;
   const { data: soPays, error: soErr } = await sb
     .from('mfg_sales_order_payments')
-    .select('method, merchant_provider, amount_centi')
+    .select('method, merchant_provider, amount_sen')
     .eq('company_id', companyId)
     .gte('paid_at', dayStart)
     .lte('paid_at', dayEnd);
   if (soErr) return { ok: false, reason: `so payments: ${soErr.message}` };
   const { data: siPays, error: siErr } = await sb
     .from('sales_invoice_payments')
-    .select('method, merchant_provider, amount_centi')
+    .select('method, merchant_provider, amount_sen')
     .eq('company_id', companyId)
     .gte('paid_at', dayStart)
     .lte('paid_at', dayEnd);
   if (siErr) return { ok: false, reason: `si payments: ${siErr.message}` };
   const all = [
-    ...((soPays ?? []) as Array<{ method: string; merchant_provider: string | null; amount_centi: number }>),
-    ...((siPays ?? []) as Array<{ method: string; merchant_provider: string | null; amount_centi: number }>),
+    ...((soPays ?? []) as Array<{ method: string; merchant_provider: string | null; amount_sen: number }>),
+    ...((siPays ?? []) as Array<{ method: string; merchant_provider: string | null; amount_sen: number }>),
   ];
   return { ok: true, buckets: bucketPayments(all) };
 }

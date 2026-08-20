@@ -2,10 +2,10 @@
 // stock-take-grouping — the PURE fold behind the count sheet's model view
 // (phase 1, owner-approved 2026-08-08).
 //
-// Variant-heavy categories (sofa / bedframe) put one LINE per (product_code,
+// Variant-heavy categories (sofa / bedframe) put one LINE per (item_code,
 // variant_key) on the sheet, so one model easily owns a dozen rows. The model
 // view collapses those to one header row per MODEL — which, on this sheet, IS
-// the product_code: migration 0035/0183 made the count variant-grained UNDER a
+// the item_code: migration 0035/0183 made the count variant-grained UNDER a
 // single code, so "CODY · 12 lines · system 3" is exactly the code's bucket
 // list. Expanding shows the variant lines; "all zero" fills the group.
 //
@@ -16,7 +16,7 @@
 
 export type GroupableLine = {
   id: string;
-  productCode: string;
+  itemCode: string;
   productName: string | null;
   /* null while a blind take hides the figure from this viewer. */
   systemQty: number | null;
@@ -26,7 +26,7 @@ export type GroupableLine = {
 
 export type ModelGroup<T extends GroupableLine> = {
   /* The grouping key — the product code (the model). */
-  productCode: string;
+  itemCode: string;
   productName: string | null;
   lines: T[];
   /* Sum of system qty across the group; null when ANY line hides it (blind) —
@@ -52,17 +52,17 @@ export function groupByModel<T extends GroupableLine>(lines: readonly T[]): Mode
   const byCode = new Map<string, ModelGroup<T>>();
   const out: ModelGroup<T>[] = [];
   for (const l of lines) {
-    let g = byCode.get(l.productCode);
+    let g = byCode.get(l.itemCode);
     if (!g) {
       g = {
-        productCode: l.productCode,
+        itemCode: l.itemCode,
         productName: l.productName,
         lines: [],
         systemTotal: 0,
         countedTotal: 0,
         countedLines: 0,
       };
-      byCode.set(l.productCode, g);
+      byCode.set(l.itemCode, g);
       out.push(g);
     }
     g.lines.push(l);

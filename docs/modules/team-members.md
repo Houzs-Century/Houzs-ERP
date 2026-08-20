@@ -115,6 +115,15 @@ position / manager ids exist in the `invitations` table but are NOT selected.
   to the clipboard, preferring the server-built `invite_url`.
 - **Client-side list.** `/api/users` is one unbounded fetch; every filter,
   count and search is computed in the component. No `ListPager`.
+- **A targeting edit busts the member's announcements banner cache.** The banner
+  filters by department_id / position_id / company grants, and its per-user KV
+  snapshot lives 300s (> the 60s poll), so PATCH `/:id` (when it changes
+  department / position / role / status / department_ids / company_ids), PUT
+  `/:id/companies`, and DELETE `/:id` all call `bustBannerForUser` (both scopes);
+  a department DELETE (`routes/departments.ts`) bumps the banner family version
+  because it un-assigns an unknown set of members at once. Session bust alone did
+  NOT cover this — it fires only on disable / role change. See the announcements
+  guide §6 and `configCache.ts`.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
   desktop must land in the mobile pair (`MobileModuleList` config +
   `MemberActions`) in the same PR.
@@ -207,3 +216,37 @@ which made "send a link" a state change:
 
 Rate-limited on the TARGET, because an admin button that sends mail to a
 colleague is also a way to spam that colleague.
+
+## Taking over an account — the actor's grants are the boundary
+
+`POST /:id/impersonate`, `POST /:id/reset-password` and `POST /:id/totp/disable`
+all hand the caller control of someone else's account. Until 2026-08-19 they
+resolved the target with `.where(eq(users.id, id))` and nothing else, and
+`users.manage` is a flat permission with no company dimension — so holding it
+anywhere held it everywhere.
+
+**Owner decision 2026-08-19**, in his words:
+
+> 我们的 team 那边是有得选这一个人是负责什么公司的。所以，如果他只是在同一间公司，
+> 肯定就是限制；如果他是两间公司，那基本上就是我们换 organization 的时候，他是没有
+> 限制。以 RBAC 这样子去做限制的
+
+So the predicate is the **actor's `allowedCompanyIds`** — the grants this very
+screen edits — and never the active company. Gating on the top-bar switcher would
+break a two-company admin doing something they are already entitled to do.
+
+`targetWithinActorCompanies()` requires the target's companies to be a **subset**
+of the actor's. Holding `{1}` and taking over someone in `{1,2}` would be a
+promotion. This is the same rule `PUT /:id/companies` twenty lines up already
+enforces: *a grantor can only ever pass on what they hold.*
+
+**Two edges are deliberate:**
+
+| state | behaviour | why |
+| --- | --- | --- |
+| `allowedCompanyIds` is `undefined` | falls through | the company context could not be READ (pre-migration, cold start). Refusing there locks every admin out of a routine action, and that is the failure nobody reports. |
+| the TARGET holds no grants | **refuses** | looks backwards until you read `companyContext`: it hands a grant-less user *every active company*, so taking them over is the **widest** reach available, not the safest. |
+
+`/:id/impersonate` is registered **twice**; the second is dead (Hono keeps the
+first, and the file says so at that line). The gate is on the live one.
+

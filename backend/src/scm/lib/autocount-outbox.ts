@@ -96,7 +96,7 @@ import { soEditHeader } from './so-edit-header';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
 import {
-  AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs, readPoEnqueueShape,
+  AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
 } from './autocount-read';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
@@ -312,13 +312,13 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    DeliverPhone1 when it differs from Phone1 and inserts it as
    emergency_contact_phone (:390/:412). Reading `phone` for both would put the
    customer's number in front of the driver.
-   total_revenue_centi + deposit_centi are two of the three inputs to the
+   total_revenue_sen + deposit_sen are two of the three inputs to the
    outstanding balance the BALANCE UDF carries; the third is the payments ledger
-   (readSoOutstandingCenti). NOT balance_centi — recomputeTotals rewrites that to
+   (readSoOutstandingSen). NOT balance_sen — recomputeTotals rewrites that to
    the gross total on every edit, and it is the column the cutover's UDF_BALANCE
    landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, customer_delivery_date, total_revenue_centi, deposit_centi, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
@@ -331,7 +331,7 @@ const SO_HEADER_COLS =
    (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
    of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -341,7 +341,7 @@ const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, 
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -625,10 +625,10 @@ export async function enqueueSoCreate(
        gets, and it can only choose between values it has been given. */
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
-    const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
+    const outstandingSen = await readSoOutstandingSen(sb, header as Record<string, unknown>);
     const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
     const body = composeCreateSo(
-      header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings });
+      header as never, lines, salespersonName, outstandingSen, paymentRefs, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -941,11 +941,11 @@ export async function enqueueConvert(
 /** The ItemCode column each line table spells its product in. */
 const LINE_CODE_COL: Record<AcLineTable, string> = {
   mfg_sales_order_items: 'item_code',
-  purchase_order_items: 'material_code',
+  purchase_order_items: 'item_code',
   delivery_order_items: 'item_code',
-  grn_items: 'material_code',
+  grn_items: 'item_code',
   sales_invoice_items: 'item_code',
-  purchase_invoice_items: 'material_code',
+  purchase_invoice_items: 'item_code',
 };
 
 /**
@@ -1434,7 +1434,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingCenti = await readSoOutstandingCenti(sb, h);
+  const outstandingSen = await readSoOutstandingSen(sb, h);
   const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
@@ -1446,7 +1446,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingSen, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1454,7 +1454,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti, paymentRefs, touchedFields), lines,
+      soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1501,7 +1501,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * What AutoCount calls each of these products, from the LIVE binding.
  *
  * `scm.supplier_material_bindings` is this ERP's own record of the cross-ref:
- * `material_code` is our internal code, `supplier_sku` is AutoCount's, one row
+ * `item_code` is our internal code, `supplier_sku` is AutoCount's, one row
  * per supplier. It was populated at the cutover precisely so ERP codes could be
  * pushed BACK, and it is the only one of the two sources that GROWS — the
  * compiled CSV is a snapshot of the book on 2026-08-05 and cannot know a
@@ -1542,15 +1542,15 @@ async function bindingsFor(
   const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
   let q = sb.from('supplier_material_bindings')
-    .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-    .in('material_code', wanted)
+    .select('item_code, supplier_id, supplier_sku, is_main_supplier')
+    .in('item_code', wanted)
     .eq('material_kind', 'mfg_product')
     .order('is_main_supplier', { ascending: false });
   if (companyId != null) q = q.eq('company_id', companyId);
   const rows = await readOrThrow('supplier_material_bindings', q);
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
-    const code = String(r.material_code ?? '').trim().toUpperCase();
+    const code = String(r.item_code ?? '').trim().toUpperCase();
     const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
     if (!code || !sku) continue;
     if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {

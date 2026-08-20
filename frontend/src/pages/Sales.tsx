@@ -1246,7 +1246,7 @@ export function EntryPanel({
               ))}
             </select>
           </Field>
-          <Field label="Debtor Code">
+          <Field label="Customer">
             <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} placeholder="300-C001" className={inputCls + " font-mono"} />
           </Field>
           <Field label="PO Doc No.">

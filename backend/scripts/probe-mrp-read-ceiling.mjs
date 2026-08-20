@@ -170,7 +170,7 @@ async function sqlPart() {
   await one('5  supplier_material_bindings (mfg_product, demand codes)', sql`
     SELECT count(*)::bigint n FROM scm.supplier_material_bindings
      WHERE company_id = ${CO}::bigint AND material_kind = 'mfg_product'
-       AND material_code IN (
+       AND item_code IN (
        SELECT DISTINCT i.item_code FROM scm.mfg_sales_order_items i
          JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
         WHERE i.company_id = ${CO}::bigint AND i.cancelled = false AND s.status NOT IN ${sql(SO_DONE)})`);
@@ -193,7 +193,7 @@ async function sqlPart() {
            coalesce(sum(length(doc_no) + 3), 0)::bigint doc_url_bytes
       FROM d`;
   note(`    distinct doc_no  -> soDeliverableRemaining(.in doc_no)   ${String(lists.docs).padStart(6)}  (~${Math.round(Number(lists.doc_url_bytes) / 1024)} KB of URL, UNCHUNKED today)`);
-  note(`    distinct item_code -> bindings .in(material_code)         ${String(lists.codes).padStart(6)}`);
+  note(`    distinct item_code -> bindings .in(item_code)         ${String(lists.codes).padStart(6)}`);
   note(`    distinct fabricCode -> fabric_trackings .in(fabric_code)  ${String(lists.fabrics).padStart(6)}`);
 
   /* soDeliverableRemaining's own reads, sized for the untruncated doc_no set. It

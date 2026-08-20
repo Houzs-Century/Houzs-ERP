@@ -386,7 +386,7 @@ export const PurchaseInvoiceFromGrn = () => {
                         style={{ textAlign: 'right', padding: '4px 6px', fontSize: 'var(--fs-13)' }}
                       />
                       <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-                        {fmtRm(pickQty * l.unitPriceCenti)}
+                        {fmtRm(pickQty * l.unitPriceSen)}
                       </span>
                     </div>
                   );

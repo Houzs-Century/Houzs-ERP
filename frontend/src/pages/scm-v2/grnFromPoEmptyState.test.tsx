@@ -76,7 +76,7 @@ const poLine = (over: Record<string, unknown> = {}) => ({
   poItemId: "poi-1", poId: "po-1", poDocNo: "HC-PO-2608-001",
   itemCode: "9028-1A(LHF)", supplierSku: null, description: "Sofa LHF",
   itemGroup: "sofa", qty: 1, receivedQty: 0, remainingQty: 1,
-  unitPriceCenti: 0, warehouseId: "wh-1", variants: null, deliveryDate: null,
+  unitPriceSen: 0, warehouseId: "wh-1", variants: null, deliveryDate: null,
   supplierId: "sup-1", supplierCode: "400-H004", supplierName: "HOOKKA INDUSTRIES SDN. BHD.",
   poDate: "2026-08-17", expectedAt: "2026-08-29",
   warehouseLocationId: "wh-1", warehouseLocationCode: "KL", warehouseLocationName: "KL WAREHOUSE",

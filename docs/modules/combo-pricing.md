@@ -73,6 +73,15 @@ row id.
 Writes gate on `requireWriteRole`. Frontend hooks:
 `frontend/src/vendor/scm/lib/sofa-combos-queries.ts`.
 
+`requireWriteRole` checks the `scm_config_write` **permission only, not tenancy**.
+`sofa_combo_pricing` carries `company_id` NOT NULL since mig 0083, and the
+service-role client bypasses RLS, so **both by-id writes must scope by company**.
+`DELETE /:id` was scoped 2026-08-13; `PUT /:id` read its source combo `.eq('id',
+id)` UNSCOPED until 2026-08-19 — so an edit could clone another company's combo
+tuple into a new effective row for the active company. Both now go through
+`scopeToCompany(...)` (a foreign id resolves to nothing → 404). See BUG-HISTORY,
+2026-08-19.
+
 **Two things the file's own header gets wrong — do not trust it over this table:**
 
 - It advertises `POST /sofa-combos/copy-to-customer`. That endpoint was

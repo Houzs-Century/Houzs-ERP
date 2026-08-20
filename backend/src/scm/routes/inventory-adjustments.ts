@@ -51,7 +51,7 @@ inventoryAdjustments.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  if (!body.warehouseId || !body.productCode) return c.json({ error: 'warehouse_and_product_required' }, 400);
+  if (!body.warehouseId || !body.itemCode) return c.json({ error: 'warehouse_and_product_required' }, 400);
   const qtyDelta = Number(body.qtyDelta ?? 0);
   if (!Number.isFinite(qtyDelta) || qtyDelta === 0) return c.json({ error: 'invalid_qty_delta' }, 400);
 
@@ -62,7 +62,7 @@ inventoryAdjustments.post('/', async (c) => {
   if (!isAdjustmentReasonCode(reasonCode)) return c.json({ error: 'reason_required' }, 400);
 
   const warehouseId = String(body.warehouseId);
-  const productCode = String(body.productCode);
+  const itemCode = String(body.itemCode);
   const itemGroup = (body.itemGroup as string | undefined) ?? null;
   const variants = (body.variants as Record<string, unknown> | null | undefined) ?? null;
   const batchNo = ((body.batchNo as string | undefined) ?? '').trim() || null;
@@ -82,7 +82,7 @@ inventoryAdjustments.post('/', async (c) => {
 
   let variantKey: string;
   if (qtyDelta > 0) {
-    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
+    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, itemCode);
     if (errs.length > 0) return c.json({ error: 'adjustment_incomplete', message: errs.join(' ') }, 422);
     variantKey = body.variantKey != null
       ? String(body.variantKey)
@@ -97,7 +97,7 @@ inventoryAdjustments.post('/', async (c) => {
       sb.from('inventory_lots')
         .select('unit_cost_sen, qty_remaining, source_doc_type, received_at')
         .eq('warehouse_id', warehouseId)
-        .eq('product_code', productCode)
+        .eq('item_code', itemCode)
         .eq('variant_key', variantKey),
       c,
     );
@@ -117,7 +117,7 @@ inventoryAdjustments.post('/', async (c) => {
     let avQ = sb.from('v_inventory_lots_open')
       .select('qty_remaining')
       .eq('warehouse_id', warehouseId)
-      .eq('product_code', productCode)
+      .eq('item_code', itemCode)
       .eq('variant_key', variantKey);
     avQ = scopeToCompany(avQ, c); // multi-company: isolate available-stock check to the active company (view exposes company_id, mig 0106)
     avQ = batchNo == null ? avQ.is('batch_no', null) : avQ.eq('batch_no', batchNo);
@@ -153,7 +153,7 @@ inventoryAdjustments.post('/', async (c) => {
     company_id: activeCompanyId(c), // multi-company: stamp the active company
     movement_type: 'ADJUSTMENT',
     warehouse_id: warehouseId,
-    product_code: productCode,
+    item_code: itemCode,
     // Attribute-composition bucket (migration 0095) + dye-lot batch (0120). An
     // increase computes these from the chosen attributes; a decrease carries the
     // picked existing bucket. The FIFO trigger (0126) honours batch_no on
@@ -185,7 +185,7 @@ inventoryAdjustments.post('/', async (c) => {
   await reconcileUncostedAfterIn(sb, [{
     movement_type: 'ADJUSTMENT',
     warehouse_id: warehouseId,
-    product_code: productCode,
+    item_code: itemCode,
     variant_key: variantKey,
     qty: qtyDelta,
   }], performedBy);
@@ -203,7 +203,7 @@ inventoryAdjustments.post('/', async (c) => {
     note: reasonCode,
     fieldChanges: compactChanges([
       fieldChange('warehouseId', null, warehouseId),
-      fieldChange('productCode', null, productCode),
+      fieldChange('itemCode', null, itemCode),
       fieldChange('variantKey', null, variantKey),
       fieldChange('batchNo', null, batchNo),
       fieldChange('qtyDelta', null, qtyDelta),

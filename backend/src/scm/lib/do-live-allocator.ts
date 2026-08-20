@@ -297,12 +297,12 @@ export async function loadIncomingLines(sb: any, itemCodes: string[], warehouseI
   const { data, error } = await sb
     .from('purchase_order_items')
     .select(`
-      material_code, item_group, variants, qty, received_qty, delivery_date,
+      item_code, item_group, variants, qty, received_qty, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       warehouse_id,
       po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id )
     `)
-    .in('material_code', itemCodes)
+    .in('item_code', itemCodes)
     .not('po.status', 'in', '("CANCELLED","DRAFT")');
   if (error) throw new Error(`incoming_load_failed: ${error.message}`);
   const out: IncomingLine[] = [];
@@ -327,7 +327,7 @@ export async function loadIncomingLines(sb: any, itemCodes: string[], warehouseI
     );
     out.push({
       poNumber: String(po.po_number ?? ''),
-      itemCode: String(r.material_code ?? ''),
+      itemCode: String(r.item_code ?? ''),
       variantKey: computeVariantKey(
         (r.item_group as string | null) ?? null,
         (r.variants as Record<string, unknown> | null) ?? null,

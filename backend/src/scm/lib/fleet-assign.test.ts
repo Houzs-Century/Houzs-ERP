@@ -8,7 +8,7 @@ import {
   type AssignConfig,
 } from './fleet-assign';
 
-const CFG: AssignConfig = { defaultMaxSets: 10, defaultMaxRevenueCenti: 3_000_000 };
+const CFG: AssignConfig = { defaultMaxSets: 10, defaultMaxRevenueSen: 3_000_000 };
 
 function group(key: string, over: Partial<AssignGroup> = {}): AssignGroup {
   return {
@@ -17,7 +17,7 @@ function group(key: string, over: Partial<AssignGroup> = {}): AssignGroup {
     group: 'KLANG_VALLEY',
     orders: [key],
     sets: 4,
-    revenueCenti: 100_000,
+    revenueSen: 100_000,
     preferredLorryId: null,
     ...over,
   };
@@ -30,7 +30,7 @@ function lorry(id: string, over: Partial<AssignLorry> = {}): AssignLorry {
     dispatchable: true,
     status: 'AVAILABLE',
     maxSets: null,
-    maxRevenueCenti: null,
+    maxRevenueSen: null,
     layer: 'SETS',
     driverId: null,
     driverName: null,
@@ -115,13 +115,13 @@ describe('assignFleet — capacity fit', () => {
 
   it('REVENUE layer measures the revenue ceiling, not sets', () => {
     const r = assignFleet({
-      groups: [group('R', { sets: 999, revenueCenti: 2_000_000 })],
-      lorries: [lorry('l1', { maxRevenueCenti: 3_000_000, layer: 'REVENUE' })],
+      groups: [group('R', { sets: 999, revenueSen: 2_000_000 })],
+      lorries: [lorry('l1', { maxRevenueSen: 3_000_000, layer: 'REVENUE' })],
       drivers: [], helpers: [], config: CFG,
     });
     expect(r.assignments[0].overCeiling).toBe(false);
     expect(r.assignments[0].ceilingSets).toBeNull();
-    expect(r.assignments[0].ceilingRevenueCenti).toBe(3_000_000);
+    expect(r.assignments[0].ceilingRevenueSen).toBe(3_000_000);
   });
 });
 

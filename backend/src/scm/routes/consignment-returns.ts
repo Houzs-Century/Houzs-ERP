@@ -49,26 +49,26 @@ consignmentReturns.use('*', supabaseAuth);
 const HEADER =
   'id, return_number, do_doc_no, consignment_do_id, ' +
   'debtor_code, debtor_name, return_date, reason, status, ' +
-  'received_at, inspected_at, refunded_at, refund_centi, inspection_notes, ' +
+  'received_at, inspected_at, refunded_at, refund_sen, inspection_notes, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, sales_location, customer_state, customer_country, note, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
-  'local_total_centi, total_cost_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
+  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, warehouse_id, notes, created_at, created_by, updated_at';
 
 const ITEM =
   'id, consignment_delivery_return_id, consignment_do_item_id, item_code, item_group, description, description2, ' +
-  'uom, qty_returned, condition, unit_price_centi, discount_centi, line_total_centi, ' +
-  'unit_cost_centi, line_cost_centi, line_margin_centi, refund_centi, variants, notes, created_at';
+  'uom, qty_returned, condition, unit_price_sen, discount_sen, line_total_sen, ' +
+  'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the return LIST and DETAIL
    payloads) but must reach ONLY a finance-viewer
    (lib/houzs-perms.canViewScmFinance). The refund/totals everyone is meant to
-   see (local_total_centi / refund_centi / line_total_centi) are deliberately NOT
+   see (local_total_sen / refund_sen / line_total_sen) are deliberately NOT
    listed — the same line #625 (SO) and #632 (DR) drew.
 
    Consignment got the SCOPE fix (#417) but never the FINANCE fix:
@@ -76,16 +76,16 @@ const ITEM =
    keys at all while HEADER + ITEM selected cost and margin for every caller.
    Same class as #600 (DO/SI detail), #625 (SO detail), #632 (DR detail). */
 const CRN_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
 /* KEPT LOCAL, deliberately — do NOT "converge" CRN_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select,
    and the consignment return speaks a narrower money vocabulary than the SO: no
-   service_centi / service_cost_centi and no deposit_centi (a return takes no
-   deposit). refund_centi is in HEADER and deliberately NOT here — the refund is
+   service_sen / service_cost_sen and no deposit_sen (a return takes no
+   deposit). refund_sen is in HEADER and deliberately NOT here — the refund is
    what the customer is owed and everyone who passes the access gate may see it,
    the same line #625 (SO) and #632 (DR) drew. The per-LINE keys ARE shared —
    see the SO_ITEM_FINANCE_KEYS import. */
@@ -126,10 +126,10 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, returnId: string) {
   const { data: items, error: itemsErr } = await sb.from('consignment_delivery_return_items')
-    .select('item_group, line_total_centi, line_cost_centi')
+    .select('item_group, line_total_sen, line_cost_sen')
     .eq('consignment_delivery_return_id', returnId);
   /* A failed READ is not an empty return, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO header AND a ZERO refund_centi on a
+     it folded a transient blip into a ZERO header AND a ZERO refund_sen on a
      return whose lines were intact, i.e. a refund owed to a customer silently
      became no refund. The ERROR is the signal, never the emptiness: a genuinely
      empty return resolves error === null with data === [] and MUST still zero. */
@@ -140,9 +140,9 @@ async function recomputeTotals(sb: any, returnId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost  = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost  = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -153,20 +153,20 @@ async function recomputeTotals(sb: any, returnId: string) {
   }
   const margin = total - totalCost;
   const { error: updErr } = await sb.from('consignment_delivery_returns').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    local_total_centi: total,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    local_total_sen: total,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
-    refund_centi: total,
+    refund_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', returnId);
   /* The write's own result was discarded until 2026-07-17: a rejected UPDATE left
@@ -281,11 +281,11 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   const cancelled = status === 'CANCELLED';
 
   // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled) {
     const { data: items } = await sb.from('consignment_delivery_return_items')
-      .select('id, consignment_do_item_id, item_code, description, qty_returned, unit_cost_centi, item_group, variants')
+      .select('id, consignment_do_item_id, item_code, description, qty_returned, unit_cost_sen, item_group, variants')
       .eq('consignment_delivery_return_id', returnId);
     const headerWarehouseId = (header as { warehouse_id: string | null }).warehouse_id ?? null;
     const lineWh = await resolveReturnLineWarehouses(
@@ -298,7 +298,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     const batchByWh = new Map<string, Map<string, string | null>>();
     const costByWh = new Map<string, Map<string, number>>();
     for (const wh of distinctWh) { batchByWh.set(wh, await resolveWarehouseLotBatches(sb, wh)); costByWh.set(wh, await resolveWarehouseLotCosts(sb, wh)); }
-    for (const it of ((items ?? []) as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; unit_cost_centi?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>)) {
+    for (const it of ((items ?? []) as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; unit_cost_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>)) {
       const qty = Number(it.qty_returned ?? 0);
       if (qty <= 0) continue;
       const wh = lineWh.get(it.id) ?? null;
@@ -308,25 +308,25 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       // Cost = the return line's snapshot; if it's 0 (free-entry return with no
       // cost), fall back to the SKU's current on-hand avg cost so we don't open a
       // 0-cost lot that a later FIFO sale would eat and under-state its COGS.
-      const lineCost = Number(it.unit_cost_centi ?? 0);
+      const lineCost = Number(it.unit_cost_sen ?? 0);
       const unitCost = lineCost > 0 ? lineCost : (costByWh.get(wh)?.get(`${it.item_code}::${vk}`) ?? 0);
       const k = `${wh}::${it.item_code}::${vk}::${batch ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
-      else targetByBucket.set(k, { warehouse_id: wh, product_code: it.item_code, variant_key: vk, product_name: it.description, qty, unit_cost_sen: unitCost, batch_no: batch });
+      else targetByBucket.set(k, { warehouse_id: wh, item_code: it.item_code, variant_key: vk, product_name: it.description, qty, unit_cost_sen: unitCost, batch_no: batch });
     }
   }
 
   // 2. CURRENT net IN per bucket from ALL this return's movements (CS_DR IN +
   //    any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
-    .select('movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name')
+    .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', returnId)
     .in('source_doc_type', ['CS_DR', 'STOCK_TRANSFER']);
   type Agg = { in_qty: number; out_qty: number; in_total_cost: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { in_qty: 0, out_qty: 0, in_total_cost: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
     if (m.movement_type === 'IN') { a.in_qty += Number(m.qty ?? 0); a.in_total_cost += Number(m.total_cost_sen ?? 0); }
@@ -353,7 +353,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       const useCsDr = neverMoved && !csDrEmitted.has(`${pc}::${vk}`);
       if (useCsDr) csDrEmitted.add(`${pc}::${vk}`);
       writes.push({
-        movement_type: 'IN', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'IN', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: delta, unit_cost_sen: t?.unit_cost_sen ?? 0,
         source_doc_type: useCsDr ? 'CS_DR' : 'STOCK_TRANSFER',
         source_doc_id: returnId, source_doc_no: returnNo,
@@ -363,7 +363,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       });
     } else {
       writes.push({
-        movement_type: 'OUT', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'OUT', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: -delta,
         source_doc_type: 'STOCK_TRANSFER',
         source_doc_id: returnId, source_doc_no: cancelled ? `${returnNo}-CANCEL` : returnNo,
@@ -393,8 +393,8 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
    payload. Shared by POST / (bulk create) and POST /:id/items (single add).
 
    `sourceCostByNoteItem` (lib/source-cost) is the server's own read of the
-   SOURCE consignment-note line's unit_cost_centi. When the line is note-linked it
-   WINS over the client's `unitCostCenti` unconditionally — the return must be
+   SOURCE consignment-note line's unit_cost_sen. When the line is note-linked it
+   WINS over the client's `unitCostSen` unconditionally — the return must be
    booked at the cost the note shipped at, which is history, not a catalog lookup.
    Ignoring the client is what makes stripping the cost off /returnable-note-lines
    safe (the #632 trap, disarmed at its root). A free-hand line has no source row
@@ -405,16 +405,16 @@ function buildItemRow(
   sourceCostByNoteItem?: Map<string, number>,
 ) {
   const qty = Number(it.qtyReturned ?? it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceCenti ?? 0);
-  const discount = Number(it.discountCenti ?? 0);
+  const unitPrice = Number(it.unitPriceSen ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   const noteItemId = ((it.doItemId as string | undefined) ?? (it.consignmentDoItemId as string | undefined)) ?? undefined;
   const sourceCost = noteItemId ? sourceCostByNoteItem?.get(noteItemId) : undefined;
-  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostCenti ?? 0);
+  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostSen ?? 0);
   const lineTotal = (qty * unitPrice) - discount;
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string) ?? null;
   const variants = (it.variants as unknown) ?? null;
-  const refund = it.refundCenti !== undefined ? Number(it.refundCenti) : lineTotal;
+  const refund = it.refundSen !== undefined ? Number(it.refundSen) : lineTotal;
   return {
     consignment_delivery_return_id: returnId,
     consignment_do_item_id: (it.doItemId as string | undefined) ?? (it.consignmentDoItemId as string | undefined) ?? null,
@@ -425,13 +425,13 @@ function buildItemRow(
     uom: (it.uom as string) ?? 'UNIT',
     qty_returned: qty,
     condition: (it.condition as string) ?? null,
-    unit_price_centi: unitPrice,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
-    refund_centi: refund,
+    unit_price_sen: unitPrice,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
+    refund_sen: refund,
     variants,
     notes: (it.notes as string | undefined) ?? null,
   };
@@ -468,7 +468,7 @@ consignmentReturns.get('/', async (c) => {
 
   /* Deterministic order + unique tiebreaker (id, in HEADER). Sort columns are
      all already in the HEADER select (schema-drift safe). */
-  const SORT_COLS = new Set(['return_date', 'return_number', 'debtor_name', 'status', 'local_total_centi']);
+  const SORT_COLS = new Set(['return_date', 'return_number', 'debtor_name', 'status', 'local_total_sen']);
   const [rawCol, rawDir] = (c.req.query('sort') ?? 'return_date:desc').split(':');
   const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'return_date';
   const sortAsc = rawDir === 'asc';
@@ -484,33 +484,33 @@ consignmentReturns.get('/', async (c) => {
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* Full-set money KPIs — sum local_total_centi (Returned Value) / total_cost_centi
-     (Cost) / total_margin_centi (Margin) over the SAME status + search filters as
+  /* Full-set money KPIs — sum local_total_sen (Returned Value) / total_cost_sen
+     (Cost) / total_margin_sen (Margin) over the SAME status + search filters as
      the page query, WITHOUT .range(). Mirrors the pre-pagination client KPI.
      paginateAll pages past the 1000-row cap. All three columns are in HEADER. */
-  const moneyRes = await paginateAll<{ local_total_centi: number | null; total_cost_centi: number | null; total_margin_centi: number | null }>((mfrom, mto) => {
-    let mq = sb.from('consignment_delivery_returns').select('local_total_centi, total_cost_centi, total_margin_centi');
+  const moneyRes = await paginateAll<{ local_total_sen: number | null; total_cost_sen: number | null; total_margin_sen: number | null }>((mfrom, mto) => {
+    let mq = sb.from('consignment_delivery_returns').select('local_total_sen, total_cost_sen, total_margin_sen');
     if (status) mq = mq.eq('status', status);
     if (qText) { const s = escapeForOr(qText); if (s) mq = mq.or(`return_number.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
     mq = scopeToCompany(mq, c);
     return mq.range(mfrom, mto);
   });
   if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-  let revenueCenti = 0, costCenti = 0, marginCenti = 0;
+  let revenueSen = 0, costSen = 0, marginSen = 0;
   for (const m of (moneyRes.data ?? [])) {
-    revenueCenti += m.local_total_centi ?? 0;
-    costCenti += m.total_cost_centi ?? 0;
-    marginCenti += m.total_margin_centi ?? 0;
+    revenueSen += m.local_total_sen ?? 0;
+    costSen += m.total_cost_sen ?? 0;
+    marginSen += m.total_margin_sen ?? 0;
   }
   /* Strip the header finance keys for a non-finance caller (list half) AND drop
      the full-set Cost / Margin KPIs — `aggregates` is derived from
-     total_cost_centi / total_margin_centi, so shipping it would hand back over
+     total_cost_sen / total_margin_sen, so shipping it would hand back over
      the whole filtered set exactly what the row strip just removed. Returned
-     Value (local_total_centi) stays: it is the refund total everyone may see. */
+     Value (local_total_sen) stays: it is the refund total everyone may see. */
   gateCrnFinance(c, data ?? [], null);
   const aggregates = canViewScmFinance(c)
-    ? { revenueCenti, costCenti, marginCenti }
-    : { revenueCenti };
+    ? { revenueSen, costSen, marginSen }
+    : { revenueSen };
   return c.json({ deliveryReturns: data ?? [], total: count ?? (data?.length ?? 0), page, pageSize, aggregates });
 });
 
@@ -522,7 +522,7 @@ consignmentReturns.get('/', async (c) => {
 // registered before /:id so 'returnable-note-lines' isn't read as an id.
 //
 // FINANCE-GATED (was not — see below). Each descriptor carries the source note
-// line's unitCostCenti, so this picker shipped every delivered line's unit cost
+// line's unitCostSen, so this picker shipped every delivered line's unit cost
 // to any caller who could reach it. It was left open deliberately, because
 // ConsignmentReturnFromNote / ConsignmentReturnNew fed the value straight back
 // into the create payload and buildItemRow trusted it — a strip alone would have
@@ -557,7 +557,7 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
 
   const { data: items, error: iErr } = await chunkIn<Record<string, unknown>>(noteIds, (batch, from, to) => sb
     .from('consignment_delivery_order_items')
-    .select('id, consignment_delivery_order_id, item_code, item_group, description, description2, uom, qty, unit_price_centi, discount_centi, unit_cost_centi, variants')
+    .select('id, consignment_delivery_order_id, item_code, item_group, description, description2, uom, qty, unit_price_sen, discount_sen, unit_cost_sen, variants')
     .in('consignment_delivery_order_id', batch)
     .range(from, to));
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
@@ -600,15 +600,15 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
       delivered,
       returned,
       remaining: delivered - returned,
-      unitPriceCenti: Number(it.unit_price_centi ?? 0),
-      discountCenti: Number(it.discount_centi ?? 0),
-      unitCostCenti: Number(it.unit_cost_centi ?? 0),
+      unitPriceSen: Number(it.unit_price_sen ?? 0),
+      discountSen: Number(it.discount_sen ?? 0),
+      unitCostSen: Number(it.unit_cost_sen ?? 0),
       variants: it.variants ?? null,
     };
   }).filter((l) => l.remaining > 0);
 
   if (!canViewScmFinance(c)) {
-    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostCenti;
+    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
   return c.json({ lines });
 });
@@ -987,7 +987,7 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_delivery_return_items')
-    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition, consignment_do_item_id')
+    .select('qty_returned, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, condition, consignment_do_item_id')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1005,11 +1005,11 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
       if (over) return c.json(over, 409);
     }
   }
-  const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
+  const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_centi for a non-finance caller, and ConsignmentReturnDetail
-     seeds each line draft straight off that payload (`unit_cost_centi ?? 0`) and
+     strips unit_cost_sen for a non-finance caller, and ConsignmentReturnDetail
+     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
      posts the value back here on save — so trusting the client would let the
      stripped field round-trip as a genuine 0 and wipe the line's cost basis
      (recomputeTotals would then roll the return's cost to 0 and its margin to
@@ -1018,16 +1018,16 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
      `explicitCost > 0` precedence makes a 0 fall through to the stored cost —
      which is why the same strip was safe there (#625). Keep the stored cost for
      a non-finance caller; a finance caller is unaffected. */
-  const unitCost = (canViewScmFinance(c) && it.unitCostCenti !== undefined)
-    ? Number(it.unitCostCenti)
-    : Number(prev.unit_cost_centi);
+  const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
+    ? Number(it.unitCostSen)
+    : Number(prev.unit_cost_sen);
   const lineTotal = (qty * unitPrice) - discount;
   const lineCost = qty * unitCost;
 
   const updates: Record<string, unknown> = {
-    qty_returned: qty, unit_price_centi: unitPrice, discount_centi: discount, unit_cost_centi: unitCost,
-    line_total_centi: lineTotal, line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
-    refund_centi: lineTotal,
+    qty_returned: qty, unit_price_sen: unitPrice, discount_sen: discount, unit_cost_sen: unitCost,
+    line_total_sen: lineTotal, line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
+    refund_sen: lineTotal,
   };
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],

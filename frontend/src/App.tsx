@@ -693,7 +693,7 @@ export default function App() {
         <Route path="/scm/purchase-returns/new" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/:id" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnDetailV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/inventory" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmInventoryV2 /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/inventory/stock-card/:productCode" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmStockCardV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/inventory/stock-card/:itemCode" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmStockCardV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/suppliers/:id" element={<ScmGuard area="scm.procurement.suppliers"><Scm2990Shell><ScmSupplierDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* /scm/drivers is RETIRED (owner 2026-07-17: "fleet 里面也是有 driver，
             所以我都不需要多一个 driver"). Its page is now the Drivers section of

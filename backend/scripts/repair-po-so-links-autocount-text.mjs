@@ -63,7 +63,7 @@ const key = (code, d2) => `${norm(code)}|${norm(d2).slice(0, 140)}`;
 
 async function pull() {
   const po = (await sql`
-    SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS hdr, i.material_code AS code,
+    SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS hdr, i.item_code AS code,
            i.description2 AS d2, i.qty, i.item_group AS grp, i.so_item_id::text AS so_item_id
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id

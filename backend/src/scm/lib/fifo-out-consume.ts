@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 /** One open FIFO lot for a single (warehouse, product, variant) bucket. The
- *  caller has already filtered to the OUT's warehouse + product_code + variant_key
+ *  caller has already filtered to the OUT's warehouse + item_code + variant_key
  *  (both consumers key on all three); batchNo is what the exact-batch pass keys on. */
 export type OutLot = {
   lotId: string;

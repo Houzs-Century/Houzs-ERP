@@ -47,12 +47,12 @@ const RULES: Rule[] = [
   // ── Cost & margin — BEFORE money, because "Total Cost" is a cost first. ──
   {
     group: COLUMN_GROUPS.costs,
-    any: /\b(cost|cogs|margin|gp|profit|commission|variance|markup)\b|\bnp \(rm\)|cost_centi|_cost\b/,
+    any: /\b(cost|cogs|margin|gp|profit|commission|variance|markup)\b|\bnp \(rm\)|cost_sen|_cost\b/,
   },
   // ── Money on the document ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.amounts,
-    any: /\b(amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials)\b|_centi\b|\(rm\)/,
+    any: /\b(amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials)\b|_sen\b|\(rm\)/,
   },
   // ── Getting it made, moved and delivered ─────────────────────────────────
   {

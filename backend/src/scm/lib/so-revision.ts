@@ -391,15 +391,59 @@ export async function applySoAmendment(
      The ceiling is deliberate: an approved amendment now grants exactly the
      authority the operator would have had on the SAME order before it locked —
      the direct SO write path already passes `trustOperatorSelling =
-     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more. Plain
-     `true`, never 'including-zero', on a native order: a 0 there means "no price
-     was entered", exactly as it does on the unlocked road. */
-  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : (approval !== null);
+     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more.
+     Never 'including-zero' on a native order: that flag ALSO suppresses the
+     selling surcharges and is a statement about a price AutoCount already
+     recorded, which is not what an operator authoring now is doing.
+
+     2026-08-19 — 'operator-zero', not plain `true`, and the reason is that the
+     unlocked road MOVED. This line read `(approval !== null)` from 2026-08-16,
+     and the sentence above it — "exactly the authority the operator would have
+     had on the SAME order before it locked" — was true when written, because on
+     that date NOBODY could author RM 0 anywhere: plain `true` reads a 0 as "not
+     provided" and hands back the catalogue figure. #2425 (2026-08-18) then gave
+     the UNLOCKED road exactly that power via 'operator-zero'. From that moment
+     the two roads disagreed on one value, so the stated invariant was broken by
+     the newer change, not by this code — an approver holding
+     scm.amendment.approve_* could sign RM 0 and the catalogue price landed,
+     silently, the same shape as the RM 50 defect this whole path was written to
+     close.
+
+     'operator-zero' is the SANCTIONED mode for an authored zero (see the
+     docblock in mfg-pricing-recompute). On the unlocked road the ERP line editor
+     states the operator typed it (`zeroPriceIntended`); here the statement is
+     stronger — a human holding the approve permission signed the diff, and
+     `clientUnit` below already refuses to read the requested price at all
+     without one. So the ceiling is unchanged in kind: still exactly the unlocked
+     road's authority, now including the one value it gained.
+
+     It also closes a second hole of the same shape. The editor sends
+     `newUnitPriceSen` on EVERY changed line, not only when the price moved (see
+     the QTY-only test), so approving a pure QUANTITY change on a line that sits
+     at 0 — a free gift, a PWP reward — used to hand it the catalogue price and
+     bill the customer for something given away. That is the RM 80 → RM 100
+     defect the QTY-only test pins, at the one value the test did not cover. */
+  const amendTrust: TrustSelling = soIsMigrated
+    ? 'including-zero'
+    : (approval !== null ? 'operator-zero' : false);
 
   /* An ADD line is authored NOW, so 'including-zero' must never reach it even on
      a migrated order — that flag is a statement about a price AutoCount already
      recorded, and a line typed today has no such history (mfg-pricing-recompute's
-     own note on the flag says so). Same approval gate, plain trust. */
+     own note on the flag says so). Same approval gate.
+
+     DELIBERATELY NOT 'operator-zero', unlike amendTrust above (2026-08-19). An
+     ADD line still reads 0 as "not provided" and takes the catalogue figure.
+     so-revision.amendmentPrice.test.ts pins that for a migrated order in as many
+     words, and it is a real protection rather than an accident of the old flag:
+     an ADD line names a SKU and nothing else about it is established yet, so a 0
+     there is far likelier to be an unfilled field than an intended giveaway.
+     Editing an EXISTING line is the opposite case — the line already carries a
+     price, and moving it to 0 is a deliberate act on a known amount.
+
+     So Add and Edit differ on 0, on purpose. A gift that genuinely belongs on a
+     locked order goes through the free-item path, not a hand-typed 0. Revisit
+     only with the owner, and update that test in the same breath. */
   const addLineTrust: TrustSelling = approval !== null;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
@@ -497,7 +541,7 @@ export async function applySoAmendment(
         itemCode,
         itemGroup,
         qty,
-        unitPriceCenti: Number(diff.new_unit_price_sen ?? 0),
+        unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
       }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
 
@@ -538,15 +582,15 @@ export async function applySoAmendment(
         description2:           buildVariantSummary(itemGroup, variants) || null,
         uom:                    'UNIT',
         qty,
-        unit_price_centi:       unit,
-        discount_centi:         0,
-        total_centi:            lineTotal,
-        total_inc_centi:        lineTotal,
-        balance_centi:          lineTotal,
+        unit_price_sen:       unit,
+        discount_sen:         0,
+        total_sen:            lineTotal,
+        total_inc_sen:        lineTotal,
+        balance_sen:          lineTotal,
         variants,
-        unit_cost_centi:        unitCost,
-        line_cost_centi:        lineCost,
-        line_margin_centi:      lineTotal - lineCost,
+        unit_cost_sen:        unitCost,
+        line_cost_sen:        lineCost,
+        line_margin_sen:      lineTotal - lineCost,
         divan_price_sen:        rec.divan_price_sen,
         leg_price_sen:          rec.leg_price_sen,
         special_order_price_sen: rec.special_order_sen,
@@ -603,7 +647,7 @@ export async function applySoAmendment(
        `approval === null` an unvalidated payload number is never even read. */
     const clientUnit = (approval !== null && diff.new_unit_price_sen != null)
       ? Number(diff.new_unit_price_sen)
-      : Number(row.unit_price_centi ?? 0);
+      : Number(row.unit_price_sen ?? 0);
 
     /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the
        price AutoCount recorded (or the explicit new_unit_price_sen when the
@@ -617,12 +661,12 @@ export async function applySoAmendment(
       itemCode,
       itemGroup,
       qty,
-      unitPriceCenti: clientUnit,
+      unitPriceSen: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
     }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
-    const discount = Number(row.discount_centi ?? 0);
+    const discount = Number(row.discount_sen ?? 0);
     const lineTotal = (qty * unit) - discount;
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
@@ -631,13 +675,13 @@ export async function applySoAmendment(
       item_code:               itemCode,
       qty,
       variants,
-      unit_price_centi:        unit,
-      total_centi:             lineTotal,
-      total_inc_centi:         lineTotal,
-      balance_centi:           lineTotal,
-      unit_cost_centi:         unitCost,
-      line_cost_centi:         lineCost,
-      line_margin_centi:       lineTotal - lineCost,
+      unit_price_sen:        unit,
+      total_sen:             lineTotal,
+      total_inc_sen:         lineTotal,
+      balance_sen:           lineTotal,
+      unit_cost_sen:         unitCost,
+      line_cost_sen:         lineCost,
+      line_margin_sen:       lineTotal - lineCost,
       divan_price_sen:         rec.divan_price_sen,
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
@@ -660,7 +704,7 @@ export async function applySoAmendment(
       const key = wasCode || String(diff.sales_order_item_id);
       noteChange(`line_${key}_item_code`, wasCode, itemCode);
       noteChange(`line_${key}_qty`, row.qty, qty);
-      noteChange(`line_${key}_unit_price_sen`, row.unit_price_centi, unit);
+      noteChange(`line_${key}_unit_price_sen`, row.unit_price_sen, unit);
       noteChange(
         `line_${key}_spec`,
         buildVariantSummary(itemGroup, (row.variants as Record<string, unknown> | null) ?? null),
@@ -926,7 +970,7 @@ export async function snapshotPo(
      • RE-DERIVE a surviving line — each PO line is 1:1 with a SO line via
        `purchase_order_items.so_item_id`; carry the SO line's qty / variants /
        item_group / description2 / per-line warehouse + delivery date and
-       re-derive the supplier COST (`unit_price_centi`) from the revised spec
+       re-derive the supplier COST (`unit_price_sen`) from the revised spec
        (deriveMfgPoUnitCost — a fabric/spec swap re-prices; never carry the old
        figure). Scope note: the create path additionally re-spreads a SOFA-COMBO
        total across a matched module set; that group step is NOT reproduced here.
@@ -1107,12 +1151,12 @@ export async function reviseBoundPo(
      two gates (a re-run, or a manual delete) simply drops out here — idempotent. */
   let orphanRows: Array<{
     id: string; purchase_order_id: string | null; received_qty: number | null;
-    material_code: string | null; material_name: string | null;
+    item_code: string | null; material_name: string | null;
   }> = [];
   if (orphanPoItemIds.length > 0) {
     const { data: oRows, error: oErr } = await sb
       .from('purchase_order_items')
-      .select('id, purchase_order_id, received_qty, material_code, material_name')
+      .select('id, purchase_order_id, received_qty, item_code, material_name')
       .in('id', orphanPoItemIds);
     if (oErr) throw new Error(`reviseBoundPo: orphan PO lines load failed: ${oErr.message}`);
     orphanRows = (oRows ?? []) as typeof orphanRows;
@@ -1213,17 +1257,17 @@ export async function reviseBoundPo(
     const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
     if (codes.length > 0) {
       let q = sb.from('supplier_material_bindings')
-        .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-        .in('material_code', codes)
+        .select('item_code, supplier_id, supplier_sku, is_main_supplier')
+        .in('item_code', codes)
         .eq('material_kind', 'mfg_product')
         .order('is_main_supplier', { ascending: false });
       if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
       const { data: bRows, error: bErr } = await q;
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
-      for (const b of (bRows ?? []) as Array<{ material_code: string; supplier_id: string; supplier_sku: string | null }>) {
-        if (!mainBindingByCode.has(b.material_code)) {
-          mainBindingByCode.set(b.material_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
+      for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
+        if (!mainBindingByCode.has(b.item_code)) {
+          mainBindingByCode.set(b.item_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
         }
       }
     }
@@ -1283,35 +1327,35 @@ export async function reviseBoundPo(
     // (12a) RE-DERIVE each surviving line in place from its revised SO line.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
-      // Read the existing PO line's discount + material_code (the SKU the
+      // Read the existing PO line's discount + item_code (the SKU the
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('material_code, discount_centi')
+        .select('item_code, discount_sen')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
-      const discountCenti = Number((existing as { discount_centi?: number } | null)?.discount_centi ?? 0);
+      const discountSen = Number((existing as { discount_sen?: number } | null)?.discount_sen ?? 0);
       const qty = revised.qty != null ? Math.max(1, revised.qty) : Number(pi.qty ?? 1);
       const itemGroup = revised.item_group;
       const variants = revised.variants;
       // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
       // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
       // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-      // falling back to the PO line's existing material_code.
-      const materialCode = revised.item_code
-        ?? String((existing as { material_code?: string } | null)?.material_code ?? '');
-      const unitPriceCenti = await deriveMfgPoUnitCost(sb, {
+      // falling back to the PO line's existing item_code.
+      const itemCode = revised.item_code
+        ?? String((existing as { item_code?: string } | null)?.item_code ?? '');
+      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
-        itemCode:   materialCode,
+        itemCode:   itemCode,
         itemGroup,
         variants:   variants ?? null,
       });
 
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
-        unit_price_centi: unitPriceCenti,
-        line_total_centi: qty * unitPriceCenti - discountCenti,
+        unit_price_sen: unitPriceSen,
+        line_total_sen: qty * unitPriceSen - discountSen,
         item_group:       itemGroup,
         variants,
         description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
@@ -1328,7 +1372,7 @@ export async function reviseBoundPo(
        re-run finds the line already gone (it dropped out of orphanRows above). */
     for (const orow of orphansByPo.get(po.id) ?? []) {
       const receivedQty = Number(orow.received_qty ?? 0);
-      const label = (orow.material_name || orow.material_code || 'a removed item').trim();
+      const label = (orow.material_name || orow.item_code || 'a removed item').trim();
       if (receivedQty > 0) {
         warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);
         continue;
@@ -1348,7 +1392,7 @@ export async function reviseBoundPo(
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
       const itemGroup = line.item_group;
       const variants = line.variants;
-      const unitPriceCenti = await deriveMfgPoUnitCost(sb, {
+      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
         itemCode:   line.item_code ?? '',
         itemGroup,
@@ -1358,12 +1402,12 @@ export async function reviseBoundPo(
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
         purchase_order_id: po.id,
         material_kind:     'mfg_product',
-        material_code:     line.item_code ?? '',
+        item_code:     line.item_code ?? '',
         material_name:     line.description ?? line.item_code ?? '',
         supplier_sku:      add.supplierSku ?? '',
         qty,
-        unit_price_centi:  unitPriceCenti,
-        line_total_centi:  qty * unitPriceCenti,
+        unit_price_sen:  unitPriceSen,
+        line_total_sen:  qty * unitPriceSen,
         delivery_date:     line.line_delivery_date,
         warehouse_id:      line.warehouse_id,
         item_group:        itemGroup,
@@ -1392,11 +1436,11 @@ export async function reviseBoundPo(
        operator retries and snapshotPo is idempotent on (po_id, revision). */
     const { data: liveLines, error: liveErr } = await sb
       .from('purchase_order_items')
-      .select('line_total_centi, delivery_date')
+      .select('line_total_sen, delivery_date')
       .eq('purchase_order_id', po.id);
     if (liveErr) throw new Error(`reviseBoundPo: PO lines re-read failed for ${po.id}: ${liveErr.message}`);
-    const rows = (liveLines ?? []) as Array<{ line_total_centi: number | null; delivery_date: string | null }>;
-    const subtotal = rows.reduce((s, r) => s + Number(r.line_total_centi ?? 0), 0);
+    const rows = (liveLines ?? []) as Array<{ line_total_sen: number | null; delivery_date: string | null }>;
+    const subtotal = rows.reduce((s, r) => s + Number(r.line_total_sen ?? 0), 0);
     const dates = rows.map((r) => r.delivery_date).filter((d): d is string => Boolean(d)).sort();
 
     if (rows.length === 0 && linesRemoved > 0) {
@@ -1404,8 +1448,8 @@ export async function reviseBoundPo(
     }
 
     const { error: bumpErr } = await sb.from('purchase_orders').update({
-      subtotal_centi: subtotal,
-      total_centi:    subtotal,
+      subtotal_sen: subtotal,
+      total_sen:    subtotal,
       expected_at:    dates[0] ?? null,
       revision:       nextRevision,
       updated_at:     new Date().toISOString(),

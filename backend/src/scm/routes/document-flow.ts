@@ -434,7 +434,7 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
    ADVISORY, READ-ONLY. For an SO whose purchase leg was never linked
    (purchase_order_items.so_item_id NULL — every PO raised before the MRP-linked
    flow of 2026-07-09), surface the live POs that MIGHT cover it, matched by
-   material_code ALONE. This writes NOTHING and creates NO link: a pre-MRP PO was
+   item_code ALONE. This writes NOTHING and creates NO link: a pre-MRP PO was
    a shared stock buy (one PO, qty N, feeding several SOs), so the true SO⇄PO
    attribution was never recorded and cannot be safely inferred. The map shows
    these as "Not linked from this SO" so the office can reconcile by hand without
@@ -464,7 +464,7 @@ documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   // UNLINKED PO lines (so_item_id NULL) carrying any of those codes.
   const { data: poItems } = await sb.from('purchase_order_items')
     .select('purchase_order_id')
-    .in('material_code', codes)
+    .in('item_code', codes)
     .is('so_item_id', null);
   const poIds = uniq((poItems ?? []).map((r: any) => r.purchase_order_id));
   if (poIds.length === 0) return c.json({ candidates: [] });
@@ -747,10 +747,10 @@ documentFlow.get('/:type/:id', async (c) => {
   const siIds = [...siById.keys()];
   if (siIds.length) {
     const { data: pays } = await sb.from('sales_invoice_payments')
-      .select('id, sales_invoice_id, method, approval_code, amount_centi').in('sales_invoice_id', siIds);
+      .select('id, sales_invoice_id, method, approval_code, amount_sen').in('sales_invoice_id', siIds);
     for (const p of (pays ?? []) as any[]) {
       const k = keyOf('payment', p.id);
-      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${(Number(p.amount_centi ?? 0) / 100).toFixed(0)}`;
+      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${(Number(p.amount_sen ?? 0) / 100).toFixed(0)}`;
       nodes.set(k, { key: k, type: 'payment', id: p.id, label, status: null, isAnchor: k === anchorKey });
       addEdge(keyOf('si', p.sales_invoice_id), k, 'payment');
     }

@@ -158,7 +158,7 @@ async function main() {
       AND i.linked_ac_dtlkey IS NULL AND i.item_group ILIKE 'sofa'`;
   await run("SO sofa lines", soRows, soAc, "mfg_sales_order_items");
 
-  const poRows = await sql`SELECT i.id, i.material_code AS code, NULL::int AS line_no, h.linked_ac_docno AS ac
+  const poRows = await sql`SELECT i.id, i.item_code AS code, NULL::int AS line_no, h.linked_ac_docno AS ac
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
       AND i.linked_ac_dtlkey IS NULL AND i.item_group ILIKE 'sofa'`;

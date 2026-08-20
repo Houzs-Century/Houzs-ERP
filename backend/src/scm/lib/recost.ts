@@ -36,7 +36,7 @@
 // through to the GR price rather than zeroing a lot that cost real money.
 //
 // Costs resolve per GRN LINE and are then aggregated onto the lot that line
-// produced, identified by (product_code, variant_key, batch_no = source PO).
+// produced, identified by (item_code, variant_key, batch_no = source PO).
 // Lines that remain tied there are indistinguishable to FIFO too, so they
 // resolve to a qty-weighted average — Σ(qty × cost) is conserved exactly.
 //
@@ -56,10 +56,10 @@ import { toMyrSen } from './fx';
    rationale. See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeSiTotals(sb: any, salesInvoiceId: string) {
   const { data: items, error: itemsErr } = await sb.from('sales_invoice_items')
-    .select('item_group, line_total_centi, line_cost_centi')
+    .select('item_group, line_total_sen, line_cost_sen')
     .eq('sales_invoice_id', salesInvoiceId);
   /* A failed READ is not an empty invoice, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO total_centi (the column the GL posts
+     it folded a transient blip into a ZERO total_sen (the column the GL posts
      from) on an invoice whose lines were intact. The ERROR is the signal, never
      the emptiness: a genuinely empty invoice resolves error === null with
      data === [] and MUST still fall through to zero the header. */
@@ -70,9 +70,9 @@ async function recomputeSiTotals(sb: any, salesInvoiceId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -83,21 +83,21 @@ async function recomputeSiTotals(sb: any, salesInvoiceId: string) {
   }
   const margin = total - totalCost;
   const { error: updErr } = await sb.from('sales_invoices').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    local_total_centi: total,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    local_total_sen: total,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
-    subtotal_centi: total,
-    total_centi: total,
+    subtotal_sen: total,
+    total_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', salesInvoiceId);
   if (updErr) {
@@ -113,19 +113,19 @@ async function recomputeSiTotals(sb: any, salesInvoiceId: string) {
 export async function restampSiFromDo(sb: any, deliveryOrderId: string) {
   try {
     const { data: doItems } = await sb.from('delivery_order_items')
-      .select('id, unit_cost_centi')
+      .select('id, unit_cost_sen')
       .eq('delivery_order_id', deliveryOrderId);
     if (!doItems || doItems.length === 0) return;
     const costByDoItem = new Map<string, number>();
     const doItemIds: string[] = [];
-    for (const d of doItems as Array<{ id: string; unit_cost_centi: number | null }>) {
-      costByDoItem.set(d.id, Number(d.unit_cost_centi ?? 0));
+    for (const d of doItems as Array<{ id: string; unit_cost_sen: number | null }>) {
+      costByDoItem.set(d.id, Number(d.unit_cost_sen ?? 0));
       doItemIds.push(d.id);
     }
     if (doItemIds.length === 0) return;
 
     const { data: siLines } = await sb.from('sales_invoice_items')
-      .select('id, sales_invoice_id, do_item_id, qty, line_total_centi')
+      .select('id, sales_invoice_id, do_item_id, qty, line_total_sen')
       .in('do_item_id', doItemIds);
     if (!siLines || siLines.length === 0) return;
 
@@ -152,18 +152,18 @@ export async function restampSiFromDo(sb: any, deliveryOrderId: string) {
     }
 
     const touched = new Set<string>();
-    for (const s of siLines as Array<{ id: string; sales_invoice_id: string; do_item_id: string | null; qty: number; line_total_centi: number | null }>) {
+    for (const s of siLines as Array<{ id: string; sales_invoice_id: string; do_item_id: string | null; qty: number; line_total_sen: number | null }>) {
       if (cancelled.has(s.sales_invoice_id)) continue;
       if (!s.do_item_id) continue;
       const unitCost = costByDoItem.get(s.do_item_id);
       if (unitCost === undefined) continue;
       const qty = Number(s.qty ?? 0);
       const lineCost = unitCost * qty;
-      const lineTotal = Number(s.line_total_centi ?? 0);
+      const lineTotal = Number(s.line_total_sen ?? 0);
       await sb.from('sales_invoice_items').update({
-        unit_cost_centi: unitCost,
-        line_cost_centi: lineCost,
-        line_margin_centi: lineTotal - lineCost,
+        unit_cost_sen: unitCost,
+        line_cost_sen: lineCost,
+        line_margin_sen: lineTotal - lineCost,
       }).eq('id', s.id);
       touched.add(s.sales_invoice_id);
     }
@@ -211,26 +211,26 @@ async function poNumberByGrnItem(
 export async function recostFromGrn(sb: any, grnId: string) {
   try {
     // 1. GRN lines — the received buckets + their GR (fallback) price.
-    //    Migration 0082 — also read allocated_charge_centi + qty_accepted so the
+    //    Migration 0082 — also read allocated_charge_sen + qty_accepted so the
     //    landed FREIGHT folded in at receive time survives a PI recost.
     //    ORDER BY id: the resolution below is order-independent by construction,
     //    but an unordered select made two runs over identical data observably
     //    different (audit 2026-07-17) — pin it so a recost is reproducible.
     const { data: grnItems } = await sb.from('grn_items')
-      .select('id, material_code, item_group, variants, unit_price_centi, qty_accepted, allocated_charge_centi, purchase_order_item_id')
+      .select('id, item_code, item_group, variants, unit_price_sen, qty_accepted, allocated_charge_sen, purchase_order_item_id')
       .eq('grn_id', grnId)
       .order('id', { ascending: true });
     if (!grnItems || grnItems.length === 0) return;
     const giList = grnItems as Array<{
-      id: string; material_code: string; item_group: string | null;
-      variants: Record<string, unknown> | null; unit_price_centi: number | null;
-      qty_accepted: number | null; allocated_charge_centi: number | null;
+      id: string; item_code: string; item_group: string | null;
+      variants: Record<string, unknown> | null; unit_price_sen: number | null;
+      qty_accepted: number | null; allocated_charge_sen: number | null;
       purchase_order_item_id: string | null;
     }>;
 
     /* Landed-cost core (migration 0082) — the GRN's exchange_rate (MYR per 1 unit
        of the GRN currency, 1 for MYR). Converts the GR-price FALLBACK
-       (g.unit_price_centi, in the GRN's currency) to MYR. The PI path below uses
+       (g.unit_price_sen, in the GRN's currency) to MYR. The PI path below uses
        the PI's OWN rate. rate 1 ⇒ toMyrSen is a no-op, so an MYR GRN recosts
        byte-for-byte as before. */
     /* `?? 1` is correct for an MYR GRN and a catastrophe for a failed read: rate 1
@@ -257,14 +257,14 @@ export async function recostFromGrn(sb: any, grnId: string) {
        billed cost is thrown away. A GRN that genuinely has no PI yet resolves
        error === null with data === [] and correctly keeps the GR fallback. */
     const { data: piRows, error: piRowsErr } = await sb.from('purchase_invoice_items')
-      .select('grn_item_id, qty, unit_price_centi, purchase_invoice_id, allocated_charge_centi')
+      .select('grn_item_id, qty, unit_price_sen, purchase_invoice_id, allocated_charge_sen')
       .in('grn_item_id', giIds);
     if (piRowsErr) {
       /* eslint-disable-next-line no-console */
       console.error('[recostFromGrn] PI lines read failed — lot costs left unchanged:', grnId, piRowsErr.message);
       return;
     }
-    const piList = (piRows ?? []) as Array<{ grn_item_id: string | null; qty: number; unit_price_centi: number | null; purchase_invoice_id: string; allocated_charge_centi: number | null }>;
+    const piList = (piRows ?? []) as Array<{ grn_item_id: string | null; qty: number; unit_price_sen: number | null; purchase_invoice_id: string; allocated_charge_sen: number | null }>;
     const piIds = [...new Set(piList.map((r) => r.purchase_invoice_id).filter(Boolean))];
     /* LEAK GUARD (DRAFT, PI two-state — 2026-06-25 anchoring diff vs 2990) — exclude
        both CANCELLED AND DRAFT PIs from the authoritative-cost aggregate. A DRAFT PI
@@ -305,7 +305,7 @@ export async function recostFromGrn(sb: any, grnId: string) {
       if (!r.grn_item_id || piExcluded.has(r.purchase_invoice_id)) continue;
       const a = piAgg.get(r.grn_item_id) ?? { qty: 0, amt: 0 };
       const q = Number(r.qty ?? 0);
-      const unitMyr = toMyrSen(Number(r.unit_price_centi ?? 0), piRateById.get(r.purchase_invoice_id) ?? 1);
+      const unitMyr = toMyrSen(Number(r.unit_price_sen ?? 0), piRateById.get(r.purchase_invoice_id) ?? 1);
       a.qty += q;
       a.amt += q * unitMyr;
       piAgg.set(r.grn_item_id, a);
@@ -313,7 +313,7 @@ export async function recostFromGrn(sb: any, grnId: string) {
 
     /* PI-level landed freight (migration 0082) — freight entered on the PI as a
        SERVICE line, pooled + allocated across the PI's GOODS lines and stored per
-       line as purchase_invoice_items.allocated_charge_centi (already MYR sen via
+       line as purchase_invoice_items.allocated_charge_sen (already MYR sen via
        the PI's own rate, computed at PI write time by reallocatePiCharges).
        SEPARATE from the GRN freight: the user enters freight on the GRN OR the PI
        (or both, deliberately), and each capitalises EXACTLY ONCE — the PI writer
@@ -322,7 +322,7 @@ export async function recostFromGrn(sb: any, grnId: string) {
     const piFreightByGrnItem = new Map<string, number>();
     for (const r of piList) {
       if (!r.grn_item_id || piExcluded.has(r.purchase_invoice_id)) continue;
-      const alloc = Number(r.allocated_charge_centi ?? 0);
+      const alloc = Number(r.allocated_charge_sen ?? 0);
       if (alloc === 0) continue;
       piFreightByGrnItem.set(r.grn_item_id, (piFreightByGrnItem.get(r.grn_item_id) ?? 0) + alloc);
     }
@@ -330,14 +330,14 @@ export async function recostFromGrn(sb: any, grnId: string) {
     /* 3. Authoritative landed cost PER LINE, then aggregated per LOT IDENTITY.
        WHY PER LINE (audit 2026-07-17): lots are one-per-GRN-line (the post writes
        one IN per line; the FIFO trigger opens one lot per IN). Keying cost by
-       (material_code, variant_key) alone put every same-SKU line in ONE bucket and
+       (item_code, variant_key) alone put every same-SKU line in ONE bucket and
        let the first-read line's price win for ALL of that SKU's lots — so a GRN
        spanning two POs (/from-po-items groups by SUPPLIER, lines keep their own
        purchase_order_item_id) booked the second PO's lot at the first PO's price.
 
        LOT IDENTITY: nothing links a lot back to its grn_item — inventory_movements
        carries no grn_item_id, only source_doc_id = the GRN. The finest identity the
-       schema actually holds is (product_code, variant_key, batch_no), batch_no being
+       schema actually holds is (item_code, variant_key, batch_no), batch_no being
        the source PO number (migration 0120). That separates the multi-PO case
        exactly. Lines still tied on all three are genuinely indistinguishable — FIFO
        itself consumes them in arbitrary order — so they resolve to a qty-weighted
@@ -386,7 +386,7 @@ export async function recostFromGrn(sb: any, grnId: string) {
       const piGoods = pi && pi.qty > 0 ? Math.round(pi.amt / pi.qty) : 0;
       const goods = piGoods > 0
         ? piGoods
-        : (Number(g.unit_price_centi ?? 0) > 0 ? toMyrSen(Number(g.unit_price_centi), grnRate) : null);
+        : (Number(g.unit_price_sen ?? 0) > 0 ? toMyrSen(Number(g.unit_price_sen), grnRate) : null);
       if (goods === null) continue; // Pending — no price anywhere yet; leave the lot alone.
       /* GRN-allocated freight + PI-allocated freight, each folded in per unit over
          the RECEIVED qty (the lot's qty) so the lot carries the whole charge once. */
@@ -396,23 +396,23 @@ export async function recostFromGrn(sb: any, grnId: string) {
          became round(0.5) = 1 sen/unit = 100 sen capitalised against a 50-sen
          allocation. Twice the charge, from rounding alone, once per source.
 
-         allocateLandedCharges guarantees Σ allocatedChargeCenti === the charge
+         allocateLandedCharges guarantees Σ allocatedChargeSen === the charge
          pool EXACTLY (lib/landed-allocation.ts:116-137, running remainder plus a
          lastPositiveIdx guard). Rounding it per unit threw that exactness away
          at the last step. Adding the charge whole and letting the aggregate
          divide ONCE preserves it; the goods half still enters per-unit, which is
          what it is. */
-      const freightTotal = Number(g.allocated_charge_centi ?? 0) + (piFreightByGrnItem.get(g.id) ?? 0);
+      const freightTotal = Number(g.allocated_charge_sen ?? 0) + (piFreightByGrnItem.get(g.id) ?? 0);
       const amt = qty * goods + freightTotal;
-      addTotal(byLotKey, `${g.material_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, amt);
-      addTotal(byCoarse, `${g.material_code}::${vkey}`, qty, amt);
+      addTotal(byLotKey, `${g.item_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, amt);
+      addTotal(byCoarse, `${g.item_code}::${vkey}`, qty, amt);
     }
     const resolve = (a: Agg | undefined): number | null =>
       a && a.qty > 0 ? Math.round(a.amt / a.qty) : null;
 
     // 4. Lots created by this GRN. Re-cost each, then cascade to its consumptions.
     const { data: lots } = await sb.from('inventory_lots')
-      .select('id, product_code, variant_key, batch_no, qty_received, movement_id, unit_cost_sen')
+      .select('id, item_code, variant_key, batch_no, qty_received, movement_id, unit_cost_sen')
       .eq('source_doc_type', 'GRN').eq('source_doc_id', grnId);
     if (!lots || lots.length === 0) return;
 
@@ -422,12 +422,12 @@ export async function recostFromGrn(sb: any, grnId: string) {
     // at cancel time; recosting it here would double-correct the GL.
     type ConsCand = { id: string; qty_consumed: number | null; movement_id: string | null; newCost: number };
     const consCandidates: ConsCand[] = [];
-    for (const lot of lots as Array<{ id: string; product_code: string; variant_key: string | null; batch_no: string | null; qty_received: number | null; movement_id: string | null; unit_cost_sen: number | null }>) {
+    for (const lot of lots as Array<{ id: string; item_code: string; variant_key: string | null; batch_no: string | null; qty_received: number | null; movement_id: string | null; unit_cost_sen: number | null }>) {
       const vkey = lot.variant_key ?? '';
       // The lot's own batch first; the pre-0120 (NULL-batch) fallback second.
       const newCost = resolve(
-        byLotKey.get(`${lot.product_code}::${vkey}::${lot.batch_no ?? ''}`)
-          ?? byCoarse.get(`${lot.product_code}::${vkey}`),
+        byLotKey.get(`${lot.item_code}::${vkey}::${lot.batch_no ?? ''}`)
+          ?? byCoarse.get(`${lot.item_code}::${vkey}`),
       );
       if (newCost === null) continue; // Pending — leave as-is
       if (Number(lot.unit_cost_sen ?? 0) === newCost) continue; // already correct

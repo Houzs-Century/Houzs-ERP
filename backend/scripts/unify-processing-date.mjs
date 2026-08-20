@@ -170,7 +170,7 @@ async function main() {
     SELECT doc_no, status::text AS status, linked_ac_docno,
            to_char(proceeded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS proc_date,
            to_char(customer_delivery_date, 'YYYY-MM-DD') AS deliv,
-           debtor_name, address1, postcode, paid_centi, local_total_centi
+           debtor_name, address1, postcode, paid_sen, local_total_sen
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO} AND proceeded_at IS NOT NULL AND processing_date IS NULL
      ORDER BY doc_no`;
@@ -247,7 +247,7 @@ async function main() {
     if (!(r.address1 ?? '').trim()) miss.push('address line 1');
     if (!(r.postcode ?? '').trim()) miss.push('postcode');
     if (!r.deliv && !r.delivFix) miss.push('delivery date');
-    const total = Number(r.local_total_centi || 0), paid = Number(r.paid_centi || 0);
+    const total = Number(r.local_total_sen || 0), paid = Number(r.paid_sen || 0);
     if (total > 0 && paid / total < DEPOSIT_THRESHOLD) miss.push('deposit below threshold');
     return { doc: r.doc_no, locked: r.value < todayMY, miss };
   }).filter((x) => x.miss.length);

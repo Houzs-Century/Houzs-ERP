@@ -160,7 +160,29 @@ export function createMirrorMapper(config: Record<string, MirrorTableConfig>): M
       forceCols: cfg.forceCols ?? {},
       preserveCols: new Set(cfg.preserveCols ?? []),
       normalize: cfg.normalize ?? {},
-      aliasCols: cfg.aliasCols ?? {},
+      /* Config aliases first, then the *_centi -> *_sen family DERIVED from
+         the dest schema itself. Migration 0305 renamed every money column on
+         these tables (30 across the SO trio alone) while 2990 — a separate
+         repository on its own deploy schedule — kept POSTing the old names.
+         applyMap's dest-column filter then dropped every one of them: the
+         payments upsert died loudly on amount_sen's NOT NULL (retrying every
+         10s in 2990's drainer, measured 2026-08-19), while header and item
+         money columns are nullable and went NULL silently — mirrored orders
+         losing their totals with a 200 response.
+
+         Derived, not enumerated, because the hand-kept list is the part that
+         fails: whoever renames a column next will not know this file exists.
+         Deriving from destCols means the alias appears the moment the rename
+         is deployed here. aliasInbound's own guard keeps every entry inert
+         until it is real: `from` must be GONE from dest and `to` PRESENT, and
+         a payload carrying both spellings keeps the new one. Explicit config
+         aliases win over a derived pair for the same key. */
+      aliasCols: {
+        ...Object.fromEntries(rows
+          .filter((r: { col: string }) => r.col.endsWith('_sen'))
+          .map((r: { col: string }) => [r.col.replace(/_sen$/, '_centi'), r.col])),
+        ...(cfg.aliasCols ?? {}),
+      },
       destCols: new Set(rows.map((r: { col: string }) => r.col)),
       // Postgres array-typed dest columns (e.g. mfg_sales_order_items.photo_urls
       // text[]). The D1-shim coerces a bound JS array by stringification, turning an

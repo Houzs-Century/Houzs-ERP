@@ -76,7 +76,7 @@ export function PoLineAllocationsModal({
   // passing poId+lineId lets the server narrow to the PO line's variant, not
   // just its bare code (owner 2026-08-08). Still includes already-picked /
   // delivered lines (historical consolidated POs are the point).
-  const candidates = useSoLineCandidates(line?.material_code ?? null, poId, lineId);
+  const candidates = useSoLineCandidates(line?.item_code ?? null, poId, lineId);
 
   const addAlloc = useAddPoLineAllocation();
   const updateAlloc = useUpdatePoLineAllocation();
@@ -166,7 +166,7 @@ export function PoLineAllocationsModal({
     <ModalOverlay
       open
       onClose={onClose}
-      title={`Allocations · ${line?.material_code ?? ""}`}
+      title={`Allocations · ${line?.item_code ?? ""}`}
       icon={<Split size={16} />}
       size="lg"
       footer={
@@ -195,7 +195,7 @@ export function PoLineAllocationsModal({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px]">
             <span className="min-w-0">
               <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Line</span>{" "}
-              <span className="font-mono font-semibold text-ink">{line.material_code}</span>
+              <span className="font-mono font-semibold text-ink">{line.item_code}</span>
             </span>
             <span>
               <span className="text-ink-muted">Ordered</span>{" "}
@@ -344,7 +344,7 @@ export function PoLineAllocationsModal({
             )}
             {candidates.isError && (
               <div className="mt-1.5 text-[11px] text-err">
-                Couldn't load the Sales Order lines for {line.material_code} — STOCK still works; reopen to retry.
+                Couldn't load the Sales Order lines for {line.item_code} — STOCK still works; reopen to retry.
               </div>
             )}
           </div>

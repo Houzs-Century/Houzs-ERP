@@ -955,7 +955,7 @@ export function NewModelDialog({
         // supplier LIST (an SKU can have 2-3 suppliers, each with their own
         // code). `results` and `rows` share the same order/length, so
         // results[i] pairs with rows[i] (the source row holding the supplier
-        // configs). materialCode is the AUTHORITATIVE server-returned code; the
+        // configs). itemCode is the AUTHORITATIVE server-returned code; the
         // per-SKU supplier code reuses the proven composeSupplierSku (size-aware)
         // so we never write the bare model code to every SKU (the
         // duplicate-supplier-code bug from PR #206/#209). Best-effort: the SKUs
@@ -974,7 +974,7 @@ export function NewModelDialog({
                total rather than asserted because this loop is best-effort and
                must not throw past a batch that already created its models. */
             const parsedPrice = parseMoneyToSen(sup.unitPrice, 'Supplier price');
-            const priceCenti = parsedPrice.ok ? parsedPrice.sen : 0;
+            const priceSen = parsedPrice.ok ? parsedPrice.sen : 0;
             const lead       = parseInt(sup.leadDays, 10);
             const moqN       = parseInt(sup.moq, 10);
             const bindings: NewBinding[] = r.codes.map((code) => {
@@ -983,10 +983,10 @@ export function NewModelDialog({
               const skuObj: Pick<MfgProductRow, 'code' | 'category' | 'size_code'> = { code, category, size_code: sizeCode };
               return {
                 materialKind:   'mfg_product' as MaterialKind,
-                materialCode:   code,
+                itemCode:   code,
                 materialName:   code,
                 supplierSku:    composeSupplierSku(baseCode, skuObj),
-                unitPriceCenti: priceCenti,
+                unitPriceSen: priceSen,
                 currency:       'MYR' as Currency,
                 leadTimeDays:   Number.isFinite(lead) ? lead : 7,
                 moq:            Number.isFinite(moqN) && moqN > 0 ? moqN : 1,
@@ -1792,7 +1792,7 @@ type AssignDraft = {
   skus:           MfgProductRow[];
   supplierCode:   string; // commander-typed code for this (Model × Supplier)
   description:    string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   leadTimeDays:   number;
   moq:            number;
   isMainSupplier: boolean;
@@ -1874,7 +1874,7 @@ export function ModularAssignSupplierDialog({
             skus,
             supplierCode:   '',
             description:    '',
-            unitPriceCenti: avg,
+            unitPriceSen: avg,
             leadTimeDays:   7,
             moq:            1,
             isMainSupplier: false,
@@ -1912,10 +1912,10 @@ export function ModularAssignSupplierDialog({
         const supplierSku = composeSupplierSku(code, sku);
         bucket.push({
           materialKind:   'mfg_product' as MaterialKind,
-          materialCode:   sku.code,
+          itemCode:   sku.code,
           materialName:   sku.name ?? sku.code,
           supplierSku,
-          unitPriceCenti: d.unitPriceCenti,
+          unitPriceSen: d.unitPriceSen,
           currency:       'MYR' as Currency,
           leadTimeDays:   d.leadTimeDays,
           moq:            d.moq,
@@ -2127,8 +2127,8 @@ export function ModularAssignSupplierDialog({
                             <td style={{ ...tdStyle, textAlign: 'right' }}>
                               <MoneyInput
                                 bare
-                                valueSen={d.unitPriceCenti}
-                                onCommit={(sen) => setDraft(d.key, { unitPriceCenti: sen ?? 0 })}
+                                valueSen={d.unitPriceSen}
+                                onCommit={(sen) => setDraft(d.key, { unitPriceSen: sen ?? 0 })}
                                 style={{ ...inputStyle, width: 100, textAlign: 'right' }}
                               />
                             </td>

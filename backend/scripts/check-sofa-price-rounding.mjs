@@ -8,7 +8,7 @@
 // by ROUNDING:
 //
 //   shared/sofa-build.ts:503   price: Math.round(sen / 100)            per module
-//   shared/sofa-build.ts:1260  Math.round(match.comboPriceCenti / 100) per combo
+//   shared/sofa-build.ts:1260  Math.round(match.comboPriceSen / 100) per combo
 //   shared/sofa-build.ts:533   Math.round(total * 100)                 back to sen
 //
 // and the result is WRITTEN to the line, not merely compared against it

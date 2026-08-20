@@ -359,7 +359,7 @@ export async function assertAuditWritable(
  * MONEY IS INTEGER SEN IN THIS CODEBASE and must be recorded as the INTEGER, not
  * a formatted string: "RM 1,234.50" cannot be summed, compared or reconciled,
  * and the moment a locale changes the history becomes unparseable. Formatting is
- * the reader's job. Pass amount_centi straight in.
+ * the reader's job. Pass amount_sen straight in.
  */
 export function fieldChange(field: string, from: unknown, to: unknown): FieldChange | null {
   const a = from == null ? '' : String(from);

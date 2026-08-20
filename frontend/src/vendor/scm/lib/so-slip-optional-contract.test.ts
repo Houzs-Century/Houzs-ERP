@@ -80,7 +80,7 @@ describe('mobile: a slip-less payment is POSTED, not dropped', () => {
     sliceFrom(mobileSource, 'async function recordNewPayments(', 'if (failed > 0) {');
 
   test('the filter is the amount, and only the amount', () => {
-    expect(recorder()).toContain('const rows = pays.filter((p) => toCenti(p.amount) > 0);');
+    expect(recorder()).toContain('const rows = pays.filter((p) => toSen(p.amount) > 0);');
   });
 
   test('it never filters on the slip again (the money bug)', () => {
@@ -92,11 +92,11 @@ describe('mobile: a slip-less payment is POSTED, not dropped', () => {
   });
 
   test('the create-time deposit gate counts every row the recorder will post', () => {
-    /* pendingDepositCenti is GATE-ONLY money. Count fewer rows than the
+    /* pendingDepositSen is GATE-ONLY money. Count fewer rows than the
        recorder posts and a slip-less deposit reads RM0 against a Processing
        Date, which 422s the create — the deadlock this field exists to close. */
-    const body = sliceFrom(mobileSource, 'pendingDepositCenti: (() => {', 'items,');
-    expect(body).toContain('.filter((p) => toCenti(p.amount) > 0)');
+    const body = sliceFrom(mobileSource, 'pendingDepositSen: (() => {', 'items,');
+    expect(body).toContain('.filter((p) => toSen(p.amount) > 0)');
     expect(body).not.toContain('p.slipSession');
   });
 
@@ -114,7 +114,7 @@ describe('mobile: a slip-less payment is POSTED, not dropped', () => {
 describe('desktop: a slip-less payment is POSTED, not dropped', () => {
   test('the rows to post are chosen on amount (receipt-backed rows go their own way)', () => {
     expect(desktopSource).toContain(
-      'const paymentIntents = () => paymentDrafts.filter((d) => d.amountCenti > 0 && !d.receiptImageKey);',
+      'const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);',
     );
   });
 
@@ -127,9 +127,9 @@ describe('desktop: a slip-less payment is POSTED, not dropped', () => {
   });
 
   test('the create-time deposit gate counts exactly the rows the flush will post', () => {
-    expect(desktopSource).toContain('const pendingDepositCenti = paymentIntents()');
+    expect(desktopSource).toContain('const pendingDepositSen = paymentIntents()');
     const gate = sliceFrom(
-      desktopSource, 'const pendingDepositCenti = paymentIntents()', 'create.mutate(',
+      desktopSource, 'const pendingDepositSen = paymentIntents()', 'create.mutate(',
     );
     expect(gate).not.toContain('slipUploadSessionId');
   });
@@ -141,7 +141,7 @@ describe('the OCR / Scan-Order receipt still rides along automatically', () => {
        as the header `receipt_image_key`, NOT through the per-payment slip
        session. It must stay out of paymentIntents so it is never booked twice. */
     expect(desktopSource).toContain(
-      '(d) => d.amountCenti > 0 && Boolean(d.receiptImageKey),',
+      '(d) => d.amountSen > 0 && Boolean(d.receiptImageKey),',
     );
     expect(desktopSource).toContain('receiptImageKey: scanReceiptImageKey || undefined,');
     expect(desktopSource).toContain('!d.receiptImageKey');

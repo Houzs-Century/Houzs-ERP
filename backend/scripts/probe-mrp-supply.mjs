@@ -33,11 +33,11 @@ async function main() {
     note(`\n${'='.repeat(72)}\n=== ${code} (company ${CO}) ===`);
 
     const bal = await sql`
-      SELECT b.product_code, b.warehouse_id::text AS warehouse_id, w.name AS warehouse,
+      SELECT b.item_code, b.warehouse_id::text AS warehouse_id, w.name AS warehouse,
              coalesce(b.variant_key,'') AS variant_key, b.qty
         FROM scm.inventory_balances b
         LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-       WHERE b.company_id = ${CO} AND b.product_code = ${code}
+       WHERE b.company_id = ${CO} AND b.item_code = ${code}
        ORDER BY w.name, b.variant_key`;
     note(`\n  inventory_balances: ${bal.length} row(s)`);
     for (const b of bal) note(`    ${String(b.warehouse ?? b.warehouse_id).padEnd(18)} qty=${String(b.qty).padStart(5)}  variant_key=${JSON.stringify(b.variant_key)}`);
@@ -49,7 +49,7 @@ async function main() {
              i.delivery_date::text AS delivery_date, p.expected_at::text AS expected_at
         FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-       WHERE i.company_id = ${CO} AND i.material_code = ${code}
+       WHERE i.company_id = ${CO} AND i.item_code = ${code}
        ORDER BY p.po_number`;
     note(`\n  purchase_order_items: ${po.length} row(s)`);
     for (const r of po) {

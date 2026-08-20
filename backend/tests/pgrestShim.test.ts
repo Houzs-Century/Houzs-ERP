@@ -54,7 +54,7 @@ describe("pgrest-shim — SQL translation for the exact chains the canonical fun
     const { sql, calls } = fakeSql([]);
     const sb = pgrestShim(sql as never);
     await sb.from("inventory_movements")
-      .select("movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen")
+      .select("movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen")
       .eq("source_doc_type", "DO").eq("source_doc_id", "do-1");
     expect(calls[0].text).toContain('WHERE "source_doc_type" = $1 AND "source_doc_id" = $2');
   });
@@ -76,9 +76,9 @@ describe("pgrest-shim — SQL translation for the exact chains the canonical fun
     const { sql, calls } = fakeSql([]);
     const sb = pgrestShim(sql as never);
     const res = await sb.from("delivery_order_items")
-      .update({ unit_cost_centi: 830, line_cost_centi: 830, line_margin_centi: -830 })
+      .update({ unit_cost_sen: 830, line_cost_sen: 830, line_margin_sen: -830 })
       .eq("id", "line-1");
-    expect(calls[0].text).toBe('UPDATE "scm"."delivery_order_items" SET "unit_cost_centi" = $1, "line_cost_centi" = $2, "line_margin_centi" = $3 WHERE "id" = $4');
+    expect(calls[0].text).toBe('UPDATE "scm"."delivery_order_items" SET "unit_cost_sen" = $1, "line_cost_sen" = $2, "line_margin_sen" = $3 WHERE "id" = $4');
     expect(calls[0].params).toEqual([830, 830, -830, "line-1"]);
     expect(res.error).toBeNull();
   });

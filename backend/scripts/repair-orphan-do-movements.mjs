@@ -91,7 +91,7 @@ try {
      service filter is needed on the movement side. */
   const orphans = await pg`
     SELECT m.id AS movement_id, m.qty, m.total_cost_sen, m.warehouse_id,
-           m.product_code, COALESCE(m.variant_key,'') AS vkey, m.company_id,
+           m.item_code, COALESCE(m.variant_key,'') AS vkey, m.company_id,
            d.id AS do_id, d.do_number, d.status
       FROM scm.inventory_movements m
       JOIN scm.delivery_orders d ON d.id = m.source_doc_id
@@ -101,8 +101,8 @@ try {
        AND NOT EXISTS (
              SELECT 1 FROM scm.delivery_order_items i
               WHERE i.delivery_order_id = d.id
-                AND i.item_code = m.product_code)
-     ORDER BY d.do_number, m.product_code`;
+                AND i.item_code = m.item_code)
+     ORDER BY d.do_number, m.item_code`;
 
   if (orphans.length === 0) {
     console.log("No orphan OUT movement anywhere (every OUT's DO carries a line for the item). Nothing to repair.");
@@ -113,7 +113,7 @@ try {
 
   for (const o of orphans) {
     console.log("=".repeat(76));
-    console.log(`${o.product_code}  ${rm(o.total_cost_sen)}  on ${o.do_number} (${o.status}) — movement ${o.movement_id}`);
+    console.log(`${o.item_code}  ${rm(o.total_cost_sen)}  on ${o.do_number} (${o.status}) — movement ${o.movement_id}`);
 
     try {
       await pg.begin(async (sql) => {
@@ -177,12 +177,12 @@ try {
             SELECT COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                                    ELSE qty END), 0) AS mov_qty
               FROM scm.inventory_movements
-             WHERE warehouse_id = ${o.warehouse_id} AND product_code = ${o.product_code}
+             WHERE warehouse_id = ${o.warehouse_id} AND item_code = ${o.item_code}
                AND COALESCE(variant_key,'') = ${o.vkey}
           ), lot AS (
             SELECT COALESCE(SUM(qty_remaining), 0) AS lot_qty
               FROM scm.inventory_lots
-             WHERE warehouse_id = ${o.warehouse_id} AND product_code = ${o.product_code}
+             WHERE warehouse_id = ${o.warehouse_id} AND item_code = ${o.item_code}
                AND COALESCE(variant_key,'') = ${o.vkey}
           )
           SELECT mov.mov_qty, lot.lot_qty FROM mov, lot`;

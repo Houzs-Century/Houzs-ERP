@@ -364,10 +364,10 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       try {
         const b = JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as {
           message?: string; remedy?: string[];
-          lines?: Array<{ materialCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
+          lines?: Array<{ itemCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
         };
         const lines = (b.lines ?? [])
-          .map((l) => `• ${l.materialCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
+          .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
           .join('\n');
         const how = (b.remedy ?? []).map((r) => `— ${r}`).join('\n');
         msg = [b.message ?? msg, lines, how].filter(Boolean).join('\n\n');

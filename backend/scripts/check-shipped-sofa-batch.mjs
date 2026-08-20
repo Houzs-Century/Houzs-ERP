@@ -28,27 +28,27 @@ async function main() {
   // the DO's status. A sofa line is identified by the product's category = SOFA.
   const rows = await sql`
     SELECT d.do_number, d.status::text AS do_status, d.company_id,
-           d.so_doc_no AS so_doc, c.product_code, l.batch_no,
+           d.so_doc_no AS so_doc, c.item_code, l.batch_no,
            SUM(c.qty_consumed)::numeric AS qty
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
       JOIN scm.delivery_orders d ON d.id = c.source_doc_id AND c.source_doc_type = 'DO'
-      JOIN scm.mfg_products p ON p.code = c.product_code AND p.company_id = d.company_id
+      JOIN scm.mfg_products p ON p.code = c.item_code AND p.company_id = d.company_id
      WHERE UPPER(COALESCE(p.category::text,'')) = 'SOFA'
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
-     GROUP BY d.do_number, d.status, d.company_id, d.so_doc_no, c.product_code, l.batch_no`;
+     GROUP BY d.do_number, d.status, d.company_id, d.so_doc_no, c.item_code, l.batch_no`;
 
   notice(`shipped SOFA consumption rows: ${rows.length}`);
   const nullBatch = rows.filter((r) => !r.batch_no);
   notice(`  sofa consumptions whose lot had NO batch_no (source PO unknowable): ${nullBatch.length}`);
-  for (const r of nullBatch.slice(0, 15)) notice(`      ${pad(r.do_number, 20)} ${pad(r.product_code, 26)} qty ${r.qty}`);
+  for (const r of nullBatch.slice(0, 15)) notice(`      ${pad(r.do_number, 20)} ${pad(r.item_code, 26)} qty ${r.qty}`);
 
   // group by (company, SO doc, model) -> set of batches
   const groups = new Map();
   for (const r of rows) {
     const so = r.so_doc ?? `(DO ${r.do_number})`;
-    const k = `${r.company_id}|${so}|${modelOf(r.product_code)}`;
-    const g = groups.get(k) ?? { company: r.company_id, so, model: modelOf(r.product_code), dos: new Set(), batches: new Set(), lines: [] };
+    const k = `${r.company_id}|${so}|${modelOf(r.item_code)}`;
+    const g = groups.get(k) ?? { company: r.company_id, so, model: modelOf(r.item_code), dos: new Set(), batches: new Set(), lines: [] };
     g.dos.add(r.do_number); if (r.batch_no) g.batches.add(r.batch_no);
     g.lines.push(r); groups.set(k, g);
   }
@@ -60,7 +60,7 @@ async function main() {
   notice(`  sets that shipped from >1 distinct batch (MIXED dye-lot — a defect): ${mixed.length}`);
   for (const g of mixed) {
     notice(`      ${pad(g.so, 20)} ${pad(g.model, 16)} DO(s) ${[...g.dos].join(",")} batches: ${[...g.batches].join(" | ")}`);
-    for (const l of g.lines) notice(`          ${pad(l.product_code, 26)} <- ${l.batch_no ?? "(no batch)"} qty ${l.qty}`);
+    for (const l of g.lines) notice(`          ${pad(l.item_code, 26)} <- ${l.batch_no ?? "(no batch)"} qty ${l.qty}`);
   }
   notice("");
   notice(`=> VERDICT: ${mixed.length === 0

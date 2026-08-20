@@ -20,7 +20,7 @@ import {
 
 const row = (o: Record<string, unknown> = {}) => ({
   method: 'cash',
-  amountCenti: 50_00,
+  amountSen: 50_00,
   ...o,
 });
 
@@ -50,8 +50,8 @@ describe('the create payments[] schema', () => {
   });
 
   it('keeps every OTHER field as strict as it was', () => {
-    expect(soCreatePaymentSchema.safeParse(row({ amountCenti: 0 })).success).toBe(false);
-    expect(soCreatePaymentSchema.safeParse(row({ amountCenti: -1 })).success).toBe(false);
+    expect(soCreatePaymentSchema.safeParse(row({ amountSen: 0 })).success).toBe(false);
+    expect(soCreatePaymentSchema.safeParse(row({ amountSen: -1 })).success).toBe(false);
     expect(soCreatePaymentSchema.safeParse(row({ method: 'crypto' })).success).toBe(false);
     expect(soCreatePaymentsSchema.safeParse([]).success).toBe(false);
     expect(soCreatePaymentsSchema.safeParse(Array(11).fill(row())).success).toBe(false);
@@ -59,8 +59,8 @@ describe('the create payments[] schema', () => {
 
   it('a whole slip-less split payment parses', () => {
     const parsed = soCreatePaymentsSchema.safeParse([
-      row({ method: 'cash', amountCenti: 30_00 }),
-      row({ method: 'transfer', amountCenti: 20_00 }),
+      row({ method: 'cash', amountSen: 30_00 }),
+      row({ method: 'transfer', amountSen: 20_00 }),
     ]);
     expect(parsed.success).toBe(true);
   });

@@ -124,7 +124,7 @@ async function syncFabricToSellingLibrary(
   /* Multi-company (mig 0089): stamp the active company on the mirrored selling
      rows. null/undefined (unresolved) inserts without the column — same no-op
      rule as companyScope. */
-  companyId?: number | null,
+  companyId: number | null,
 ): Promise<string | null> {
   const code = fabricCode.trim();
   if (!code) return null;
@@ -178,7 +178,7 @@ fabricTracking.post('/', async (c) => {
     supplier_code: (body.supplierCode as string) ?? null,
     /* Migration 0063 — collection name. */
     series: (body.series as string) ?? null,
-    price_centi: typeof body.priceCenti === 'number' ? body.priceCenti : 0,
+    price_sen: typeof body.priceSen === 'number' ? body.priceSen : 0,
     /* Migration 0167 — ACTIVE toggle; new fabrics default true. */
     is_active: typeof body.isActive === 'boolean' ? body.isActive : true,
   };
@@ -202,7 +202,7 @@ fabricTracking.post('/', async (c) => {
   // new fabric is immediately pickable on POS. The procurement row above is
   // already saved; surface any library failure as a warning so the operator can
   // retry without losing the fabric.
-  const libraryWarning = await syncFabricToSellingLibrary(sb, fabricCode, (body.fabricDescription as string) ?? null, activeCompanyId(c));
+  const libraryWarning = await syncFabricToSellingLibrary(sb, fabricCode, (body.fabricDescription as string) ?? null, activeCompanyId(c) ?? null);
 
   return c.json({ fabric: data, fabricSeries: seriesOf(fabricCode), libraryWarning }, 201);
 });
@@ -234,15 +234,15 @@ fabricTracking.post('/bulk-upsert', async (c) => {
     ['series',              'series'],
   ];
   const INT_COLS: Array<[string, string]> = [
-    ['priceCenti',              'price_centi'],
-    ['sohCenti',                'soh_centi'],
-    ['poOutstandingCenti',      'po_outstanding_centi'],
-    ['lastMonthUsageCenti',     'last_month_usage_centi'],
-    ['oneWeekUsageCenti',       'one_week_usage_centi'],
-    ['twoWeeksUsageCenti',      'two_weeks_usage_centi'],
-    ['oneMonthUsageCenti',      'one_month_usage_centi'],
-    ['shortageCenti',           'shortage_centi'],
-    ['reorderPointCenti',       'reorder_point_centi'],
+    ['priceSen',              'price_sen'],
+    ['sohSen',                'soh_sen'],
+    ['poOutstandingSen',      'po_outstanding_sen'],
+    ['lastMonthUsageSen',     'last_month_usage_sen'],
+    ['oneWeekUsageSen',       'one_week_usage_sen'],
+    ['twoWeeksUsageSen',      'two_weeks_usage_sen'],
+    ['oneMonthUsageSen',      'one_month_usage_sen'],
+    ['shortageSen',           'shortage_sen'],
+    ['reorderPointSen',       'reorder_point_sen'],
     ['leadTimeDays',            'lead_time_days'],
   ];
 
@@ -345,10 +345,10 @@ fabricTracking.get('/', async (c) => {
       .from('fabric_trackings')
       .select(
         'id, fabric_code, fabric_description, fabric_category, price_tier, ' +
-          'sofa_price_tier, bedframe_price_tier, price_centi, soh_centi, ' +
-          'po_outstanding_centi, last_month_usage_centi, one_week_usage_centi, ' +
-          'two_weeks_usage_centi, one_month_usage_centi, shortage_centi, ' +
-          'reorder_point_centi, supplier, supplier_code, lead_time_days, series, is_active',
+          'sofa_price_tier, bedframe_price_tier, price_sen, soh_sen, ' +
+          'po_outstanding_sen, last_month_usage_sen, one_week_usage_sen, ' +
+          'two_weeks_usage_sen, one_month_usage_sen, shortage_sen, ' +
+          'reorder_point_sen, supplier, supplier_code, lead_time_days, series, is_active',
       ),
     c,
   )

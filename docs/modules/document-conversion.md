@@ -1054,7 +1054,7 @@ full account is in `docs/unlinked-line-duplicate-coe.md` §5a; in brief:
 | what | where |
 |---|---|
 | the predicate — refuse only when the material is already on a receipt this invoice covers | `lib/return-unlinked-lines.ts` `findUnlinkedPiLines` |
-| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `material_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
+| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `item_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
 | **every** receipt the invoice covers, not the header ref | `coveredGrnIds`: header `grn_id` UNION the receipts behind the invoice's own linked lines. A PI is line-level multi-receipt (mig 0267), so a set of one let a SECONDARY note's material through |
 | FAILS CLOSED | the guard's read binds its error; every call site answers 500 `unlinked_check_failed`. An empty parent-code set is an unconditional pass, so a swallowed error opened the door in silence |
 

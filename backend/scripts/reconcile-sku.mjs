@@ -134,7 +134,7 @@ async function reconcile(code) {
                        FROM scm.inventory_lot_consumptions c
                       WHERE c.movement_id = m.id), 0) AS consumed
       FROM scm.inventory_movements m
-     WHERE m.product_code = ${code}
+     WHERE m.item_code = ${code}
      ORDER BY m.created_at`;
   if (movs.length === 0) {
     console.log("\nNo stock movements at all — this is a SERVICE line (delivery fee, disposal)");
@@ -183,7 +183,7 @@ async function reconcile(code) {
   const movBalance = totalIn - totalOut + totalAdj;
   const [lotRow] = await pg`
     SELECT COALESCE(SUM(qty_remaining), 0) AS qty
-      FROM scm.inventory_lots WHERE product_code = ${code}`;
+      FROM scm.inventory_lots WHERE item_code = ${code}`;
   const lotBalance = num(lotRow.qty);
 
   console.log("  THE ARITHMETIC");
@@ -217,7 +217,7 @@ async function reconcile(code) {
                                     WHEN 'ADJUSTMENT' THEN m.qty WHEN 'TRANSFER' THEN m.qty
                                     ELSE 0 END) AS mov
       FROM scm.inventory_movements m
-     WHERE m.product_code = ${code}
+     WHERE m.item_code = ${code}
      GROUP BY COALESCE(m.variant_key,'')
      ORDER BY 1`;
   if (byVariant.length > 1) {
@@ -226,7 +226,7 @@ async function reconcile(code) {
     for (const v of byVariant) {
       const [lv] = await pg`
         SELECT COALESCE(SUM(qty_remaining),0) AS qty FROM scm.inventory_lots
-         WHERE product_code = ${code} AND COALESCE(variant_key,'') = ${v.vkey}`;
+         WHERE item_code = ${code} AND COALESCE(variant_key,'') = ${v.vkey}`;
       const mv = num(v.mov), lq = num(lv.qty);
       console.log(`      ${pad(v.vkey || "(none)", 34)} movements ${rpad(mv, 6)}  lots ${rpad(lq, 6)}  ${mv === lq ? "agree" : `DRIFT ${mv - lq}`}`);
     }
@@ -247,7 +247,7 @@ async function reconcile(code) {
            m.movement_type AS opened_by_type, m.source_doc_no AS opened_by_doc
       FROM scm.inventory_lots l
       LEFT JOIN scm.inventory_movements m ON m.id = l.movement_id
-     WHERE l.product_code = ${code}
+     WHERE l.item_code = ${code}
      ORDER BY l.received_at`;
   if (lots.length > 0) {
     console.log("  EVERY LOT, AND WHAT OPENED IT\n");
@@ -291,7 +291,7 @@ async function reconcile(code) {
                                   ELSE 0 END) AS net,
            COUNT(*) AS rows
       FROM scm.inventory_movements
-     WHERE product_code = ${code}
+     WHERE item_code = ${code}
      GROUP BY COALESCE(source_doc_type, '(none)')
      ORDER BY 1`;
   console.log("  EVERY WAY THIS SKU MOVED — the whole flow, walked again\n");
@@ -311,7 +311,7 @@ async function reconcile(code) {
       COALESCE((SELECT SUM(gi.qty_accepted)
                   FROM scm.grn_items gi
                   JOIN scm.grns g ON g.id = gi.grn_id
-                 WHERE gi.material_code = ${code}
+                 WHERE gi.item_code = ${code}
                    AND g.status IS DISTINCT FROM 'CANCELLED'), 0) AS received,
       COALESCE((SELECT SUM(di.qty)
                   FROM scm.delivery_order_items di
@@ -326,7 +326,7 @@ async function reconcile(code) {
       COALESCE((SELECT SUM(pri.qty_returned)
                   FROM scm.purchase_return_items pri
                   JOIN scm.purchase_returns pr ON pr.id = pri.purchase_return_id
-                 WHERE pri.material_code = ${code}
+                 WHERE pri.item_code = ${code}
                    AND pr.status IS DISTINCT FROM 'CANCELLED'), 0) AS returned_out`;
 
   /* Whatever the documents above do NOT explain — stock takes, inventory
@@ -352,7 +352,7 @@ async function reconcile(code) {
     SELECT COALESCE(SUM(m.qty), 0) AS cancel_addback
       FROM scm.inventory_movements m
       JOIN scm.delivery_orders d ON d.id = m.source_doc_id
-     WHERE m.product_code = ${code}
+     WHERE m.item_code = ${code}
        AND m.source_doc_type = 'ADJUSTMENT'
        AND UPPER(COALESCE(d.status::text,'')) = 'CANCELLED'`;
 
@@ -384,7 +384,7 @@ async function reconcile(code) {
     SELECT po.po_number, po.status, pi.qty, pi.received_qty
       FROM scm.purchase_order_items pi
       JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
-     WHERE pi.material_code = ${code}
+     WHERE pi.item_code = ${code}
      ORDER BY po.po_number`;
   if (poLines.length === 0) {
     console.log("  No purchase order has ever ordered this code.\n");

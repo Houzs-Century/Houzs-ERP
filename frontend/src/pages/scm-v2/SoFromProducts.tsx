@@ -85,7 +85,7 @@ type GenLine = {
   /* Sent to the server as the line price. The server recomputes and rejects
      the whole SO if the client value drifts >0.5%, so for priced products we
      echo their own price (test products are unpriced → 0 is safe). */
-  unitPriceCenti?: number;
+  unitPriceSen?: number;
 };
 type SoSpec = {
   customerName: string;
@@ -176,7 +176,7 @@ const specToBody = (s: SoSpec) => ({
     itemGroup: l.itemGroup,
     description: l.description,
     qty: l.qty,
-    unitPriceCenti: l.unitPriceCenti ?? 0,
+    unitPriceSen: l.unitPriceSen ?? 0,
     variants: l.variants,
   })),
 });
@@ -252,7 +252,7 @@ export const SoFromProducts = () => {
       return {
         customerName: manualCustomer.trim(), combo: 'Mattress only',
         processingDate: manualProc, deliveryDate: manualDeliv,
-        lines: [{ itemCode: p.code, itemGroup: group, description: p.name, qty: v.qty, variants: null, unitPriceCenti: p.price1_sen ?? 0 }],
+        lines: [{ itemCode: p.code, itemGroup: group, description: p.name, qty: v.qty, variants: null, unitPriceSen: p.price1_sen ?? 0 }],
       };
     });
     void runBatch(specs);

@@ -52,7 +52,7 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { fmtCenti } from "../../vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
@@ -113,7 +113,7 @@ const TIER_LABELS: Record<Tier, { short: string; long: string }> = {
 };
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 // ── Hooks (wizard-local) ────────────────────────────────────────────────────
 
@@ -245,9 +245,9 @@ export function SalesOrderNewGuided() {
         itemGroup: "sofa",
         description: sku?.name ?? "",
         qty,
-        unitPriceCenti: unitPriceSen,
-        discountCenti: 0,
-        unitCostCenti: 0,
+        unitPriceSen: unitPriceSen,
+        discountSen: 0,
+        unitCostSen: 0,
         variants: {
           fabricTier: tier,
           configuredVia: "wizard",

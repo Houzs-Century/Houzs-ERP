@@ -17,6 +17,11 @@ fails when one appears in CODE.
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
+| **Item code (SKU reference)** | `item_code` | ~~`material_code`~~<br>~~`product_code`~~ | `backend/src/scm/routes/mfg-products.ts` |
+| **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `frontend/src/lib/money.ts` |
+| **Salesperson (order attribution)** | `salesperson_id` / `salespersonId` | — | `backend/src/scm/lib/so-agent.ts` |
+| **Warehouse (which building ships)** | `warehouse_id` / `warehouseId` | — | `backend/src/scm/lib/warehouse-label.ts` |
+| **Customer reference (their own PO / order number)** | `ref` | — | `frontend/src/lib/customer-ref.ts` |
 
 ## What each one means
 
@@ -34,6 +39,30 @@ One rule generates every transfer label. "Transfer to" names the DOCUMENT a docu
 
 The label rule: SOFA is the company's house brand (ZANOTTI / 2990s Sofa) and does not read the line; MATTRESS is the SKU's branding, falling back to the category noun. The VALUES are maintained by the owner in PMS -> Project Maintenance -> BRANDS (`project_brands`, per company) and checked by `audit:branding-vocabulary`.
 
+### Item code (SKU reference)
+
+The SKU reference on a line item. AutoCount (the system of record) calls it ItemCode, so item_code is canonical; material_code (purchasing) and product_code (inventory) were the drift, renamed on 18 columns by migration 0307 (2026-08-19). The master table mfg_products keys the SKU as `code`; item_code is the reference. The dead `public`-schema copies still carry the old names and are out of scope.
+
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`.
+
+### Money (minor unit)
+
+Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount speaks; 100 sen = RM 1) and displayed as RM at the edge. The column/field suffix is `_sen` / `Sen`; `_centi` was the drift (291 columns across 70 tables, renamed by migration 0305 on 2026-08-18). Storing decimals is what money.ts exists to prevent — the retirement is of the NAME, not the integer type. Bare `centi` local helpers in one-off scripts are not `_centi` and are not retired.
+
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`, `src/scm/lib/mirror-map.ts`.
+
+### Salesperson (order attribution)
+
+Who the ERP records as having sold a Sales Order. The canonical identity is `salesperson_id` (a uuid into scm.staff) — scope, commission, the Fair Report and the SO PDF all read it, and its camelCase twin is `salespersonId`. `agent` is a SEPARATE legacy free-text column kept on purpose: it is the single field the AutoCount book is given, and `so-agent.ts` fills it from the stamped salesperson's `scm.staff.name` unless a caller supplies one (an FK_SO_SalesAgent refusal on go-live day is why). It is NOT a retired spelling of salesperson_id. The screening spellings `sales_reps`/`rep_id`, `sales_agent`/`SalesAgent`, `salesRep`, `salespeople` are genuinely different identifiers (a legacy integer roster and the AutoCount mirror), still reconciled at runtime, and are out of scope for a rename.
+
+### Warehouse (which building ships)
+
+The building an order ships from. The canonical binding is `warehouse_id` (uuid -> scm.warehouses), per LINE, which MRP/allocation/costing read; its camelCase twin is `warehouseId` and its display label is one rule in `warehouse-label.ts` (code first, then name). The SO header additionally stores a free-text snapshot `sales_location` (what the SO says, written by warehouseLabel()); unifying that onto `warehouse_id` needs a data BACKFILL and lands on a money/stock-adjacent table, so it is STAGED as a reviewed migration rather than enforced here. `sales_location` stays live until that migration. `purchase_location_id` (PO header) and `showroom_warehouse_id` are separate columns, not drift.
+
+### Customer reference (their own PO / order number)
+
+The customer's own reference (their PO / order number) on a sales document. Owner ruling 2026-08-18 (#2429): the canonical field is `ref`, resolved on every relationship map by the ONE shared helper `customerRefOf` = ref || customer_so_no || po_doc_no. `customer_so_no` is a near-duplicate kept as a transitional fallback; `po_doc_no` and `customer_po`/`customer_po_id`/`customer_po_date` are 0%-filled DEAD columns still SELECTed by the backend router and projected by a view. Dropping the dead columns is a STAGED migration (the 0189 view-grant hazard: the recreate must restore the view's grants), so none of these spellings is retired in the guard yet — the retirement waits for that drop.
+
 ## Concepts still carrying several spellings — the unification worklist
 
 Found by the 2026-08-18 full-codebase screening. These are DOCUMENTED, not yet
@@ -42,12 +71,12 @@ Until then, prefer the **Target** spelling in new code.
 
 | Sev | Concept | Target | Also seen as |
 | --- | --- | --- | --- |
-| high | Money minor unit (1/100 MYR) | `*_sen` | `*_centi` `*_cents` `amountSen` |
+| high | Money minor unit (1/100 MYR) | `*_sen` | `*_cents` `amountSen` |
 | high | Salesperson / sales rep | `salesperson_id` | `agent` `sales_reps` `sales_agent` `salesRep` |
 | high | Delivery date (customer promise / per-line / effective) | `customer_delivery_date (header) / line_delivery_date (line)` | `customer_delivery_date` `line_delivery_date` `amended_delivery_date` `expected_at` `supplier_delivery_date_2/3/4` |
 | high | Processing date (release-to-purchasing signal) | `processing_date` | `internal_expected_dd` `proceeded_at` `PDate` `target_date` `so_processing_date` |
 | high | Customer's own reference / their PO number | `customer_so_no` | `po_doc_no` `customer_po` `ToPONo` `ref` `poRef` |
-| high | Product / item / material code (SKU) | `item_code` | `material_code` `product_code` `code` `sku` |
+| high | Product / item / material code (SKU) | `item_code` | `code` `sku` |
 | high | Warehouse / location an order ships from | `warehouse_id` | `sales_location` `purchase_location_id` `Location` `'stock` `primaryWh` |
 | high | Customer / debtor | `debtor_code / debtor_name` | `debtor_code` `customer_id` `DebtorName` `hasCustomerName` `recipientName` |
 | high | Supplier / creditor | `creditor_code / creditor_name` | `creditor_code` `supplier` `main_supplier` `payee_name` `company_name` |
@@ -71,7 +100,7 @@ Until then, prefer the **Target** spelling in new code.
 | low | Sofa leg-height axis | `legHeight` | `sofaLegHeight` |
 | low | Exchange / FX rate | `exchange_rate` | `rate_to_myr` `operatorRate` `fxRate` |
 | low | Payment slip / proof / R2 media key | `*_r2_key (per artifact type)` | `slip_key` `podKey` `photoRef` `logoR2Key` |
-| low | Paid total (running paid figure) | `paid_total_centi` | `paid_centi` `paidCenti` |
+| low | Paid total (running paid figure) | `paid_total_sen` | `paid_sen` `paidSen` |
 | low | Installment / online payment sub-fields | `installment_months / online_type` | `installment_plan` `online_type` |
 | low | Amendment SO_APPROVED label | `one label per context, documented` | `'SO` `'Applied'` |
 | low | ASSR case number vs SO document number (overload) | `assr_no (cases) / doc_no (SO)` | `assr_no` `doc_no` `case_no` |

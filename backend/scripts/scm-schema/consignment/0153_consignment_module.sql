@@ -82,15 +82,15 @@ CREATE TABLE IF NOT EXISTS consignment_sales_orders (
   address3                TEXT,
   address4                TEXT,
   phone                   TEXT,
-  mattress_sofa_centi     INTEGER NOT NULL DEFAULT 0,
-  bedframe_centi          INTEGER NOT NULL DEFAULT 0,
-  accessories_centi       INTEGER NOT NULL DEFAULT 0,
-  others_centi            INTEGER NOT NULL DEFAULT 0,
-  local_total_centi       INTEGER NOT NULL DEFAULT 0,
-  balance_centi           INTEGER NOT NULL DEFAULT 0,
-  total_cost_centi        INTEGER NOT NULL DEFAULT 0,
-  total_revenue_centi     INTEGER NOT NULL DEFAULT 0,
-  total_margin_centi      INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_sen     INTEGER NOT NULL DEFAULT 0,
+  bedframe_sen          INTEGER NOT NULL DEFAULT 0,
+  accessories_sen       INTEGER NOT NULL DEFAULT 0,
+  others_sen            INTEGER NOT NULL DEFAULT 0,
+  local_total_sen       INTEGER NOT NULL DEFAULT 0,
+  balance_sen           INTEGER NOT NULL DEFAULT 0,
+  total_cost_sen        INTEGER NOT NULL DEFAULT 0,
+  total_revenue_sen     INTEGER NOT NULL DEFAULT 0,
+  total_margin_sen      INTEGER NOT NULL DEFAULT 0,
   margin_pct_basis        INTEGER NOT NULL DEFAULT 0,
   line_count              INTEGER NOT NULL DEFAULT 0,
   currency                currency_code NOT NULL DEFAULT 'MYR',
@@ -143,17 +143,17 @@ CREATE TABLE IF NOT EXISTS consignment_sales_orders (
   payment_method          TEXT,
   installment_months      INTEGER,
   merchant_provider       TEXT,
-  deposit_centi           INTEGER NOT NULL DEFAULT 0,
-  paid_centi              INTEGER NOT NULL DEFAULT 0,
+  deposit_sen           INTEGER NOT NULL DEFAULT 0,
+  paid_sen              INTEGER NOT NULL DEFAULT 0,
   -- ── 0069 approval_code ─────────────────────────────────────────────────
   approval_code           TEXT,
   -- ── 0070 payment_date ──────────────────────────────────────────────────
   payment_date            DATE,
   -- ── 0079 category cost columns ─────────────────────────────────────────
-  mattress_sofa_cost_centi INTEGER NOT NULL DEFAULT 0,
-  bedframe_cost_centi      INTEGER NOT NULL DEFAULT 0,
-  accessories_cost_centi   INTEGER NOT NULL DEFAULT 0,
-  others_cost_centi        INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_cost_sen INTEGER NOT NULL DEFAULT 0,
+  bedframe_cost_sen      INTEGER NOT NULL DEFAULT 0,
+  accessories_cost_sen   INTEGER NOT NULL DEFAULT 0,
+  others_cost_sen        INTEGER NOT NULL DEFAULT 0,
   -- ── 0082 customer_country ──────────────────────────────────────────────
   customer_country        TEXT,
   -- ── 0086 venue_id ──────────────────────────────────────────────────────
@@ -173,9 +173,9 @@ CREATE TABLE IF NOT EXISTS consignment_sales_orders (
   -- column does not exist after 0284.
   proceeded_at            TIMESTAMPTZ,
   -- ── 0124 fabric tier add-on ────────────────────────────────────────────
-  fabric_tier_addon_centi INTEGER NOT NULL DEFAULT 0 CHECK (fabric_tier_addon_centi >= 0),
+  fabric_tier_addon_sen INTEGER NOT NULL DEFAULT 0 CHECK (fabric_tier_addon_sen >= 0),
   -- ── 0133 delivery fee ──────────────────────────────────────────────────
-  delivery_fee_centi      INTEGER NOT NULL DEFAULT 0 CHECK (delivery_fee_centi >= 0),
+  delivery_fee_sen      INTEGER NOT NULL DEFAULT 0 CHECK (delivery_fee_sen >= 0),
   -- ── 0141 cross-category link ───────────────────────────────────────────
   cross_category_source_doc_no TEXT,
   -- ── 0142 signature ─────────────────────────────────────────────────────
@@ -209,21 +209,21 @@ CREATE TABLE IF NOT EXISTS consignment_sales_order_items (
   uom                TEXT NOT NULL DEFAULT 'UNIT',
   location           TEXT,
   qty                INTEGER NOT NULL DEFAULT 1,
-  unit_price_centi   INTEGER NOT NULL DEFAULT 0,
-  discount_centi     INTEGER NOT NULL DEFAULT 0,
-  total_centi        INTEGER NOT NULL DEFAULT 0,
-  tax_centi          INTEGER NOT NULL DEFAULT 0,
-  total_inc_centi    INTEGER NOT NULL DEFAULT 0,
-  balance_centi      INTEGER NOT NULL DEFAULT 0,
+  unit_price_sen   INTEGER NOT NULL DEFAULT 0,
+  discount_sen     INTEGER NOT NULL DEFAULT 0,
+  total_sen        INTEGER NOT NULL DEFAULT 0,
+  tax_sen          INTEGER NOT NULL DEFAULT 0,
+  total_inc_sen    INTEGER NOT NULL DEFAULT 0,
+  balance_sen      INTEGER NOT NULL DEFAULT 0,
   payment_status     TEXT NOT NULL DEFAULT 'Unchecked',
   venue              TEXT,
   branding           TEXT,
   remark             TEXT,
   cancelled          BOOLEAN NOT NULL DEFAULT FALSE,
   variants           JSONB,
-  unit_cost_centi    INTEGER NOT NULL DEFAULT 0,
-  line_cost_centi    INTEGER NOT NULL DEFAULT 0,
-  line_margin_centi  INTEGER NOT NULL DEFAULT 0,
+  unit_cost_sen    INTEGER NOT NULL DEFAULT 0,
+  line_cost_sen    INTEGER NOT NULL DEFAULT 0,
+  line_margin_sen  INTEGER NOT NULL DEFAULT 0,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- ── 0051 sofa/bedframe variant pricing ─────────────────────────────────
   gap_inches              INTEGER,
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS consignment_sales_order_payments (
   merchant_provider   text,
   installment_months  integer,
   approval_code       text,
-  amount_centi        integer NOT NULL CHECK (amount_centi >= 0),
+  amount_sen        integer NOT NULL CHECK (amount_sen >= 0),
   account_sheet       text,
   collected_by        uuid REFERENCES staff(id) ON DELETE SET NULL,
   note                text,
@@ -329,17 +329,17 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_orders (
   emergency_contact_phone        TEXT,
   emergency_contact_relationship TEXT,
   currency              currency_code NOT NULL DEFAULT 'MYR',
-  mattress_sofa_centi       INTEGER NOT NULL DEFAULT 0,
-  bedframe_centi            INTEGER NOT NULL DEFAULT 0,
-  accessories_centi         INTEGER NOT NULL DEFAULT 0,
-  others_centi              INTEGER NOT NULL DEFAULT 0,
-  mattress_sofa_cost_centi  INTEGER NOT NULL DEFAULT 0,
-  bedframe_cost_centi       INTEGER NOT NULL DEFAULT 0,
-  accessories_cost_centi    INTEGER NOT NULL DEFAULT 0,
-  others_cost_centi         INTEGER NOT NULL DEFAULT 0,
-  local_total_centi         INTEGER NOT NULL DEFAULT 0,
-  total_cost_centi          INTEGER NOT NULL DEFAULT 0,
-  total_margin_centi        INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_sen       INTEGER NOT NULL DEFAULT 0,
+  bedframe_sen            INTEGER NOT NULL DEFAULT 0,
+  accessories_sen         INTEGER NOT NULL DEFAULT 0,
+  others_sen              INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_cost_sen  INTEGER NOT NULL DEFAULT 0,
+  bedframe_cost_sen       INTEGER NOT NULL DEFAULT 0,
+  accessories_cost_sen    INTEGER NOT NULL DEFAULT 0,
+  others_cost_sen         INTEGER NOT NULL DEFAULT 0,
+  local_total_sen         INTEGER NOT NULL DEFAULT 0,
+  total_cost_sen          INTEGER NOT NULL DEFAULT 0,
+  total_margin_sen        INTEGER NOT NULL DEFAULT 0,
   margin_pct_basis          INTEGER NOT NULL DEFAULT 0,
   line_count                INTEGER NOT NULL DEFAULT 0
 );
@@ -359,7 +359,7 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_order_items (
   description                 TEXT,
   qty                         INTEGER NOT NULL,
   m3_milli                    INTEGER NOT NULL DEFAULT 0,
-  unit_price_centi            INTEGER NOT NULL DEFAULT 0,
+  unit_price_sen            INTEGER NOT NULL DEFAULT 0,
   notes                       TEXT,
   created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- ── 0058 variant + pricing columns ─────────────────────────────────────
@@ -375,12 +375,12 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_order_items (
   item_group                  TEXT,
   description2                TEXT,
   uom                         TEXT NOT NULL DEFAULT 'UNIT',
-  discount_centi              INTEGER NOT NULL DEFAULT 0,
-  line_total_centi            INTEGER NOT NULL DEFAULT 0,
+  discount_sen              INTEGER NOT NULL DEFAULT 0,
+  line_total_sen            INTEGER NOT NULL DEFAULT 0,
   -- ── 0100 cost/margin + per-line delivery date ──────────────────────────
-  unit_cost_centi             INTEGER NOT NULL DEFAULT 0,
-  line_cost_centi             INTEGER NOT NULL DEFAULT 0,
-  line_margin_centi           INTEGER NOT NULL DEFAULT 0,
+  unit_cost_sen             INTEGER NOT NULL DEFAULT 0,
+  line_cost_sen             INTEGER NOT NULL DEFAULT 0,
+  line_margin_sen           INTEGER NOT NULL DEFAULT 0,
   line_delivery_date          DATE,
   line_delivery_date_overridden BOOLEAN NOT NULL DEFAULT FALSE
 );
@@ -396,7 +396,7 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_order_payments (
   installment_months  integer,
   online_type         text,
   approval_code       text,
-  amount_centi        integer NOT NULL CHECK (amount_centi >= 0),
+  amount_sen        integer NOT NULL CHECK (amount_sen >= 0),
   account_sheet       text,
   collected_by        uuid REFERENCES staff(id) ON DELETE SET NULL,
   note                text,
@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_returns (
   received_at         TIMESTAMPTZ,
   inspected_at        TIMESTAMPTZ,
   refunded_at         TIMESTAMPTZ,
-  refund_centi        INTEGER NOT NULL DEFAULT 0,
+  refund_sen        INTEGER NOT NULL DEFAULT 0,
   inspection_notes    TEXT,
   notes               TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -456,17 +456,17 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_returns (
   emergency_contact_relationship TEXT,
   warehouse_id        UUID REFERENCES warehouses(id) ON DELETE SET NULL,
   currency            currency_code NOT NULL DEFAULT 'MYR',
-  mattress_sofa_centi       INTEGER NOT NULL DEFAULT 0,
-  bedframe_centi            INTEGER NOT NULL DEFAULT 0,
-  accessories_centi         INTEGER NOT NULL DEFAULT 0,
-  others_centi              INTEGER NOT NULL DEFAULT 0,
-  mattress_sofa_cost_centi  INTEGER NOT NULL DEFAULT 0,
-  bedframe_cost_centi       INTEGER NOT NULL DEFAULT 0,
-  accessories_cost_centi    INTEGER NOT NULL DEFAULT 0,
-  others_cost_centi         INTEGER NOT NULL DEFAULT 0,
-  local_total_centi         INTEGER NOT NULL DEFAULT 0,
-  total_cost_centi          INTEGER NOT NULL DEFAULT 0,
-  total_margin_centi        INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_sen       INTEGER NOT NULL DEFAULT 0,
+  bedframe_sen            INTEGER NOT NULL DEFAULT 0,
+  accessories_sen         INTEGER NOT NULL DEFAULT 0,
+  others_sen              INTEGER NOT NULL DEFAULT 0,
+  mattress_sofa_cost_sen  INTEGER NOT NULL DEFAULT 0,
+  bedframe_cost_sen       INTEGER NOT NULL DEFAULT 0,
+  accessories_cost_sen    INTEGER NOT NULL DEFAULT 0,
+  others_cost_sen         INTEGER NOT NULL DEFAULT 0,
+  local_total_sen         INTEGER NOT NULL DEFAULT 0,
+  total_cost_sen          INTEGER NOT NULL DEFAULT 0,
+  total_margin_sen        INTEGER NOT NULL DEFAULT 0,
   margin_pct_basis          INTEGER NOT NULL DEFAULT 0,
   line_count                INTEGER NOT NULL DEFAULT 0
 );
@@ -485,8 +485,8 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_return_items (
   description         TEXT,
   qty_returned        INTEGER NOT NULL,
   condition           TEXT,
-  unit_price_centi    INTEGER NOT NULL DEFAULT 0,
-  refund_centi        INTEGER NOT NULL DEFAULT 0,
+  unit_price_sen    INTEGER NOT NULL DEFAULT 0,
+  refund_sen        INTEGER NOT NULL DEFAULT 0,
   notes               TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- ── 0102 variant + pricing columns (the THIN set on the source) ────────
@@ -494,11 +494,11 @@ CREATE TABLE IF NOT EXISTS consignment_delivery_return_items (
   description2        TEXT,
   uom                 TEXT NOT NULL DEFAULT 'UNIT',
   variants            JSONB,
-  discount_centi      INTEGER NOT NULL DEFAULT 0,
-  line_total_centi    INTEGER NOT NULL DEFAULT 0,
-  unit_cost_centi     INTEGER NOT NULL DEFAULT 0,
-  line_cost_centi     INTEGER NOT NULL DEFAULT 0,
-  line_margin_centi   INTEGER NOT NULL DEFAULT 0,
+  discount_sen      INTEGER NOT NULL DEFAULT 0,
+  line_total_sen    INTEGER NOT NULL DEFAULT 0,
+  unit_cost_sen     INTEGER NOT NULL DEFAULT 0,
+  line_cost_sen     INTEGER NOT NULL DEFAULT 0,
+  line_margin_sen   INTEGER NOT NULL DEFAULT 0,
   -- ── FULL SOFA FIDELITY (NOT in source delivery_return_items — added here
   --     so consignment returns carry the same variant detail as DO items,
   --     copied from delivery_order_items / 0058) ─────────────────────────────
@@ -557,11 +557,11 @@ CREATE POLICY cdri_all  ON consignment_delivery_return_items   FOR ALL TO authen
 --      CS_DR — consignment return                  (value-neutral transfer IN)
 -- ════════════════════════════════════════════════════════════════════════════
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_cs_do_source
-  ON inventory_movements (source_doc_type, source_doc_id, product_code, variant_key)
+  ON inventory_movements (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE source_doc_type = 'CS_DO';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_cs_dr_source
-  ON inventory_movements (source_doc_type, source_doc_id, product_code, variant_key)
+  ON inventory_movements (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE source_doc_type = 'CS_DR';
 
 COMMIT;

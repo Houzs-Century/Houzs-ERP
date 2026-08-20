@@ -9,7 +9,7 @@
    camelCase and never raw column names.
 
    Money in this codebase is INTEGER SEN. The panel renders a key through
-   fmtCenti only if it appears in moneyFields, so a money key omitted here shows
+   fmtSen only if it appears in moneyFields, so a money key omitted here shows
    as a bare integer (RM 1,234.00 would read as "123400"). */
 
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
@@ -29,7 +29,7 @@ const PV_FIELDS: Record<string, string> = {
   status: 'Status', payeeName: 'Payee', creditAccountCode: 'Credit account',
   voucherDate: 'Voucher date', supplierId: 'Supplier', purpose: 'Purpose',
   notes: 'Notes', currency: 'Currency', exchangeRate: 'Exchange rate',
-  totalCenti: 'Total', allocatedCenti: 'Allocated to invoices',
+  totalSen: 'Total', allocatedSen: 'Allocated to invoices',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',
   /* 2026-07-30 — "the payment defines the FX rate". A knock-off writes its rate onto
@@ -41,13 +41,13 @@ const PV_FIELDS: Record<string, string> = {
   fxRateRetainedFromPv: 'Exchange rate kept from voucher',
   exchangeRateRetained: 'Exchange rate retained',
   rateSourcePv: 'Rate taken from voucher',
-  appliedCenti: 'Applied to invoice',
+  appliedSen: 'Applied to invoice',
 };
 
 export const PAYMENT_VOUCHER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: PV_ACTIONS,
   fields: PV_FIELDS,
-  moneyFields: new Set(['totalCenti', 'allocatedCenti', 'postedTotalSen', 'appliedCenti']),
+  moneyFields: new Set(['totalSen', 'allocatedSen', 'postedTotalSen', 'appliedSen']),
 };
 
 /* ── GRN — routes/grns.ts ─────────────────────────────────────────────────── */
@@ -65,14 +65,14 @@ const GRN_ACTIONS: Record<string, string> = {
 };
 
 const GRN_FIELDS: Record<string, string> = {
-  status: 'Status', warehouseId: 'Warehouse', totalCenti: 'Total',
+  status: 'Status', warehouseId: 'Warehouse', totalSen: 'Total',
   lineCount: 'Lines', qtyReversed: 'Qty reversed',
 };
 
 export const GRN_AUDIT_LABELS: AuditLabelDictionary = {
   actions: GRN_ACTIONS,
   fields: GRN_FIELDS,
-  moneyFields: new Set(['totalCenti']),
+  moneyFields: new Set(['totalSen']),
 };
 
 /* ── Stock Take — routes/stock-takes.ts ───────────────────────────────────── */

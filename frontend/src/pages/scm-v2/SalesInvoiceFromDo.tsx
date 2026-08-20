@@ -42,11 +42,11 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const STORAGE_KEY = 'pr-g.si-from-do-lines.layout.v1';
 
@@ -289,11 +289,11 @@ export const SalesInvoiceFromDo = () => {
         const pickQty = p?.picked ? p.qty : r.remaining;
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceCenti)}
+            {fmtRm(pickQty * r.unitPriceSen)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remaining * a.unitPriceCenti - b.remaining * b.unitPriceCenti,
+      sortFn: (a, b) => a.remaining * a.unitPriceSen - b.remaining * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks, lockedCustomer]);
@@ -318,9 +318,9 @@ export const SalesInvoiceFromDo = () => {
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceCenti: r.unitPriceCenti,
-          discountCenti: r.discountCenti,
-          unitCostCenti: r.unitCostCenti,
+          unitPriceSen: r.unitPriceSen,
+          discountSen: r.discountSen,
+          unitCostSen: r.unitCostSen,
           variants: r.variants,
         };
       })
