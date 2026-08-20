@@ -868,10 +868,10 @@ Stored-origin build (`feat/po-real-origin-so`, 2026-07-25 — superseded by the 
 - `frontend/src/pages/scm-v2/{PurchaseOrdersListV2,GoodsReceivedListV2,PurchaseInvoicesListV2}.tsx`
   — feed the columns from `usePoSoCoverage`; the old `DocumentTraceability` strip removed.
 - `frontend/src/mobile/MobileModuleDetail.tsx` — assignment rides each `LineItem`.
-- `frontend/src/components/DocumentTraceability.tsx` — DELETED.
+- `frontend/src/components/DocumentTraceability.tsx` [gone] — DELETED.
 
 Original strip (`feat/doc-traceability-display`, 2026-07-24 — now superseded):
-- `frontend/src/components/DocumentTraceability.tsx` (new, since deleted).
+- `frontend/src/components/DocumentTraceability.tsx` [gone] (new, since deleted).
 - `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`,
   `PurchaseInvoicesListV2.tsx` — rendered the strip in the row-expansion wrappers.
 - `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` — `drillStock` service → READY.

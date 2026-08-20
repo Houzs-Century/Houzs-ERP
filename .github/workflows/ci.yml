@@ -192,6 +192,16 @@ jobs:
       # entry, named NNNN-slug.md. Neither compares against a committed copy;
       # there is no committed copy, which is the point.
       - run: npm run audit:bug-history
+      # And the OTHER half of that split: nothing may put ledger content back at
+      # the old path. #2567 moved the layout and left it unguarded, and on
+      # 2026-08-21 the whole 24,000-line ledger was back on `main` with every
+      # check green — one PR's entry existed ONLY in the resurrected file.
+      # A branch forked before the split still carries `BUG-HISTORY.md
+      # merge=union` in ITS OWN .gitattributes, and a merge applies the
+      # attributes of the tree it runs in, so `git merge origin/main` keeps both
+      # sides and EXITS 0. Nothing on `main` can reach into that branch; what it
+      # can do is refuse the result, here, in a required check.
+      - run: npm run audit:bug-signpost
       - run: npm run audit:map
       # Transaction-workflow drift tripwire: fails if any transaction document's
       # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).

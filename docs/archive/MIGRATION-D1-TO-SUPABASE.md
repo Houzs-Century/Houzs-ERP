@@ -38,10 +38,10 @@ in prod directly once verified — no parallel run required.
 | Hookka file | Use |
 |---|---|
 | `src/api/lib/db-pg.ts` | connection layer — already ported to `src/db/pg.ts` |
-| `scripts/d1-to-postgres.mjs` | D1 schema/data -> Postgres conversion |
-| `scripts/import-d1-data-to-supabase.mjs` | load converted data into Supabase |
+| `scripts/d1-to-postgres.mjs` [external] | D1 schema/data -> Postgres conversion |
+| `scripts/import-d1-data-to-supabase.mjs` [external] | load converted data into Supabase |
 | `scripts/apply-postgres-migrations*.mjs` | Postgres migration runner |
-| `scripts/backup-supabase.mjs` | logical backups (Tier 2) |
+| `scripts/backup-supabase.mjs` [external] | logical backups (Tier 2) |
 
 Hookka's `db-pg.ts` carries three production lessons that are already encoded
 in `pg.ts`: `prepare:false` (pooler rejects prepared statements), no `ssl` on
