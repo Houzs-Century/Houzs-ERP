@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.join(here, "..");
@@ -320,16 +321,11 @@ if (check) {
     fs.readFile(OUT_DDL, "utf8").catch(() => null),
     fs.readFile(OUT_SEED, "utf8").catch(() => null),
   ]);
-  // Compare CONTENT, not line endings. Git hands a Windows checkout CRLF while
-  // the generator always builds LF, so a raw !== reported both files stale on
-  // every Windows run — for a tree where nothing under src/db/migrations/ had
-  // changed at all. It passes on Linux CI, which makes it the expensive kind of
-  // wrong: the local gate says regenerate, regenerating produces a byte-identical
-  // file, and `git diff` shows nothing to explain it.
-  const eol = (s) => (s === null ? null : s.replace(/\r\n/g, "\n"));
+  // Content, not line endings — see scripts/lib/eol.mjs. A missing file reads
+  // as `null` here, which `lf()` passes through unchanged.
   const stale = [];
-  if (eol(haveDdl) !== eol(ddlOut)) stale.push(path.relative(backendRoot, OUT_DDL));
-  if (eol(haveSeed) !== eol(seedOut)) stale.push(path.relative(backendRoot, OUT_SEED));
+  if (!sameIgnoringEol(haveDdl, ddlOut)) stale.push(path.relative(backendRoot, OUT_DDL));
+  if (!sameIgnoringEol(haveSeed, seedOut)) stale.push(path.relative(backendRoot, OUT_SEED));
   if (stale.length) {
     console.error(
       `Test schema snapshot is stale: ${stale.join(", ")}\n` +

@@ -371,17 +371,37 @@ describe("MobileMailCenter Auto-sent folder", () => {
 //                     then had no way to list the threads carrying it.
 // ---------------------------------------------------------------------------
 
-// jsdom's FileReader resolves on a macrotask, so the three microtask ticks in
-// flush() are not enough to see a picked file land.
-async function settle() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-function pickFile(name: string, type: string) {
+// COUNTING TICKS HERE IS A RACE, AND CI LOSES IT. This helper used to be one
+// `await new Promise(r => setTimeout(r, 0))`, and that blocked two frontend
+// deploys on 2026-08-20 (runs 32398840395 and 32400244624) on commits that
+// changed nothing under frontend/src — see docs/bugs.
+//
+// jsdom does not resolve a FileReader on the next macrotask. `_readFile` in
+// jsdom/lib/jsdom/living/file-api/FileReader-impl.js schedules setImmediate,
+// and fires `load` from a SECOND setImmediate scheduled inside the first. Node
+// runs due timers BEFORE the check phase, and an immediate scheduled from
+// within the check phase is deferred to the next turn — so `setTimeout(…, 0)`
+// (clamped to 1ms) resolves ahead of that second immediate whenever the turn
+// takes longer than the clamp. That is exactly what a loaded CI runner does,
+// which is why this failed under parallelism and passed on a quiet laptop.
+// Reproduced on this machine at roughly 3 failures in 14 isolated runs.
+//
+// So wait for the thing the read actually produces — the attachment chip for
+// an accepted file, the refusal sentence for a rejected one — instead of for a
+// number of ticks. `findBy*` retries until it is there and fails loudly if it
+// never arrives, which is the assertion we want anyway: Send must not be
+// clicked before the picked file has reached state.
+function choosePickFile(name: string, type: string) {
   const input = screen.getByLabelText("Attach images or PDF files");
   fireEvent.change(input, { target: { files: [new File(["hello"], name, { type })] } });
+}
+
+/** Pick a file and wait for it to be ATTACHED — the chip carries a Remove
+ *  control named after the file, and it appears only once the FileReader has
+ *  resolved and `onFiles` has landed the base64 in state. */
+async function pickFile(name: string, type: string) {
+  choosePickFile(name, type);
+  await screen.findByRole("button", { name: `Remove ${name}` });
 }
 
 describe("MobileMailCenter outbound attachments", () => {
@@ -415,10 +435,9 @@ describe("MobileMailCenter outbound attachments", () => {
     fireEvent.change(screen.getByPlaceholderText(/Write your email/), {
       target: { value: "See attached." },
     });
-    pickFile("sofa.jpg", "image/jpeg");
-    await settle();
+    await pickFile("sofa.jpg", "image/jpeg");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await settle();
+    await flush();
 
     const call = apiPost.mock.calls.find(([url]) => String(url) === "/api/mail-center/compose");
     const body = call?.[1] as Record<string, unknown>;
@@ -440,10 +459,9 @@ describe("MobileMailCenter outbound attachments", () => {
     fireEvent.change(screen.getByPlaceholderText(/Write your reply/), {
       target: { value: "Photo of the fabric." },
     });
-    pickFile("fabric.pdf", "application/pdf");
-    await settle();
+    await pickFile("fabric.pdf", "application/pdf");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await settle();
+    await flush();
 
     const call = apiPost.mock.calls.find(([url]) => String(url).endsWith("/reply"));
     const body = call?.[1] as Record<string, unknown>;
@@ -459,19 +477,20 @@ describe("MobileMailCenter outbound attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: "New" }));
     await flush();
 
-    pickFile(
+    choosePickFile(
       "quotation.docx",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
-    await settle();
 
     // Verbatim from mail-attachments.ts — the same sentence the backend answers
     // with, which is the point of importing the rule instead of re-writing it.
     const wanted =
       "is not an allowed type. Only images and PDF files can be attached.";
     expect(
-      screen.getByText((text) => text.includes("quotation.docx") && text.includes(wanted)),
+      await screen.findByText((text) => text.includes("quotation.docx") && text.includes(wanted)),
     ).toBeTruthy();
+    // …and nothing was attached, so no Remove chip exists to send.
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
   });
 });
 
