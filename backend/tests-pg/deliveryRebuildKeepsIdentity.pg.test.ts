@@ -137,10 +137,16 @@ const feeRow = (itemCode: string, unitSen: number, discountSen = 0, lineNo = 0) 
   };
 };
 
+/* p_rows is bound through `admin.json(...)`, never `JSON.stringify`. postgres.js
+   serializes a JS value for the jsonb OID exactly once; stringifying first
+   serializes it a second time, so the array reaches Postgres as a JSON STRING
+   and jsonb_array_elements answers "cannot extract elements from a scalar".
+   The same trap is called out in soConcurrency.pg.test.ts and
+   variantMergePreservesKeys.pg.test.ts. */
 const rebuild = (sql: Sql, rows: unknown[], feeSen: number, source: string | null = null) =>
   sql.unsafe(
     'SELECT scm.rebuild_mfg_so_delivery_lines($1, $2, $3, $4::jsonb)',
-    [DOC, source, feeSen, JSON.stringify(rows)],
+    [DOC, source, feeSen, admin.json(rows)],
   );
 
 const feeLines = (sql: Sql) => sql.unsafe(`

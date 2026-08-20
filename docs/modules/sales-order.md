@@ -2098,7 +2098,9 @@ compound the reduction on every save. A component that disappears on rebuild
 than migrating it to money it never named.
 
 **The line keeps its identity (2026-08-20, migration 0310).** The rebuild now
-UPDATEs the fee lines in place instead of deleting and re-inserting them.
+UPDATEs the fee lines in place instead of deleting and re-inserting them
+(`backend/src/db/migrations-pg/0310_scm_rebuild_so_delivery_lines_keeps_identity.sql`
+— this module owns that RPC; the earlier bodies are 0214 and 0305).
 This is not tidiness — **a Delivery Order can carry a delivery-fee line**
 (`routes/delivery-orders-mfg.ts` records Nico's DO for 2990-SO-2606-034, blocked
 on `SVC-DISPOSE-SOFA` and `SVC-DELIVERY-CROSS` being "short" at BALAKONG), and
