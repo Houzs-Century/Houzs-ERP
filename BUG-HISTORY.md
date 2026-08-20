@@ -1,3 +1,65 @@
+## The 2990 mirror kept overwriting Houzs edits, and blanked the delivery links every time [high]
+
+<!-- area: Cutover + migrated data -->
+
+**白话.** 2990 的单现在是在 Houzs 开的、也只在 Houzs 改。可是旧的同步还开着：2990 那
+边每传一次，系统就把这张单整组行删掉再放回去，等于把老板刚改的东西盖回旧的样子。老板把
+运费 250 改成 125，等一会儿又变回 250，那张单还「变成 0 件」—— 就是这样来的。更麻烦的
+是，行一被删，送货单就不记得自己送的是销售单的哪一行，MRP 会以为还没出货，叫采购再买一
+次。现在改成「同一张单只收第一次」：这张单 Houzs 已经有了，就完全不动它；2990 那边要删
+这张单，也不理它。已经断掉的 10 条送货行，另外用修复程序接回去。
+
+**Symptom.** Two faces of one cause. The owner's: editing the delivery fee 250 →
+125 on a 2990 Sales Order "nuked the line to 0" and the order went to 0 items —
+the edit simply came back as 2990 last knew it. The silent one: 10 delivery
+lines across 4 documents carrying `so_item_id IS NULL` under a DO whose header
+still named the order, measured by the orphan sentinel on 2026-08-20 (run
+32321165432) against a committed baseline of 1. `so_item_id` is the key MRP's
+delivered-netting and the CONFIRMED → DELIVERED flip resolve on.
+
+**Root cause (traced in source, and the competing theory refuted by
+measurement).** `routes/so-mirror.ts` was written before the cutover, as a live
+one-way replica: on EVERY inbound message it upserted the header and then
+replaced the whole item and payment set with a DELETE-then-INSERT. That was
+correct while 2990 owned its own orders. It stopped being correct on 2026-07-21,
+when `HOUZS_OWNS_2990="true"` made Houzs the writer — the POS creates `2990-`
+orders here, Houzs mints their numbers, and the readonly wall in
+`mfg-sales-orders.ts` lifts so staff can edit them. The receiver went on
+replaying 2990's copy over those edits, and because
+`delivery_order_items.so_item_id` is `ON DELETE SET NULL`, each replay also
+blanked every DO line pointing at the SO lines it had just deleted and
+re-inserted with the same ids. **The route's own header comment still described
+the pre-cutover contract, which is how a live overwrite path stayed invisible
+for a month.**
+
+The leading alternative — that the `SVC-DELIVERY` fee rebuild did it — was
+REFUTED by the same run: it predicts delivery-charge lines only, and the ten
+orphans are sofas, a mattress and a pillow as well, with whole documents
+orphaned together (2990-DO-2607-012, -015 and 2990-DO-2608-009 lost all three of
+their lines at once). A per-line fee rebuild cannot do that; replacing an
+order's entire item set can. That rebuild was a real mechanism and was closed
+separately by #2514.
+
+**Fix.** The receiver is IMPORT-ONCE. A `doc_no` company 2 does not hold is
+imported exactly as before; a `doc_no` it already holds is not touched at all
+(200 + `skipped_existing`); `deleted:true` on an order Houzs holds is refused
+(200 + `refused_delete`), because Houzs owns these orders' lifecycle now. Every
+refusal is a 2xx on purpose — 2990's pg_cron drainer keys on HTTP status, so a
+non-2xx would keep the outbox row PENDING and wedge the queue behind it. The
+first import writes the header LAST-CHANCE style: if any part of it throws, the
+header it created is removed before the 500, so the retry redoes the whole
+document instead of finding a header-only order and skipping it. The 10 broken
+links are repaired separately by `repair-do-so-item-links.mjs` (workflow **Repair
+DO->SO line links**), AFTER this shipped — repairing first only re-breaks on the
+next sync. The NTYR pillow on 2990-DO-2607-013 stays unrepaired by design: its SO
+line is already fully delivered by another document, so re-linking would report 2
+delivered against 1 ordered.
+
+**Ref.** so-mirror import-once, 2026-08-20. Pinned by
+`backend/tests/soMirrorImportOnce.test.ts` (in `MUST_GATE_MERGE`, so a
+regression stops a merge rather than a deploy). Sentinel:
+`.github/workflows/do-link-sentinel.yml`.
+
 ## New Sales Order create popped ONE missing required field per click [medium]
 
 <!-- area: Sales orders + pricing -->
