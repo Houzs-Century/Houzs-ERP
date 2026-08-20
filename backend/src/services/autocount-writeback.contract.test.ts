@@ -572,7 +572,7 @@ const PO_HEADER = {
   supplier_id: 'supplier-uuid-1', notes: 'Trial purchase order',
   /* The PO's OWN ship-to warehouse (PR #77). /submit refuses a purchase order
      that has neither this nor a warehouse on every line
-     (mfg-purchase-orders.ts:4030), so a fixture without one is a purchase order
+     (mfg-purchase-orders.ts:4019), so a fixture without one is a purchase order
      the ERP would not have let go live. Resolved to the `KL` code through the
      `warehouses` row the two arm fixtures seed. */
   purchase_location_id: 'wh-kl',
@@ -1208,8 +1208,8 @@ describe('/so-to-po carries the whole master', () => {
    * being bought (ItemCode/Description/Desc2/Qty/UnitPrice), while a transfer's
    * names an existing AutoCount line by `DtlKey` and overrides what the ERP
    * agreed with the supplier — AutoCount's own `AddSOToPOTransferDetail` brought
-   * the line across already (AcSyncService.cs:2348), and phase two edits it
-   * (:2381-2401). The two shapes are checked separately below.
+   * the line across already (AcSyncService.cs:2358), and phase two edits it
+   * (:2391-2411). The two shapes are checked separately below.
    *
    * Anything NOT in this set must reach the transfer. If a field genuinely
    * cannot, it belongs here with its reason, not missing from the payload.
@@ -1268,7 +1268,7 @@ describe('/so-to-po carries the whole master', () => {
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {
     /* THE ERP'S COUNTERPART is `scm.purchase_orders.purchase_location_id`, the
        per-PO ship-to warehouse that /submit REFUSES a purchase order without
-       (mfg-purchase-orders.ts:1138). AutoCount's is `PurchaseLocation`, and
+       (mfg-purchase-orders.ts:1125). AutoCount's is `PurchaseLocation`, and
        `PurchaseHeader`'s own comment says it "has never been sent" — which is
        why the book was defaulting it. Owner 2026-08-19: 「它的 Purchase
        Location 也不对」.
@@ -1299,7 +1299,7 @@ describe('/so-to-po carries the whole master', () => {
     expect(details[0].DtlKey, 'the AutoCount sales line this purchase line buys').toBe(4242);
 
     /* Phase two of SoToPo is the ONLY thing that reads these, and it reads four
-       (AcSyncService.cs:2396-2400). A key outside that set would be composed,
+       (AcSyncService.cs:2407-2410). A key outside that set would be composed,
        stored, POSTed and silently dropped by the host — which is the whole
        failure mode this block exists to stop, so it must not be reintroduced on
        the line side while being fixed on the header side. */
@@ -1314,7 +1314,7 @@ describe('/so-to-po carries the whole master', () => {
        whole payload did before `SoToPo` learned to read the creditor.
 
        The route's readable surface is its OWN keys plus PurchaseHeader's, since
-       that is the header function it applies (AcSyncService.cs:2349). `UDF` is
+       that is the header function it applies (AcSyncService.cs:2359). `UDF` is
        excluded for the same reason the /create-po twin excludes it: it goes
        through ApplyUdf, not through Str(p, "UDF"). `FromDocNo` is resolved at
        drain and is in SoToPo's own key list already. */

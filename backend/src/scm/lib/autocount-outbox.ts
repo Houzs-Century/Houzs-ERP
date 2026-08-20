@@ -337,8 +337,8 @@ const SO_ITEM_COLS =
    and the other two do not exist at all on the ERP side. */
 /* purchase_location_id is the PO's OWN ship-to warehouse (PR #77), and /submit
    refuses a purchase order that has neither it nor a warehouse on every line
-   (mfg-purchase-orders.ts:4030). AutoCount has the same field on its purchase
-   header — `doc.PurchaseLocation`, AcSyncService.cs:2446 — and until this
+   (mfg-purchase-orders.ts:4019). AutoCount has the same field on its purchase
+   header — `PurchaseLocation`, AcSyncService.cs:935 and :2457 — and until this
    column was selected the ERP had never sent one, so the book defaulted it. */
 const PO_HEADER_COLS =
   'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';

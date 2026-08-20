@@ -258,7 +258,8 @@ export interface ErpPoHeader {
    * IT IS A HEADER FIELD ON BOTH SIDES, which is what an earlier comment here
    * denied. AutoCount's purchase documents carry `doc.PurchaseLocation` and
    * `PurchaseHeader` — the ONE function both /create-po and /so-to-po call for
-   * their header — assigns it (AcSyncService.cs:2446); its own comment records
+   * their header — assigns it (AcSyncService.cs:934-935 is /create-po's copy,
+   * :2456-2457 is PurchaseHeader's); PurchaseHeader's own comment records
    * that the ERP "has never been sent" one, so the book has been defaulting it
    * on every purchase order the ERP ever wrote. Owner 2026-08-19: 「它的
    * Purchase Location 也不对」.
@@ -403,7 +404,7 @@ export interface AcCreatePoPayload {
   Description: string | null;
   /** See `ErpPoHeader.purchase_location`. OMITTED, never null: `PurchaseHeader`
    *  is `ContainsKey`-gated AND non-empty-gated on this one key
-   *  (AcSyncService.cs:2446) precisely because a blank is its own foreign key
+   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own foreign key
    *  error, so `composeCreatePo` leaves the key off when the ERP has none. */
   PurchaseLocation?: string;
   UDF: Record<string, string>;
@@ -673,7 +674,7 @@ export class MissingCreditorError extends Error {
  * disagree.
  *
  * Nothing downstream catches it. `SoToPo`'s own guard compares the lines it
- * CREATED against `DtlKeys` (AcSyncService.cs:2374-2377), so a short `Details`
+ * CREATED against `DtlKeys` (AcSyncService.cs:2382-2384), so a short `Details`
  * passes it and simply leaves the tail lines carrying the CUSTOMER's price
  * instead of the supplier's cost — a purchase order that saves, looks right,
  * and pays the wrong number. Refusing composes nothing and writes a readable
@@ -1268,7 +1269,7 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
-  /* Through the same map the LINE locations go through (composeDetails:937), so
+  /* Through the same map the LINE locations go through (composeDetails:993), so
      the header and its lines cannot end up spelling one warehouse two ways. */
   const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
@@ -1293,14 +1294,14 @@ export function composeCreatePo(
        AUTOCOUNT: the purchase documents carry `PurchaseLocation`, and it is
        assigned in TWO places because /create-po does not share a header
        function with the rest — `CreatePo` sets its own master
-       (AcSyncService.cs:926), and `PurchaseHeader` (:2447) is what /so-to-po
-       (:2349) and the four conversions apply. `PurchaseHeader`'s own comment
+       (AcSyncService.cs:934-935), and `PurchaseHeader` (:2456-2457) is what
+       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own comment
        records that the ERP "has never been sent" one, so AutoCount has been
        defaulting the purchase location on every ERP-written purchase order
        since the cutover.
 
        THE ERP: `scm.purchase_orders.purchase_location_id`, which /submit
-       REFUSES a purchase order without (mfg-purchase-orders.ts:1138,
+       REFUSES a purchase order without (mfg-purchase-orders.ts:1125,
        `purchase_location_id_required`).
 
        OMITTED WHEN THE ERP HAS NONE, never sent null: the service's guard is
@@ -1317,7 +1318,7 @@ export function composeCreatePo(
       /* A LINE WITHOUT A WAREHOUSE INHERITS THE HEADER'S, which is the ERP's own
          precedence read the only direction it runs: `warehouse_id ?? po.purchase_location_id`
          (outstanding-po-lines.ts:382, and `poWarehouseGap` at
-         mfg-purchase-orders.ts:4030 treats a header warehouse as covering every
+         mfg-purchase-orders.ts:4019 treats a header warehouse as covering every
          line). Before this, a purchase order the ERP considers complete — header
          warehouse set, no per-line override — was refused with
          MissingLocationError, and a line that DID reach the book carried a
@@ -1889,9 +1890,9 @@ export function clearedAcKeys(
  *     Description, Desc2, Qty, UnitPrice — because AutoCount holds no line yet.
  *     A transfer's detail addresses a line AutoCount already made: the SDK's
  *     `AddSOToPOTransferDetail` brought the sales line across, price and all
- *     (AcSyncService.cs:2348), and phase two reopens the saved document and
+ *     (AcSyncService.cs:2358), and phase two reopens the saved document and
  *     applies the ERP's COST over the customer's price by `DtlKey`
- *     (:2381-2401). Those four keys — UnitPrice, Qty, Location, DeliveryDate —
+ *     (:2391-2411). Those four keys — UnitPrice, Qty, Location, DeliveryDate —
  *     are the only ones phase two reads, so they are the only ones sent; a
  *     fifth would be composed, stored, POSTed and dropped by the host, which is
  *     the exact failure this function's history is made of.
