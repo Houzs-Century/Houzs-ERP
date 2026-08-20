@@ -19,9 +19,9 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 export const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
-  'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, balance_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
+  'total_cost_sen, total_revenue_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   /* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
@@ -29,12 +29,12 @@ export const HEADER =
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
-  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
+  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_sen, paid_sen, ' +
   'created_at, created_by, updated_at';
 export const ITEM =
   'id, doc_no, line_date, debtor_code, debtor_name, agent, item_group, item_code, description, description2, ' +
-  'uom, location, qty, unit_price_centi, discount_centi, total_centi, tax_centi, total_inc_centi, balance_centi, ' +
-  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_centi, line_cost_centi, line_margin_centi, ' +
+  'uom, location, qty, unit_price_sen, discount_sen, total_sen, tax_sen, total_inc_sen, balance_sen, ' +
+  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_sen, line_cost_sen, line_margin_sen, ' +
   'line_delivery_date, line_delivery_date_overridden, ' +
   'photo_urls, ' +
   'created_at';
@@ -73,9 +73,9 @@ export function norm(v: unknown): string {
    subtotals + deposit. All are in HEADER (so they travel in the CO list AND
    detail payloads) but must reach ONLY a finance-viewer
    (lib/houzs-perms.canViewScmFinance). Mirrors SO_FINANCE_KEYS — the CO is a
-   /mfg-sales-orders clone — minus service_centi / service_cost_centi, which the
+   /mfg-sales-orders clone — minus service_sen / service_cost_sen, which the
    consignment header does not carry. Order money everyone is meant to see
-   (local_total_centi / balance_centi / paid_centi / total_revenue_centi) is
+   (local_total_sen / balance_sen / paid_sen / total_revenue_sen) is
    deliberately NOT listed here — the same line #625 (SO) and #632 (DR) drew.
 
    Consignment got the SCOPE fix (#417 — salesDocOutOfScope on every detail /
@@ -84,15 +84,15 @@ export function norm(v: unknown): string {
    cost and margin for every caller. Same class as the DO/SI detail leak (#600),
    the SO detail leak (#625) and the DR detail leak (#632). */
 export const CO_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis', 'deposit_centi',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis', 'deposit_sen',
 ] as const;
 
 /* KEPT LOCAL, deliberately — do NOT "converge" CO_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select.
-   The CO is a /mfg-sales-orders clone, so it DOES carry deposit_centi (finance-
-   only since #574) — but it has no service_centi / service_cost_centi, because
+   The CO is a /mfg-sales-orders clone, so it DOES carry deposit_sen (finance-
+   only since #574) — but it has no service_sen / service_cost_sen, because
    the consignment order carries no service category. It is therefore the closest
    of the six to the SO's list and still not equal to it; importing the SO's would
    make this gate depend on a vocabulary this document does not speak. The

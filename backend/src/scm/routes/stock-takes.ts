@@ -48,6 +48,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { assertWarehouseInCompany } from '../lib/ref-in-company';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody, type FieldChange } from '../lib/entity-audit';
 import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
 import {
@@ -68,7 +69,7 @@ const HEADER =
   'id, take_no, status, warehouse_id, scope_type, scope_value, take_date, ' +
   'notes, posted_at, cancelled_at, created_at, created_by, assignee_staff_id, blind';
 const LINE =
-  'id, stock_take_id, product_code, product_name, variant_key, variant_label, ' +
+  'id, stock_take_id, item_code, product_name, variant_key, variant_label, ' +
   'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at';
 
 const VALID_STATUS = new Set(['OPEN', 'POSTED', 'CANCELLED']);
@@ -109,7 +110,7 @@ const nextTakeNo = async (sb: any, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'stock_takes', 'take_no', `${p}STK-${yymm}`);
 };
 
-// ── Resolve in-scope SKUs PER (product_code, variant_key) + current on-hand ──
+// ── Resolve in-scope SKUs PER (item_code, variant_key) + current on-hand ──
 // Migration 0183 (#15): the count sheet is variant-grained. Scope (ALL /
 // CATEGORY / CODE_PREFIX) is resolved against v_inventory_all_skus (which carries
 // category + every SKU incl. zero-stock); the per-variant on-hand comes from
@@ -117,7 +118,7 @@ const nextTakeNo = async (sb: any, c: any): Promise<string> => {
 // per real variant bucket; a plain SKU yields a single '' line; a SKU that has
 // never moved yields one '' line at qty 0 so it still appears to be counted.
 type ScopedSku = {
-  product_code: string; product_name: string | null;
+  item_code: string; product_name: string | null;
   variant_key: string; variant_label: string | null; qty: number;
 };
 
@@ -134,23 +135,37 @@ const fetchScopedSkus = async (
   scopeValue: string | null,
   c: any,
 ): Promise<{ rows: ScopedSku[]; error?: string }> => {
-  // 1) Scope → the set of product_codes (+ names) at this warehouse.
-  // NOTE: v_inventory_all_skus intentionally aggregates across companies and has
-  // NO company_id column (see inventory.ts) — product codes are per-company, and
-  // the balances read below is company-scoped, so the snapshot stays isolated.
-  let q = sb.from('v_inventory_all_skus')
-    .select('product_code, product_name, category')
-    .eq('warehouse_id', warehouseId);
+  // 1) Scope → the set of item_codes (+ names) at this warehouse.
+  /* ⚠️ CORRECTED 2026-08-18. This read used to carry: "v_inventory_all_skus
+     intentionally aggregates across companies and has NO company_id column (see
+     inventory.ts) — item codes are per-company, and the balances read below
+     is company-scoped, so the snapshot stays isolated."
+
+     The view DOES have company_id. Migration 0156 rebuilt it precisely because
+     it was a "CONFIRMED live leak", appending `w.company_id` as the last column
+     specifically "so the route can .eq('company_id', <active>) it", and adding
+     `p.company_id = w.company_id` to its WHERE. So the column existed and was
+     put there for this. The rest of the old note was also doing work it could
+     not do: a scoped BALANCES read cannot isolate a SKU LIST — a zero-stock SKU
+     has no balance row at all, which is exactly the row this view exists to
+     serve, and the ALL / CATEGORY / CODE_PREFIX scopes are built from this list.
+
+     The warehouse is now proved to be the active company's at the call site, so
+     this is belt-and-braces rather than the only boundary — but it is one line
+     and the view was rebuilt to accept it. */
+  let q = scopeToCompany(sb.from('v_inventory_all_skus')
+    .select('item_code, product_name, category')
+    .eq('warehouse_id', warehouseId), c);
   if (scopeType === 'CATEGORY' && scopeValue) {
     q = q.eq('category', scopeValue);
   } else if (scopeType === 'CODE_PREFIX' && scopeValue) {
-    q = q.ilike('product_code', `${scopeValue}%`);
+    q = q.ilike('item_code', `${scopeValue}%`);
   }
-  const { data: skuData, error: skuErr } = await q.order('product_code');
+  const { data: skuData, error: skuErr } = await q.order('item_code');
   if (skuErr) return { rows: [], error: skuErr.message };
-  const skus = ((skuData as Array<{ product_code: string; product_name: string | null }>) ?? []);
+  const skus = ((skuData as Array<{ item_code: string; product_name: string | null }>) ?? []);
   if (skus.length === 0) return { rows: [] };
-  const nameByCode = new Map(skus.map((s) => [s.product_code, s.product_name] as const));
+  const nameByCode = new Map(skus.map((s) => [s.item_code, s.product_name] as const));
   const codes = [...nameByCode.keys()];
 
   // 2) Per-variant on-hand for those codes at this warehouse (chunk the .in()).
@@ -159,18 +174,18 @@ const fetchScopedSkus = async (
     const chunk = codes.slice(i, i + 200);
     const { data: balData, error: balErr } = await scopeToCompany(
       sb.from('inventory_balances')
-        .select('product_code, variant_key, product_name, qty')
+        .select('item_code, variant_key, product_name, qty')
         .eq('warehouse_id', warehouseId)
-        .in('product_code', chunk),
+        .in('item_code', chunk),
       c,
     );
     if (balErr) return { rows: [], error: balErr.message };
     for (const b of (balData as Array<{
-      product_code: string; variant_key: string | null; product_name: string | null; qty: number | null;
+      item_code: string; variant_key: string | null; product_name: string | null; qty: number | null;
     }>) ?? []) {
-      const list = balByCode.get(b.product_code) ?? [];
+      const list = balByCode.get(b.item_code) ?? [];
       list.push({ variant_key: b.variant_key ?? '', product_name: b.product_name, qty: Number(b.qty ?? 0) });
-      balByCode.set(b.product_code, list);
+      balByCode.set(b.item_code, list);
     }
   }
 
@@ -186,7 +201,7 @@ const fetchScopedSkus = async (
       for (const b of buckets) {
         if (scopeType === 'NONZERO' && b.qty === 0) continue;
         rows.push({
-          product_code: code,
+          item_code: code,
           product_name: b.product_name ?? name,
           variant_key: b.variant_key,
           variant_label: labelFromVariantKey(b.variant_key),
@@ -194,11 +209,11 @@ const fetchScopedSkus = async (
         });
       }
     } else if (scopeType !== 'NONZERO') {
-      rows.push({ product_code: code, product_name: name, variant_key: '', variant_label: null, qty: 0 });
+      rows.push({ item_code: code, product_name: name, variant_key: '', variant_label: null, qty: 0 });
     }
   }
   rows.sort((a, b) =>
-    a.product_code.localeCompare(b.product_code) || a.variant_key.localeCompare(b.variant_key));
+    a.item_code.localeCompare(b.item_code) || a.variant_key.localeCompare(b.variant_key));
   return { rows };
 };
 
@@ -285,7 +300,7 @@ export const getStockTakeDetailHandler = async (c: any) => {
     scopeToCompany(sb.from('stock_takes')
       .select(`${HEADER}, warehouse:warehouses(id, code, name)`)
       .eq('id', id), c).maybeSingle(),
-    sb.from('stock_take_lines').select(LINE).eq('stock_take_id', id).order('product_code'),
+    sb.from('stock_take_lines').select(LINE).eq('stock_take_id', id).order('item_code'),
   ]);
 
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
@@ -346,6 +361,17 @@ export const createStockTakeHandler = async (c: any) => {
 
   const warehouseId = body.warehouseId as string | undefined;
   if (!warehouseId) return c.json({ error: 'warehouse_required' }, 400);
+
+  /* THE WAREHOUSE IS A BODY FIELD. Nothing above proves it is ours, and this
+     handler goes on to snapshot every SKU at it and write a stock_takes header
+     against it — whose POST then writes ADJUSTMENT movements into it. See
+     lib/ref-in-company.ts; this is the call site that primitive was missing.
+     Before fetchScopedSkus, so a foreign warehouse id cannot be used to read a
+     SKU list either. */
+  const whCo = requireActiveCompanyId(c);
+  if (!whCo.ok) return c.json(whCo.refusal, 409);
+  const whCheck = await assertWarehouseInCompany(sb, warehouseId, whCo.companyId);
+  if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
 
   /* Phase 1: a take has a PERSON RESPONSIBLE from the moment it exists.
      Required — an unowned count sheet is exactly the accountability gap this
@@ -425,7 +451,7 @@ export const createStockTakeHandler = async (c: any) => {
   // 2) Bulk-insert lines with system_qty filled + counted_qty NULL.
   const lineRows = scoped.rows.map((r) => ({
     stock_take_id: header.id,
-    product_code:  r.product_code,
+    item_code:  r.item_code,
     product_name:  r.product_name,
     variant_key:   r.variant_key,
     variant_label: r.variant_label,
@@ -490,12 +516,12 @@ export const patchStockTakeLinesHandler = async (c: any) => {
      PostgREST's 1000-row cap) rather than a read per line — the update loop
      below is already one round-trip per line and does not need doubling. */
   const lineIds = lines.map((l) => l.id).filter((x): x is string => !!x);
-  const beforeById = new Map<string, { product_code: string; counted_qty: number | null; notes: string | null }>();
+  const beforeById = new Map<string, { item_code: string; counted_qty: number | null; notes: string | null }>();
   if (lineIds.length > 0) {
     const { data: beforeLines } = await chunkIn<{
-      id: string; product_code: string; counted_qty: number | null; notes: string | null;
+      id: string; item_code: string; counted_qty: number | null; notes: string | null;
     }>(lineIds, (batch, pFrom, pTo) => sb.from('stock_take_lines')
-      .select('id, product_code, counted_qty, notes')
+      .select('id, item_code, counted_qty, notes')
       .eq('stock_take_id', id).in('id', batch).range(pFrom, pTo));
     for (const b of beforeLines ?? []) beforeById.set(b.id, b);
   }
@@ -536,7 +562,7 @@ export const patchStockTakeLinesHandler = async (c: any) => {
        cannot answer that. Only lines whose stored update SUCCEEDED reach here. */
     const b = beforeById.get(l.id);
     if ('counted_qty' in patch) {
-      countChanges.push(fieldChange(b?.product_code ?? l.id, b?.counted_qty ?? null, patch.counted_qty));
+      countChanges.push(fieldChange(b?.item_code ?? l.id, b?.counted_qty ?? null, patch.counted_qty));
     }
   }
 
@@ -662,7 +688,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
      have carried the original basis even if it wanted to. See the note on the
      reversal row. */
   const { data: movs, error: mLoadErr } = await sb.from('inventory_movements')
-    .select('warehouse_id, product_code, product_name, variant_key, batch_no, qty, unit_cost_sen')
+    .select('warehouse_id, item_code, product_name, variant_key, batch_no, qty, unit_cost_sen')
     .eq('source_doc_type', 'STOCK_TAKE')
     .eq('source_doc_id', id);
   if (mLoadErr) {
@@ -671,7 +697,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
 
   const reverseRows: Array<Record<string, unknown>> = [];
   for (const m of (movs as Array<{
-    warehouse_id: string; product_code: string; product_name: string | null;
+    warehouse_id: string; item_code: string; product_name: string | null;
     variant_key: string | null; batch_no: string | null; qty: number;
     unit_cost_sen: number | null;
   }>) ?? []) {
@@ -679,7 +705,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
     reverseRows.push({
       movement_type:   'ADJUSTMENT',
       warehouse_id:    m.warehouse_id,
-      product_code:    m.product_code,
+      item_code:    m.item_code,
       product_name:    m.product_name,
       variant_key:     m.variant_key ?? '',
       batch_no:        m.batch_no ?? null,
@@ -876,14 +902,14 @@ export const postStockTakeHandler = async (c: any) => {
   };
 
   const { data: lines } = await sb.from('stock_take_lines')
-    .select('product_code, product_name, variant_key, counted_qty, notes')
+    .select('item_code, product_name, variant_key, counted_qty, notes')
     .eq('stock_take_id', id);
   const counted = ((lines as Array<{
-    product_code: string; product_name: string | null;
+    item_code: string; product_name: string | null;
     variant_key: string | null; counted_qty: number | null; notes: string | null;
   }>) ?? []).filter((ln) => ln.counted_qty != null);
 
-  // Audit 2026-06-20 (#15) — re-read LIVE on-hand per (product_code, variant_key)
+  // Audit 2026-06-20 (#15) — re-read LIVE on-hand per (item_code, variant_key)
   // at post time, NOT the frozen create-time snapshot, so:
   //   adjustment = counted − live_on_hand(code, variant)
   // drives the exact bucket the operator counted to exactly the counted qty.
@@ -892,19 +918,19 @@ export const postStockTakeHandler = async (c: any) => {
   // — stock that moved during the count no longer skews the correction
   // (supersedes branch fix/stock-take-reconcile).
   const liveByKey = new Map<string, number>();
-  const codes = [...new Set(counted.map((ln) => ln.product_code))];
+  const codes = [...new Set(counted.map((ln) => ln.item_code))];
   for (let i = 0; i < codes.length; i += 200) {
     const chunk = codes.slice(i, i + 200);
     if (chunk.length === 0) break;
     const { data: bal } = await scopeToCompany(
       sb.from('inventory_balances')
-        .select('product_code, variant_key, qty')
+        .select('item_code, variant_key, qty')
         .eq('warehouse_id', header.warehouse_id)
-        .in('product_code', chunk),
+        .in('item_code', chunk),
       c,
     );
-    for (const b of (bal as Array<{ product_code: string; variant_key: string | null; qty: number | null }>) ?? []) {
-      liveByKey.set(`${b.product_code} ${b.variant_key ?? ''}`, Number(b.qty ?? 0));
+    for (const b of (bal as Array<{ item_code: string; variant_key: string | null; qty: number | null }>) ?? []) {
+      liveByKey.set(`${b.item_code} ${b.variant_key ?? ''}`, Number(b.qty ?? 0));
     }
   }
 
@@ -914,7 +940,7 @@ export const postStockTakeHandler = async (c: any) => {
   const pending = counted
     .map((ln) => {
       const variantKey = ln.variant_key ?? '';
-      const live = liveByKey.get(`${ln.product_code} ${variantKey}`) ?? 0;
+      const live = liveByKey.get(`${ln.item_code} ${variantKey}`) ?? 0;
       return { ln, variantKey, adjustment: ln.counted_qty! - live };
     })
     .filter((p) => p.adjustment !== 0);
@@ -933,19 +959,19 @@ export const postStockTakeHandler = async (c: any) => {
   // costs nothing extra beyond the wider .in() list. The R3 cost_required
   // refusal itself still fires ONLY for positive lines, exactly as before.
   const lotsByKey = new Map<string, LotCostRow[]>();
-  const upCodes = [...new Set(pending.map((p) => p.ln.product_code))];
+  const upCodes = [...new Set(pending.map((p) => p.ln.item_code))];
   for (let i = 0; i < upCodes.length; i += 200) {
     const chunk = upCodes.slice(i, i + 200);
     if (chunk.length === 0) break;
     const { data: lots } = await scopeToCompany(
       sb.from('inventory_lots')
-        .select('product_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
+        .select('item_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
         .eq('warehouse_id', header.warehouse_id)
-        .in('product_code', chunk),
+        .in('item_code', chunk),
       c,
     );
-    for (const l of (lots as Array<{ product_code: string; variant_key: string | null } & LotCostRow>) ?? []) {
-      const key = `${l.product_code} ${l.variant_key ?? ''}`;
+    for (const l of (lots as Array<{ item_code: string; variant_key: string | null } & LotCostRow>) ?? []) {
+      const key = `${l.item_code} ${l.variant_key ?? ''}`;
       (lotsByKey.get(key) ?? lotsByKey.set(key, []).get(key)!).push(l);
     }
   }
@@ -957,22 +983,22 @@ export const postStockTakeHandler = async (c: any) => {
   const thresholdLines: VarianceLine[] = [];
   for (const p of pending) {
     const forced = resolveForcedUnitCostSen({
-      lots: lotsByKey.get(`${p.ln.product_code} ${p.variantKey}`) ?? [],
+      lots: lotsByKey.get(`${p.ln.item_code} ${p.variantKey}`) ?? [],
     });
     thresholdLines.push({
-      productCode: p.ln.product_code,
+      itemCode: p.ln.item_code,
       adjustment:  p.adjustment,
       unitCostSen: forced.ok ? forced.unitCostSen : null,
     });
     let unitCostSen = 0;
     if (p.adjustment > 0) {
-      if (!forced.ok) { costlessSkus.push(p.ln.product_code); continue; }
+      if (!forced.ok) { costlessSkus.push(p.ln.item_code); continue; }
       unitCostSen = forced.unitCostSen;
     }
     adjustmentRows.push({
       movement_type:   'ADJUSTMENT',
       warehouse_id:    header.warehouse_id,
-      product_code:    p.ln.product_code,
+      item_code:    p.ln.item_code,
       product_name:    p.ln.product_name,
       variant_key:     p.variantKey,                   // #15 — land in the counted bucket
       qty:             p.adjustment,                   // SIGNED — see /inventory/adjustments
@@ -1005,7 +1031,7 @@ export const postStockTakeHandler = async (c: any) => {
     return c.json({
       error: 'cost_required',
       message: `These items have no known cost yet, so they can't be added at RM0: ${skus.join(', ')}. Enter an initial unit cost (a costed stock adjustment or a GRN) for them, then post the count again.`,
-      productCodes: skus,
+      itemCodes: skus,
       postReverted: !revErr,
     }, 422);
   }
@@ -1029,7 +1055,7 @@ export const postStockTakeHandler = async (c: any) => {
       return c.json({
         error: 'variance_supervisor_required',
         message: formatVarianceRefusal(breaches, thresholds),
-        productCodes: breaches,
+        itemCodes: breaches,
         postReverted: !revErr,
       }, 403);
     }
@@ -1072,8 +1098,8 @@ export const postStockTakeHandler = async (c: any) => {
          say what it corrected. adjustmentRows holds only non-zero variances (the
          loop above skips the rest), so every entry here is a real movement. */
       ...adjustmentRows.map((r) => {
-        const live = liveByKey.get(`${r.product_code} ${r.variant_key ?? ''}`) ?? 0;
-        return fieldChange(String(r.product_code), live, live + Number(r.qty));
+        const live = liveByKey.get(`${r.item_code} ${r.variant_key ?? ''}`) ?? 0;
+        return fieldChange(String(r.item_code), live, live + Number(r.qty));
       }),
     ]),
   });

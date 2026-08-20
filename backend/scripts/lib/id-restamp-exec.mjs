@@ -173,7 +173,7 @@ export async function execIdRestamp(sql, plan, { commit = false, schema = "scm" 
 /* part=dedupe (owner authorization 2026-08-01: "继续 全部可以", including
    REMOVAL). Deletes the movement+consumption pairs part=ids classifies
    `duplicate-of-real` — under a rule STRICTER than the index collision:
-   the real document must carry a FULL-ROW twin, same (company, product_code,
+   the real document must carry a FULL-ROW twin, same (company, item_code,
    variant_key, warehouse, movement_type, qty), decided by
    classifyDuplicateMovement in the caller. The delete REVERSES the
    duplicate's whole ledger effect in one transaction: its consumption rows
@@ -205,7 +205,7 @@ export async function execDedupe(sql, plan, classify, { commit = false, schema =
     const g = plan.find((p) => `${p.docType} ${p.docNo}` === d.group);
     const rows = await sql.unsafe(
       `SELECT id::text AS id, movement_type, qty, unit_cost_sen, total_cost_sen,
-              company_id, warehouse_id::text AS warehouse_id, product_code,
+              company_id, warehouse_id::text AS warehouse_id, item_code,
               COALESCE(variant_key,'') AS variant_key, batch_no,
               source_doc_type, source_doc_no, source_doc_id::text AS doc_id, created_at
          FROM ${M} WHERE id = $1`, [d.rowId]);
@@ -213,16 +213,16 @@ export async function execDedupe(sql, plan, classify, { commit = false, schema =
     const m = rows[0];
     const counterparts = await sql.unsafe(
       `SELECT id::text AS id, movement_type, qty, company_id, warehouse_id::text AS warehouse_id,
-              product_code, COALESCE(variant_key,'') AS variant_key
+              item_code, COALESCE(variant_key,'') AS variant_key
          FROM ${M} WHERE source_doc_id::text = $1 AND id <> $2`,
       [d.resolvedDocId, m.id]);
     const verdict = classify({
       duplicate: {
-        companyId: m.company_id, productCode: m.product_code, variantKey: m.variant_key,
+        companyId: m.company_id, itemCode: m.item_code, variantKey: m.variant_key,
         warehouseId: m.warehouse_id, movementType: m.movement_type, qty: m.qty,
       },
       counterparts: counterparts.map((c) => ({
-        movementId: c.id, companyId: c.company_id, productCode: c.product_code,
+        movementId: c.id, companyId: c.company_id, itemCode: c.item_code,
         variantKey: c.variant_key, warehouseId: c.warehouse_id, movementType: c.movement_type, qty: c.qty,
       })),
     });

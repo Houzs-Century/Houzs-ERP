@@ -50,7 +50,7 @@ describe('findSkuUsage — where a code is already spent', () => {
   test('a code that only ever moved in stock is still used', async () => {
     const sb = fakeSb({
       mfg_sales_order_items: [], purchase_order_items: [],
-      inventory_movements: [{ product_code: 'MOVED-1', source_doc_no: 'GRN-1' }],
+      inventory_movements: [{ item_code: 'MOVED-1', source_doc_no: 'GRN-1' }],
     });
     expect((await findSkuUsage(sb, 'MOVED-1')) as { usage: unknown })
       .toMatchObject({ ok: true, usage: { where: 'a stock movement' } });

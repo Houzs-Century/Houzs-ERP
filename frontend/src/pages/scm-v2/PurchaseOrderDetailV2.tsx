@@ -13,7 +13,7 @@ import { lazy, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
@@ -83,14 +83,14 @@ import { convertToLink, transferToLabel } from "../../lib/convertScope";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const supplierNameOf = (h: PoHeaderRow): string =>
   h.supplier?.name || h.supplier_id || "—";
 const supplierCodeOf = (h: PoHeaderRow): string => h.supplier?.code || "—";
 
 const totalOf = (h: PoHeaderRow): number =>
-  h.total_centi ?? h.subtotal_centi ?? 0;
+  h.total_sen ?? h.subtotal_sen ?? 0;
 
 // PO effective lifecycle for hero + tone.
 type Effective =
@@ -303,8 +303,8 @@ function PoTotalHeroCard({
       </div>
 
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-        <HeroLine k="Subtotal" v={fmtMoney(header.subtotal_centi, header.currency)} />
-        <HeroLine k="Tax" v={fmtMoney(header.tax_centi ?? 0, header.currency)} />
+        <HeroLine k="Subtotal" v={fmtMoney(header.subtotal_sen, header.currency)} />
+        <HeroLine k="Tax" v={fmtMoney(header.tax_sen ?? 0, header.currency)} />
         <HeroLine k="Total" v={fmtMoney(total, header.currency)} strong />
       </div>
 
@@ -640,10 +640,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code,
+      getValue: (l) => l.item_code,
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). JUDGEMENT CALL, stated rather than
-         silently taken: this is PURCHASE vocabulary (material_code), and every
+         silently taken: this is PURCHASE vocabulary (item_code), and every
          owner precedent for the rule is sales-side, so it is not covered by the
          letter of any report. It is swept because the SHAPE is identical, not
          the vocabulary — this render was byte-for-byte the pre-#647
@@ -657,7 +657,7 @@ function PurchaseOrderDetailV2ReadOnly() {
          search / export value. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code,
+          code: l.item_code,
           description: l.description || l.material_name,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -867,7 +867,7 @@ function PurchaseOrderDetailV2ReadOnly() {
                 type="button"
                 onClick={() => setAllocLineId(l.id)}
                 title="Split this line across the Sales Orders it was bought for"
-                aria-label={`Edit allocations for ${l.material_code}`}
+                aria-label={`Edit allocations for ${l.item_code}`}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
               >
                 <Split size={12} />
@@ -882,10 +882,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, purchaseOrder?.currency)}
+          {fmtMoney(l.unit_price_sen, purchaseOrder?.currency)}
         </span>
       ),
     },
@@ -894,10 +894,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_centi ?? 0, purchaseOrder?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)}
         </span>
       ),
     },

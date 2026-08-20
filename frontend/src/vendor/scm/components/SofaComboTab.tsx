@@ -26,7 +26,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Plus, Pencil, Trash2, History, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DateField } from './DateField';
-import { buildComboLabel, fmtCenti, fmtDate, maintValues, normalizeCompartmentCode, SOFA_MODULES, type SofaPriceTier } from '@2990s/shared';
+import { buildComboLabel, fmtSen, fmtDate, maintValues, normalizeCompartmentCode, SOFA_MODULES, type SofaPriceTier } from '@2990s/shared';
 import {
   useSofaCombos,
   useCreateSofaCombo,
@@ -54,7 +54,7 @@ const TIERS: SofaPriceTier[] = ['PRICE_1', 'PRICE_2', 'PRICE_3'];
 
 const ICON_PROPS = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number | null | undefined): string => fmtCenti(centi);
+const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
 
 
 // Malaysia calendar date — the UTC version returned YESTERDAY before 08:00 MYT.
@@ -157,8 +157,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   // Supplier-scoped only: derive base_model → the supplier's OWN model code so
   // each combo card can show "Booqit · 5539" — the code Hookka recognises on
   // their side. Source = this supplier's bindings (supplier_material_bindings).
-  // A binding's material_code equals the product code (see PurchaseOrderDetail
-  // pickProduct: materialCode = p.code), so we resolve base_model via products,
+  // A binding's item_code equals the product code (see PurchaseOrderDetail
+  // pickProduct: itemCode = p.code), so we resolve base_model via products,
   // then take the supplier_sku's leading code ("5539-2A(LHF)" → "5539"; bare
   // "5539" stays "5539"). When a base_model carries several supplier codes we
   // pick the most common one. Empty/unmapped → card just shows base_model.
@@ -175,7 +175,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     // base_model → { supplierCode → count } so we can pick the most common.
     const tally: Record<string, Record<string, number>> = {};
     for (const b of supplierDetailQ.data?.bindings ?? []) {
-      const bm = baseModelByCode.get(b.material_code);
+      const bm = baseModelByCode.get(b.item_code);
       if (!bm) continue;
       const sku = (b.supplier_sku ?? '').trim();
       if (!sku) continue;
@@ -985,7 +985,7 @@ function ComposerModal({
 // change. Composition is NEVER touched here (changing modules = a different
 // logical combo → that's the Composer's job, not batch). Never PUT/overwrite.
 //   · percent: round(old * (1 + pct/100)) for each non-null height
-//   · set:     setCenti for each EXISTING (key present) height; null stays null
+//   · set:     setSen for each EXISTING (key present) height; null stays null
 //   · grid:    per-combo × per-height inputs — each combo's map is rebuilt from
 //              its own grid row (job-card style edit, commander T8).
 // Mirrors HOOKKA's batch price tool.
@@ -998,14 +998,14 @@ function adjustPrices(
   pricesByHeight: Record<string, number | null>,
   mode: BatchMode,
   pct: number,
-  setCenti: number,
+  setSen: number,
 ): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const [h, v] of Object.entries(pricesByHeight)) {
     if (v == null) { out[h] = null; continue; }
     out[h] = mode === 'percent'
       ? Math.round(v * (1 + pct / 100))
-      : setCenti;
+      : setSen;
   }
   return out;
 }
@@ -1053,7 +1053,7 @@ function BatchEditModal({
 
   const pct = Number(pctStr);
   const setRm = Number(setRmStr);
-  const setCenti = Math.round((Number.isFinite(setRm) ? setRm : 0) * 100);
+  const setSen = Math.round((Number.isFinite(setRm) ? setRm : 0) * 100);
   // Build one combo's pricesByHeight from its grid row: parse each cell to
   // centi, blank → null. Returns null when any cell is a non-empty bad number
   // so apply can reject before POSTing.
@@ -1107,7 +1107,7 @@ function BatchEditModal({
       const pricesByHeight =
         mode === 'grid'
           ? gridMapFor(r)
-          : adjustPrices(r.pricesByHeight ?? {}, mode, pct, setCenti);
+          : adjustPrices(r.pricesByHeight ?? {}, mode, pct, setSen);
       if (pricesByHeight == null) { fail += 1; continue; } // bad grid cell
       const newCombo: NewSofaCombo = {
         baseModel: r.baseModel,
@@ -1280,7 +1280,7 @@ function BatchEditModal({
               const h = firstPricedHeight(r);
               const oldV = h ? (r.pricesByHeight?.[h] ?? null) : null;
               const newV = h
-                ? adjustPrices(r.pricesByHeight ?? {}, mode, pct, setCenti)[h] ?? null
+                ? adjustPrices(r.pricesByHeight ?? {}, mode, pct, setSen)[h] ?? null
                 : null;
               return (
                 <div key={r.id} style={{

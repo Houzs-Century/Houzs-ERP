@@ -79,7 +79,7 @@ async function main() {
      decomposes into its compartments, everything else is one-for-one - so an
      ItemCode holding FEWER ERP rows than it has AutoCount lines is proof of
      missing rows whatever the sofa decoder does today. Rows are claimed by
-     supplier_sku, falling back to material_code for the 225 migrated lines that
+     supplier_sku, falling back to item_code for the 225 migrated lines that
      carry no supplier_sku at all; the full rule is in lib/po-line-topup-core.mjs
      and is the SAME code the top-up repair writes from, deliberately. */
   const acPo = mergeAcPoLines(gz("ac-outstanding-po.json.gz"), gz("ac-so-linked-pos.json.gz"));
@@ -98,16 +98,16 @@ async function main() {
   const HAS_DTLKEY = (await sql`SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'scm' AND table_name = 'purchase_order_items' AND column_name = 'linked_ac_dtlkey'`).length > 0;
   const poItemRows = HAS_DTLKEY
-    ? await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code, i.linked_ac_dtlkey
+    ? await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.item_code, i.linked_ac_dtlkey
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
-    : await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code, NULL::bigint AS linked_ac_dtlkey
+    : await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.item_code, NULL::bigint AS linked_ac_dtlkey
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const poItemsByAc = new Map();
   for (const r of poItemRows) {
     if (!poItemsByAc.has(r.ac)) poItemsByAc.set(r.ac, []);
-    poItemsByAc.get(r.ac).push({ supplierSku: r.supplier_sku, materialCode: r.material_code, linkedAcDtlKey: r.linked_ac_dtlkey });
+    poItemsByAc.get(r.ac).push({ supplierSku: r.supplier_sku, itemCode: r.item_code, linkedAcDtlKey: r.linked_ac_dtlkey });
   }
   let poDocsChecked = 0, poDocsAbsent = 0, poAcLines = 0, poErpRows = 0, poShort = 0, poUnassigned = 0, poAmbiguous = 0;
   const poShortDocs = [];

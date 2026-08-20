@@ -137,7 +137,7 @@ const world = (header: Row) => fakeSb({
     allocated_batch_no: null,
   }],
   mfg_products: [{ code: CODE, category: 'MATTRESS' }],
-  inventory_balances: [{ warehouse_id: WH, product_code: CODE, variant_key: '', qty: 5 }],
+  inventory_balances: [{ warehouse_id: WH, item_code: CODE, variant_key: '', qty: 5 }],
   delivery_orders: [],
   delivery_order_items: [],
   delivery_returns: [],

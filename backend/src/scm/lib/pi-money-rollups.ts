@@ -26,9 +26,9 @@ import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around */
 /* ── Recompute PI header money rollups (mirror recomputeGrnTotals) ─────────
-   Sum line_total_centi across purchase_invoice_items → write subtotal_centi,
-   then total_centi = subtotal + tax_centi (PI carries a stored tax that GRN
-   does NOT, so we ADD it into total here). paid_centi is untouched — Balance
+   Sum line_total_sen across purchase_invoice_items → write subtotal_sen,
+   then total_sen = subtotal + tax_sen (PI carries a stored tax that GRN
+   does NOT, so we ADD it into total here). paid_sen is untouched — Balance
    (total - paid) is derived in the UI; payment recording stays on /payment.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
@@ -36,11 +36,11 @@ import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 export async function recomputePiTotals(sb: any, piId: string) {
   const [itemsRes, headerRes] = await Promise.all([
-    sb.from('purchase_invoice_items').select('line_total_centi').eq('purchase_invoice_id', piId),
-    sb.from('purchase_invoices').select('tax_centi').eq('id', piId).maybeSingle(),
+    sb.from('purchase_invoice_items').select('line_total_sen').eq('purchase_invoice_id', piId),
+    sb.from('purchase_invoices').select('tax_sen').eq('id', piId).maybeSingle(),
   ]);
   /* Neither read's error was looked at, and `?? []` / `?? 0` cannot tell a failed
-     read from a real empty/zero: a blip on the ITEMS read wrote total_centi ZERO
+     read from a real empty/zero: a blip on the ITEMS read wrote total_sen ZERO
      on an invoice the supplier is owed for, and a blip on the HEADER read wrote a
      total silently SHORT by the tax. Both are what this AP figure is paid from.
      The ERROR is the signal, never the emptiness: a genuinely line-less PI, and a
@@ -57,11 +57,11 @@ export async function recomputePiTotals(sb: any, piId: string) {
     console.error('[pi-recompute] tax read failed — header left unchanged:', piId, headerRes.error.message);
     return;
   }
-  const subtotal = (itemsRes.data ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
-  const tax = (headerRes.data as { tax_centi?: number } | null)?.tax_centi ?? 0;
+  const subtotal = (itemsRes.data ?? []).reduce((s: number, r: any) => s + (r.line_total_sen ?? 0), 0);
+  const tax = (headerRes.data as { tax_sen?: number } | null)?.tax_sen ?? 0;
   const { error: updErr } = await sb.from('purchase_invoices').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal + tax,
+    subtotal_sen: subtotal,
+    total_sen: subtotal + tax,
     updated_at: new Date().toISOString(),
   }).eq('id', piId);
   if (updErr) {
@@ -71,7 +71,7 @@ export async function recomputePiTotals(sb: any, piId: string) {
 }
 
 /* ── PI-level landed freight ("平摊") — reallocatePiCharges ──────────────────
-   Migration 0082 added purchase_invoice_items.allocated_charge_centi and recost.ts
+   Migration 0082 added purchase_invoice_items.allocated_charge_sen and recost.ts
    folds it into the FIFO lot cost — but until now NO write path ever filled it, so
    the column sat at 0 forever and freight billed on the SUPPLIER'S INVOICE (the
    normal shape for RMB / cross-border sourcing, where freight arrives on the PI
@@ -82,7 +82,7 @@ export async function recomputePiTotals(sb: any, piId: string) {
 
    POOL = PI-NATIVE service lines only (grn_item_id IS NULL). A service line COPIED
    DOWN from the GRN by /from-grn keeps its grn_item_id, and that charge was ALREADY
-   capitalised into the lot at receive time (grn_items.allocated_charge_centi, which
+   capitalised into the lot at receive time (grn_items.allocated_charge_sen, which
    recost re-adds separately) — pooling it again here would capitalise the same
    freight twice. This is what "each capitalises EXACTLY ONCE" means in recost.ts.
 
@@ -116,11 +116,11 @@ export async function reallocatePiCharges(
     const [headRes, itemsRes] = await Promise.all([
       sb.from('purchase_invoices').select('exchange_rate').eq('id', piId).maybeSingle(),
       sb.from('purchase_invoice_items')
-        .select('id, grn_item_id, material_code, item_group, qty, unit_price_centi, line_total_centi, allocated_charge_centi')
+        .select('id, grn_item_id, item_code, item_group, qty, unit_price_sen, line_total_sen, allocated_charge_sen')
         .eq('purchase_invoice_id', piId),
     ]);
     /* `?? 1` means "already MYR", so a failed read on an RMB/USD PI allocates the
-       freight pool at rate 1 and writes an allocated_charge_centi wrong by the
+       freight pool at rate 1 and writes an allocated_charge_sen wrong by the
        whole FX factor onto every goods line — which recost then capitalises into
        the lot. The itemsRes read below fails closed (items = [] returns), but this
        one silently invents an exchange rate. Returning matches this function's own
@@ -134,9 +134,9 @@ export async function reallocatePiCharges(
     }
     const piRate = (headRes.data as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
     const items = (itemsRes.data ?? []) as Array<{
-      id: string; grn_item_id: string | null; material_code: string; item_group: string | null;
-      qty: number | null; unit_price_centi: number | null; line_total_centi: number | null;
-      allocated_charge_centi: number | null;
+      id: string; grn_item_id: string | null; item_code: string; item_group: string | null;
+      qty: number | null; unit_price_sen: number | null; line_total_sen: number | null;
+      allocated_charge_sen: number | null;
     }>;
     if (items.length === 0) return;
 
@@ -145,12 +145,12 @@ export async function reallocatePiCharges(
        capitalised. They are not goods either, so removing them leaves the goods
        basis untouched. */
     const visible = items.filter((it) =>
-      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.material_code })));
+      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })));
 
     // CBM basis needs each goods line's product volume; one round trip, default 0
     // (the allocator falls back to QTY when the CBM Σ is 0).
     const m3ByCode = new Map<string, number>();
-    const codes = [...new Set(visible.map((it) => it.material_code).filter(Boolean))];
+    const codes = [...new Set(visible.map((it) => it.item_code).filter(Boolean))];
     if (codes.length > 0) {
       // Company-scoped: `code` is shared, and the other company's volume would
       // shift every goods line's share of the landed charge.
@@ -158,7 +158,7 @@ export async function reallocatePiCharges(
       if (companyId != null) volQ = volQ.eq('company_id', companyId);
       /* BIND THE ERROR. Unbound, a failed volume read blanked every m3 and the
          allocator silently fell back to the QTY basis — a different split of the
-         same freight pool, written into allocated_charge_centi and capitalised by
+         same freight pool, written into allocated_charge_sen and capitalised by
          recost into the FIFO lot. The fallback stays (this function is
          best-effort by contract) but it stops being silent. */
       const { data: prods, error: volErr } = await volQ;
@@ -175,12 +175,12 @@ export async function reallocatePiCharges(
       visible.map((it) => ({
         id: it.id,
         itemGroup: it.item_group ?? null,
-        materialCode: it.material_code,
+        itemCode: it.item_code,
         qty: Number(it.qty ?? 0),
         // Pool by the SERVICE line's line total; allocate ONTO the goods lines.
-        amountCenti: Number(it.line_total_centi ?? 0),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
+        amountSen: Number(it.line_total_sen ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        unitM3Milli: m3ByCode.get(it.item_code) ?? 0,
       })),
       method,
       piRate,
@@ -192,13 +192,13 @@ export async function reallocatePiCharges(
        return (the service lines themselves) are forced to 0: recost re-adds the
        charge of ANY line carrying a grn_item_id, so a row that used to be goods and
        was later retyped as freight would otherwise keep injecting a stale charge. */
-    const anyToReset = items.some((it) => Number(it.allocated_charge_centi ?? 0) !== 0);
+    const anyToReset = items.some((it) => Number(it.allocated_charge_sen ?? 0) !== 0);
     if (alloc.chargePoolMyr > 0 || anyToReset) {
-      const allocById = new Map(alloc.goods.map((g) => [g.id, g.allocatedChargeCenti]));
+      const allocById = new Map(alloc.goods.map((g) => [g.id, g.allocatedChargeSen]));
       await Promise.all(items.map((it) => {
         const next = allocById.get(it.id) ?? 0;
-        if (Number(it.allocated_charge_centi ?? 0) === next) return null;
-        return sb.from('purchase_invoice_items').update({ allocated_charge_centi: next }).eq('id', it.id);
+        if (Number(it.allocated_charge_sen ?? 0) === next) return null;
+        return sb.from('purchase_invoice_items').update({ allocated_charge_sen: next }).eq('id', it.id);
       }).filter(Boolean));
     }
   } catch (e) {

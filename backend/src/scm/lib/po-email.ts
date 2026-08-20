@@ -107,7 +107,7 @@ export interface PoEmailRow {
   id: string;
   po_number: string | null;
   status: string | null;
-  total_centi: number | null;
+  total_sen: number | null;
   currency: string | null;
   po_date: string | null;
   supplier?: { name?: string | null; email?: string | null } | null;
@@ -128,7 +128,7 @@ export function buildPurchaseOrderEmail(
   if (!isSendableEmail(to)) return null;
 
   const docNo = row.po_number ?? row.id;
-  const total = (Number(row.total_centi ?? 0) / 100).toFixed(2);
+  const total = (Number(row.total_sen ?? 0) / 100).toFixed(2);
   const currency = row.currency ?? 'MYR';
 
   return {

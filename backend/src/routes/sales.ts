@@ -897,8 +897,8 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
 
   const id = r.meta.last_row_id as number;
 
-  if (items.length) await replaceItems(c.env, id, items, companyId);
-  if (payments.length) await replacePayments(c.env, id, payments, companyId);
+  if (items.length) await replaceItems(c.env, id, items, companyId ?? null);
+  if (payments.length) await replacePayments(c.env, id, payments, companyId ?? null);
 
   // Persist custom field values via the existing UDF store. Silent-drop
   // anything with an unknown key so a renamed field doesn't 500 the
@@ -1045,11 +1045,11 @@ async function applyEntryPatch(
   // Items + payments — replace-all when arrays are supplied. Mirrors the
   // deposit_amount / deposit_payment_type so the legacy list view renders.
   if (Array.isArray(body.items)) {
-    await replaceItems(env, id, body.items as SalesItemInput[], companyId);
+    await replaceItems(env, id, body.items as SalesItemInput[], companyId ?? null);
   }
   if (Array.isArray(body.payments)) {
     const pays = body.payments as SalesPaymentInput[];
-    await replacePayments(env, id, pays, companyId);
+    await replacePayments(env, id, pays, companyId ?? null);
     const sum = summarisePayments(pays);
     if (!("deposit_amount" in body)) {
       sets.push("deposit_amount = ?");

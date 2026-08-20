@@ -60,13 +60,13 @@ describe('the gate and its reasons are ONE expression', () => {
   });
 
   test('the deposit condition asks meetsDepositGate, so a free order can never raise it', () => {
-    /* total <= 0 is vacuously met there (its own docblock). A `totalCenti > 0`
+    /* total <= 0 is vacuously met there (its own docblock). A `totalSen > 0`
        guard written out here instead would read the same today and drift the
        first time the threshold rule grows a branch. */
     expect(between(RULES, 'export const proceedGateFailures', '\nexport '))
       .toContain('meetsDepositGate(i.paid, i.total, i.companyCode)');
     expect(between(PROBLEMS, 'const depositProblem = (', '};'))
-      .toContain('if (meetsDepositGate(paidCenti, totalCenti, companyCode)) return null;');
+      .toContain('if (meetsDepositGate(paidSen, totalSen, companyCode)) return null;');
   });
 });
 
@@ -119,8 +119,8 @@ describe('every proceed refusal path carries the detail', () => {
     expect(helper).toContain('proceedGateUnmetBody(problems)');
     /* Both amounts are handed over under their centi names — these numbers are
        PRINTED, unlike the ratio-only paid/total on ProceedGateInput. */
-    expect(helper).toContain('paidCenti');
-    expect(helper).toContain('totalCenti');
+    expect(helper).toContain('paidSen');
+    expect(helper).toContain('totalSen');
   });
 
   /* THE TWO CALL SITES THIS FILE COUNTED ARE GONE (2026-08-18), and the count is

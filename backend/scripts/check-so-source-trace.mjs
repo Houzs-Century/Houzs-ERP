@@ -161,14 +161,14 @@ try {
   // Ledger for those DOs: batched OUTs + consumptions -> lots (classified).
   const movs = doIds.length
     ? await pg`
-        SELECT source_doc_id::text AS do_id, product_code, COALESCE(variant_key,'') AS vk, batch_no
+        SELECT source_doc_id::text AS do_id, item_code, COALESCE(variant_key,'') AS vk, batch_no
           FROM scm.inventory_movements
          WHERE source_doc_type = 'DO' AND movement_type = 'OUT'
            AND source_doc_id::text = ANY(${doIds}) AND batch_no IS NOT NULL`
     : [];
   const cons = doIds.length
     ? await pg`
-        SELECT c.source_doc_id::text AS do_id, c.product_code, COALESCE(c.variant_key,'') AS vk,
+        SELECT c.source_doc_id::text AS do_id, c.item_code, COALESCE(c.variant_key,'') AS vk,
                c.qty_consumed, l.batch_no, UPPER(COALESCE(l.source_doc_type,'')) AS lot_src,
                l.source_doc_id::text AS lot_src_id, l.id::text AS lot_id,
                l.received_at, l.warehouse_id::text AS lot_wh, l.company_id AS lot_company,
@@ -187,11 +187,11 @@ try {
     return v;
   };
   for (const m of movs) {
-    const v = led(`${m.do_id}::${m.product_code}::${m.vk}`);
+    const v = led(`${m.do_id}::${m.item_code}::${m.vk}`);
     v.pos.add(m.batch_no); v.any = true; v.movPos.add(m.batch_no);
   }
   for (const r of cons) {
-    const v = led(`${r.do_id}::${r.product_code}::${r.vk}`);
+    const v = led(`${r.do_id}::${r.item_code}::${r.vk}`);
     v.any = true;
     const po = r.batch_no ?? r.grn_po ?? null;
     if (po) v.pos.add(po);
@@ -259,20 +259,20 @@ try {
   const openLots = wantedCodes.length
     ? await pg`
         SELECT l.id::text AS id, l.company_id, l.warehouse_id::text AS warehouse_id,
-               l.product_code, COALESCE(l.variant_key,'') AS vk, l.qty_remaining,
+               l.item_code, COALESCE(l.variant_key,'') AS vk, l.qty_remaining,
                l.batch_no, UPPER(COALESCE(l.source_doc_type,'')) AS lot_src,
                p.po_number AS grn_po
           FROM scm.inventory_lots l
           LEFT JOIN scm.grns g ON UPPER(COALESCE(l.source_doc_type,'')) = 'GRN' AND g.id = l.source_doc_id
           LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
-         WHERE l.qty_remaining > 0 AND l.product_code = ANY(${wantedCodes})
+         WHERE l.qty_remaining > 0 AND l.item_code = ANY(${wantedCodes})
          ORDER BY l.received_at ASC, l.id ASC`
     : [];
   // Bucket lots by (company, warehouse, code) — variant matched loosely below,
   // same reasoning as the delivered side.
   const lotsByBucket = new Map();
   for (const l of openLots) {
-    const k = `${Number(l.company_id)}::${l.warehouse_id}::${l.product_code}`;
+    const k = `${Number(l.company_id)}::${l.warehouse_id}::${l.item_code}`;
     const arr = lotsByBucket.get(k) ?? [];
     arr.push(l);
     lotsByBucket.set(k, arr);
@@ -424,12 +424,12 @@ try {
     SELECT delivery_order_id::text AS do_id, item_code, item_group, variants
       FROM scm.delivery_order_items WHERE delivery_order_id::text = ANY(${allDoIds})` : [];
   const allMovs = allDoIds.length ? await pg`
-    SELECT source_doc_id::text AS do_id, product_code, COALESCE(variant_key,'') AS vk, batch_no
+    SELECT source_doc_id::text AS do_id, item_code, COALESCE(variant_key,'') AS vk, batch_no
       FROM scm.inventory_movements
      WHERE source_doc_type = 'DO' AND movement_type = 'OUT'
        AND source_doc_id::text = ANY(${allDoIds}) AND batch_no IS NOT NULL` : [];
   const allCons = allDoIds.length ? await pg`
-    SELECT c.source_doc_id::text AS do_id, c.product_code, COALESCE(c.variant_key,'') AS vk,
+    SELECT c.source_doc_id::text AS do_id, c.item_code, COALESCE(c.variant_key,'') AS vk,
            COALESCE(l.batch_no, p.po_number) AS po, UPPER(COALESCE(l.source_doc_type,'')) AS lot_src
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
@@ -463,8 +463,8 @@ try {
     m.set(k, cur);
     ledgerBucketsByDo.set(doId, m);
   };
-  for (const m of allMovs) bucketAdd(m.do_id, m.product_code, m.vk, m.batch_no, "movement");
-  for (const r of allCons) bucketAdd(r.do_id, r.product_code, r.vk, r.po, "consumption");
+  for (const m of allMovs) bucketAdd(m.do_id, m.item_code, m.vk, m.batch_no, "movement");
+  for (const r of allCons) bucketAdd(r.do_id, r.item_code, r.vk, r.po, "consumption");
   const doNoById2 = new Map(allDos.map((d) => [d.id, d.do_number]));
   const detailWanted = new Set(DETAIL_DOS);
   let orphanDoCount = 0;
@@ -541,7 +541,7 @@ try {
     if (newestConsumed) {
       const older = await pg`
         SELECT COUNT(*)::int AS n FROM scm.inventory_lots
-         WHERE product_code = ${l.item_code} AND qty_remaining > 0
+         WHERE item_code = ${l.item_code} AND qty_remaining > 0
            AND received_at < ${newestConsumed}
            AND company_id = ${Number(soByDoc.get(l.doc_no)?.company_id ?? 0)}`;
       suspect = Number(older[0]?.n ?? 0) > 0;
@@ -560,7 +560,7 @@ try {
   log("");
   log("SECTION 8 — J2: PO lines assigned to >1 SO:");
   const allocLines = await pg`
-    SELECT i.id::text AS line_id, i.qty AS line_qty, i.material_code,
+    SELECT i.id::text AS line_id, i.qty AS line_qty, i.item_code,
            i.so_item_id::text AS stored_so_item, p.po_number, p.company_id,
            COALESCE(SUM(a.qty), 0)::int AS alloc_qty,
            COUNT(a.id)::int AS alloc_n,
@@ -570,7 +570,7 @@ try {
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
       LEFT JOIN scm.purchase_order_item_allocations a ON a.purchase_order_item_id = i.id
      WHERE UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'
-     GROUP BY i.id, i.qty, i.material_code, i.so_item_id, p.po_number, p.company_id
+     GROUP BY i.id, i.qty, i.item_code, i.so_item_id, p.po_number, p.company_id
     HAVING COUNT(a.id) > 0`;
   // SO docs + served state for every allocation-named SO line.
   const allocSoIds = [...new Set(allocLines.flatMap((r) => r.alloc_so_items ?? []).filter(Boolean))];
@@ -586,7 +586,7 @@ try {
       JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
       JOIN scm.inventory_lot_consumptions c
         ON c.source_doc_type = 'DO' AND c.source_doc_id = di.delivery_order_id
-       AND c.product_code = di.item_code
+       AND c.item_code = di.item_code
       JOIN scm.inventory_lots l ON l.id = c.lot_id
       LEFT JOIN scm.grns g ON UPPER(COALESCE(l.source_doc_type,'')) = 'GRN' AND g.id = l.source_doc_id
       LEFT JOIN scm.purchase_orders gp ON gp.id = g.purchase_order_id
@@ -608,7 +608,7 @@ try {
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
        AND EXISTS (SELECT 1 FROM scm.inventory_lot_consumptions c
                     WHERE c.source_doc_type = 'DO' AND c.source_doc_id = di.delivery_order_id
-                      AND c.product_code = di.item_code)
+                      AND c.item_code = di.item_code)
      GROUP BY di.so_item_id` : [];
   const servedQtyBySo = new Map(servedQtyRows.map((r) => [r.so_item_id, Number(r.qty ?? 0)]));
   let j2Legit = 0, j2Conflict = 0, j2Diverged = 0;
@@ -628,14 +628,14 @@ try {
     }
     if (conflicts.length > 0) {
       j2Conflict += 1;
-      log(`  [CONFLICT] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: ${conflicts.join("; ")} — fix: part=fifo-attribute-repair.`);
+      log(`  [CONFLICT] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.item_code}: ${conflicts.join("; ")} — fix: part=fifo-attribute-repair.`);
     } else if (Number(r.alloc_so_n) > 1) {
       j2Legit += 1; // consolidated split — the owner-approved model; counted, not printed
     }
   }
   // Stored so_item_id vs the PO's own delivered chain (PO-level lens).
   const storedVsDelivered = await pg`
-    SELECT p.po_number, p.company_id, i.id::text AS line_id, i.material_code, si.doc_no AS stored_doc
+    SELECT p.po_number, p.company_id, i.id::text AS line_id, i.item_code, si.doc_no AS stored_doc
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
       JOIN scm.mfg_sales_order_items si ON si.id = i.so_item_id
@@ -648,7 +648,7 @@ try {
         FROM scm.inventory_lots l
         JOIN scm.inventory_lot_consumptions c ON c.lot_id = l.id AND c.source_doc_type = 'DO'
         JOIN scm.delivery_order_items di
-          ON di.delivery_order_id = c.source_doc_id AND di.item_code = c.product_code
+          ON di.delivery_order_id = c.source_doc_id AND di.item_code = c.item_code
         JOIN scm.mfg_sales_order_items so_items ON so_items.id = di.so_item_id
        WHERE l.batch_no = ANY(${svdPoNos})`;
     for (const r of rows2) {
@@ -667,7 +667,7 @@ try {
          delivered divergence is EXPECTED on healthy data — informational, and
          it no longer feeds the one-truth verdict. */
       j2Diverged += 1;
-      log(`  [provenance-diverged] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: bought for ${r.stored_doc}, delivered chain served {${[...servedDocs].sort().join(", ")}} — expected under soft-until-DO.`);
+      log(`  [provenance-diverged] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.item_code}: bought for ${r.stored_doc}, delivered chain served {${[...servedDocs].sort().join(", ")}} — expected under soft-until-DO.`);
     }
   }
   log(`  J2 totals: consolidated multi-SO splits (LEGIT, allocation model): ${j2Legit}; allocation-vs-delivered CONFLICTS: ${j2Conflict}; provenance-diverged (informational): ${j2Diverged}.`);

@@ -3,7 +3,7 @@
 // integrity check (owner ruling 2026-08-07: "全部都会有 SKU 的 … 怎么可以走后门呢?").
 //
 // THE SHAPE THIS HUNTS (proven on 2990-SO-2608-006): an SO whose SVC-DELIVERY*
-// lines are gone (deleted or cancelled) while the header delivery_fee_centi
+// lines are gone (deleted or cancelled) while the header delivery_fee_sen
 // dual-write snapshot survived. recomputeTotals' legacy line-less fallback then
 // folds that orphaned snapshot into the total, so the SO reads subtotal RM0 /
 // total RM250 with NO line carrying the 250 — money in the total that no line
@@ -57,10 +57,10 @@ try {
            so.company_id,
            so.status,
            so.created_at,
-           COALESCE(so.local_total_centi, 0) AS local_total_centi,
+           COALESCE(so.local_total_sen, 0) AS local_total_sen,
            COALESCE(l.line_sum, 0)        AS line_sum,
-           COALESCE(so.local_total_centi, 0) - COALESCE(l.line_sum, 0) AS diff_centi,
-           COALESCE(so.delivery_fee_centi, 0) AS header_fee_centi,
+           COALESCE(so.local_total_sen, 0) - COALESCE(l.line_sum, 0) AS diff_sen,
+           COALESCE(so.delivery_fee_sen, 0) AS header_fee_sen,
            COALESCE(l.fee_line_count, 0)  AS fee_line_count,
            COALESCE(l.fee_line_sum, 0)    AS fee_line_sum,
            a.create_source,
@@ -69,8 +69,8 @@ try {
            a.fee_line_audit
       FROM scm.mfg_sales_orders so
       LEFT JOIN LATERAL (
-        SELECT SUM(i.total_centi) FILTER (WHERE NOT i.cancelled)                                          AS line_sum,
-               SUM(i.total_centi) FILTER (WHERE NOT i.cancelled AND i.item_code LIKE 'SVC-DELIVERY%')      AS fee_line_sum,
+        SELECT SUM(i.total_sen) FILTER (WHERE NOT i.cancelled)                                          AS line_sum,
+               SUM(i.total_sen) FILTER (WHERE NOT i.cancelled AND i.item_code LIKE 'SVC-DELIVERY%')      AS fee_line_sum,
                COUNT(*)          FILTER (WHERE NOT i.cancelled AND i.item_code LIKE 'SVC-DELIVERY%')      AS fee_line_count
           FROM scm.mfg_sales_order_items i
          WHERE i.doc_no = so.doc_no
@@ -93,7 +93,7 @@ try {
          WHERE g.so_doc_no = so.doc_no
       ) a ON true
      WHERE so.status <> 'CANCELLED'
-       AND COALESCE(so.local_total_centi, 0) <> COALESCE(l.line_sum, 0)
+       AND COALESCE(so.local_total_sen, 0) <> COALESCE(l.line_sum, 0)
      ORDER BY so.created_at DESC`;
 
   if (rows.length === 0) {
@@ -102,8 +102,8 @@ try {
     let repairable = 0;
     let other = 0;
     for (const r of rows) {
-      const diff = Number(r.diff_centi);
-      const headerFee = Number(r.header_fee_centi);
+      const diff = Number(r.diff_sen);
+      const headerFee = Number(r.header_fee_sen);
       const feeLines = Number(r.fee_line_count);
       /* Repairable = exactly the 006 shape: the WHOLE gap is the orphaned
          header delivery fee and no live SVC-DELIVERY* line exists. Anything
@@ -113,8 +113,8 @@ try {
 
       console.log("=".repeat(76));
       console.log(`${r.doc_no}  [${r.status}]  company ${r.company_id}  created ${r.created_at ? new Date(r.created_at).toISOString().slice(0, 10) : "?"}`);
-      console.log(`  header total ${rm(r.local_total_centi)}  vs  Σ(lines) ${rm(r.line_sum)}  →  diff ${rm(diff)}`);
-      console.log(`  header delivery_fee_centi ${rm(headerFee)} · live SVC-DELIVERY* lines: ${feeLines} (Σ ${rm(r.fee_line_sum)})`);
+      console.log(`  header total ${rm(r.local_total_sen)}  vs  Σ(lines) ${rm(r.line_sum)}  →  diff ${rm(diff)}`);
+      console.log(`  header delivery_fee_sen ${rm(headerFee)} · live SVC-DELIVERY* lines: ${feeLines} (Σ ${rm(r.fee_line_sum)})`);
       console.log(`  created via: source=${r.create_source ?? "(no CREATE audit)"} status=${r.create_status ?? "?"} actor=${r.create_actor ?? "?"}`);
       const audit = r.fee_line_audit;
       if (Array.isArray(audit) && audit.length > 0) {

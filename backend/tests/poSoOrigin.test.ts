@@ -103,7 +103,7 @@ describe("buildStoredOrigins (linkage B — the PO's stored raise-link origin, S
 // ─────────────────────────────────────────────────────────────────────────────
 describe("effectiveStoredLinks (allocations ∪ so_item_id, allocations win per line)", () => {
   const line = (id: string, code: string, so: string | null) =>
-    ({ id, material_code: code, so_item_id: so });
+    ({ id, item_code: code, so_item_id: so });
 
   test("a line with NO allocations keeps its single so_item_id (the 1:1 fast path)", () => {
     const eff = effectiveStoredLinks([line("L1", "BF-15", "so-1")], new Map());

@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
-import { fmtCenti } from '@2990s/shared';
+import { fmtSen } from '@2990s/shared';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
@@ -96,7 +96,7 @@ const RateField = ({
 };
 
 /** A money threshold held as integer sen, edited as ringgit. */
-const CentiField = ({
+const SenField = ({
   label, centi, editable, onChange,
 }: { label: string; centi: number; editable: boolean; onChange: (centi: number) => void }) => {
   const [text, setText] = useState((centi / 100).toString());
@@ -125,7 +125,7 @@ const CentiField = ({
   );
 };
 
-/* The in-table twin of RateField/CentiField: an integer minor unit (sen or bps)
+/* The in-table twin of RateField/SenField: an integer minor unit (sen or bps)
    edited as its major one, with the same blank guard. Read-only mode prints the
    value rather than showing a disabled box, because a table of greyed inputs
    reads as broken. `render` formats the committed value; `scale` is what one
@@ -165,7 +165,7 @@ const MinorUnitCell = ({
 };
 
 type ProfileDraft = { tier?: HrTier; showroomId?: string; active?: boolean };
-type ItemKpiDraft = { label?: string; bonusCenti?: number; active?: boolean };
+type ItemKpiDraft = { label?: string; bonusSen?: number; active?: boolean };
 type LevelDraft = { rateBps?: number; label?: string; active?: boolean };
 
 export const HrSettings = () => {
@@ -315,7 +315,7 @@ export const HrSettings = () => {
 
   const addItemKpi = async () => {
     if (!canAddItemKpi || bonusError !== null) return;
-    const bonusCenti = Math.round(Number(flagBonus) * 100);
+    const bonusSen = Math.round(Number(flagBonus) * 100);
     const chosen = flagRefs.map((ref) => ({
       ref,
       // The label is what the owner reads back on the row. A ref with no picker
@@ -330,7 +330,7 @@ export const HrSettings = () => {
       const ok = await askConfirm({
         title: `Add ${chosen.length} separate ${flagType} rules?`,
         body:
-          `Each of these gets its OWN rule paying ${fmtCenti(bonusCenti)} per unit, and each can be ` +
+          `Each of these gets its OWN rule paying ${fmtSen(bonusSen)} per unit, and each can be ` +
           `edited or removed on its own afterwards:\n\n` +
           chosen.map((c) => `  • ${c.label}`).join('\n') +
           `\n\nThis is not one rule covering all ${chosen.length}. An item is paid by whichever single ` +
@@ -347,7 +347,7 @@ export const HrSettings = () => {
     const added: string[] = [];
     for (const c of chosen) {
       try {
-        await createItemKpi.mutateAsync({ flagType, ref: c.ref, label: c.label, bonusCenti });
+        await createItemKpi.mutateAsync({ flagType, ref: c.ref, label: c.label, bonusSen });
         added.push(c.label);
       } catch (e) {
         // Everything from the one that failed onwards is still unsaved.
@@ -598,11 +598,11 @@ export const HrSettings = () => {
               bps={cfgDraft.personalKpiBonusBps ?? cfg.personalKpiBonusBps}
               onChange={(v) => stageCfg({ personalKpiBonusBps: v })}
             />
-            <CentiField
+            <SenField
               label="Personal threshold RM"
               editable={editMode}
-              centi={cfgDraft.personalKpiThresholdCenti ?? cfg.personalKpiThresholdCenti}
-              onChange={(v) => stageCfg({ personalKpiThresholdCenti: v })}
+              centi={cfgDraft.personalKpiThresholdSen ?? cfg.personalKpiThresholdSen}
+              onChange={(v) => stageCfg({ personalKpiThresholdSen: v })}
             />
             <RateField
               label="Showroom KPI +%"
@@ -610,11 +610,11 @@ export const HrSettings = () => {
               bps={cfgDraft.showroomKpiBonusBps ?? cfg.showroomKpiBonusBps}
               onChange={(v) => stageCfg({ showroomKpiBonusBps: v })}
             />
-            <CentiField
+            <SenField
               label="Showroom threshold RM"
               editable={editMode}
-              centi={cfgDraft.showroomKpiThresholdCenti ?? cfg.showroomKpiThresholdCenti}
-              onChange={(v) => stageCfg({ showroomKpiThresholdCenti: v })}
+              centi={cfgDraft.showroomKpiThresholdSen ?? cfg.showroomKpiThresholdSen}
+              onChange={(v) => stageCfg({ showroomKpiThresholdSen: v })}
             />
             <RateField
               label="Override base %"
@@ -682,11 +682,11 @@ export const HrSettings = () => {
                   <td className="px-2 py-2 text-ink">{it.label || it.ref}</td>
                   <td className="px-2 py-2 text-right">
                     <MinorUnitCell
-                      value={itemDraft[it.id]?.bonusCenti ?? it.bonusCenti}
+                      value={itemDraft[it.id]?.bonusSen ?? it.bonusSen}
                       editable={editMode}
                       scale={100}
-                      render={fmtCenti}
-                      onChange={(v) => stageItem(it.id, { bonusCenti: v })}
+                      render={fmtSen}
+                      onChange={(v) => stageItem(it.id, { bonusSen: v })}
                     />
                   </td>
                   <td className="px-2 py-2 text-ink-secondary">

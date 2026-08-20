@@ -17,7 +17,7 @@
      `active_not_pos` below is the population both rules hit.
 
    RULE 2 — the selling price auto-fills from the POS master, and a 0 does not
-   stand. The UI seeds `unitPriceCenti: p.sell_price_sen ?? 0` on pick, and the
+   stand. The UI seeds `unitPriceSen: p.sell_price_sen ?? 0` on pick, and the
    server (lib/mfg-pricing-recompute.ts) treats a submitted 0 as "not provided"
    and writes the catalogue figure over it. `active_pos_unpriced` is the set
    where that seed is RM 0 to begin with — the case the SoLineCard comment says
@@ -81,7 +81,7 @@ async function main() {
   const [lines] = await sql`
     SELECT
       count(*)::int AS live_lines,
-      count(*) FILTER (WHERE COALESCE(i.unit_price_centi, 0) = 0)::int AS zero_priced_live_lines
+      count(*) FILTER (WHERE COALESCE(i.unit_price_sen, 0) = 0)::int AS zero_priced_live_lines
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no
     WHERE o.company_id = ${CO}

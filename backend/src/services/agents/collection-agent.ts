@@ -29,7 +29,7 @@
 //     collection_agent_proposals + collection_agent_briefs (public schema).
 //   - Deterministic — no LLM calls. ai_focus over the brief is the lead's
 //     shared-brain pass, on top of this engine's JSON, never inside it.
-//   - Money is integer sen end-to-end (scm columns are *_centi = sen; the
+//   - Money is integer sen end-to-end (scm columns are *_sen = sen; the
 //     engine's payloads/brief expose them as *Sen).
 //
 // DB handle = env.DB (the d1-compat shim over postgres.js). scm tables are
@@ -109,7 +109,7 @@ async function chaseThresholdDays(db: D1Database): Promise<number> {
 // sales_invoice_status: DRAFT SENT PARTIALLY_PAID PAID OVERDUE CANCELLED.
 // DRAFT excluded (no AR posted), PAID/CANCELLED have nothing to collect —
 // the same leak-guard the Document Agent's UNPAID_SI detector uses. Outstanding
-// = total_centi - paid_centi (paid_centi is the header stamp the SI payment
+// = total_sen - paid_sen (paid_sen is the header stamp the SI payment
 // routes maintain).
 
 interface UnpaidInvoice {
@@ -135,10 +135,10 @@ async function loadUnpaidInvoices(
   const res = await db
     .prepare(
       `SELECT si.id, si.invoice_number, si.status, si.debtor_name,
-              si.invoice_date, si.due_date, si.total_centi, si.paid_centi
+              si.invoice_date, si.due_date, si.total_sen, si.paid_sen
          FROM scm.sales_invoices si
         WHERE si.status IN ('SENT', 'PARTIALLY_PAID', 'OVERDUE')
-          AND (si.total_centi - si.paid_centi) > 0
+          AND (si.total_sen - si.paid_sen) > 0
           AND si.invoice_date::timestamptz <= ?
         ORDER BY si.invoice_date ASC`,
     )
@@ -146,8 +146,8 @@ async function loadUnpaidInvoices(
     .all<Row>();
   return (res.results ?? []).map((r): UnpaidInvoice => {
     const age = daysSince(col(r, "invoiceDate", "invoice_date"), nowMs);
-    const totalSen = num(col(r, "totalCenti", "total_centi"));
-    const paidSen = num(col(r, "paidCenti", "paid_centi"));
+    const totalSen = num(col(r, "totalSen", "total_sen"));
+    const paidSen = num(col(r, "paidSen", "paid_sen"));
     return {
       siId: str(r.id),
       invoiceNo: str(col(r, "invoiceNumber", "invoice_number")) || null,
@@ -437,10 +437,10 @@ export async function collectionAgentStatus(env: Env): Promise<CollectionAgentSt
   try {
     const r = await db
       .prepare(
-        `SELECT COALESCE(SUM(si.total_centi - si.paid_centi), 0) AS out
+        `SELECT COALESCE(SUM(si.total_sen - si.paid_sen), 0) AS out
            FROM scm.sales_invoices si
           WHERE si.status IN ('SENT', 'PARTIALLY_PAID', 'OVERDUE')
-            AND (si.total_centi - si.paid_centi) > 0`,
+            AND (si.total_sen - si.paid_sen) > 0`,
       )
       .first<Row>();
     totalOutstandingSen = num(col(r ?? {}, "out", "out"));

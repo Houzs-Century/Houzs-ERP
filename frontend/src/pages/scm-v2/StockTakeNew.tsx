@@ -97,7 +97,7 @@ export const StockTakeNew = () => {
     if (scopeType === 'CODE_PREFIX') {
       const p = scopeValue.trim().toUpperCase();
       if (!p) return list.length;
-      return list.filter((b) => b.product_code.toUpperCase().startsWith(p)).length;
+      return list.filter((b) => b.item_code.toUpperCase().startsWith(p)).length;
     }
     /* NONZERO (phase 1): same approximation the other scopes use — the server
        resolves per-variant buckets; here we count SKUs whose balance ≠ 0 so

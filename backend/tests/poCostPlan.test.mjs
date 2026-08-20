@@ -35,7 +35,7 @@ const CODE_MAP = new Map([
 
 const acLine = (o) => ({ PoNo: "PO-009826", PoDtlKey: null, ItemCode: "X", Qty: 1, TransferedQty: 0, Desc2: null, ...o });
 const erpRow = (o) => ({
-  id: "row-1", material_code: "X", supplier_sku: null, description2: null,
+  id: "row-1", item_code: "X", supplier_sku: null, description2: null,
   qty: 1, received_qty: 0, linked_ac_dtlkey: null,
   ac_doc: "PO-009826", po_number: "PO-2606-001", ...o,
 });
@@ -53,8 +53,8 @@ const divanBook = book({
   history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2, UnitPrice: 470 }],
 });
 const divanRows = [
-  erpRow({ id: "erp-q", material_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, qty: 3 }),
-  erpRow({ id: "erp-k", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2, qty: 1 }),
+  erpRow({ id: "erp-q", item_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, qty: 3 }),
+  erpRow({ id: "erp-k", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2, qty: 1 }),
 ];
 
 test("the king's price does not land on the queen sharing its Desc2", () => {
@@ -76,8 +76,8 @@ test("the ELEGANT super-single price does not land on the queen either", () => {
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-2041 (A) (SS)", Desc2: D2, UnitPrice: 641.5 }],
   });
   const rows = [
-    erpRow({ id: "erp-q", ac_doc: "PO-009802", material_code: "ELEGANT (A)-(Q)", supplier_sku: "HOK-2041 (A) (Q)", description2: D2 }),
-    erpRow({ id: "erp-ss", ac_doc: "PO-009802", material_code: "ELEGANT (A)-(SS)", supplier_sku: "HOK-2041 (A) (SS)", description2: D2 }),
+    erpRow({ id: "erp-q", ac_doc: "PO-009802", item_code: "ELEGANT (A)-(Q)", supplier_sku: "HOK-2041 (A) (Q)", description2: D2 }),
+    erpRow({ id: "erp-ss", ac_doc: "PO-009802", item_code: "ELEGANT (A)-(SS)", supplier_sku: "HOK-2041 (A) (SS)", description2: D2 }),
   ];
   const { plan, skipped } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.deepEqual(plan.map((p) => p.id), ["erp-ss"]);
@@ -98,7 +98,7 @@ test("plan and skipped together account for every ERP row exactly once", () => {
 test("one ERP row wanted at two different prices is refused, not resolved", () => {
   /* Reachable because the mapping CSV is many-to-one: AERO-DIVAN ONLY (K) and
      HOK-DIVAN ONLY (K) both map to ERP DIVAN ONLY-(K). So one ERP row can be
-     claimed by its supplier_sku (the HOK line) and by its material_code (the
+     claimed by its supplier_sku (the HOK line) and by its item_code (the
      AERO line), at two different prices. Whichever arrived last used to win. */
   const D2 = "Col:AB1";
   const b = book({
@@ -111,7 +111,7 @@ test("one ERP row wanted at two different prices is refused, not resolved", () =
       { DocDate: "2026-02-01", ItemCode: "AERO-DIVAN ONLY (K)", Desc2: D2, UnitPrice: 900 },
     ],
   });
-  const rows = [erpRow({ id: "erp-1", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: D2 })];
+  const rows = [erpRow({ id: "erp-1", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: D2 })];
   const map = new Map([["HOK-DIVAN ONLY (K)", "DIVAN ONLY-(K)"], ["AERO-DIVAN ONLY (K)", "DIVAN ONLY-(K)"]]);
   const out = planStamps({ book: b, erpRows: rows, codeMap: map });
   assert.equal(out.plan.length, 0, "a contested row must not be written");
@@ -131,7 +131,7 @@ test("the same price proposed by two routes is one agreed write, not a refusal",
       { DocDate: "2026-02-01", ItemCode: "AERO-DIVAN ONLY (K)", Desc2: D2, UnitPrice: 470 },
     ],
   });
-  const rows = [erpRow({ id: "erp-1", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: D2 })];
+  const rows = [erpRow({ id: "erp-1", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: D2 })];
   const map = new Map([["HOK-DIVAN ONLY (K)", "DIVAN ONLY-(K)"], ["AERO-DIVAN ONLY (K)", "DIVAN ONLY-(K)"]]);
   const { plan, skipped } = planStamps({ book: b, erpRows: rows, codeMap: map });
   assert.equal(plan.length, 1);
@@ -148,7 +148,7 @@ test("the same price proposed twice is one write, not two", () => {
     poLines: [acLine({ PoDtlKey: 1, ItemCode: "HOK-7", Desc2: D2 }), acLine({ PoDtlKey: 2, ItemCode: "HOK-7", Desc2: D2 })],
     history: [{ DocDate: "2026-01-01", ItemCode: "HOK-7", Desc2: D2, UnitPrice: 250 }],
   });
-  const rows = [erpRow({ id: "erp-1", material_code: "HOK-7", supplier_sku: "HOK-7", description2: D2 })];
+  const rows = [erpRow({ id: "erp-1", item_code: "HOK-7", supplier_sku: "HOK-7", description2: D2 })];
   const { plan } = planStamps({ book: b, erpRows: rows, codeMap: new Map() });
   assert.equal(plan.length, 1);
   assert.equal(plan[0].centi, 25000);
@@ -160,7 +160,7 @@ test("a DtlKey is a 1:1 match and beats the signature", () => {
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2, UnitPrice: 470 }],
   });
   // Desc2 deliberately does NOT match; the key alone must carry it.
-  const rows = [erpRow({ id: "erp-k", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: "something else entirely", linked_ac_dtlkey: 892694 })];
+  const rows = [erpRow({ id: "erp-k", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: "something else entirely", linked_ac_dtlkey: 892694 })];
   const { plan, stats } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 1);
   assert.equal(plan[0].route, "dtlkey");
@@ -172,7 +172,7 @@ test("a DtlKey pointing at a different item code is refused, never followed", ()
     poLines: [acLine({ PoDtlKey: 892694, ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2 })],
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2, UnitPrice: 470 }],
   });
-  const rows = [erpRow({ id: "erp-q", material_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, linked_ac_dtlkey: 892694 })];
+  const rows = [erpRow({ id: "erp-q", item_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, linked_ac_dtlkey: 892694 })];
   const { plan, skipped } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 0);
   assert.equal(skipped[0].reason, SKIP.CODE_MISMATCH);
@@ -193,7 +193,7 @@ test("a broken DtlKey vetoes the row — no other route may rescue it", () => {
   });
   // erp-q carries the KING's DtlKey (a broken backfill) but its own supplier_sku
   // would otherwise match the queen line at RM325.
-  const rows = [erpRow({ id: "erp-q", material_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, linked_ac_dtlkey: 892694 })];
+  const rows = [erpRow({ id: "erp-q", item_code: "DIVAN ONLY-(Q)", supplier_sku: "HOK-DIVAN ONLY (Q)", description2: DIVAN_D2, linked_ac_dtlkey: 892694 })];
   const { plan, skipped } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 0);
   assert.equal(skipped[0].reason, SKIP.CODE_MISMATCH);
@@ -206,7 +206,7 @@ test("supplier_sku carries a minted sofa SKU the mapping CSV cannot reach", () =
     history: [{ DocDate: "2026-01-01", ItemCode: "DSL-8051 SOFA", Desc2: D2, UnitPrice: 1800 }],
   });
   // No CSV entry for this code; the ERP row was minted as SOFA-8051-BO315-31.
-  const rows = [erpRow({ id: "erp-s", material_code: "SOFA-8051-BO315-31", supplier_sku: "DSL-8051 SOFA", description2: D2 })];
+  const rows = [erpRow({ id: "erp-s", item_code: "SOFA-8051-BO315-31", supplier_sku: "DSL-8051 SOFA", description2: D2 })];
   const { plan, stats } = planStamps({ book: b, erpRows: rows, codeMap: new Map() });
   assert.equal(plan.length, 1);
   assert.equal(plan[0].route, "supplier_sku+desc2");
@@ -214,7 +214,7 @@ test("supplier_sku carries a minted sofa SKU the mapping CSV cannot reach", () =
 });
 
 test("an ERP row no AutoCount line reaches keeps its zero and is reported", () => {
-  const rows = [erpRow({ id: "erp-orphan", material_code: "DIVAN ONLY-(S)", supplier_sku: "HOK-DIVAN ONLY (S)", description2: "Col:NOPE" })];
+  const rows = [erpRow({ id: "erp-orphan", item_code: "DIVAN ONLY-(S)", supplier_sku: "HOK-DIVAN ONLY (S)", description2: "Col:NOPE" })];
   const { plan, skipped } = planStamps({ book: divanBook, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 0);
   assert.equal(skipped[0].reason, SKIP.NO_AC_LINE);
@@ -225,7 +225,7 @@ test("a closed AutoCount line is not a source of price for anything", () => {
     poLines: [acLine({ ItemCode: "HOK-DIVAN ONLY (K)", Qty: 1, TransferedQty: 1, Desc2: DIVAN_D2 })],
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2, UnitPrice: 470 }],
   });
-  const rows = [erpRow({ id: "erp-k", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2 })];
+  const rows = [erpRow({ id: "erp-k", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2 })];
   const { plan, skipped } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 0);
   assert.equal(skipped[0].reason, SKIP.NO_AC_LINE);
@@ -236,7 +236,7 @@ test("the Desc2 signature still folds curly quotes and doubled apostrophes", () 
     poLines: [acLine({ ItemCode: "HOK-DIVAN ONLY (K)", Desc2: "Divan:10''+No Leg/Col:PC151-01" })],
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: "Divan:10”+No  Leg/Col:PC151-01", UnitPrice: 470 }],
   });
-  const rows = [erpRow({ id: "erp-k", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: "divan:10” + no leg / col:pc151-01" })];
+  const rows = [erpRow({ id: "erp-k", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: "divan:10” + no leg / col:pc151-01" })];
   const { plan } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan.length, 1, "the same physical build keyed by two typists must still match");
   assert.equal(plan[0].centi, 47000);
@@ -293,7 +293,7 @@ test("qty on the plan is the OPEN quantity, so the reported value is the exposur
     poLines: [acLine({ ItemCode: "HOK-DIVAN ONLY (K)", Qty: 5, TransferedQty: 2, Desc2: DIVAN_D2 })],
     history: [{ DocDate: "2026-05-01", ItemCode: "HOK-DIVAN ONLY (K)", Desc2: DIVAN_D2, UnitPrice: 470 }],
   });
-  const rows = [erpRow({ id: "erp-k", material_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2, qty: 5, received_qty: 2 })];
+  const rows = [erpRow({ id: "erp-k", item_code: "DIVAN ONLY-(K)", supplier_sku: "HOK-DIVAN ONLY (K)", description2: DIVAN_D2, qty: 5, received_qty: 2 })];
   const { plan } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan[0].qty, 3);
 });

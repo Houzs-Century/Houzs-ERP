@@ -57,7 +57,7 @@ async function returnAtCostMigrationSql(): Promise<string> {
       `expected exactly one *_scm_return_do_units_at_cost.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 const WH = '11111111-1111-1111-1111-111111111111';
@@ -86,7 +86,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       movement_type text,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text DEFAULT '' NOT NULL,
       product_name text,
       qty integer,
@@ -107,7 +107,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       movement_id uuid,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text DEFAULT '' NOT NULL,
       qty_received integer NOT NULL,
       qty_remaining integer NOT NULL,
@@ -120,7 +120,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       lot_id uuid,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text DEFAULT '' NOT NULL,
       qty_consumed integer NOT NULL,
       unit_cost_sen bigint,
@@ -137,7 +137,7 @@ async function resetFixture(sql: Sql): Promise<void> {
     -- The production idempotency backstop (0279). Present so the balancing IN
     -- has to carry a correct correction_seq rather than passing by its absence.
     CREATE UNIQUE INDEX uq_inv_mov_do_source_v2 ON scm.inventory_movements
-      USING btree (source_doc_type, source_doc_id, product_code, variant_key, COALESCE(correction_seq, 0))
+      USING btree (source_doc_type, source_doc_id, item_code, variant_key, COALESCE(correction_seq, 0))
       WHERE (source_doc_type = 'DO'::text);
   `);
 }
@@ -148,18 +148,18 @@ async function resetFixture(sql: Sql): Promise<void> {
 async function shipTenWithFourUncosted(sql: Sql): Promise<{ outId: string; lotA: string; lotB: string }> {
   const [out] = await sql<{ id: string }[]>`
     INSERT INTO scm.inventory_movements
-      (movement_type, warehouse_id, product_code, variant_key, product_name, qty,
+      (movement_type, warehouse_id, item_code, variant_key, product_name, qty,
        source_doc_type, source_doc_id, source_doc_no, total_cost_sen, unit_cost_sen)
     VALUES ('OUT', ${WH}, ${CODE}, '', 'Trion King', 10,
             'DO', ${DO_ID}, 'DO-2608-001', ${2 * 100 + 4 * 250}, ${Math.round((2 * 100 + 4 * 250) / 10)})
     RETURNING id
   `;
   const [a] = await sql<{ id: string }[]>`
-    INSERT INTO scm.inventory_lots (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen)
+    INSERT INTO scm.inventory_lots (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen)
     VALUES (${WH}, ${CODE}, '', 2, 0, 100) RETURNING id
   `;
   const [b] = await sql<{ id: string }[]>`
-    INSERT INTO scm.inventory_lots (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen)
+    INSERT INTO scm.inventory_lots (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen)
     VALUES (${WH}, ${CODE}, '', 4, 0, 250) RETURNING id
   `;
   // Consumed oldest-first at ship time: lot A, then lot B. created_at ordering is
@@ -167,7 +167,7 @@ async function shipTenWithFourUncosted(sql: Sql): Promise<{ outId: string; lotA:
   // insert order resolving to the same microsecond.
   await sql`
     INSERT INTO scm.inventory_lot_consumptions
-      (lot_id, warehouse_id, product_code, variant_key, qty_consumed, unit_cost_sen, total_cost_sen,
+      (lot_id, warehouse_id, item_code, variant_key, qty_consumed, unit_cost_sen, total_cost_sen,
        source_doc_type, source_doc_id, source_doc_no, movement_id, created_by, created_at)
     VALUES (${a!.id}, ${WH}, ${CODE}, '', 2, 100, 200,
             'DO', ${DO_ID}, 'DO-2608-001', ${out!.id}, ${USER}, now() - interval '2 minutes'),
@@ -315,7 +315,7 @@ describePg('fn_return_do_units_at_cost — a shipped-line reduction returns stoc
     // A wholly-uncosted ship: OUT exists, nothing was ever costed against it.
     await admin`
       INSERT INTO scm.inventory_movements
-        (movement_type, warehouse_id, product_code, variant_key, qty, source_doc_type, source_doc_id, source_doc_no)
+        (movement_type, warehouse_id, item_code, variant_key, qty, source_doc_type, source_doc_id, source_doc_no)
       VALUES ('OUT', ${WH}, ${CODE}, '', 3, 'DO', ${DO_ID}, 'DO-2608-002')
     `;
     const r = await callReturn(admin, 3, 1);

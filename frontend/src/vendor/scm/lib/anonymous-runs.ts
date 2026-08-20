@@ -46,7 +46,7 @@ export type AnonymousRun = {
   runNo: number;
   stops: AnonymousRunStop[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   overCapacity: boolean;
   windowViolations: number;
   returnTime: string | null;
@@ -99,7 +99,7 @@ export function foldToAnonymousRuns(trips: AssignedTrip[]): AnonymousRun[] {
       runNo,
       stops,
       sets: t.sets,
-      revenueCenti: t.revenueCenti,
+      revenueSen: t.revenueSen,
       overCapacity: t.overCeiling,
       windowViolations: seq?.windowViolations ?? 0,
       returnTime: seq?.returnTime ?? null,

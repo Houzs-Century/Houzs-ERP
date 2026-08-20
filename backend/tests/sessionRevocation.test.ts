@@ -230,42 +230,12 @@ describe("authoritative session revocation with a warm hydration cache", () => {
     expect(after?.department_name).toBe(renamedDepartment);
   });
 
-  test("user and manager brand changes replace cached project scope next request", async () => {
-    await env.DB.prepare(`UPDATE roles SET scope_to_pic = 1 WHERE id = ?`)
-      .bind(roleId)
-      .run();
-    const manager = await env.DB.prepare(
-      `INSERT INTO users (email, name, password_hash, role_id, status, joined_at)
-       VALUES (?, 'Scope Manager', 'unused', ?, 'active', datetime('now'))`,
-    )
-      .bind(`manager-${crypto.randomUUID()}@test.local`, roleId)
-      .run();
-    managerUserId = Number(manager.meta.last_row_id);
-    await env.DB.prepare(`UPDATE users SET manager_id = ? WHERE id = ?`)
-      .bind(managerUserId, userId)
-      .run();
-    await env.DB.prepare(
-      `INSERT INTO user_brands (user_id, brand) VALUES (?, 'SELF-A'), (?, 'MANAGER-A')`,
-    )
-      .bind(userId, managerUserId)
-      .run();
-
-    const before = await warmHydratedCache();
-    expect(before.brand_scope).toEqual(expect.arrayContaining(["SELF-A", "MANAGER-A"]));
-
-    await env.DB.prepare(`DELETE FROM user_brands WHERE user_id IN (?, ?)`)
-      .bind(userId, managerUserId)
-      .run();
-    await env.DB.prepare(
-      `INSERT INTO user_brands (user_id, brand) VALUES (?, 'SELF-B'), (?, 'MANAGER-B')`,
-    )
-      .bind(userId, managerUserId)
-      .run();
-
-    const after = await getUserBySession(env as unknown as Env, token);
-    expect(after?.brand_scope).toEqual(expect.arrayContaining(["SELF-B", "MANAGER-B"]));
-    expect(after?.brand_scope).not.toEqual(expect.arrayContaining(["SELF-A", "MANAGER-A"]));
-  });
+  // NOTE: the "user and manager brand changes replace cached project scope"
+  // test was removed 2026-08-19 with the PIC/brand project ACL. brand_scope is
+  // no longer hydrated from user_brands (auth.ts now sets it to null), so there
+  // is nothing to re-resolve here. The session-cache invalidation mechanism it
+  // exercised is still covered by the position/department and mail-identity
+  // tests around it.
 
   test("email, name, and email alias changes replace the cached mail identity next request", async () => {
     const oldAlias = `old-${crypto.randomUUID()}@test.local`;

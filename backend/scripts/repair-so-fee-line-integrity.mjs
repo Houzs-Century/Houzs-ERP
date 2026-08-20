@@ -4,7 +4,7 @@
 //
 // THE SHAPE (proven on 2990-SO-2608-006; owner ruling 2026-08-07: every ringgit
 // on a Sales Order is a LINE — "怎么可以走后门呢?"): an SO whose SVC-DELIVERY*
-// lines are gone while the header delivery_fee_centi dual-write snapshot
+// lines are gone while the header delivery_fee_sen dual-write snapshot
 // survived. recomputeTotals' legacy line-less fallback folds that snapshot into
 // the total, so the SO reads subtotal RM0 / total RM250 with NO line carrying
 // the 250. The fix PR closes the live path; this repair heals the rows already
@@ -12,8 +12,8 @@
 //
 // THE REPAIR, per SO — total is NEVER changed, only ITEMISED:
 //   1. re-verify the shape inside the transaction (never from a plan):
-//      non-cancelled SO, delivery_fee_centi > 0, ZERO non-cancelled
-//      SVC-DELIVERY* lines, and (header total − Σ lines) == delivery_fee_centi
+//      non-cancelled SO, delivery_fee_sen > 0, ZERO non-cancelled
+//      SVC-DELIVERY* lines, and (header total − Σ lines) == delivery_fee_sen
 //      EXACTLY — the whole gap is the orphaned fee, nothing else;
 //   2. call scm.rebuild_mfg_so_delivery_lines (migration 0214) — the SAME
 //      atomic RPC every live derivation uses (advisory per-doc lock,
@@ -28,7 +28,7 @@
 //      follow-up link is never dropped — and when one exists the line is
 //      SVC-DELIVERY-CROSS with the follow-up remark, exactly as
 //      buildDeliveryFeeServiceLines would emit it.
-//   3. re-roll the two header columns the new line moves (service_centi,
+//   3. re-roll the two header columns the new line moves (service_sen,
 //      line_count) and VERIFY: new Σ(lines) == header total (unchanged), and
 //      exactly one live SVC-DELIVERY* line equal to the header fee;
 //   4. write one mfg_so_audit_log ADD_LINE row (source 'repair') so the SO's
@@ -98,13 +98,13 @@ export function buildFeeLineRow({
   venue,
   customerDeliveryDate,
   crossCategorySourceDocNo,
-  feeCenti,
+  feeSen,
   keptMaxLineNo,
   lineDate,
 }) {
-  const fee = Number(feeCenti);
+  const fee = Number(feeSen);
   if (!Number.isFinite(fee) || fee <= 0) {
-    throw new Error(`buildFeeLineRow: fee must be a positive finite number, got ${feeCenti}`);
+    throw new Error(`buildFeeLineRow: fee must be a positive finite number, got ${feeSen}`);
   }
   const src = crossCategorySourceDocNo ?? null;
   const isCross = !!src;
@@ -121,15 +121,15 @@ export function buildFeeLineRow({
     remark: isCross ? `Follow-up of ${src}` : null,
     uom: "UNIT",
     qty: 1,
-    unit_price_centi: fee,
-    discount_centi: 0,
-    total_centi: fee,
-    total_inc_centi: fee,
-    balance_centi: fee,
+    unit_price_sen: fee,
+    discount_sen: 0,
+    total_sen: fee,
+    total_inc_sen: fee,
+    balance_sen: fee,
     variants: null,
-    unit_cost_centi: 0,
-    line_cost_centi: 0,
-    line_margin_centi: fee,
+    unit_cost_sen: 0,
+    line_cost_sen: 0,
+    line_margin_sen: fee,
     divan_price_sen: 0,
     leg_price_sen: 0,
     special_order_price_sen: 0,
@@ -186,15 +186,15 @@ async function main() {
       SELECT so.doc_no
         FROM scm.mfg_sales_orders so
         LEFT JOIN LATERAL (
-          SELECT SUM(i.total_centi) FILTER (WHERE NOT i.cancelled)                                     AS line_sum,
+          SELECT SUM(i.total_sen) FILTER (WHERE NOT i.cancelled)                                     AS line_sum,
                  COUNT(*)          FILTER (WHERE NOT i.cancelled AND i.item_code LIKE 'SVC-DELIVERY%') AS fee_line_count
             FROM scm.mfg_sales_order_items i
            WHERE i.doc_no = so.doc_no
         ) l ON true
        WHERE so.status <> 'CANCELLED'
-         AND COALESCE(so.delivery_fee_centi, 0) > 0
+         AND COALESCE(so.delivery_fee_sen, 0) > 0
          AND COALESCE(l.fee_line_count, 0) = 0
-         AND so.local_total_centi - COALESCE(l.line_sum, 0) = COALESCE(so.delivery_fee_centi, 0)
+         AND so.local_total_sen - COALESCE(l.line_sum, 0) = COALESCE(so.delivery_fee_sen, 0)
        ORDER BY so.doc_no`;
 
     if (candidates.length === 0) {
@@ -218,26 +218,26 @@ async function main() {
           const [so] = await sql`
             SELECT doc_no, company_id, status, debtor_name, venue,
                    customer_delivery_date, cross_category_source_doc_no,
-                   COALESCE(delivery_fee_centi, 0) AS fee_centi,
-                   local_total_centi,
-                   COALESCE(service_centi, 0) AS service_centi
+                   COALESCE(delivery_fee_sen, 0) AS fee_sen,
+                   local_total_sen,
+                   COALESCE(service_sen, 0) AS service_sen
               FROM scm.mfg_sales_orders
              WHERE doc_no = ${cand.doc_no}
                FOR UPDATE`;
           if (!so) return stop("SO vanished between discovery and repair");
           if (so.status === "CANCELLED") return stop("SO is CANCELLED");
-          const fee = Number(so.fee_centi);
+          const fee = Number(so.fee_sen);
           if (fee <= 0) return stop("header delivery fee is no longer > 0");
 
           const [agg] = await sql`
-            SELECT COALESCE(SUM(total_centi) FILTER (WHERE NOT cancelled), 0)                                     AS line_sum,
+            SELECT COALESCE(SUM(total_sen) FILTER (WHERE NOT cancelled), 0)                                     AS line_sum,
                    COUNT(*) FILTER (WHERE NOT cancelled AND item_code LIKE 'SVC-DELIVERY%')                       AS fee_line_count,
                    COUNT(*) FILTER (WHERE NOT cancelled)                                                          AS live_line_count,
                    MAX(line_no) FILTER (WHERE item_code NOT LIKE 'SVC-DELIVERY%')                                 AS kept_max_line_no
               FROM scm.mfg_sales_order_items
              WHERE doc_no = ${cand.doc_no}`;
           if (Number(agg.fee_line_count) > 0) return stop("live SVC-DELIVERY* line(s) exist — the fee is already itemised");
-          const gap = Number(so.local_total_centi) - Number(agg.line_sum);
+          const gap = Number(so.local_total_sen) - Number(agg.line_sum);
           if (gap !== fee) return stop(`gap ${rm(gap)} != header fee ${rm(fee)} — a different mismatch class`);
 
           const src = so.cross_category_source_doc_no;
@@ -247,7 +247,7 @@ async function main() {
             venue: so.venue,
             customerDeliveryDate: so.customer_delivery_date,
             crossCategorySourceDocNo: src,
-            feeCenti: fee,
+            feeSen: fee,
             keptMaxLineNo: agg.kept_max_line_no,
             lineDate: todayMyt(),
           });
@@ -278,7 +278,7 @@ async function main() {
              whole header through the authoritative TS path anyway. */
           await sql`
             UPDATE scm.mfg_sales_orders
-               SET service_centi = ${Number(so.service_centi) + fee},
+               SET service_sen = ${Number(so.service_sen) + fee},
                    line_count    = (SELECT COUNT(*) FROM scm.mfg_sales_order_items
                                      WHERE doc_no = ${so.doc_no} AND NOT cancelled),
                    updated_at    = now()
@@ -287,26 +287,26 @@ async function main() {
           // VERIFY — total unchanged and now equal to Σ(lines); exactly one live
           // fee line carrying exactly the header fee.
           const [after] = await sql`
-            SELECT so2.local_total_centi,
-                   COALESCE(so2.delivery_fee_centi, 0) AS fee_centi,
-                   (SELECT COALESCE(SUM(i.total_centi) FILTER (WHERE NOT i.cancelled), 0)
+            SELECT so2.local_total_sen,
+                   COALESCE(so2.delivery_fee_sen, 0) AS fee_sen,
+                   (SELECT COALESCE(SUM(i.total_sen) FILTER (WHERE NOT i.cancelled), 0)
                       FROM scm.mfg_sales_order_items i WHERE i.doc_no = so2.doc_no)       AS line_sum,
                    (SELECT COUNT(*) FROM scm.mfg_sales_order_items i
                      WHERE i.doc_no = so2.doc_no AND NOT i.cancelled
                        AND i.item_code LIKE 'SVC-DELIVERY%')                              AS fee_line_count,
-                   (SELECT COALESCE(SUM(i.total_centi), 0) FROM scm.mfg_sales_order_items i
+                   (SELECT COALESCE(SUM(i.total_sen), 0) FROM scm.mfg_sales_order_items i
                      WHERE i.doc_no = so2.doc_no AND NOT i.cancelled
                        AND i.item_code LIKE 'SVC-DELIVERY%')                              AS fee_line_sum
               FROM scm.mfg_sales_orders so2
              WHERE so2.doc_no = ${so.doc_no}`;
-          if (Number(after.local_total_centi) !== Number(so.local_total_centi))
-            return stop(`verify failed: total moved ${rm(so.local_total_centi)} → ${rm(after.local_total_centi)}`);
-          if (Number(after.line_sum) !== Number(after.local_total_centi))
-            return stop(`verify failed: Σ(lines) ${rm(after.line_sum)} != total ${rm(after.local_total_centi)}`);
+          if (Number(after.local_total_sen) !== Number(so.local_total_sen))
+            return stop(`verify failed: total moved ${rm(so.local_total_sen)} → ${rm(after.local_total_sen)}`);
+          if (Number(after.line_sum) !== Number(after.local_total_sen))
+            return stop(`verify failed: Σ(lines) ${rm(after.line_sum)} != total ${rm(after.local_total_sen)}`);
           if (Number(after.fee_line_count) !== 1 || Number(after.fee_line_sum) !== fee)
             return stop(`verify failed: fee lines ${after.fee_line_count} Σ ${rm(after.fee_line_sum)} != 1 × ${rm(fee)}`);
-          if (Number(after.fee_centi) !== fee)
-            return stop(`verify failed: header fee restamped to ${rm(after.fee_centi)}`);
+          if (Number(after.fee_sen) !== fee)
+            return stop(`verify failed: header fee restamped to ${rm(after.fee_sen)}`);
 
           // The SO's own timeline records the materialisation (same column set
           // recordSoAudit writes; everything else defaults). sql.json for the
@@ -322,12 +322,12 @@ async function main() {
                'repair-so-fee-line-integrity',
                ${sql.json([
                  { field: "itemCode", to: row.item_code },
-                 { field: "totalCenti", to: fee },
+                 { field: "totalSen", to: fee },
                ])},
                ${null}, 'repair',
                'Materialised the header-carried delivery fee as a line (owner ruling 2026-08-07: every ringgit is a line). Total unchanged.')`;
 
-          console.log(`  OK — total ${rm(after.local_total_centi)} == Σ(lines) ${rm(after.line_sum)}; fee is now a line.`);
+          console.log(`  OK — total ${rm(after.local_total_sen)} == Σ(lines) ${rm(after.line_sum)}; fee is now a line.`);
           repaired++;
           if (!APPLY) throw new DryRunRollback("dry-run");
         });

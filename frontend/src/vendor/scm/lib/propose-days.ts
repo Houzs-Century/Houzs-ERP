@@ -19,7 +19,7 @@ export type ProposalDayOrder = {
   debtorName: string | null;
   zone: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
 };
 
 export type ProposalDay = {
@@ -28,7 +28,7 @@ export type ProposalDay = {
   group: string;
   orders: ProposalDayOrder[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
 };
 
 /** Fold the packer's proposals into DAY (+ zone group) cards — deliberately
@@ -40,7 +40,7 @@ export function groupProposalsByDay(proposals: PackProposal[]): ProposalDay[] {
     const key = `${p.deliveryDate}\0${p.group}`;
     let day = byKey.get(key);
     if (!day) {
-      day = { date: p.deliveryDate, group: p.group, orders: [], sets: 0, revenueCenti: 0 };
+      day = { date: p.deliveryDate, group: p.group, orders: [], sets: 0, revenueSen: 0 };
       byKey.set(key, day);
     }
     day.orders.push({
@@ -48,10 +48,10 @@ export function groupProposalsByDay(proposals: PackProposal[]): ProposalDay[] {
       debtorName: p.debtorName ?? null,
       zone: p.zone,
       sets: p.sets,
-      revenueCenti: p.revenueCenti,
+      revenueSen: p.revenueSen,
     });
     day.sets += p.sets;
-    day.revenueCenti += p.revenueCenti;
+    day.revenueSen += p.revenueSen;
   }
   return [...byKey.values()].sort(
     (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.group.localeCompare(b.group)),

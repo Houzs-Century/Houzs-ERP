@@ -197,7 +197,14 @@ type ModelGroup = {
   stock: number;
   poOutstanding: number;
   shortage: number;
-  suppliers: MrpSku['suppliers'];
+  /* NO `suppliers` HERE, DELIBERATELY. All three groupers built this field the
+     same way — from whichever child happened to be first — and a Model or a
+     Sales Order does not have suppliers: each VARIANT does, and on the Sofa tab
+     each variant is a different module SKU with its own bindings. Nothing read
+     it, so it was a wrong value waiting for a reader: the next renderer to want
+     a supplier on a parent row would have picked up the first module's and shown
+     it against all three. Supplier lives on MrpSku and is read there
+     (LineSupplierCell, SofaSoTable, OrderLines). */
 };
 
 const WH_NONE = 'NOWH';
@@ -224,7 +231,6 @@ function groupByModel(skus: MrpSku[]): ModelGroup[] {
         warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
         itemCode: s.itemCode, description: s.description, category: s.category,
         variants: [], qtyNeeded: 0, stock: 0, poOutstanding: 0, shortage: 0,
-        suppliers: s.suppliers,
       };
       map.set(gk, g);
     }
@@ -345,7 +351,6 @@ function groupBySo(skus: MrpSku[]): ModelGroup[] {
         warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
         itemCode: soDocNo, description: null, category: 'SOFA',
         variants: [], qtyNeeded: 0, stock: 0, poOutstanding: 0, shortage: 0,
-        suppliers: s.suppliers,
       };
       map.set(gk, g);
     }
@@ -393,7 +398,6 @@ function groupByVariant(skus: MrpSku[]): ModelGroup[] {
     itemCode: s.itemCode, description: s.description, category: s.category,
     variants: [s],                     // single → ModelRows jumps straight to orders
     qtyNeeded: s.qtyNeeded, stock: s.stock, poOutstanding: s.poOutstanding, shortage: s.shortage,
-    suppliers: s.suppliers,
   }));
   // Same ordering as the other groupers: shortage (orange) first, then warehouse,
   // then code, then the variant label so a model's colours cluster together.

@@ -45,7 +45,7 @@ describe('SO create — payments[]', () => {
        legitimately requires one, because a slip IS that route's request. */
     const createBlock = code.slice(
       code.indexOf('let posPayments'),
-      code.indexOf('const posPaymentsTotalCenti'),
+      code.indexOf('const posPaymentsTotalSen'),
     );
     expect(createBlock.length).toBeGreaterThan(50);
     expect(createBlock).not.toMatch(/uploadSessionId:\s*z\./);
@@ -101,6 +101,6 @@ describe('what a slip_required 400 is allowed to mean', () => {
     expect(block).toContain('if (p.uploadSessionId) {');
     expect(block).toContain("error: 'slip_required'");
     // The gate is the session, never the amount.
-    expect(block).not.toContain('amountCenti');
+    expect(block).not.toContain('amountSen');
   });
 });

@@ -125,13 +125,13 @@ const asArray = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : [v])
 /* The money columns of the two line tables. NOTE the name: the authoritative
    selling figure the recompute calls `unit_price_sen`
    (mfg-pricing-recompute.ts:600) is PERSISTED into the column
-   `unit_price_centi` (mfg-sales-orders.ts:4291) — the column name is a legacy
+   `unit_price_sen` (mfg-sales-orders.ts:4291) — the column name is a legacy
    misnomer, the unit is sen. Summing the wrong column would prove nothing. */
 const MONEY_COLS = {
-  mfg_sales_order_items: ["unit_price_centi", "total_centi", "total_inc_centi", "discount_centi",
-    "unit_cost_centi", "line_cost_centi", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
-  purchase_order_items: ["unit_price_centi", "line_total_centi", "discount_centi",
-    "unit_cost_centi", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+  mfg_sales_order_items: ["unit_price_sen", "total_sen", "total_inc_sen", "discount_sen",
+    "unit_cost_sen", "line_cost_sen", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+  purchase_order_items: ["unit_price_sen", "line_total_sen", "discount_sen",
+    "unit_cost_sen", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
 };
 
 async function moneySums(tx, table, ids) {
@@ -213,7 +213,7 @@ async function main() {
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
   // purchase_orders numbers itself po_number; only the SO header uses doc_no
-  const poLines = await sql`SELECT i.id, h.po_number AS doc, i.material_code AS code, i.item_group AS grp,
+  const poLines = await sql`SELECT i.id, h.po_number AS doc, i.item_code AS code, i.item_group AS grp,
       i.description2 AS d2, i.variants
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;

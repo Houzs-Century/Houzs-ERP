@@ -70,7 +70,7 @@ describe('planReceiptPayments — receipt count', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       imageIndex: 1,
-      amountCenti: 150000,
+      amountSen: 150000,
       approvalCode: '001586',
       method: 'merchant',
       merchantProvider: 'MBB',
@@ -95,7 +95,7 @@ describe('planReceiptPayments — receipt count', () => {
     }));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      amountCenti: 80000,
+      amountSen: 80000,
       approvalCode: '778210',
       method: 'cash',
       isDeposit: true,
@@ -112,7 +112,7 @@ describe('planReceiptPayments — receipt count', () => {
         receipt(3, 500, { approvalCode: 'A3', paymentMethodValue: 'Cash', bankValue: null }),
       ],
     }));
-    expect(rows.map((r) => r.amountCenti)).toEqual([150000, 320000, 50000]);
+    expect(rows.map((r) => r.amountSen)).toEqual([150000, 320000, 50000]);
     expect(rows.map((r) => r.isDeposit)).toEqual([true, false, false]);
     expect(rows.map((r) => r.approvalCode)).toEqual(['A1', 'A2', 'A3']);
     expect(rows.map((r) => r.merchantProvider)).toEqual(['MBB', 'Public', null]);
@@ -145,7 +145,7 @@ describe('planReceiptPayments — receipt count', () => {
       },
     }));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ amountCenti: 120000, isDeposit: true, installmentMonths: 12, merchantProvider: 'CIMB' });
+    expect(rows[0]).toMatchObject({ amountSen: 120000, isDeposit: true, installmentMonths: 12, merchantProvider: 'CIMB' });
   });
 
   test('first receipt slip key falls back to receiptImageKey when the enqueue-time put failed', () => {

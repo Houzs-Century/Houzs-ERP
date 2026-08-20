@@ -37,7 +37,7 @@ try {
       if (cur > 0 && !r.overwrite) { skipNonzero++; continue; }
       if (APPLY) {
         await tx`UPDATE scm.mfg_products SET base_price_sen = ${r.base_price_sen}, updated_at = ${now} WHERE id = ${p.id}`;
-        await tx`INSERT INTO scm.master_price_history (product_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
+        await tx`INSERT INTO scm.master_price_history (item_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
                  VALUES (${r.erp}, 'base_price_sen', ${cur || null}, ${r.base_price_sen}, ${"gap-fill-2: " + r.source}, ${now}, ${co.id})`;
       }
       if (cur > 0) ow++; else fill++;

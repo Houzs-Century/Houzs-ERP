@@ -1,0 +1,71 @@
+name: probe-outbox-queued-or-not (read-only, counts only)
+
+# "Did this document ever get an AutoCount outbox row, or was it never offered
+# at all?" — answered in COUNTS AND BOOLEANS ONLY.
+#
+# WHY THIS EXISTS BESIDE why-no-outbox-row.yml. That workflow answers the same
+# question and answers it well, but it prints every document NUMBER and every
+# skip reason verbatim, and a refusal's `last_error` quotes real item codes.
+# THIS REPOSITORY IS PUBLIC, ACTIONS LOGS INCLUDED. So this one is written so
+# that exposure never has to be weighed: it emits statuses, ops, booleans and
+# counts, and names no document, customer, address, item or amount. The document
+# you are asking about is identified by the INPUTS you dispatch with (company,
+# window) and, inside that window, by an ordinal — never by its number.
+#
+# THE QUESTION (owner, 2026-08-19): the queue health report itemises PENDING,
+# FAILED and SKIPPED rows and prints `sent` only as a total. So for a document
+# that is not in the failure list, "it is one of the sent ones" and "it never
+# got a row at all" are indistinguishable — and those are opposite facts.
+#
+# Manual trigger only, per CLAUDE.md: a production DB read on a schedule turns a
+# real question into CI noise nobody reads.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output, so
+# it exits 0 for every legitimate answer, including an empty queue.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (1 = HOUZS)'
+        required: false
+        default: '1'
+        type: string
+      days:
+        description: 'Window in days. Blank = since the write-back switch last moved.'
+        required: false
+        default: ''
+        type: string
+      recent:
+        description: 'How many of the newest sales orders get their own boolean line (max 50)'
+        required: false
+        default: '10'
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: probe-outbox-queued-or-not
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: probe (read-only, counts only)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DAYS: ${{ inputs.days }}
+          RECENT: ${{ inputs.recent }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/probe-outbox-queued-or-not.mjs

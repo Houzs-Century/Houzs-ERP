@@ -54,7 +54,7 @@ import {
 } from "../../vendor/scm/lib/sales-order-queries";
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
-import { fmtCenti } from "../../vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import {
   companyRequiresStockLocation,
   soDateGuardError,
@@ -87,7 +87,7 @@ type Customer = {
 };
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
@@ -266,9 +266,9 @@ export function SalesOrderNewFromProducts() {
       itemGroup: itemGroupFor(l.sku?.category ?? "OTHERS"),
       description: l.sku?.name ?? "",
       qty: l.qty,
-      unitPriceCenti: l.priceSen,
-      discountCenti: 0,
-      unitCostCenti: 0,
+      unitPriceSen: l.priceSen,
+      discountSen: 0,
+      unitCostSen: 0,
       variants: { addedVia: "from-products" },
       remark: "",
     }));

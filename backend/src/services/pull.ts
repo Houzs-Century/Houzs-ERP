@@ -18,7 +18,21 @@ export interface PullResult {
 export async function runPull(
   env: Env,
   triggerType: "MANUAL" | "SCHEDULED",
-  mode: PullMode = "filtered"
+  mode: PullMode = "filtered",
+  /* BACKFILL WINDOW. `null` = normal behaviour. A date here makes the pull ask
+     getSince(<that date>) instead of getSince(checkpoint), and the checkpoint is
+     NEITHER read NOR advanced — so a backfill cannot disturb the incremental pull
+     that is working.
+
+     Required as `| null` rather than optional: it decides which window AutoCount
+     is asked for, and CLAUDE.md's rule is that a parameter which decides
+     something must make every caller say so.
+
+     Why this exists: `mode: "all"` calls getAll(), and against ~13,000 orders
+     that KILLED THE WORKER — measured 2026-08-19, 39 seconds then
+     `Worker exceeded resource limits`. A full refresh cannot run in one request,
+     so a backlog has to be collected in windows. */
+  since: string | null = null
 ): Promise<PullResult> {
   const rid = crypto.randomUUID();
   const startedAt = new Date();
@@ -29,14 +43,17 @@ export async function runPull(
     // "all" mode: full refresh via /getAll, no checkpoint involvement.
     // "filtered" mode: incremental via /getSince, advances checkpoint.
     let checkpoint = "";
-    if (mode === "filtered") {
+    if (mode === "filtered" && !since) {
       const cp = await env.DB.prepare(
         `SELECT value FROM system_settings WHERE key = 'pull_checkpoint'`
       ).first<{ value: string }>();
       checkpoint = cp?.value || "2000-01-01 00:00:00";
     }
 
-    const data = mode === "all" ? await client.getAll() : await client.getSince(checkpoint);
+    const data =
+      since ? await client.getSince(since)
+      : mode === "all" ? await client.getAll()
+      : await client.getSince(checkpoint);
 
     if (!data.length) {
       const result: PullResult = {
@@ -75,7 +92,9 @@ export async function runPull(
     let checkpointAdvanced = false;
     let newCheckpoint: string | null = null;
     // Only the filtered (incremental) mode advances the checkpoint.
-    if (mode === "filtered" && failed === 0) {
+    // `since` never advances the checkpoint: a backfill reaches BACKWARDS, so
+    // writing its window forward would skip everything between.
+    if (mode === "filtered" && !since && failed === 0) {
       const last = data[data.length - 1];
       if (last.LastModified) {
         await env.DB.prepare(

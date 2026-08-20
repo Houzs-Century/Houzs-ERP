@@ -1,5 +1,5 @@
 /**
- * D10 — the ERP's material_code is NOT AutoCount's ItemCode.
+ * D10 — the ERP's item_code is NOT AutoCount's ItemCode.
  *
  * The write-back used to compose details with identityResolver, so "9028-1S"
  * would have been written into the licensed account book as an ItemCode. The
@@ -9,7 +9,7 @@
  * The contract these tests pin is TOTALITY, not coverage: every line resolves to
  * exactly ONE AutoCount ItemCode, or the whole document is refused with a named
  * reason and the candidates it could not choose between. A silent fallback to
- * material_code is the one behaviour that must be impossible.
+ * item_code is the one behaviour that must be impossible.
  */
 import { describe, expect, it, test } from 'vitest';
 import {
@@ -40,7 +40,7 @@ const line = (over: Partial<ErpLine>): ErpLine => ({
   description: 'x',
   description2: null,
   qty: 1,
-  unit_price_centi: 1000,
+  unit_price_sen: 1000,
   location: 'KL',
   ...over,
 } as ErpLine);
@@ -199,7 +199,7 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
   });
 });
 
-/* This block used to be titled "REFUSAL, never a fallback to material_code",
+/* This block used to be titled "REFUSAL, never a fallback to item_code",
    and the rule was right for the reason it gave: sending a code the licensed
    book does not hold would reference a nonexistent item, and on a purchase
    order the resulting line cannot be deleted.
@@ -357,8 +357,8 @@ describe('a sofa CREATE sends one line per compartment', () => {
   it('a clean build reaches AutoCount as TWO lines, each under its own code', () => {
     const d2 = '1 + 1 (28") / COL: BEIGE';
     const so = composeCreateSo({ doc_no: 'SO-1', customer_name: 'X' } as never, [
-      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000 }),
-      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0 }),
+      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_sen: 250000 }),
+      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_sen: 0 }),
     ], 'KINGSLEY', null, []);
     expect(so.Details).toHaveLength(2);
     expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
@@ -371,8 +371,8 @@ describe('a sofa CREATE sends one line per compartment', () => {
   it('the SAME build already folded in the book stays ONE line, on the book\'s item', () => {
     const d2 = '1 + 1 (28") / COL: BEIGE';
     const { details } = composeDetails([
-      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000, linked_ac_dtlkey: 501 }),
-      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0, linked_ac_dtlkey: 501 }),
+      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_sen: 250000, linked_ac_dtlkey: 501 }),
+      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_sen: 0, linked_ac_dtlkey: 501 }),
     ]);
     expect(details).toHaveLength(1);
     expect(details[0].ItemCode).toBe('RDS-5526 SOFA');

@@ -56,13 +56,13 @@ async function main() {
 
   // Consignment lots for 2990 NOT already at PJ.
   const lots = await sql`
-    SELECT l.id, l.product_code, l.batch_no, l.qty_remaining, l.warehouse_id, l.movement_id,
+    SELECT l.id, l.item_code, l.batch_no, l.qty_remaining, l.warehouse_id, l.movement_id,
            w.code AS wh_code
       FROM scm.inventory_lots l LEFT JOIN scm.warehouses w ON w.id = l.warehouse_id
      WHERE l.company_id = ${COMPANY_ID}
        AND UPPER(COALESCE(l.source_doc_type,'')) = 'PC_RECEIVE'
        AND l.warehouse_id IS DISTINCT FROM ${pj.id}
-     ORDER BY w.code, l.product_code`;
+     ORDER BY w.code, l.item_code`;
 
   const strayMovs = await sql`
     SELECT COUNT(*)::int AS n FROM scm.inventory_movements
@@ -89,7 +89,7 @@ async function main() {
   notice(`Consignment LOTS to move to PJ SHOWROOM: ${lots.length} (units ${lots.reduce((a, l) => a + num(l.qty_remaining), 0)})`);
   for (const [wh, g] of byWh) {
     notice(`  from ${pad(wh, 16)} : ${g.qty} unit(s)`);
-    for (const l of g.lots) notice(`      ${pad(l.product_code, 28)} qty ${pad(l.qty_remaining, 3)} <- ${l.batch_no ?? "(no batch)"}`);
+    for (const l of g.lots) notice(`      ${pad(l.item_code, 28)} qty ${pad(l.qty_remaining, 3)} <- ${l.batch_no ?? "(no batch)"}`);
   }
   notice(`Stray PC_RECEIVE movements not at PJ: ${strayMovs[0].n}`);
   notice(`PC Receive docs (PCR) to re-point to PJ: ${pcrs.length}  ${pcrs.map((p) => `${p.receive_number}(${p.wh_code})`).join(", ")}`);

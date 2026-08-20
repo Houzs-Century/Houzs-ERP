@@ -75,14 +75,14 @@ async function main() {
     cells.get(k).layers.push(l);
   }
   // the flat lots this replaces — must be fully unconsumed
-  const flat = await sql`SELECT l.id, l.product_code, l.warehouse_id, l.qty_received, l.qty_remaining, l.unit_cost_sen
+  const flat = await sql`SELECT l.id, l.item_code, l.warehouse_id, l.qty_received, l.qty_remaining, l.unit_cost_sen
     FROM scm.inventory_lots l WHERE l.source_doc_no = 'AC-BAL-2026-08-09'`;
   // Several AC ItemCodes map onto ONE ERP code (HOK-/DSL-/AMN-SQUARE PILLOW ->
   // SQUARE PILLOW), so a cell may hold SEVERAL flat lots — aggregate them and
   // reconcile the SUM against the merged layers.
   const flatBy = new Map();
   for (const f of flat) {
-    const k = `${norm(f.product_code)}|${f.warehouse_id}`;
+    const k = `${norm(f.item_code)}|${f.warehouse_id}`;
     const agg = flatBy.get(k) ?? { received: 0, remaining: 0 };
     agg.received += Number(f.qty_received);
     agg.remaining += Number(f.qty_remaining);
@@ -107,7 +107,7 @@ async function main() {
   let done = 0;
   for (const c of todo) {
     await sql.begin(async (tx) => {
-      const base = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key", "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
+      const base = ["movement_type", "warehouse_id", "item_code", "product_name", "variant_key", "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
       const cols = hasCo ? [...base, "company_id"] : base;
       // 1. reverse the flat zero-cost lot (negative adjustment consumes it)
       const negVals = ["'ADJUSTMENT'", `'${c.wh.id}'`, "$1", "$2", "''", `${-Number(c.flat.qty_received)}`, "0", "'AC_CUTOVER'", "'AC-BAL-RELAYER-2026-08-10'", "'replace flat opening lot with real receipt layers'"];
