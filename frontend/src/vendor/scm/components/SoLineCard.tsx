@@ -51,7 +51,7 @@ import {
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
-import { editsFeeAsDiscount, feeAmountSen, feeDiscountForAmount } from '../lib/delivery-fee-amount';
+import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -257,14 +257,19 @@ const SoLineCardInner = ({
      way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
      for — so a higher figure clamps to no discount rather than pretending. */
   const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
-  /* ...but ONLY once there is a fee to reduce. A delivery-fee line added by
-     hand on a NEW SO starts at 0, and there the operator is AUTHORING the fee,
-     not discounting it: reading 250 as "charge 250" computed a discount of
-     max(0 - 250, 0) = 0, never wrote the price, and the box snapped back to
-     RM 0 on blur. Reported on a new SO within an hour of shipping this. You
-     cannot discount a fee that does not exist yet, so with no gross the cell
-     goes back to being a plain unit price. */
-  const isFeeLine = editsFeeAsDiscount(isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen);
+  /* ...and the fee-vs-price verdict is LOCKED per mounted line, never
+     re-derived per keystroke. Deriving it live from the gross shipped two
+     regressions in one day (the full account is on lockedFeeSemantics): first
+     a hand-added fee line at gross 0 read "250" as a target and booked
+     nothing, then the fix for THAT let the first keystroke flip the cell into
+     target mode and pin the price at the first digit typed ("stuck at RM 2").
+     A line that arrives priced edits as a fee; a line being authored from 0
+     stays a plain unit price until it is saved and re-mounted. */
+  const feeVerdictRef = useRef<boolean | null>(null);
+  feeVerdictRef.current = lockedFeeSemantics(
+    feeVerdictRef.current, isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen,
+  );
+  const isFeeLine = feeVerdictRef.current === true;
   const amountCellSen = isFeeLine
     ? feeAmountSen(feeGrossSen, draft.discountSen)
     : draft.unitPriceSen;
