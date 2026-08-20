@@ -40,7 +40,7 @@ written 2026-08-14 from the merged diff. **Module guide: none exists.** No file
 under `docs/modules/` quotes `backend/src/scm/routes/fabric-tracking.ts`, and the
 working-agreement checker's own path→module index maps it to no guide. Per
 CLAUDE.md that is the gap to close rather than a licence; writing
-`docs/modules/fabric-library.md` is outside a write-up PR and is named here so it
+`docs/modules/fabric-library.md` [planned] is outside a write-up PR and is named here so it
 is not lost.
 
 ---

@@ -86,7 +86,7 @@ wiped once, close the gaps in this order:
 4. **Nightly offsite `pg_dump` under separate credentials.** Supabase's own backups
    sit behind the Supabase account; a second copy under a different credential means
    an account takeover can't erase every copy. Pattern exists: `restore-owner-data.yml:68-98`.
-5. **Write `docs/RESTORE-RUNBOOK.md` and rehearse one restore into staging** — the
+5. **Write `docs/RESTORE-RUNBOOK.md` [planned] and rehearse one restore into staging** — the
    2026-06-17 recovery was never documented; an untested backup is a guess.
 
 ### H — HIGH (fix before deploy)

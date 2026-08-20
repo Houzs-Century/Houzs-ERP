@@ -383,7 +383,7 @@ used, so removing it removes duplication, not capability. Backend and frontend
 
 | # | site (pre-delete) | what it was | evidence it was dead | why safe |
 |---|---|---|---|---|
-| K3.1 | `backend/src/services/projectAcl.ts:70` (whole file since **deleted / removed** 2026-08-19 with the project ACL) | `getProjectPicScope` — "back-compat shim" for callers that only want the PIC dimension | 1 hit repo-wide. Its successor `getProjectScope` has 16. | Pure delegation to `getProjectScope(user).pic_ids`; the shim had no caller to be back-compatible *with* |
+| K3.1 | `backend/src/services/projectAcl.ts:70` [gone] (whole file since **deleted / removed** 2026-08-19 with the project ACL) | `getProjectPicScope` — "back-compat shim" for callers that only want the PIC dimension | 1 hit repo-wide. Its successor `getProjectScope` has 16. | Pure delegation to `getProjectScope(user).pic_ids`; the shim had no caller to be back-compatible *with* |
 | K3.2 | `backend/src/services/agent-brain.ts:114` | `ANTHROPIC_MESSAGES_URL` | 1 hit. It was `= ANTHROPIC_URL`, which has 12. | Exported alias of a live constant, nothing imported it |
 | K3.3 | `backend/src/services/pageAccess.ts:679` | `getChildrenOf(parentKey)` | 1 hit. Sibling `getPageDef` has 2. | One-line `PAGES.filter(p => p.parent === parentKey)`; no permission logic |
 | K3.4 | `frontend/src/auth/capabilities.ts:131` | `useCapabilitiesUnresolved` | 1 hit. Non-hook twin `capabilitiesUnresolved` has 13. | Hook wrapper only. Its doc comment claimed "the one or two places that render the message" — there were **zero**; the comment was already lying |

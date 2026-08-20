@@ -1,6 +1,6 @@
 ## The sharded-script guard names a script, so it fails on the next rename — third time in one day [medium]
 
-**Symptom** - `npm run test:scale-contract` red on a branch whose only crime was
+**Symptom** - `npm run test:scale-contract` [gone] red on a branch whose only crime was
 adding `--coverage` to the script CI shards. `pretest` gates `npm test`, and
 `deploy.yml` runs `npm test -- --shard=...`, so a false failure here blocks the
 backend deploy.
