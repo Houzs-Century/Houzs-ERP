@@ -1456,6 +1456,154 @@ because that is what has been running and what ran on the build that worked, not
 because it fixes anything. The refuted sentence is pinned by a contract-test
 assertion so it cannot quietly return.
 
+### 7c5. A conversion carries the WHOLE document — one master, two projections
+
+**The defect: a transfer sent the ERP's number and the account, and nothing else
+the document knew about itself.** Owner, 2026-08-19, walking a live chain:
+「为什么 Sales Order to PO，它的 Description2 不对的呢？再来，它的 Purchase
+Location 也不对… 为什么它没有把 Sales Order 的那些资料带过去呢？」 — asked about
+`/so-to-po`, true of all five transfers, and the four conversions had never been
+looked at.
+
+What each of the four dropped, before 2026-08-20:
+
+| target | dropped | what AutoCount did about it |
+| --- | --- | --- |
+| DO (`so_to_do`) | `DocDate`, `Ref`, `DebtorName`, `Attention`, `Phone1`, `Note` | date DEFAULTED to the drain's day; `Ref` BLANKED; the other four had **no slot on this route at all** |
+| Sales Invoice (`do_to_iv`) | same six | same |
+| GRN (`po_to_gr`) | `DocDate`, `Ref`, `Description`, `SupplierDONo`, `PurchaseLocation` | date and location DEFAULTED; `Ref`, `Description`, `SupplierDONo` BLANKED — **destructively**, see below |
+| Purchase Invoice (`gr_to_pi`) | `DocDate`, `Ref`, `Description`, `SupplierInvoiceNo` | same |
+
+**None of it was a refusal**, which is why it survived a week of live documents
+and a page whose job is to show stuck ones. `Ref`, `Description`, `SupplierDONo`
+and `SupplierInvoiceNo` are assigned **unconditionally** (`AcSyncService.cs`
+:2426-2427, :2450-2451, :1226, :1259) and `Str` of an absent key is `""` (:3212).
+`DocDate` and `PurchaseLocation` are guarded, so those two genuinely default.
+
+**On the two purchase arms it was destruction, not omission.** `PurchaseHeader`
+runs a second time *after* the transfer (:1225, :1258) and the vendor's own
+comment says why: *"FullTransfer copies the SOURCE document's master onto the
+target… the ERP is master for DocNo, DisplayTerm, Ref, Description and
+PurchaseLocation. This call is what makes the ERP's values the ones that
+survive."* The ERP sent nothing, so the empty string won over the real values
+`FullTransfer` had just copied off the purchase order.
+
+**No caller ever passed a date or a reference.** `enqueueConvert` spread them in
+`if (opts.docDate)` / `if (opts.ref)`, and all eight production call sites pass
+neither — `delivery-orders-mfg.ts:3576` and `:4216`, `grns.ts:1961` and `:2343`,
+`purchase-invoices.ts:1692` and `:1892`, `sales-invoices.ts:1394`,
+`si-autocount-source.ts:178`. So the conditional was dead and every conversion
+landed under the drain's date.
+
+#### The fix is one master, not five more fields
+
+`AcDownstreamSpec.facts` is now the **only** description of a downstream
+document: every AutoCount-named header fact the ERP holds for it, keys always
+present, values `string | null`. Both routes are **projections** of it —
+
+- `downstreamEditHeader` → `AC_EDIT_HEADER_KEYS`, the allow-list `Edit()`
+  reflects over (`AcSyncService.cs:2990-2995`);
+- `downstreamTransferHeader` → `AC_TRANSFER_HEADER_KEYS[type]`, what
+  `SalesHeader` / `PurchaseHeader` apply plus the one extra assignment each
+  purchase arm makes.
+
+`present()` still strips the blanks at the projection, so an absent value is an
+absent key and never a `""`.
+
+**A field added to `facts` reaches the transfer with no edit to `enqueueConvert`,
+and one that reaches no route at all fails the build by name** — the test is
+`a header fact reaches a route, or the build says which one does not`. That is
+the guard, and it is the whole reason this is not a third one-field patch: the
+same hole in `/so-to-po` was patched twice, `CreditorCode` on 2026-08-17 09:15
+and `DocNo` at 10:15, and five fields were still missing afterwards.
+
+#### The two classes of dropped field, which need different fixes
+
+The transfer route applies a **strictly narrower** set than `/edit`. That splits
+every dropped key in two, and reading them as one problem is what would have
+made `Agent` a third no-op patch — `PurchaseHeader` has no `Agent` slot, so
+adding it to the `/so-to-po` payload would have changed nothing.
+
+- **The service would apply it and the ERP did not send it.** `DocDate`, `Ref`,
+  `Description`, `SupplierDONo`, `SupplierInvoiceNo`, `PurchaseLocation`.
+  Sending them fixes them, and they are sent now.
+- **The route had no slot.** `DebtorName`, `Attention`, `Phone1`, `Note` on the
+  sales side. Sending them would have been inert, so **`SalesHeader` was given
+  guarded slots for all four** — which is what makes a transferred delivery
+  order carry the customer's name instead of whatever AutoCount defaults off the
+  fixed `300-C002` account. The host binary must be rebuilt for that half; the
+  ERP half lands with the merge and an old binary simply ignores the keys.
+
+#### The purchase location, and where it actually comes from
+
+Our own note on the create side says *"a purchase order has no location of its
+own — the ship-to warehouse is per LINE"* (`autocount-writeback.ts:1237`). That
+is true of the ERP's purchase order and **false as a claim about AutoCount**,
+whose purchase documents carry `doc.PurchaseLocation` and whose own comment
+records that the ERP had never sent one. Per document:
+
+- **GRN** — `scm.grns.warehouse_id` exists and the GRN list column it feeds is
+  labelled *"Purchase Location"* (`grns.ts:1050`). We have one, AutoCount takes
+  one, so it is sent — resolved uuid → `dbo.Location` code, the same hop
+  `withLocations` does for lines.
+- **Purchase Invoice** — `scm.purchase_invoices` has no warehouse column at all.
+  Nothing is fabricated. `PurchaseHeader`'s guard means the absent key leaves
+  whatever the transfer copied off the GRN, which is the right answer and not
+  ours to overwrite.
+- **Purchase Order** — the header location is PR #2523's, not this one's.
+
+#### And the omission is said out loud, at save time
+
+A value the ERP does not have is omitted, never blanked — a blank is a foreign
+key error on a master field and a destroyed value on a text one. On its own that
+is a quieter version of the same bug, so the omission is **reported through the
+channel #2499 built**, not through a second one:
+
+- `enqueueConvert` returns `AcEnqueueOutcome` — the shape `enqueueSoCreate` and
+  `enqueuePoCreate` already return — with `problems` composed by
+  `acNotCarriedProblems` from `downstreamNotCarried`.
+- The four routes spread them into their 201 as **`acNotSent`**, the key the
+  frontend's `acNotSentProblemsOf` already reads off any response.
+- `DeliveryOrderNewV2`, `GrnNew`, `PurchaseInvoiceNew` and `SalesInvoiceNew`
+  call `notifyAcNotSent` before they navigate, so the operator sees it on the
+  save rather than five minutes later in a queue behind a permission key they
+  do not hold.
+
+**The verdict is the OTHER one, and it gets its own sentence.** These problems
+carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and `acTitleFor` picks the title
+off the problems: *"… saved and sent — but not every field on it reached the
+accounts"*. The not-sent wording would be false here, and telling someone their
+goods receipt is ERP-only sends them to raise it a second time into a book that
+already holds it. Never blocks — the problems are composed after the conversion
+is queued, so there is no save left to refuse. Tone stays `info`.
+
+The sentences distinguish *"the ERP document has none"* from *"this transfer has
+no field for it"*, because only the first is something the person holding the
+document can fix.
+
+The row keeps its own copy too: `acNotCarriedReason(…)` goes into `last_error`
+while the status stays `pending` (`acNeedsAttention` branches on status, so it
+is visible without being counted as stuck), and `payload.notCarried` is the
+durable half, because the drain clears `last_error` on success while the blank
+in the book stays true.
+
+**One call site is not wired**: `si-autocount-source.ts:178` returns a string
+enum to its callers rather than a response body, so an invoice raised through
+that path records its omissions on the outbox row and does not raise a dialog.
+Named here rather than left to be discovered.
+
+#### What is still open — D17
+
+The sales arms have **no `SalesLocation` slot** in `SalesHeader` (only `/edit`
+does), while the sales *create* route treats the header location as mandatory
+(`FK_SO_SalesLocation`). And `scm.delivery_orders` / `scm.sales_invoices` carry
+**two** note columns — `note`, mapped to AutoCount's `Note` since `/edit` was
+written, and `notes`, mapped nowhere — so which one is the book's `Description`
+is the owner's call, not a code change. It costs nothing today: the sales arms
+build with `transferMaster: false` (`AcSyncService.cs:1096`), so the `""` written
+over `Description` overwrites nothing. Registered as **D17**, severity low.
+
+
 ## 7d. The four documents AutoCount cannot create at all
 
 A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never

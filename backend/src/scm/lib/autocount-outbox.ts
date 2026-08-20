@@ -102,7 +102,7 @@ import {
 } from './autocount-read';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
-import { acParentlessCreateReason } from './autocount-outbox-status';
+import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
 import { persistLineKeys } from './autocount-line-keys';
@@ -114,13 +114,23 @@ import {
   CONVERT_TARGET,
   readConvertSourceKeys,
   readConvertTargetLines,
+  readConvertHeaderFacts,
+  /* Moved into that module 2026-08-20: all four are derived from or ask about
+     CONVERT_TARGET, which lives there, and this file was at its cap again. */
+  SALES_CONVERSION,
+  PURCHASE_CONVERSION,
+  readConvertCreditor,
+  downstreamEditHeader,
+  downstreamTransferHeader,
+  downstreamNotCarried,
   type AcDownstreamSpec,
+  type AcHeaderCtx,
 } from './autocount-convert-lines';
 
 /* The operator's half of a refusal. The skipped row this file writes is the
    engineer's half and has not changed — see lib/ac-preflight.ts for why there
    are two and why only ONE module is allowed to write either sentence. */
-import { acNotSentProblems, type AcDocKind } from './ac-preflight';
+import { acNotSentProblems, acNotCarriedProblems, type AcDocKind } from './ac-preflight';
 import type { SaveProblem } from '../shared/so-save-problems';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -248,6 +258,12 @@ export interface AcOutboxPayload {
      */
     desc2?: Array<string | null>;
   };
+  /** Header facts this operation did NOT carry, one operator sentence each,
+   *  from `downstreamNotCarried` (two different silences — see it). Never goes
+   *  on the wire: `dispatchOne` POSTs `payload.body` and this is its sibling.
+   *  The DURABLE half of the report; `last_error` is the half seen at save time
+   *  and the drain clears that on success while the blank in the book stays. */
+  notCarried?: string[];
 }
 
 export interface AcOutboxRow {
@@ -463,84 +479,6 @@ async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<stri
 }
 
 
-/**
- * The two conversions whose target is a SALES document, and therefore the two
- * that need a DebtorCode on the payload.
- *
- * Derived from CONVERT_TARGET rather than listed again: a fifth conversion
- * added to that map joins this set on its own if its target is a sales one,
- * and the alternative — a second hand-written list of ops — is the duplicated
- * -list bug this repo keeps paying for.
- */
-const SALES_CONVERSION = new Set(
-  (Object.keys(CONVERT_TARGET) as Array<keyof typeof CONVERT_TARGET>)
-    .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
-);
-
-/** The complement, and derived the same way so the two can never disagree. */
-const PURCHASE_CONVERSION = new Set<string>(
-  Object.keys(CONVERT_TARGET).filter((op) => !SALES_CONVERSION.has(op as never)),
-);
-
-/**
- * The ERP source tables that carry a supplier of their own.
- *
- * THIS LIST IS THE CORRECTION. Until 2026-08-17 the purchase half of divergence
- * D15 was left open on the recorded grounds that "`grns` and `purchase_invoices`
- * carry no supplier column, so a creditor means a `grn -> purchase_order ->
- * supplier` join". That is false, and the DDL this repo already vendors says so
- * in one line each — `scripts/scm-schema/2990s-full-schema.sql`:
- *
- *     CREATE TABLE "grns" (...  "supplier_id" uuid NOT NULL, ...)
- *     CREATE TABLE "purchase_invoices" (... "supplier_id" uuid NOT NULL, ...)
- *
- * Both are NOT NULL, both are written on every insert (`grns.ts`,
- * `purchase-invoices.ts`) and both are selected by the live list and detail
- * routes. So there is no join: it is one hop to `suppliers.code`, the same hop
- * `readPoHeader` already makes for `/create-po`, and therefore the same
- * vocabulary AutoCount has already accepted as a `CreditorCode`.
- *
- * Only the SOURCE tables are listed. The target row carries the same supplier —
- * the GRN is inserted with the PO's, the PI with the GRN's — but the document
- * being TRANSFERRED is the authority on whose account it moves, and that is the
- * row the service's own book fallback reads too.
- */
-const SUPPLIER_BEARING_SOURCE = new Set<AcLinkTable>(['purchase_orders', 'grns']);
-
-/**
- * The creditor for a purchase conversion, off the ERP's own source document.
- *
- * Returns null on ANY doubt, and null means "say nothing": the body goes out
- * without an account and the service falls back to reading the creditor off the
- * source document in the live book. That fallback stays whatever happens here —
- * it is the only thing that drains a row queued before this existed, and a
- * lookup that quietly stops being exercised is a lookup someone deletes.
- */
-async function readConvertCreditor(
-  sb: Sb,
-  from: AcDocRef,
-): Promise<{ CreditorCode: string; CreditorName?: string } | null> {
-  try {
-    if (!SUPPLIER_BEARING_SOURCE.has(from.table)) return null;
-    const { data, error } = await sb.from(from.table)
-      .select('supplier_id').eq(from.keyCol, from.key).maybeSingle();
-    if (error || !data) return null;
-    const supplierId = (data as Record<string, unknown>).supplier_id;
-    if (!supplierId) return null;
-    const { data: sup, error: supErr } = await sb.from('suppliers')
-      .select('code, name').eq('id', String(supplierId)).maybeSingle();
-    if (supErr) return null;
-    const s = sup as { code?: string | null; name?: string | null } | null;
-    const code = s?.code == null ? '' : String(s.code).trim();
-    /* Trimmed and length-checked because "   " is not an account, and
-       AutoCount's own complaint is "Debtor Code is empty." — the service trims
-       the payload for the same reason (AcSyncService.cs, Convert_). */
-    if (!code) return null;
-    return { CreditorCode: code, ...(s?.name ? { CreditorName: String(s.name) } : {}) };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Write a failed compose down instead of dropping it.
@@ -843,13 +781,18 @@ export async function enqueueConvert(
     ref?: string | null;
     createdBy?: number | null;
   },
-): Promise<boolean> {
+  /* RETURNS THE OPERATOR'S SENTENCES, the shape the two create routes return
+     (#2499) — but the OTHER verdict: the document IS in the accounts and some
+     of its fields are not, so `AC_SENT_INCOMPLETE`, and never a block. */
+): Promise<AcEnqueueOutcome> {
   /* WHICH SOURCE LINES THIS CONVERSION ACTUALLY TOOK.
      Resolved BEFORE the enqueue so a refusal is recorded instead of a wrong
      transfer being queued. */
   const source = await readConvertSourceKeys(sb, opts.op, opts.docId ?? null);
   if (source.refuse) {
-    return recordConvertSkipped(sb, {
+    /* No problems: the skip is written where the operator looks and carries its
+       own sentence there (classifyAcSkip). */
+    await recordConvertSkipped(sb, {
       companyId: opts.companyId,
       op: opts.op,
       docType: opts.docType,
@@ -858,6 +801,7 @@ export async function enqueueConvert(
       reason: source.refuse,
       createdBy: opts.createdBy ?? null,
     });
+    return AC_ENQUEUE_SILENT;
   }
   /* THE SUPPLIER, for the two conversions whose target is a purchase document.
      Resolved here rather than inline below so a null is one branch and not a
@@ -867,11 +811,15 @@ export async function enqueueConvert(
      it belongs in recordParentlessCreate, not here, and enqueueing a transfer
      with nothing to transfer FROM would fail on the host with a message about
      the payload rather than about the document. */
-  if (!froms.length) return false;
+  if (!froms.length) return AC_ENQUEUE_SILENT;
   const creditor = PURCHASE_CONVERSION.has(opts.op)
     ? await readConvertCreditor(sb, froms[0])
     : null;
-  return enqueueAcOp(sb, {
+  /* THE DOCUMENT'S OWN HEADER, resolved before the enqueue for the same reason
+     the source keys are: what goes in the payload is decided once, here, where
+     an omission can still be written down. */
+  const own = await readConvertHeaderFacts(sb, opts.docType, opts.docId ?? null);
+  const queued = await enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
     docType: opts.docType,
@@ -901,14 +849,16 @@ export async function enqueueConvert(
            raised in its own UI keeps its own series in parallel — which is
            what tells the two apart. */
         DocNo: opts.docNo ?? null,
-        /* OMITTED WHEN THE ERP HAS NONE, not sent as null. `SalesHeader` /
-           `PurchaseHeader` apply `Set(() => doc.Ref = Str(p, "Ref"))`
-           unconditionally, and `Str` turns a present-null into "" — so every
-           conversion was writing an empty Ref over whatever the transfer had
-           put there. No caller passes `ref` yet (audit finding 13); until they
-           do, saying nothing is the only answer that cannot destroy a value.
-           `DocDate` was already correct and is written the same way for the
-           same reason: the target keeps the transfer's own posting date. */
+        /* ── THE DOCUMENT'S OWN HEADER, AND IT IS NOT A LIST OF FIELDS ───────
+           `AcDownstreamSpec.facts` projected onto the keys this route's header
+           applier actually applies. A fact added to a spec reaches this payload
+           with no edit here; one no route can carry fails the build by name.
+           Why, and what the four conversions used to drop: the composer's own
+           notes in autocount-convert-lines.ts, and guide §7c5.
+           THE CALLER STILL WINS — `opts` is spread AFTER, and the `if` stays
+           because a present-null is how you blank a live book. Neither key has
+           ever been passed by a caller (all eight verified, §7c5). */
+        ...own.header,
         ...(opts.docDate ? { DocDate: opts.docDate } : {}),
         ...(opts.ref ? { Ref: opts.ref } : {}),
         /* THE CUSTOMER, AND THE TRANSFER DOES NOT HAPPEN WITHOUT ONE.
@@ -970,11 +920,27 @@ export async function enqueueConvert(
          degrades to "no keys stored", which costs a refused edit later and is
          visible, and must never cost the conversion itself. */
       lineWriteback: await readConvertTargetLines(sb, opts.op, opts.docId ?? null),
+      /* WHAT THIS DOCUMENT IS GOING WITHOUT, kept here as well as in the row's
+         reason: the drain clears last_error on success and the blank in the
+         book does not go with it. */
+      ...(own.notCarried.length ? { notCarried: own.notCarried } : {}),
     },
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
+    /* `acNeedsAttention` branches on STATUS, so a note on a `pending` row
+       reports without crying wolf. */
+    reason: acNotCarriedReason(own.notCarried),
     createdBy: opts.createdBy ?? null,
   });
+  /* NOTHING QUEUED, NOTHING TO SAY: flag off, no company, or already queued —
+     none of those left a field behind, and a warning about something that did
+     not happen is how people learn to click through warnings. */
+  return { queued, problems: queued ? acNotCarriedProblems(own.notCarried, AC_DOC_KIND[opts.docType]) : [] };
 }
+
+/** The noun each transferred document is called in a sentence to an operator. */
+const AC_DOC_KIND: Record<'DO' | 'IV' | 'GR' | 'PI', AcDocKind> = {
+  DO: 'delivery order', IV: 'invoice', GR: 'goods receipt', PI: 'purchase invoice',
+};
 
 
 /** The ItemCode column each line table spells its product in. */
@@ -1456,8 +1422,10 @@ async function composeDownstreamState(
     photos: undefined as AcOutboxPayload['photos'],
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as (() => Record<string, unknown>) | null,
+    /* The SAME master the conversion route projects, narrowed to /edit's own
+       allow-list instead — see `AcDownstreamSpec.facts`. */
     edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
+      docType, String(h.linked_ac_docno ?? docNo), downstreamEditHeader(docType, h), lines, {}, retired,
     ),
   };
 }

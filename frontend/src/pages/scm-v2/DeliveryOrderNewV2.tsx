@@ -63,6 +63,7 @@ import type { MfgProductRow } from "../../vendor/scm/lib/mfg-products-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { notifyAcNotSent } from "../../vendor/scm/lib/ac-not-sent";
 import { cn } from "../../lib/utils";
 import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
@@ -909,8 +910,16 @@ export function DeliveryOrderNewV2() {
          right (DeliveryOrderNew.tsx:294) and this one never got it. */
       { ...buildBody(), idempotencyKey: idemKey, asDraft: draft || undefined, status: draft ? "DRAFT" : "LOADED" },
       {
-        onSuccess: (res) => {
+        onSuccess: async (res) => {
           setFlash(draft ? "Saved as draft" : "Delivery order created");
+          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A DO raised from a
+             sales order is TRANSFERRED into AutoCount, and the transfer route
+             applies a narrower set of header fields than an edit does — so the
+             book can hold this delivery order with no reference and no date of
+             its own. Said here, BEFORE the navigation, for the reason
+             PurchaseOrderNew records: a route change tears the dialog down.
+             Never blocks; the DO exists and the goods have gone. */
+          await notifyAcNotSent(notify, res, "Delivery order");
           if (res?.id) {
             navigate(`/scm/delivery-orders/${res.id}`);
           } else {

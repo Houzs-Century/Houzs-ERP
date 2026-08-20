@@ -49,6 +49,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -302,8 +303,11 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const supplierId = body.supplierId as string | undefined;
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
 
-  const expectedAt = body.expectedAt as string | undefined;
-  if (!expectedAt) return c.json({ error: 'expected_at_required' }, 400);
+  // Owner 2026-08-20 ("越松越好"): mirror PO — Expected Delivery must not block
+  // opening a purchase-consignment order. Blank defaults to today (still fans out
+  // downstream) instead of a 400. Purchase Location stays required (per-line
+  // warehouse = stock location).
+  const expectedAt = dateOrNull(body.expectedAt) ?? todayMyt();
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
 

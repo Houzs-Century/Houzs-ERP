@@ -705,8 +705,15 @@ export const GoodsReceivedDetail = () => {
 
                   {/* T12 — variants. View shows the read-only summary; Edit shows
                       the per-category editor (bedframe / sofa) for EXISTING lines,
-                      mirroring New GRN. The server re-buckets inventory on save. */}
-                  {isEditing && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
+                      mirroring New GRN. The server re-buckets inventory on save.
+
+                      Owner 2026-08-20: a line RECEIVED FROM A PO inherits its
+                      variant from that PO — it is what the supplier was told to
+                      make, so it is READ-ONLY here even in Edit (the backend
+                      refuses the change too). To change it, cancel this GRN and
+                      edit the PO. Only a MANUAL line (source_po_number null) keeps
+                      the editor. You always still SEE the variant summary. */}
+                  {isEditing && !it.source_po_number && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
                       {d.itemGroup === 'bedframe' ? (
@@ -749,8 +756,15 @@ export const GoodsReceivedDetail = () => {
                       </div>
                     </div>
                   ) : (
-                    variantSummary && (
-                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{variantSummary}</div>
+                    (variantSummary || (isEditing && it.source_po_number)) && (
+                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        {variantSummary}
+                        {isEditing && it.source_po_number && (
+                          <span style={{ display: 'block', marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', fontStyle: 'italic' }}>
+                            Variant set on PO {it.source_po_number} — cancel this GRN and edit the PO to change it.
+                          </span>
+                        )}
+                      </div>
                     )
                   )}
 
