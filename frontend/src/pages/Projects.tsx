@@ -105,6 +105,9 @@ import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canL
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
+import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
+import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
+import { PROJECT_STATUS_OPTIONS, paymentPillOptions, type ProjectStatus as SharedProjectStatus } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -145,7 +148,7 @@ type ChecklistStatus = "pending" | "done" | "na" | "blocked";
 // mig 088 — boss-facing lifecycle, drives the calendar tint and replaces
 // the old Go Live button. Independent from `stage` which keeps driving
 // the internal workflow + section tracker.
-type ProjectStatus = "confirmed" | "pending" | "cancelled";
+type ProjectStatus = SharedProjectStatus;
 
 interface ProjectRow {
   id: number;
@@ -806,11 +809,16 @@ const stageVariant = pmsStageVariant;
 // blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
 // `chip`/`ring` are the matching pill tints used by the list view + the
 // status dropdown.
-const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string; hex: string; chip: string; ring: string }> = [
-  { value: "confirmed", label: "Confirmed", hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  { value: "pending",   label: "Pending",   hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  { value: "cancelled", label: "Cancelled", hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
-];
+// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
+// shared with mobile. Only the palette is desktop's — mobile styles inline, so
+// the value->label contract is the part that must not drift (the same split
+// pms-status.ts uses for stages).
+const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
+  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
+  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
+  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
+};
+const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
 
 const STATUS_BY_VALUE: Record<ProjectStatus, typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
   (acc, s) => ({ ...acc, [s.value]: s }),
@@ -8802,17 +8810,10 @@ const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-synced/15 text-synced" },
 };
 
-// The submit/approve/reject review workflow applies ONLY to these
-// checklist items. Every other row shows no review controls.
-const REVIEWABLE_TITLES = new Set([
-  "Agreement / Quotation",
-  "Stock Out Transfer Record",
-  "Stock In Transfer Record",
-  "Display Floor Plan",
-  "3D Design",
-  "2D Design",
-  "Exchange List",
-]);
+// Which rows carry the submit/approve/reject workflow is decided by
+// isReviewableTitle (pms-reviewable-titles.ts), shared with mobile. It is a
+// PREFIX rule: this Set of seven EXACT titles used to withhold the workflow
+// from "3D Design (Revision 2)" on desktop while mobile granted it.
 
 // Documents that are view-only: a medium preview opens (image → lightbox,
 // other files → inline new tab) and there's no download button.
@@ -8934,7 +8935,7 @@ function DocRow({
   // Free-text remark notes on this document (excludes the review decision trail).
   const remarkNotes = comments.filter((c) => c.kind !== "submit" && c.kind !== "reject" && c.kind !== "approve" && c.kind !== "amend" && c.body);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
   const latest = attachments[0];
   // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
   // VERSION to the approve/reject decision made while it was the newest file, so
@@ -9725,7 +9726,7 @@ function ChecklistRow({
       toast?.success("Uploaded");
       // Reviewable items auto-submit on upload so the approver's
       // Approve/Reject reappear (and a prior decision is superseded).
-      if (REVIEWABLE_TITLES.has(item.title)) {
+      if (isReviewableTitle(item.title)) {
         await onReview("submit", {});
       }
       // Floorplan → read the m² automatically (owner 2026-08-04: "once display
@@ -9779,16 +9780,13 @@ function ChecklistRow({
     new Date(item.due_date) < new Date(todayInAppTz());
   const reviewBadge = item.review_status ? REVIEW_BADGES[item.review_status] : null;
   const awaitingReview = item.review_status === "pending_review" || item.review_status === "amended";
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
 
   // mig 090 — payment / deposit rows render as multi-state pills instead
   // of the done/pending circle. pill_value is stored via the standard
   // checklist PATCH; the row's status stays 'na' (off the progress bar).
   if (item.pill_kind) {
-    const opts: [string, string][] =
-      item.pill_kind === "rental_payment"
-        ? [["none", "N/A"], ["unpaid", "Pending"], ["fully_paid", "Fully paid"]]
-        : [["none", "N/A"], ["unpaid", "Pending"], ["refunded", "Refunded"]];
+    const opts = paymentPillOptions(item.pill_kind);
     const cur = item.pill_value || "unpaid";
     // Terminal pill values (N/A, FULLY PAID, REFUNDED) = treat the row as done:
     // green check + greyed title. Only PENDING ("unpaid") stays "not done".
@@ -13321,54 +13319,9 @@ function Stat({
 // computed client-side so edits feel instant; the backend keeps
 // project_finance in sync for list-view rollups.
 
-// Mirrors backend/src/services/projects.ts → LEDGER_COST_CATEGORIES.
-// Backend accepts arbitrary strings on write; this list is the picker
-// surface only. 2026-05-08 — boss's Financial Snapshot model split
-// COGS into product sub-categories and transport into rate-driven
-// fee + actual logistics cost. Legacy `cogs` and `transport` slugs
-// stay in the picker so old data is still pickable on edit but new
-// rows should pick from the sub-categories.
-const LEDGER_COST_CATS = [
-  "rental",
-  "cogs", "cogs_matt_sofa", "cogs_bedframe", "cogs_accessories",
-  "setup",
-  "transport", "transport_fee", "transport_setup_dismantle",
-  "commission", "merchandise",
-  "contractor", "license", "deposit", "permit",
-  "accommodation", "staffing", "marketing", "misc",
-];
-const LEDGER_INCOME_CATS = ["sales", "deposit_refund", "rebate", "other_income"];
-
-function catLabel(cat: string): string {
-  switch (cat) {
-    case "cogs":
-      return "COGS";
-    case "cogs_matt_sofa":
-      return "COGS — Matt/Sofa";
-    case "cogs_bedframe":
-      return "COGS — Bedframe";
-    case "cogs_accessories":
-      return "COGS — Accessories";
-    case "transport":
-      return "Transport";
-    case "transport_fee":
-      return "Transport Fee";
-    case "transport_setup_dismantle":
-      return "Transport Setup & Dismantle";
-    case "contractor":
-      return "Contractor";
-    case "license":
-      return "License";
-    case "deposit":
-      return "Deposit paid";
-    case "deposit_refund":
-      return "Deposit refund";
-    case "other_income":
-      return "Other income";
-    default:
-      return cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, " ");
-  }
-}
+// The picker lists and their labels live in pms-ledger-categories.ts, shared
+// with mobile — which used to humanize() the slugs, so one P&L row read
+// "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone.
 
 function FinanceLedgerSection({
   projectId,
@@ -13446,7 +13399,7 @@ function FinanceLedgerSection({
           kind: "cost",
           category,
           amount: nextAmount,
-          description: `${catLabel(category)} (snapshot)`,
+          description: `${ledgerCategoryLabel(category)} (snapshot)`,
           r2_key: withReceipt?.r2_key ?? undefined,
           file_name: withReceipt?.file_name ?? undefined,
           mime_type: withReceipt?.mime_type ?? undefined,
@@ -14174,7 +14127,7 @@ function LedgerGroup({
                   tone === "synced" ? "bg-synced/10 text-synced" : "bg-err/10 text-err"
                 )}
               >
-                {catLabel(l.category)}
+                {ledgerCategoryLabel(l.category)}
               </span>
               <div className="min-w-0 flex-1">
                 <div
@@ -14351,7 +14304,7 @@ function AddFinanceLineForm({
     <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
         New {kind} line
-        {categoryDefault && ` · ${catLabel(categoryDefault)}`}
+        {categoryDefault && ` · ${ledgerCategoryLabel(categoryDefault)}`}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {!categoryDefault && (
@@ -14362,7 +14315,7 @@ function AddFinanceLineForm({
           >
             {categories.map((c) => (
               <option key={c} value={c}>
-                {catLabel(c)}
+                {ledgerCategoryLabel(c)}
               </option>
             ))}
           </select>
@@ -14497,11 +14450,11 @@ function EditFinanceLineRow({
         >
           {categories.map((c) => (
             <option key={c} value={c}>
-              {catLabel(c)}
+              {ledgerCategoryLabel(c)}
             </option>
           ))}
           {!categories.includes(line.category) && (
-            <option value={line.category}>{catLabel(line.category)}</option>
+            <option value={line.category}>{ledgerCategoryLabel(line.category)}</option>
           )}
         </select>
         <input

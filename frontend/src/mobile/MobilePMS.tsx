@@ -18,6 +18,9 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { formatCurrency, formatDate, todayInAppTz } from "../lib/utils";
 import { pmsStageLabel, pmsStageVariant, type PmsStageVariant } from "../vendor/scm/lib/pms-status";
+import { ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
+import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
+import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
@@ -1118,9 +1121,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 style={{ background: "rgba(216,168,90,.16)", borderColor: "rgba(216,168,90,.4)", color: "#d8a85a" }}
                 aria-label="Change status"
               >
-                <option value="confirmed">Confirmed</option>
-                <option value="pending">Pending</option>
-                <option value="cancelled">Cancelled</option>
+                {PROJECT_STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             )}
             {/* Edit lived on the (removed) Project card's summary — the card
@@ -1755,7 +1758,7 @@ function SalesPanel({
           <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
             {income.map((line, i) => (
               <div key={`${line.source ?? "l"}-${line.id}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
-                <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>{line.description || humanize(line.category || "sales")}</span>
+                <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>{line.description || ledgerCategoryLabel(line.category || "sales")}</span>
                 <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "#2f8a5b" }}>{formatCurrency(line.amount)}</span>
               </div>
             ))}
@@ -2319,10 +2322,7 @@ function TaskRow({
   };
   // Payment / deposit pill rows: N/A / PENDING / PAID instead of the tick.
   if (it.pill_kind) {
-    const opts: Array<[string, string]> =
-      it.pill_kind === "rental_payment"
-        ? [["none", "N/A"], ["unpaid", "Pending"], ["fully_paid", "Paid"]]
-        : [["none", "N/A"], ["unpaid", "Pending"], ["refunded", "Refunded"]];
+    const opts = paymentPillOptions(it.pill_kind);
     const cur = it.pill_value || "unpaid";
     return (
       <>
@@ -3159,9 +3159,9 @@ const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
 ];
 
 // ── Document review (Approve / Reject) — shared by the doc cards ──
-// The reviewable document titles, matched by prefix (mobile titles can carry
-// suffixes). Mirrors pages/Projects.tsx REVIEWABLE_TITLES.
-const REVIEWABLE_TITLE_RE = /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
+// The rule now lives in pms-reviewable-titles.ts, shared with desktop, which
+// used to test a Set of EXACT titles — so a suffixed row got this workflow here
+// and no review controls at all on the PC.
 
 // After uploading to a reviewable doc, auto-submit it so the approver's
 // Approve/Reject (re)appear — desktop does exactly this (Projects.tsx upload →
@@ -3169,7 +3169,7 @@ const REVIEWABLE_TITLE_RE = /^(agreement|stock\s*(out|in)\s*transfer|display\s*f
 // this: their gate needs review_status=pending_review, which nothing else sets.
 // Non-fatal: a failed submit only delays the amber PENDING badge.
 async function autoSubmitReviewable(itemId: number, title: string | null | undefined): Promise<void> {
-  if (!REVIEWABLE_TITLE_RE.test((title ?? "").trim())) return;
+  if (!isReviewableTitle(title)) return;
   try {
     await api.post(`/api/projects/checklist/${itemId}/review`, { action: "submit" });
   } catch {
@@ -3202,7 +3202,7 @@ function checklistReviewVisible(
   // history, so reversals stay auditable. `status`/`awaitingReview` are no
   // longer part of this arm — the permission alone decides.
   if (item.required_perm) return canApprove;
-  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
+  const reviewable = isReviewableTitle(item.title);
   return reviewable && awaitingReview && canApprove;
 }
 
@@ -3270,7 +3270,7 @@ function ReviewBadge({
 }) {
   const rs = (reviewStatus ?? "").toLowerCase();
   if (!rs) {
-    const reviewable = !!item && (!!item.required_perm || REVIEWABLE_TITLE_RE.test((item.title ?? "").trim()));
+    const reviewable = !!item && (!!item.required_perm || isReviewableTitle(item.title));
     const approvedByStatus = (item?.status ?? "").toLowerCase() === "done";
     if (!reviewable || !hasFiles || approvedByStatus) return null;
     return <span className="rbadge" style={{ background: "#f6efd9", color: "#6e4d12" }}>NOT APPROVED</span>;
@@ -4212,7 +4212,7 @@ function FinancialSnapshot({
               return (
                 <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
                   <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>
-                    {line.description || humanize(line.category || "—")}
+                    {line.description || ledgerCategoryLabel(line.category)}
                     {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "#9aa093" }}>auto</span>}
                   </span>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700 }}>{formatCurrency(line.amount)}</span>
