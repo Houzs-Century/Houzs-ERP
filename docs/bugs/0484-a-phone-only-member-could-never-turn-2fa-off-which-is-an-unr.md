@@ -3,17 +3,24 @@
 <!-- area: Auth, permissions, sessions -->
 
 **白话.** 同事如果只有手机、没有电脑，他可以用两步验证（2FA）登入，但**没有任何一个
-画面**可以让他自己把 2FA 关掉。手机掉了、换机、验证器 App 被误删 —— 只要那支验证器
-没了，这个户口就再也进不去，除非找到一台电脑。同一个画面上「还剩几组备用码」也看不到，
-所以他连自己剩多少后路都不知道。顺带一提：手机是唯一有相机的装置，却是唯一不能上传
-大头照的 —— 连别人在电脑上传好的照片，手机上也看不到，永远只显示两个英文字母。
+画面**可以让他自己把 2FA 关掉。手机掉了、换机、验证器 App 被误删 —— 他就只能去找一台
+电脑，或者去求管理员帮他重设。同一个画面上「还剩几组备用码」也看不到，所以他连自己
+还剩多少后路都不知道。顺带一提：手机是唯一有相机的装置，却是唯一不能上传大头照的 ——
+连别人在电脑上传好的照片，手机上也看不到，永远只显示两个英文字母。
 
 **Symptom.** Everything about two-factor except the login challenge was desktop
 only. A member working from a phone could sign in with 2FA (`MobileLogin`
 handles the challenge) but could not enrol, could not see the backup-code count,
-and could not DISABLE 2FA after losing the authenticator. With no PC to hand
-that is not an inconvenience, it is a locked account with no self-service way
-back.
+and could not DISABLE 2FA after losing the authenticator.
+
+**Said precisely, because the difference matters:** this was not an
+*absolutely* unrecoverable account — `POST /api/users/:id/totp/disable`
+(`users.manage`) lets an ADMIN reset somebody's 2FA, and `backend/src/routes/totp.ts`
+names that as the lost-device path. What did not exist was any SELF-service way
+back from a phone. A member on the road with no PC had to find an administrator
+and wait, holding a backup code they could not even count. That is the gap; the
+title's "unrecoverable" overstates it and is left only because the filename is
+the ledger's stable citation key.
 
 **Root cause (traced, not guessed).** The whole TOTP surface — status, setup,
 enable, disable, backup codes — was written INSIDE the desktop page component

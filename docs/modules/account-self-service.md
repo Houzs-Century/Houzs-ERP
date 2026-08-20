@@ -40,9 +40,12 @@ limit, or a gate.
 ### Why it is shaped this way
 
 Until 2026-08-21 all of it was private to the desktop components. The bill was a
-**lockout**: a member with only a phone could ANSWER the 2FA challenge at login
-(`MobileLogin`) but had no screen anywhere that could turn 2FA off again, so a
-lost authenticator meant a lost account unless they could find a PC. The photo
+**self-service lockout**: a member with only a phone could ANSWER the 2FA
+challenge at login (`MobileLogin`) but had no screen anywhere that could turn 2FA
+off again. An ADMIN could always reset it (`POST /api/users/:id/totp/disable`,
+`users.manage` — see `docs/modules/team-members.md`), so the account was never
+absolutely lost; what a phone-only member had was no way back without another
+person, and no way to see how many backup codes were left while deciding. The photo
 had the mirror-image gap — the one device with a camera could neither upload nor
 even display a photo. Both had the same cause: a rule written into one surface's
 component instead of into a layer both can import.
