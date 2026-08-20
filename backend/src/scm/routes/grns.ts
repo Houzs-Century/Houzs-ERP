@@ -11,6 +11,9 @@ import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
@@ -43,18 +46,13 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    another company's PO would post the stock IN, and its cost, into the active
    company's inventory and books.
 
-   Returns the refusal payload for the first offending PO, or null when every
-   referenced PO belongs to the active company (unresolved degrades to allowed,
-   like the rest of the scoping helpers). The two declared converters
+   Called inline via crossCompanySourceRefusal — the file-local wrapper this note
+   used to sit on was one line of delegation and went 2026-08-18. Returns the
+   refusal for the first offending PO, or null when every referenced PO is the
+   active company's (unresolved degrades to allowed). The two declared converters
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
-async function firstCrossCompanyPo(
-  sb: any,
-  c: any,
-  poIds: Array<string | null | undefined>,
-): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
-}
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -114,19 +112,6 @@ const GRN_AUDIT_SELECT =
    line in hand but not the parent. Best-effort by design: the writer is
    fail-open, so an unresolved doc number costs the row its human key and
    nothing else. */
-async function loadGrnAuditMeta(
-  sb: Variables['supabase'],
-  grnId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('grns')
-      .select('grn_number, company_id, status').eq('id', grnId).maybeSingle();
-    const row = (data ?? null) as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.grn_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
 
 /**
  * Record the CREATE of a GRN that has SURVIVED its handler.
@@ -1504,6 +1489,8 @@ grns.post('/', async (c) => {
       acceptedByPoItem.set(poItemId, (acceptedByPoItem.get(poItemId) ?? 0) + accepted);
     }
     if (acceptedByPoItem.size > 0) {
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
+      if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
         .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
@@ -1551,7 +1538,7 @@ grns.post('/', async (c) => {
      carry an explicit warehouse — the intentional manual-receipt flow still
      works, it just can't land stock nowhere-in-particular. */
   {
-    const x = await firstCrossCompanyPo(sb, c, [(body.purchaseOrderId as string | undefined) ?? null]);
+    const x = await crossCompanySourceRefusal(sb, c, 'purchase_orders', [(body.purchaseOrderId as string | undefined) ?? null], 'po_number');
     if (x && 'loadError' in x) return refuseWithoutWriting(c, { error: 'load_failed', reason: x.loadError }, 500);
     if (x) return refuseWithoutWriting(c, x.blocked, 409);
   }
@@ -2948,6 +2935,8 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId]);
+    if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],
@@ -3423,9 +3412,18 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-grns.delete('/:id/items/:itemId', async (c) => {
+/* First GRN route in the PG command txn: line delete, stock OUT, audit, outbox
+   and allocation request commit together or not at all. 503s without
+   DATABASE_URL by design. `sb` is the TRANSACTIONAL client - the body must not
+   reach for c.get('supabase'). The body stays INSIDE the route on purpose:
+   several checks scan grns.ts by route block, and hoisting it to a named
+   handler moved it out of their sight. docs/modules/grn.md 7c. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as mfg-sales-orders' command handlers.
+  sb: any,
+) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
-  const sb = c.get('supabase'); const user = c.get('user');
+  const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
     const { data: own, error: ownErr } = await scopeToCompany(
@@ -3571,11 +3569,9 @@ grns.delete('/:id/items/:itemId', async (c) => {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out → re-walk SO allocation. */
-          try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-delete failed:', e); }
+          /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+             enqueue must fail the delete. docs/modules/grn.md 7c. */
+          await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
         }
       } catch { /* best-effort */ }
     }
@@ -3584,4 +3580,4 @@ grns.delete('/:id/items/:itemId', async (c) => {
   await recomputeGrnTotals(sb, grnId);
   await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-});
+}));

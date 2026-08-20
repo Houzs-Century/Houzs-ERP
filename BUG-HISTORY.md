@@ -50,24 +50,464 @@ which had no test of its own.
 
 **Ref.** `fix/over-delivery-unlinked-blind-spot`, 2026-08-20.
 
+## A GRN line delete could move stock and lose its allocation recompute [high]
+
+**Symptom.** None visible — that is the whole problem. Delete a line from a
+posted GRN, and if the Worker died between the reversing stock OUT and the
+allocation recompute, SO lines stayed READY while the stock backing them had
+just been pulled out. Nothing logged, nothing retried, nothing to see until an
+unrelated mutation happened to sweep.
+
+**Root cause (traced, not guessed).** The recompute was a best-effort call AFTER
+the write: `recomputeSoStockAllocation(sb)` inside a try/catch, with the source
+write already committed through PostgREST. Only a queue row inside the source
+write's own transaction can survive that window, and this route had no
+transaction to join — `grns.ts` used `runScmPgCommand` in zero places.
+
+Counted on the tree the day this was written: 4 durable call sites against 42
+`recomputeSoStockAllocation` call sites.
+
+**Fix.** The route runs inside `runScmPgCommand`, and the recompute is requested
+with `scheduleStockAllocationAfterCommand`, whose queue row commits in the same
+transaction as the stock movement. It is also no longer swallowed: a failure to
+enqueue now fails the delete, because a stock move with no recompute is the
+exact state being removed.
+
+**Proof, because this is a transaction property and no unit test can see it.**
+`backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` against real Postgres —
+commit leaves the line gone AND the request queued; a throw after the enqueue
+leaves NEITHER; a throw before it leaves the line intact; the queue stays a
+singleton across two deletes.
+
+**Scope, stated so nobody reads more into it.** ONE of six GRN routes. The other
+five are unchanged and still best-effort, `postGrnHandler` last on purpose. The
+ledger `stockAllocationDurabilityScope.test.ts` moved 4/33 -> 5/32 in this PR,
+which is how progress here is recorded — it FAILS if a count drifts silently.
+
+**Ref.** `feat/grn-line-delete-in-transaction`, 2026-08-20.
+
+## company-scope: round2's stricter checker DEFERRED, leak fixes land on main's #2484 ratchet [minor]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Decision (owner, 2026-08-20).** Round2's leak FIXES ship now; round2's
+stricter checker rewrite does NOT. The entry directly below describes the
+reconciliation that reseeded `company-scope-baseline.json` 17 -> 55 to
+grandfather round2's **32 write findings + 21 read handlers**. That reseed GROWS
+the baseline, which the owner's REQUIRED `company-scope-ratchet` (a no-growth
+guard, `--check --ratchet-against origin/main`) forbids. Rather than weaken the
+ratchet, the owner chose to keep main's strong #2484 gate and DEFER the stricter
+checker + its write/read debt for a later per-site pass.
+
+**What landed here.** Restored main's versions of the four tooling files
+(`check-company-scope.mjs`, `company-scope-baseline.json` staying at 17 entries,
+`.github/workflows/ci.yml`, and removed the round2-only
+`companyScopeCheckerShapes.test.mjs` that tested the reverted checker). ALL of
+round2's actual route/lib leak fixes and its tenant suites
+(`crossTenantLeaksRound2`, `crossTenantUncoveredLeaks`) are kept — they are the
+point. Because the fixes only REMOVE leaks, main's ratchet stays green: `--check`
+and `--check --ratchet-against origin/main` both EXIT 0 (14 unscoped now, a
+subset of the 17-baseline; 3 baseline entries — `sofa-combos PUT /:id`,
+`suppliers POST /:id/bindings/batch`, `warehouse POST /racks` — even improved).
+
+**Deferred (NOT adopted here), to be revisited per-site.** Round2's shape-scan
+checker (`shapeKeyOf` shape-WRITE keys joining the ratchet) and the debt it
+surfaced — 32 write findings (natural-key / upsert-key / rpc; 18 in
+`mfg-sales-orders.ts`, plus `consignment-orders`, `fabric-tracking` bulk-upsert,
+`delivery-orders-mfg` crew, `fleet-maintenance`, `so-amendments`) and 21 unscoped
+read handlers. None is a proven new leak; each is a site still owed a per-site
+review. Re-adopt the stricter checker only alongside clearing (not just
+grandfathering) that backlog.
+
+**Ref.** `fix/cross-tenant-leaks-round2`, 2026-08-20 (revert commit on the
+branch). Supersedes the reconciliation entry below.
+
+## company-scope gate: two conflicting versions merged, reconciled onto one ratchet [minor]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** `backend-typecheck` (required) HARD-FAILED. Round2 rewrote
+`check-company-scope.mjs` (the shape scan that found the leaks above) and wired
+`backend-typecheck` to run it `--strict`, whose invariant was "handler WRITE
+findings must stay at ZERO". The improved scan surfaced **32 write findings**
+(natural-key / upsert-key / rpc — 18 in `mfg-sales-orders.ts`, plus
+`consignment-orders`, `fabric-tracking` bulk-upsert, `delivery-orders-mfg` crew,
+`fleet-maintenance`, `so-amendments`) and the read-side ratchet (#2484's
+`company-scope-baseline.json`) flagged **21 unscoped read handlers** it had not
+grandfathered. Neither set was a new leak — the deep review traced this
+money/stock surface as largely scoped (`selfScopedSalesBlocked` checks company
+first) with the real leaks fixed on `main` (#2497) — they were shape-scanner
+debt nobody had judged.
+
+**Root cause (traced).** Two independently-correct gates collided in the merge.
+`--strict` (round2) said writes must be zero; `--check` (main #2484) said the
+current set must be a SUBSET of a committed baseline. `--strict` had no baseline
+concept, so it could not grandfather the 32 writes; the shape-pass WRITES were
+not even in the ratchet's `currentKeys` (only by-id + lib were), so `--check`
+could not grandfather them either. The 32 writes and 21 reads therefore failed
+one gate each with no honest way to ship the leak fixes without clearing an
+unjudged backlog first.
+
+**Fix (owner decision: grandfather as tracked debt, block NEW, shrink-only).**
+Reconciled the two into ONE ratchet. `shapeKeyOf` gives each shape-WRITE finding
+a line-free stable key (`file :: handler [kind]`); the shape WRITES now join the
+ratchet's `currentKeys` (set-reads stay informational, as before — the owner
+named 32 writes + 21 reads, not the ~89 set-reads). `--strict` and `--check` now
+run the SAME gate: PASS when the current set is a subset of the baseline, FAIL on
+a NEW finding (write OR read). The baseline was reseeded through the checker's
+own `--update` path (no hand-editing) to **55 entries = 20 shape-write keys (the
+32 write findings) + 35 read handlers (21 newly grandfathered + 14 carried
+over)**. The matcher and the shape scan are unchanged — detection is not
+weakened, the debt is merely locked and made blockable-on-growth. **This debt is
+GRANDFATHERED, not cleared:** every entry in `company-scope-baseline.json` is a
+site still owed a per-site review; the list may only SHRINK. The non-required
+`company-scope-ratchet` job's `--ratchet-against origin/main` step is red BY
+DESIGN on this reseed PR (baseline 17 -> 55) and self-heals on the next PR.
+
+**Ref.** `fix/cross-tenant-leaks-round2`, 2026-08-20. Verified: `--strict` and
+`--check` exit 0 on the reseeded baseline; a dropped write key AND a dropped read
+key are each named as NEW (negative test); `test:light` 6070 green incl.
+`companyScopeCheckerShapes` (9), `crossTenantLeaksRound2` (30),
+`crossTenantUncoveredLeaks` (14); backend `tsc --noEmit` clean.
+
+## Fifteen cross-tenant leaks, and the gate that reported zero while they existed [critical]
+
+<!-- area: Auth, permissions, sessions -->
+
+**Symptom.** Nothing on screen. Every one of these served a correct-looking
+answer to whoever asked; that is the shape of the whole class. The measurable
+consequence: 79 of 96 live users hold exactly one company, and each of the reads
+below handed them the other one's data.
+
+**Root cause (traced).** The SCM Supabase client is SERVICE-ROLE, so migration
+0061's RLS runs no policy on an app request — the predicate a statement carries
+IS the tenant boundary. Seven distinct ways of not carrying one:
+
+1. `routes/mail-center.ts` GET `/outbox` + `/outbox/:id` had no predicate at all
+   on `email_outbox`, whose `company_code` exists (mig 0094). They return
+   `body_html` in full, and `routes/auth.ts:374` / `:448` put the one-time
+   `/invite/<token>` and `/reset/<token>` links in that body. Cross-tenant
+   ACCOUNT TAKEOVER, not disclosure.
+2. `routes/assrFormIntake.ts` GET `/status-export` — PRE-AUTH, one shared secret,
+   `SELECT ... FROM assr_cases WHERE archived_at IS NULL` for BOTH companies
+   including `customer_name`, `phone`, `addr1-4`, `complaint_issue`. Its write
+   sibling POST `/delivery-dates`, found in the same pass, resolved a case by
+   `assr_no` — not unique across companies — and UPDATEd it.
+3. `routes/projects.ts` — the file header asserted "child tables are ALWAYS read
+   through their parent project_id". That sentence is why ~30 handlers were never
+   re-read, and it is false: `/finance/lines/:lineId`, `/checklist/:itemId`,
+   `/sections/:sectionId`, `/defects/:defectId`, `/team/:teamId`,
+   `/attachments/:attId`, `/stock-transfers/:tid` carry no parent in the URL and
+   no middleware supplies one. `PATCH`/`DELETE /finance/lines/:lineId` was a bare
+   `WHERE id = ?` on a table that HAS `company_id` (mig 0170, which explicitly
+   declined a column DEFAULT to avoid exactly this). Migration 0292 repeated the
+   false claim back.
+4. Six purchase-side handlers put the guard on the HEADER id while the LINE id
+   came from the request BODY unchecked — `grns.ts` POST `/` and `/:id/items`,
+   `purchase-invoices.ts` and `purchase-returns.ts` `/:id/items`, both
+   `purchase-consignment-receives.ts` sites, both
+   `purchase-consignment-returns.ts` sites. The rollup writers
+   (`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty`,
+   `recomputePcoReceived`, `adjustPcReceiveReturnedQty`) all end
+   `.eq('id', <bodyId>)`, so `received_qty` / `invoiced_qty` / `returned_qty`
+   landed on the other tenant's lines, cascading into their PO/PCO status. The
+   CREATE path of two of those same files already applied the rule via a
+   `parent!inner(company_id)` embed; the add-line path never got it.
+5. `scm/routes/hr.ts` GET `/pickers` listed every active `scm.staff` row
+   platform-wide with a comment saying it was "unscoped by design", while its
+   four immediate siblings in the same `Promise.all` each carried
+   `.eq('company_id', ...)`. The premise was true (scm.staff has no company_id,
+   mig 0089) and the conclusion did not follow — `scm/lib/staffCompanyScope.ts`
+   exists to DERIVE it and its header names this leak class. Chained with
+   `staff.ts` GET `/by-ids`, which returns email and phone, it yielded the other
+   company's staff directory.
+6. `scm/routes/staff.ts` PATCH `/by-user/:userId/showroom` scoped the WAREHOUSE
+   half and keyed the write on `user_id` alone, so a HOUZS admin could re-park a
+   2990-only salesperson — moving whose venue, fair P&L and commission their
+   orders land in. It was invisible to `check-company-scope.mjs` because the
+   words "company-scope:" opened a paragraph about the OTHER table in the same
+   handler, and the checker's opt-out is a substring match.
+7. NO `assertWarehouseInCompany` / `warehouseInCompany` / `requireWarehouse`
+   existed anywhere under `backend/src/scm` — grep, 2026-08-18. So
+   `stock-takes.ts`, `inventory-adjustments.ts` and `dp-orders.ts` each took a
+   warehouse or trip id from the body and each invented its own half-argument for
+   why that was safe. One of those arguments was factually wrong:
+   `stock-takes.ts` said `v_inventory_all_skus` "has NO company_id column" while
+   migration 0156 rebuilt that view as a CONFIRMED LIVE LEAK and appends
+   `w.company_id` to it, saying in its own header that it did so "so the route
+   can `.eq('company_id', <active>)` it".
+
+**And the gate reported ZERO.** `check-company-scope.mjs` printed `0 of them
+WRITE` over all of the above, because it only matches a row addressed BY ID
+inside a handler body — a list with no predicate at all has no id, so
+`ID_PREDICATE` never fires. Its `DELEGATION_GUARDS` also trusted
+`salesDocOutOfScope`, which has no company logic anywhere in it
+(`scm/lib/salesScope.ts:86-95` resolves a SALESPERSON subtree); that one entry
+was suppressing two real findings. And 67 `// company-scope:` suppressions were
+invisible in its output, so nobody re-read them.
+
+**Fix.** Predicates, and one new primitive each for the two shapes that had none:
+`activeCompanyCodePred` in `scm/lib/companyScope.ts` (company CODE columns —
+binds, does not interpolate, and handles all three states `email_outbox.company_code`
+actually holds); `crossCompanySourceRefusal` widened to accept a source LINE
+(`docNoColumn: null`) rather than growing a ninth copy of the conversion rule;
+`scm/lib/ref-in-company.ts` `assertWarehouseInCompany` + `assertTripInAllowedCompanies`
+(per-company vs cross-company predicates, both fail closed on a read error);
+`scopeStaffRowsToActiveCompany` moved out of `scm/routes/staff.ts` into
+`scm/lib/staffCompanyScope.ts` so hr.ts can reach it; `refuseForeignChild` /
+`refuseForeignProject` in `routes/projects.ts` covering 33 handlers.
+Three false comments were CORRECTED in place rather than deleted, because each
+is why its leak survived a previous sweep.
+
+The checker now sees three shapes it was blind to — SET-READ (a list with no row
+narrowing and no company predicate, judged PER STATEMENT so a scoped sibling
+cannot excuse it), GLOBAL NATURAL KEY (including an upsert whose `onConflict`
+omits `company_id`), and RPC DELEGATION — prints every suppression with its
+reason, and links a raw-SQL fragment variable to its definition so the widened
+table list does not drown the report. `salesDocOutOfScope` is gone from
+`DELEGATION_GUARDS`, taking the by-id count 19 -> 21 on its own.
+
+Four MORE cross-tenant writes fell straight out of the widened checker and are
+fixed here too: `routes/assr.ts` POST `/:id/approve` (one company signing off the
+other's quality record and stamping its NCR category), DELETE `/:id/track-link`
+and DELETE `/:id/supplier-link` (revoking the other company's customer and
+supplier portal tokens), POST `/:id/generate-po` (burning a service-PO number
+onto the other company's case) — all four keyed on id alone while every sibling
+writer in the same file already used `assrCompanySql`.
+
+`tests/crossTenantLeaksRound2.test.ts` — 30 tests, one REFUSAL per leak plus the
+DEGRADE case for each, because a fix that blanks single-company Houzs is not a
+fix. Every one was proven to BITE: each fix was reverted in turn and the run
+re-executed. mail-center handler -> 1 fail; `activeCompanyCodePred` -> 5;
+intake predicates -> 2; projects gates -> 2; line refusal -> 1; staff pass -> 3;
+`ref-in-company` -> 4; all restored -> 30 passed.
+
+**Not touched, deliberately.** `rename_sofa_compartment` (needs a migration), the
+customer-credit atomic RPC (applied by hand), the background agents'
+cross-tenant PII emails (needs a design decision), and the deliberately-shared
+masters — lorries/drivers/helpers (migs 0121 / 0202-0204), `my_localities`,
+`currencies`, `so_scan_*`, `project_event_types`, `project_organizers`.
+
+**Found and NOT fixed, reported instead.** `scm/lib/do-email.ts:180` and
+`scm/routes/mfg-purchase-orders.ts:4288` both pass `String(row.company_id)` —
+"1" / "2" — into `sendEmail`'s `companyCode`, which wants a CODE.
+`brandingKeyForCompany("1")` misses, so every DO and PO email renders its From
+display name as the bare number. Not a tenant leak and not fixed here (it changes
+outbound branding); `activeCompanyCodePred` accepts the id-as-text form so those
+rows stay visible to the right company rather than vanishing from both.
+
+**One more, found while testing the checker rather than the code.**
+`check-company-scope.mjs` ended on `process.exit()`. Node's stdout writes are
+ASYNCHRONOUS when stdout is a PIPE, so the process was torn down before the
+buffer drained and the report was TRUNCATED — silently, and only when a machine
+was reading it. Measured 2026-08-18: 8,647 characters through `execFileSync`
+against 33,828 on a terminal, with the entire new-shapes section and the
+suppression ledger missing. That is the same class of fault as the leaks above —
+a gate reporting less than it found. Now `process.exitCode`, so node exits after
+the flush; the exit STATUS is unchanged, and
+`tests/companyScopeCheckerShapes.test.mjs` reads the script through a pipe on
+purpose so it cannot come back.
+
+Ref: fix/cross-tenant-leaks-round2, 2026-08-18.
+## Making completeness-claim REQUIRED jammed the merge queue for the whole repo [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**白话.** 今天早上把 completeness-claim 设成必过之后，合并队列就卡死了 —— 不是某一个 PR
+的问题，是所有 PR 都进不去。原因是这个检查只在 pull_request 时才跑，队列里跑的是
+merge_group，那时候根本没有 PR 内容可读，所以它永远不会回报结果，队列就一直等。第一个
+排队的 PR 十六项检查全绿，还是停在 AWAITING_CHECKS 第一位。现在让这个 job 在
+merge_group 时立刻回报通过（PR 阶段已经真的验过了），队列才走得动。顺手修了并发设定：
+merge_group 没有 PR 编号，原本的写法会让每个 merge group 共用同一个并发组、互相取消，
+被取消的检查不算通过，那会用另一种方式再把队列卡住一次。
+
+**Symptom.** #2516 sat at merge-queue position 1 in `AWAITING_CHECKS` with all
+16 of its merge-group checks `completed/success`, and did not merge. Nothing was
+wrong with the PR: the same PR's checks were green, `mergeStateStatus` was
+`CLEAN`, `mergeable` was `MERGEABLE`, and its timeline showed
+`added_to_merge_queue` with no removal. Any PR enqueued after 2026-08-20 10:40
+would have done the same, so this was a repo-wide stop, not one branch's problem.
+
+**Root cause (traced).** The `main` ruleset (id 20119902) requires four
+contexts: `backend-typecheck`, `frontend`, `company-scope-ratchet` and
+`completeness-claim`. The first three are jobs in `ci.yml`, which declares
+`on: pull_request` **and** `merge_group`. `completeness-claim.yml` declared
+`on: pull_request` only. A required context must report on the MERGE GROUP, not
+just on the PR, so the queue waited for a check that could never arrive.
+
+The ruleset's `updated_at` is `2026-08-20T10:40:56+08:00`; #2516 was enqueued at
+`10:51:26+08:00`, eleven minutes later. #2514 and #2515 merged earlier the same
+morning, and #2514's merge-group head carries no `completeness-claim` check
+either — it merged because the context was not required yet. So the requirement,
+not the workflow, is what changed.
+
+**Why the workflow cannot simply run there.** Its inputs are the PR title, body
+and labels — its own header says so, and explains that this is why it is not a
+job inside `ci.yml`. A `merge_group` event has no pull request attached, so
+there is no claim to reproduce. Two things would have broken if it were merely
+given the trigger with nothing else changed:
+
+- the checkout pins `ref: github.event.pull_request.head.sha`, which is empty on
+  a merge group. It would resolve to the default branch and the gate would
+  quietly measure the wrong tree rather than fail;
+- `concurrency.group` keys on `github.event.pull_request.number`, also empty, so
+  every merge group would share one group named `completeness-` and
+  `cancel-in-progress` would cancel the previous group's run. **A cancelled
+  check is not a passed check**, so that jams the queue a second time, in a form
+  that looks like flakiness rather than a rule.
+
+**Fix.** The job answers immediately on `merge_group` and does no work,
+reporting the verdict already reached against the same content on the PR run
+that let the PR be enqueued. Every real step is guarded
+`if: github.event_name != 'merge_group'`, and the concurrency group falls back
+to `github.ref` when there is no PR number. The job NAME is untouched, because
+the ruleset matches on that string and renaming it would silently un-require the
+gate.
+
+The gate keeps its teeth where they belong: on the pull request, where the claim
+exists and where the author can still fix it.
+
+**Ref.** ci/completeness-claim-reports-on-merge-group, 2026-08-20. The gate
+itself is `4a7c4eb6` (weisiang329-eng, 2026-08-13) and is not at fault — it was
+correct as an advisory PR check; only promoting it to required exposed the
+missing trigger.
+## The delivery fee could not be reduced by anyone — the discount had a server road and no door [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 运费降不下来，因为画面上根本没有输入折扣的地方。之前修好的是后端那一半：折扣
+存得住，重算也不会再把它抹掉。可是销售单画面上的「折扣」只是一个显示，数值大于零才看得
+见，没有输入框；那颗「$」改价按钮改的是单价，不是折扣。所以能写进折扣的只有 POS 的礼券
+拆分，柜台人员一条路都没有。现在改成：在运费那一行，原本打单价的同一格改成打「要收多少」
+—— 打 125，系统就记 125 的折扣，单据上还是单价 250、折扣 125、合计 125。想收更多不能用
+折扣（那会变成负数、账面上没有一行说明这笔钱），要另外加一行额外运费。
+
+**Symptom.** An operator trying to charge RM125 instead of RM250 has no field to
+do it in. Typing over the unit price snaps back (the fee is derived), and the
+`$ Override price` button writes `unit_price_sen`, which the next rebuild
+re-derives. The reduction that the server supports — a line discount — could not
+be entered from the SO screen at all.
+
+**Root cause (traced).** `SoLineCard.tsx` carried `discountSen` as a type, a
+default of `0`, a term in the line total and a read-only "− Discount" row that
+renders only when the value is ALREADY above zero. Its editable inputs are
+description, remark, qty, unit price, delivery date, variants and photos. There
+is no discount input, and `SalesOrderDetail.tsx` renders the Disc column as
+text. Both line payloads already send `discountSen`, so the whole path existed
+except the one place a human touches it.
+
+This is the half that #2490 (discount survives the rebuild) and 0310 (the line
+keeps its id) left open. Each was necessary; neither was sufficient, and read
+together they made the road look finished.
+
+**Fix.** On a `SVC-DELIVERY*` line the amount cell shows the line NET and writes
+the difference as a discount — the same cell the operator was already typing in.
+The arithmetic lives in `frontend/src/vendor/scm/lib/delivery-fee-amount.ts` so
+a test EXECUTES it rather than reading the JSX.
+
+Three deliberate properties, each pinned:
+- **Target semantics, not discount semantics.** Typing 125 on a 250 fee means
+  "charge 125", so the discount is 125. Wanting 200 books 50. The owner's own
+  case is a coincidence — half of 250 is also 125 — so a second case (250 → 200)
+  is what actually distinguishes the two readings.
+- **A higher figure books NO discount.** A negative discount would raise the fee
+  with no line naming the money: the header back door the owner ruled out on
+  2026-08-07. Charging more is what `SVC-DELIVERY-ADD` is for.
+- **A blank or unreadable box writes nothing.** `Number('')` is 0, which would
+  read as charge-nothing and discount the whole line on the way to retyping it,
+  and a blur at that moment would save the waiver. A deliberate waiver is still
+  typed as `0`. The first draft of the helper rounded NaN to 0 for symmetry and
+  a test caught it giving the fee away.
+
+Non-fee lines are byte-identical: the cell is still the unit price, on the same
+`canEditPrice` gate, so no new pricing power is handed to anyone.
+
+**It was never the mirror, and that matters for what to check next time.** An
+earlier draft of this entry blamed the `2990-*` revert on the SO mirror
+replaying its copy over the edit. #2518 withdrew that claim with a measurement,
+and it was wrong: 2990's own `sync_outbox` shows the last successful delivery at
+**2026-08-19T08:42:39Z** with an empty queue, while both `SVC-DELIVERY` deletes
+on 2990-SO-2608-033 (2026-08-20 01:41 and 02:40, from mig 0302's forensic log)
+postdate it and carry `application_name = PostgREST 14.5` — the Houzs fee
+rebuild, not the mirror, which reaches Postgres through postgres.js and appears
+nowhere in that log.
+
+So all three faults were on this side, and this entry is the last of them:
+`discount_sen: 0` written over an accepted discount (#2490), the rebuild
+replacing rows so they changed id (#2514 / mig 0310), and the discount having no
+input at all (here). The mirror's DELETE-then-INSERT is still real and still
+worth the import-once fix (#2515) — it is the only known mechanism that orphans
+a WHOLE document's DO lines at once — but it explains the ten repaired delivery
+links, not a reverted fee. An empty outbox is a state, not a guarantee: any
+2990-side row change re-arms it.
+
+Eight cases in `delivery-fee-amount.test.ts`, including the bound the server
+enforces (`0 <= discount <= qty x unit`) over a spread of typed figures.
+
+**Ref.** feat/delivery-fee-editable-amount, 2026-08-20. Completes #2490 (the
+discount survives) and #2514 (the line keeps its identity).
 ## The 2990 mirror kept overwriting Houzs edits, and blanked the delivery links every time [high]
 
 <!-- area: Cutover + migrated data -->
 
 **白话.** 2990 的单现在是在 Houzs 开的、也只在 Houzs 改。可是旧的同步还开着：2990 那
-边每传一次，系统就把这张单整组行删掉再放回去，等于把老板刚改的东西盖回旧的样子。老板把
-运费 250 改成 125，等一会儿又变回 250，那张单还「变成 0 件」—— 就是这样来的。更麻烦的
-是，行一被删，送货单就不记得自己送的是销售单的哪一行，MRP 会以为还没出货，叫采购再买一
-次。现在改成「同一张单只收第一次」：这张单 Houzs 已经有了，就完全不动它；2990 那边要删
-这张单，也不理它。已经断掉的 10 条送货行，另外用修复程序接回去。
+边每传一次，系统就把这张单整组行删掉再放回去，等于把老板刚改的东西盖回旧的样子。更麻烦
+的是，行一被删，送货单就不记得自己送的是销售单的哪一行，MRP 会以为还没出货，叫采购再买
+一次 —— 现在有 10 条这样的行。改成「同一张单只收第一次」：这张单 Houzs 已经有了，就完
+全不动它；2990 那边要删这张单，也不理它。那 10 条断掉的行，另外用修复程序接回去。
 
-**Symptom.** Two faces of one cause. The owner's: editing the delivery fee 250 →
-125 on a 2990 Sales Order "nuked the line to 0" and the order went to 0 items —
-the edit simply came back as 2990 last knew it. The silent one: 10 delivery
-lines across 4 documents carrying `so_item_id IS NULL` under a DO whose header
-still named the order, measured by the orphan sentinel on 2026-08-20 (run
-32321165432) against a committed baseline of 1. `so_item_id` is the key MRP's
-delivered-netting and the CONFIRMED → DELIVERED flip resolve on.
+> **更正（同一天）。** 这段原本写「老板把运费 250 改成 125 又变回 250，就是这个同步害
+> 的」—— **这句话是错的，收回。** 查过 2990 那边的传送记录：最后一次成功传过来是
+> 2026-08-19 08:42（UTC），之后一次都没有，队列是空的。老板那个运费问题发生在这之后，
+> 所以不可能是它。运费那件事是 Houzs 自己这边的三个毛病（#2490、#2514、#2516），已经
+> 各自修好了。这个同步的问题是真的、也真的要修，但它害的是送货单那 10 条断掉的行，不是
+> 运费。
+
+**Symptom.** 10 delivery lines across 4 documents carrying `so_item_id IS NULL`
+under a DO whose header still named the order, measured by the orphan sentinel
+on 2026-08-20 (run 32321165432) against a committed baseline of 1. `so_item_id`
+is the key MRP's delivered-netting and the CONFIRMED → DELIVERED flip resolve
+on. Silent by then: #2225 and #2355 had already covered the MRP face of it
+twice over.
+
+> **CORRECTED, same day, before anyone acted on it.** This paragraph opened
+> *"Two faces of one cause. The owner's: editing the delivery fee 250 → 125 on a
+> 2990 Sales Order 'nuked the line to 0' … the edit simply came back as 2990
+> last knew it."* **That attribution is wrong and is withdrawn.** The mirror's
+> last successful delivery to Houzs was **2026-08-19T08:42:39Z** — read from
+> 2990's own `public.sync_outbox` (`max(delivered_at)`) by
+> `mirror-drift-sentinel.mjs`, run
+> [32326411962](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/32326411962):
+> `pending=0 sent=0 done=102 stuck=0`. The outbox has been drained and idle
+> since. The vacuum only prunes `done` rows older than 30 days
+> (`docs/2990-live-sync/03_reconcile_2990.sql:34`), so that timestamp is the
+> real newest delivery, not an artefact of pruning.
+>
+> Every `SVC-DELIVERY` delete on `2990-SO-2608-033` in the forensic log
+> (`2026-08-20 01:41` and `02:40`) postdates that and carries
+> `application_name = PostgREST 14.5` — the Houzs fee rebuild, which reaches
+> Postgres through the PostgREST-shaped client. The mirror reaches it through
+> postgres.js and appears nowhere in that log.
+>
+> The 250 → 125 symptom is fully explained on the Houzs side and was fixed
+> there: the line PATCH accepted a bounded discount, the rebuild wrote
+> `discount_sen: 0` straight over it (#2490), the rebuild also replaced the
+> `SVC-DELIVERY*` rows so they changed id (#2514 / mig 0310), and `SoLineCard`
+> rendered the discount READ-ONLY, so no operator could type one at all —
+> which is why typing over the unit price, and watching the re-derive undo it,
+> is what actually happened (#2516).
+>
+> **What this does NOT withdraw.** The mirror was genuinely live and delivering
+> until 2026-08-19T08:42Z, its delete-then-insert of the whole item set is
+> real, and it remains the only known mechanism that orphans a whole document's
+> DO lines at once — which is what the ten rows below look like. Import-once is
+> a correct and necessary fix either way: the queue being empty today is a
+> state, not a guarantee, and any 2990-side change or any failed row returning
+> to `pending` would have replayed over Houzs edits again.
+>
+> Recorded here rather than quietly edited because the wrong sentence had
+> already merged, and because two facts disagreeing is the finding, not
+> something to reconcile into a smoother story.
 
 **Root cause (traced in source, and the competing theory refuted by
 measurement).** `routes/so-mirror.ts` was written before the cutover, as a live
@@ -168,9 +608,24 @@ THERE, carrying their original `created_at`", and its own example
 evidence that order was never rebuilt. Delete-and-reinsert reproduces the
 *appearance* 0302 describes but not that `created_at`. So this closes a
 mechanism that is real, reachable from the UI, and independently checkable —
-`scm.mfg_so_item_deletions` (0302) has been recording since 2026-08-18, and
-rows there with an `SVC-DELIVERY%` item_code are the direct proof. An empty
-result there stays a real answer, in 0302's own framing.
+`scm.mfg_so_item_deletions` (0302) has been recording since 2026-08-18.
+
+> **ANSWERED 2026-08-20, and NOT by this entry — see #2515.** The orphans were
+> the 2990 SO mirror: `so-mirror.ts` DELETE-then-INSERTed the WHOLE item set on
+> every sync, so one replay blanked every DO link on the order at once. That
+> fits what this mechanism cannot: whole documents orphaned together, `2990-*`
+> only, sofas and pillows among them. A fee rebuild can only ever reach fee
+> lines.
+>
+> ⚠️ **This entry's own investigative advice was wrong, and is corrected here
+> rather than deleted.** It said to look for rows in `scm.mfg_so_item_deletions`
+> with an `SVC-DELIVERY%` item_code, and pointed at a fee line younger than its
+> product lines as the fingerprint. Under the real mechanism that filter HIDES
+> the signal — the mirror deletes lines of every item code, so the query to run
+> is the unfiltered one, per `doc_no`. The migration file cannot be edited to
+> say so (it is applied, and `pg-migrate` checksums it), so the correction lives
+> here. The narrow mechanism this entry describes was still real and is still
+> closed; it simply was not the one that bit.
 
 **Fix.** 0310 replaces the function body with match → update → delete → insert.
 Incoming rows are numbered per `item_code` by their position in `p_rows`; live
