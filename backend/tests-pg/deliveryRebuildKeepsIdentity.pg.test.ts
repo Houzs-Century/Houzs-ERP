@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { deliveryFeeStateKey } from '../src/scm/shared/service-lines';
 
 /*
  * The delivery-fee rebuild must REUSE its lines (migration 0310).
@@ -97,7 +98,15 @@ async function resetFixture(sql: Sql): Promise<void> {
       so_item_id uuid REFERENCES scm.mfg_sales_order_items(id) ON DELETE SET NULL
     );
   `);
+  await sql.unsafe(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+      END IF;
+    END $$;
+  `);
   await sql.unsafe(await migration('0310_scm_rebuild_so_delivery_lines_keeps_identity.sql'));
+  await sql.unsafe(await migration('0314_scm_so_delivery_rebuild_refuses_a_stale_derivation.sql'));
 }
 
 /** One rebuilt line as the route builds it: gross unit, operator discount, net total. */
@@ -143,11 +152,34 @@ const feeRow = (itemCode: string, unitSen: number, discountSen = 0, lineNo = 0) 
    and jsonb_array_elements answers "cannot extract elements from a scalar".
    The same trap is called out in soConcurrency.pg.test.ts and
    variantMergePreservesKeys.pg.test.ts. */
-const rebuild = (sql: Sql, rows: unknown[], feeSen: number, source: string | null = null) =>
-  sql.unsafe(
-    'SELECT scm.rebuild_mfg_so_delivery_lines($1, $2, $3, $4::jsonb)',
-    [DOC, source, feeSen, admin.json(rows)],
-  );
+const rebuild = (
+  sql: Sql,
+  rows: unknown[],
+  feeSen: number,
+  source: string | null = null,
+  /* The operator-owned fee state the caller derived FROM (0314). undefined =
+     the pre-0314 four-argument call, which is still what the repair script and
+     the unraced cases below use. */
+  expectState?: unknown,
+) => sql.unsafe<Array<{ rebuilt: boolean }>>(
+  'SELECT scm.rebuild_mfg_so_delivery_lines($1, $2, $3, $4::jsonb, $5::jsonb) AS rebuilt',
+  [DOC, source, feeSen, admin.json(rows), expectState === undefined ? null : admin.json(expectState as never)],
+);
+
+/** Read the fee lines the way the route reads them, then build the expectation
+ *  with the SAME helper the route uses. That pairing is the point: it is what
+ *  proves the TypeScript object and the SQL jsonb_object_agg agree, which is the
+ *  only way this guard can be silently wrong (an integer rendered 1.00 would
+ *  refuse every rebuild forever, and no fee would ever change again). */
+const stateNow = async (sql: Sql) => deliveryFeeStateKey(
+  (await sql.unsafe(`
+    SELECT id, item_code, qty, unit_price_sen, discount_sen
+      FROM scm.mfg_sales_order_items
+     WHERE doc_no = '${DOC}'
+       AND item_code IN ('SVC-DELIVERY', 'SVC-DELIVERY-CROSS', 'SVC-DELIVERY-ADD')
+       AND COALESCE(cancelled, false) = false
+  `)) as unknown as Array<{ id: string; item_code: string; qty: number; unit_price_sen: number; discount_sen: number }>,
+);
 
 const feeLines = (sql: Sql) => sql.unsafe(`
   SELECT id, item_code, line_no, unit_price_sen, discount_sen, total_sen, cancelled
@@ -284,5 +316,116 @@ describePg('the delivery-fee rebuild keeps its lines (0310)', () => {
     const rows = await feeLines(admin);
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].total_sen)).toBe(25000);
+  });
+});
+
+/*
+ * A derivation computed from fee lines that have since MOVED is refused (0314).
+ *
+ * The 0214 advisory lock is taken INSIDE this function; the derivation reads the
+ * fee lines BEFORE calling it. Read, then lock. One ordinary SO Detail Save fans
+ * its dirty-line PATCHes out in parallel and each ends in rederiveDeliveryFee,
+ * so a salesperson who cuts the fee 250 -> 125 AND changes a sofa quantity in
+ * the same Save had two rebuilds in flight — and the one derived from the
+ * pre-discount snapshot wrote last. Quoted RM 125, invoiced RM 250.
+ *
+ * These cases run the interleave for real: the state is read, a concurrent
+ * commit moves it, and the stale derivation is then offered to the function.
+ */
+describePg('the delivery-fee rebuild refuses a stale derivation (0314)', () => {
+  beforeAll(async () => { admin = postgres(url, { max: 4, onnotice: () => {} }); });
+  afterAll(async () => { await admin?.end({ timeout: 5 }); });
+
+  beforeEach(async () => {
+    await resetFixture(admin);
+    await admin.unsafe(`
+      INSERT INTO scm.mfg_sales_orders (doc_no, company_id, delivery_fee_sen)
+      VALUES ('${DOC}', 2, 25000);
+    `);
+    await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000);
+  });
+
+  test('the expectation TypeScript builds is the expectation SQL re-reads', async () => {
+    const [rebuilt] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, await stateNow(admin));
+    expect(rebuilt.rebuilt).toBe(true);
+  });
+
+  test('REGRESSION: a stale derivation does NOT put the operator discount back to 250', async () => {
+    const stale = await stateNow(admin);                 // what P_sofa derived from
+
+    // P_fee lands: the operator's 250 -> 125 commits while P_sofa is deriving.
+    await admin.unsafe(`
+      UPDATE scm.mfg_sales_order_items
+         SET discount_sen = 12500, total_sen = 12500, total_inc_sen = 12500, balance_sen = 12500
+       WHERE doc_no = '${DOC}' AND item_code = 'SVC-DELIVERY'
+    `);
+    await admin.unsafe(`UPDATE scm.mfg_sales_orders SET delivery_fee_sen = 12500 WHERE doc_no = '${DOC}'`);
+
+    // P_sofa now offers its pre-discount derivation. Under 0310 this WROTE.
+    const [refused] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, stale);
+    expect(refused.rebuilt).toBe(false);
+
+    const [line] = await feeLines(admin);
+    expect(Number(line.discount_sen)).toBe(12500);       // the reduction survived
+    expect(Number(line.total_sen)).toBe(12500);
+    const [header] = await admin.unsafe(`SELECT delivery_fee_sen FROM scm.mfg_sales_orders WHERE doc_no = '${DOC}'`);
+    expect(Number(header.delivery_fee_sen)).toBe(12500); // and so did the mirror
+  });
+
+  test('the SAME derivation, re-run against the moved state, lands', async () => {
+    const stale = await stateNow(admin);
+    await admin.unsafe(`
+      UPDATE scm.mfg_sales_order_items SET discount_sen = 12500, total_sen = 12500
+       WHERE doc_no = '${DOC}' AND item_code = 'SVC-DELIVERY'
+    `);
+    expect((await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, stale))[0].rebuilt).toBe(false);
+
+    // What the route does next: read again, derive again, call again.
+    const fresh = await stateNow(admin);
+    const [ok] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000, 12500)], 12500, null, fresh);
+    expect(ok.rebuilt).toBe(true);
+    const [line] = await feeLines(admin);
+    expect(Number(line.unit_price_sen)).toBe(25000);
+    expect(Number(line.discount_sen)).toBe(12500);
+    expect(Number(line.total_sen)).toBe(12500);
+  });
+
+  test('a DELETED fee line moves the state too — the derivation is refused', async () => {
+    const stale = await stateNow(admin);
+    await admin.unsafe(`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = '${DOC}'`);
+    expect((await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, stale))[0].rebuilt).toBe(false);
+    expect(await feeLines(admin)).toHaveLength(0);
+  });
+
+  test('NULL means no expectation — the repair script and the create path still write', async () => {
+    const [rebuilt] = await rebuild(admin, [feeRow('SVC-DELIVERY', 30000)], 30000);
+    expect(rebuilt.rebuilt).toBe(true);
+    expect(Number((await feeLines(admin))[0].unit_price_sen)).toBe(30000);
+  });
+
+  test('a hand-added SVC-DELIVERY-ANYTHING row is in NEITHER side of the compare', async () => {
+    /* isDeliveryFeeServiceCode is a PREFIX match; the function names three exact
+       codes. If the expectation used the prefix, a row like this would be in it
+       and not in what the function re-reads — a mismatch that never resolves, so
+       the order would stop re-deriving its fee forever, silently. */
+    await admin.unsafe(`
+      INSERT INTO scm.mfg_sales_order_items (company_id, doc_no, item_code, qty, unit_price_sen, total_sen)
+      VALUES (2, '${DOC}', 'SVC-DELIVERY-BESPOKE', 1, 9900, 9900)
+    `);
+    const state = await stateNow(admin);
+    expect(Object.values(state ?? {}).map((v) => v[0])).not.toContain('SVC-DELIVERY-BESPOKE');
+    const [rebuilt] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, state);
+    expect(rebuilt.rebuilt).toBe(true);
+    // …and the function leaves the stray row alone, exactly as it did before.
+    const rows = await feeLines(admin);
+    expect(rows.map((r) => r.item_code)).toContain('SVC-DELIVERY-BESPOKE');
+  });
+
+  test('an SO with no fee lines at all expects an empty object, not null', async () => {
+    await admin.unsafe(`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = '${DOC}'`);
+    expect(await stateNow(admin)).toEqual({});
+    const [rebuilt] = await rebuild(admin, [feeRow('SVC-DELIVERY', 25000)], 25000, null, {});
+    expect(rebuilt.rebuilt).toBe(true);
+    expect(await feeLines(admin)).toHaveLength(1);
   });
 });
