@@ -38,6 +38,21 @@ export function invalidateInventoryShared(qc: QueryClient) {
   bump(qc, INVENTORY_ROOTS);
 }
 
+/* The three PRIVATE roots `MobileConvertWizard` reads its pickable lines under.
+ *
+ * They are the hazard this file's own header describes, pointed the other way.
+ * The wizard invented them, nothing else knew them, and they were in nobody's
+ * invalidation set — so a convert completed ANYWHERE (a desktop picker, another
+ * mobile flow, or the wizard itself a moment earlier) left a mounted phone
+ * wizard still offering lines that had already been consumed. Picking one gets
+ * an `over_remaining` refusal at best; where the pool only partly shrank, a
+ * wrong quantity goes through instead.
+ *
+ * Listed HERE rather than fixed with a fourth private key at the call site,
+ * which is the mistake that produced the first three. Prefix-match covers every
+ * target / source-id / poIds variant. */
+const CONVERT_PICKER_ROOTS = ["convert-source", "convert-lines", "convert-grn-lines"];
+
 /* A convert touches source + target doc lists (SO/DO/SI/PO/GRN) and, for a GRN,
  * inventory — invalidate the union so no desktop picker/list is left stale. */
 export function invalidateConvertShared(qc: QueryClient) {
@@ -49,6 +64,7 @@ export function invalidateConvertShared(qc: QueryClient) {
      in the same change so the two callers cannot disagree about which PO keys a
      write touches. */
   bump(qc, ["sales-invoices", "sales-invoices-paged", "mfg-purchase-orders", "mfg-purchase-orders-paged", "grns", "grns-paged"]);
+  bump(qc, CONVERT_PICKER_ROOTS);
 }
 
 /* Roots for a module whose actions write inventory_movements. Every stock-moving
