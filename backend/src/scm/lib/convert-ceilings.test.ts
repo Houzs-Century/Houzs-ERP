@@ -331,19 +331,19 @@ describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () 
      that slipped through would fail on this line instead of silently reading as
      `undefined` and passing a `toBe(...)` nobody re-checked. */
   async function pending(tables: Record<string, Row[]>) {
-    const r = await doRemainingByItemId(fakeSb(tables) as any, ['dl-1']);
+    const r = await doRemainingByItemId(fakeSb(tables) as any, ['dl-1'], 'invoiceable');
     if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
     return r.remaining.get('dl-1');
   }
 
   async function pendingOf(tables: Record<string, Row[]>, id: string) {
-    const r = await doRemainingByItemId(fakeSb(tables) as any, [id]);
+    const r = await doRemainingByItemId(fakeSb(tables) as any, [id], 'invoiceable');
     if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
     return r.remaining.get(id);
   }
 
   async function ledger(tables: Record<string, Row[]>, doIds: string[]) {
-    const r = await doLineRemaining(fakeSb(tables) as any, doIds);
+    const r = await doLineRemaining(fakeSb(tables) as any, doIds, 'invoiceable');
     if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
     return r.lines;
   }
