@@ -85,6 +85,10 @@ function harness(over: {
       from: (table: string) => new FakeQuery((tables[table] ||= [])),
       rpc: async () => ({ data: [{ applied: true, current_version: 2 }], error: null }),
     } as never);
+    /* The header PATCH became a STRICT company write (an unresolved company is
+       refused, not defaulted to Houzs by mig 0164's COALESCE). The fixture
+       carries the company its own row already has. */
+    c.set('companyId' as never, 1 as never);
     c.set('user' as never, { id: 'actor-1', user_metadata: { name: 'Test User' } } as never);
     c.set('companyCode' as never, (over.companyCode ?? 'HOUZS') as never);
     c.set('houzsUser' as never, {
