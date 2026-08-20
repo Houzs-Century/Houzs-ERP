@@ -78,6 +78,9 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
+/* parseInches is imported, not redeclared: this file's private copy also served
+   sortNumeric below, and a shared parser serves both readers. */
+import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
@@ -307,13 +310,6 @@ const FABRIC_SYNC_KEYS: string[] = [
   "fabricCode", "colourId", "fabricId", "fabricLabel", "colourLabel", "colourHex",
 ];
 
-/* Inches parser — mirrors SoLineCard.parseInches (handles `10"`, `10`, `-2`). */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
-};
-
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
@@ -346,15 +342,22 @@ function defaultSofaLegValue(maint: MaintenanceConfig | null | undefined): strin
 
 /* Build a line's outgoing `variants` blob for the create/edit body. We fold in
    the remark + a fresh computed totalHeight for bedframes (kept for the backend
-   even though the readout is hidden). */
+   even though the readout is hidden).
+
+   THE TOTAL HEIGHT IS ASSIGNED UNCONDITIONALLY NOW. This function used to say
+   `if (th > 0) variants.totalHeight = …`, which was a third answer to "what is
+   written when divan/leg/gap are blank" — it both left a STALE height on a line
+   whose parts were cleared (the blob is spread from l.variants, so the old
+   number survived) and omitted the key on a fresh line. Writing '' matches the
+   fourteen purchasing screens; '' and an absent key are interchangeable to
+   every consumer (computeVariantKey drops empty axes, the pricing lookups and
+   the allowed-options gate all short-circuit on a falsy value), so the only
+   thing that changes is that a cleared spec now actually clears. */
 function buildVariants(l: LineItem): Record<string, unknown> {
   const variants: Record<string, unknown> = { ...(l.variants ?? {}) };
   if (l.remark.trim()) variants.remark = l.remark.trim();
   else delete variants.remark;
-  if (l.cat === "bedframe") {
-    const th = parseInches(variants.divanHeight) + parseInches(variants.legHeight) + parseInches(variants.gap);
-    if (th > 0) variants.totalHeight = `${th}"`;
-  }
+  if (isTotalHeightCategory(l.cat)) variants.totalHeight = computeTotalHeight(l.cat, variants);
   return variants;
 }
 

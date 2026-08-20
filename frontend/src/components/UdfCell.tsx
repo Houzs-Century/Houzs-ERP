@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import type { UdfField } from "../hooks/useUdf";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 
 type Status = "idle" | "saving" | "ok" | "error";
 
@@ -79,8 +80,39 @@ export function UdfCell({ field, value, onSave }: Props) {
         onClick={(e) => e.stopPropagation()}
       />
     );
+  } else if (field.type === "date") {
+    /* DateField, not a native date input: the native one renders in the
+       OPERATING SYSTEM's locale, so the same column read DD/MM/YYYY on one
+       machine and MM/DD/YYYY on another. "date" is a first-class UdfFieldType,
+       so this is reachable by anyone who adds a date column to a table.
+
+       This survived the 2026-08-18 sweep of all 175 native date inputs and the
+       gate shipped with it because the type was COMPUTED into a variable —
+       `const type = … ? "date" : "text"` and then `type={type}`. That is the one
+       spelling check-date-formatting.mjs states it cannot see (the string is
+       decided away from the input), which is why it is written out here.
+
+       The span carries the two handlers DateField does not take: the grid row
+       must not receive the click, and Enter still commits by blurring. */
+    editor = (
+      <span
+        style={{ display: "contents" }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLElement).blur();
+        }}
+      >
+        <DateField
+          fullWidth
+          className={baseInput}
+          value={draft}
+          onChange={setDraft}
+          onBlur={() => commit()}
+        />
+      </span>
+    );
   } else {
-    const type = field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
+    const type = field.type === "number" ? "number" : "text";
     editor = (
       <input
         type={type}
