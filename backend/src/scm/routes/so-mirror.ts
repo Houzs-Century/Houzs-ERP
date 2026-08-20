@@ -17,8 +17,23 @@
 // receiver went on replaying 2990's older copy over those edits — and because
 // it replaced the item set with a DELETE-then-INSERT, every replay blanked the
 // Delivery-Order lines pointing at those SO lines through the FK's ON DELETE
-// SET NULL. Owner-visible: a delivery fee edited 250 -> 125 came back as 250,
-// and the order "went to 0 items".
+// SET NULL. Ten such orphaned delivery lines across four documents were live on
+// 2026-08-20, whole documents at a time — which is the shape only a
+// whole-item-set replacement produces.
+//
+// WHAT THIS IS *NOT*, corrected 2026-08-20 before it could mislead anyone. This
+// comment first said "Owner-visible: a delivery fee edited 250 -> 125 came back
+// as 250, and the order went to 0 items". That symptom is NOT this route's.
+// 2990's outbox (`public.sync_outbox`) shows the last successful delivery at
+// 2026-08-19T08:42:39Z with pending=0 and sent=0 since, read by
+// mirror-drift-sentinel.mjs; the fee edits postdate it, and the deletes behind
+// them carry application_name "PostgREST 14.5" — the Houzs fee rebuild, not
+// this receiver, which reaches Postgres through postgres.js. The fee symptom
+// was three Houzs-side faults, all fixed there: #2490 (rebuild wrote
+// discount_sen 0 over the discount), #2514 / mig 0310 (rebuild replaced the
+// SVC-DELIVERY* rows so they changed id), #2516 (the discount was read-only in
+// SoLineCard, so nobody could type one). Import-once stands on the orphaned
+// links, which is evidence it does carry.
 //
 // SO THE RULE IS NOW: THE FIRST DELIVERY WINS, AND ONLY THE FIRST.
 //
