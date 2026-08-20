@@ -1,3 +1,33 @@
+## May a LOADED delivery order be invoiced? Two merged PRs disagree [OWNER DECISION]
+
+<!-- area: Delivery, DO, returns -->
+
+**Not a defect report — an open question, recorded so it is not lost.** Nothing
+here is broken today; two rulings simply point opposite ways and the system is
+currently following both in different places.
+
+- **#2485, owner, 2026-08-19.** *"A Sales Invoice can be raised from every
+  CONFIRMED delivery order"* — anything past DRAFT that is not CANCELLED,
+  `LOADED` included. The desktop still behaves this way:
+  `do-next-step.ts:89` `SI_TRANSFERABLE_DO_STATUSES` opens with `'loaded'`, so a
+  LOADED delivery shows an enabled **Transfer to Sales Invoice** button.
+- **#2557, 2026-08-20.** A LOADED DO is still on the lorry and its inventory OUT
+  has not fired, so *"billing it would be the bug"* — the words are
+  `unbilled-deliveries.ts:39`. Its `DO_NOT_DELIVERED_IN_LIST` now filters the
+  server's SI candidate picker, so a LOADED delivery's lines are not offered.
+
+**What a user sees under each.** Under #2485, an operator can invoice goods that
+are packed on the lorry but have not left, and stock still reads as on hand
+because the OUT fires on dispatch. Under #2557, they must dispatch first, and the
+button the desktop shows them produces an empty line picker.
+
+**Where it stands.** `main` is inconsistent with itself: the UI offers the
+transfer and the server picker declines to supply it. The nesting is at least the
+safe way round — the picker offers a strict SUBSET of what the create gate
+accepts — so nothing is advertised that the create path then refuses, and no
+money or stock is wrong either way. Left for the owner because "may we bill goods
+that have not left the warehouse" is a business rule, not a merge resolution.
+
 ## A mirror pin that was refereeing a different pair [high]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
@@ -40,6 +70,14 @@ holds the pair.
 whose module name appears in an unrelated test. Tightening it would reclassify
 other pairs and could turn `--strict` red repo-wide, so it is raised rather than
 changed inside a PR about something else.
+
+**The pin earned itself the same day.** Hours after it was written, #2557 added
+`DO_NOT_DELIVERED_STATES`, `doCountsAsDelivered` and `DO_NOT_DELIVERED_IN_LIST`
+to `backend/src/scm/shared/do-shipped-states.ts` and NOT to the frontend twin.
+`check-shared-mirrors.mjs --strict` passed that divergence, exactly as described
+above. `do-shipped-states.canonical.test.ts` failed on it by name and the twin
+was synced from the backend home. Nothing else in the repository noticed — which
+is the difference between a pin and a paragraph claiming there is one.
 
 ## A comment stripper that lost its place at `=> "?"` [medium]
 
