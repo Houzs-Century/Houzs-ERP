@@ -220,7 +220,7 @@ function walk(dir, acc = []) {
 
    A WHITELIST, so the unknown case keeps the character as text. Keeping too much
    costs an allowlist entry; dropping too much costs a missed lie. */
-const OPENERS = new Set(["=", "(", "[", "{", ",", ";", ":", "?", "+", "&", "|", "!", "\n", undefined]);
+const OPENERS = new Set(["=", "(", "[", "{", ",", ";", ":", "?", "+", "&", "|", "!", ">", "\n", undefined]);
 const OPENER_WORDS = new Set(["return", "typeof", "case", "in", "of", "await", "throw", "new", "delete", "void", "yield", "do", "else", "from", "import", "export", "extends", "as", "satisfies"]);
 function opensString(src, at) {
   let j = at - 1;
@@ -353,6 +353,24 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
   }
   if (!/caught up/i.test(stripComments("if (x) return 'you are caught up';"))) {
     failures.push("stripComments lost a string opened after a keyword");
+  }
+  /* AN ARROW FUNCTION RETURNING A STRING — `() => "?"`. `>` was missing from
+     OPENERS here too (this stripper is the original; check-company-divergence
+     inherited it), so the opening quote read as code and the CLOSING one opened
+     a string that never shut, leaving every later comment in the file to be
+     scanned as source. Latent here — no comment in the tree happened to match a
+     claim shape — and a live false positive in the sibling gate. Pinned so it
+     cannot come back on either. */
+  {
+    const NL = String.fromCharCode(10);
+    const arrowProbe = [
+      'const s = xs.map(() => "?").join(", ");',
+      '/* No orders yet. */',
+      'const a = 1;',
+    ].join(NL);
+    if (/No orders yet/.test(stripComments(arrowProbe))) {
+      failures.push('stripComments desynced on a string literal after `=>` and leaked a later comment');
+    }
   }
   if (failures.length > 0) {
     warn("check-empty-state-claims: internal SELF-TEST FAILED — not reporting a number.");

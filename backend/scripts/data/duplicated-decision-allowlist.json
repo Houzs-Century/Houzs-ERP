@@ -457,8 +457,8 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx",
-      "why": "THE DO SHIPPED STATES. backend/src/scm/shared/do-shipped-states.ts is the named home and DeliveryOrderDetailV2.tsx re-types it inline to decide whether the line editors lock. One question, two homes, no referee — recorded so the inline copy can be replaced with an import in a change that is allowed to touch the DO screen."
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
     },
     {
       "check": "D1",
@@ -1129,6 +1129,11 @@
       "check": "D2",
       "key": "DESCRIPTION,DISPLAYTERM,DOCDATE,DOCNO,PURCHASELOCATION,REF,SUPPLIERDONO ~ DESCRIPTION,DISPLAYTERM,DOCDATE,DOCNO,PURCHASELOCATION,REF,SUPPLIERINVOICENO",
       "why": "TWO ARMS OF ONE MAP, three lines apart in one declaration: AC_TRANSFER_HEADER_KEYS in autocount-convert-lines.ts. The GR arm is PurchaseHeader plus the goods receipt's own SupplierDONo; the PI arm is PurchaseHeader plus the purchase invoice's own SupplierInvoiceNo. Each line carries a comment saying exactly that. Meant to differ, and the difference is visible to anyone reading either line — the opposite of the invisible second home this gate hunts."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,DISPATCHED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE STATES A DELIVERY MAY BE INVOICED FROM — a VENDORED TWIN of one declaration, not a second decision. The rule has one home in backend/src/scm/shared/do-shipped-states.ts and a byte-identical copy under frontend/src/vendor/shared/ so the browser can gate the transfer button on the same list the server enforces. Four hand-typed spellings of this rule are what the parent PR removes; keeping the twin is the price of a browser that cannot import backend/src. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
     }
   ]
 }

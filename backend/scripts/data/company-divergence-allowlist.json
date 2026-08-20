@@ -1,0 +1,488 @@
+{
+  "_README": [
+    "REVIEWED PER-COMPANY DIFFERENCES. ONE SYSTEM, TWO ORGANISATIONS (owner,",
+    "2026-08-18): 两个公司不是用着同一个系统吗？他们只是 Multi-Organization 关系而已啊.",
+    "",
+    "A company may legitimately have its own DATA - its documents, its numbering",
+    "prefix, its branding - and a very small number of RULES THE OWNER STATED",
+    "HIMSELF. It may not have different CAPABILITIES by accident.",
+    "",
+    "backend/scripts/check-company-divergence.mjs finds lines that NAME a company.",
+    "A regex cannot tell a stated rule from an accident, so this file is where a",
+    "person records the judgement. Every entry needs a `why` that would survive",
+    "being read out loud AND a `whoSetIt` naming whose decision it was - the second",
+    "field is the one that matters here, because the owner's position is that a",
+    "per-company difference is legitimate only when he set it. 'Historical' and",
+    "'legacy' are not people. A line not listed here FAILS the build.",
+    "",
+    "Keyed by file plus normalized line TEXT, never by line number, so a merge that",
+    "moves a branch keeps its review and an EDIT to a branch re-opens it.",
+    "",
+    "Entries whose line is gone are reported as STALE and printed, never failed - a",
+    "gate that punishes somebody for REMOVING a per-company branch is a gate that",
+    "stops the work. Clear them anyway.",
+    "",
+    "THE TWO ENTRIES WORTH RE-READING BEFORE ANY SWEEP, because they are real",
+    "capability differences and not branding:",
+    "  - frontend/src/auth/AuthGate.tsx - the mobile build exists for the base",
+    "    company only (owner: 2990 手机关闭).",
+    "  - backend/src/scm/lib/so-po-lock.ts - the SO-PO edit lock applies to 2990",
+    "    orders only, scoped by doc-number prefix (owner, 2026-08-12).",
+    "",
+    "WHAT IS NOT IN HERE, and cannot be: a config row one company lacks, a column",
+    "one importer never writes, and a status list that only ever matches one",
+    "company's rows. The gate cannot see any of those. See its header."
+  ],
+  "reviewed": [
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": ": code === HOUZS_COMPANY_CODE",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": ": companyCode === HOUZS_COMPANY_CODE",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "const caseEntity: PrintEntity = companyCode === HOUZS_COMPANY_CODE ? \"houzs\" : \"2990\";",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "const csPhone = companyCode === HOUZS_COMPANY_CODE ? \"011-6155 6133\" : branding.phone;",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "const headProfile = (entity === \"2990\" ? homeProfile : houzsProfile) ?? {",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "const homeProfile = entity === \"2990\" || entity === \"both\"",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "rawEntity === \"houzs\" || rawEntity === \"2990\" || rawEntity === \"both\"",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "square: code === HOUZS_COMPANY_CODE,",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "square: companyCode === HOUZS_COMPANY_CODE,",
+      "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/projects_print.ts",
+      "text": ": companyCode === HOUZS_COMPANY_CODE",
+      "why": "Same print-entity choice as assr_print: whose letterhead a project document carries.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "const DOC_PREFIX_BY_COMPANY: Record<string, string> = {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "const houzs = rows.find((r) => r.code === \"HOUZS\");",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "const m = rows.find((r) => r.code === MIRRORED_COMPANY_CODE);",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "export function houzsCompanyIds(c: CompanyScopeCtx): number[] | undefined {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "export function houzsCompanySql(c: CompanyScopeCtx, col = \"company_id\"): string {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "export function houzsOwns2990(env: { HOUZS_OWNS_2990?: string } | undefined | null): boolean {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "export function isMirroredDocNo(docNo: unknown): boolean {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "export function mintsIntoMirroredNamespace(c: CompanyScopeCtx): boolean {",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/companyScope.ts",
+      "text": "return DOC_PREFIX_BY_COMPANY[upper] ?? `${upper}-`;",
+      "why": "This IS the multi-company module — it DEFINES base company, mirrored company, per-company doc prefixes and the cutover switch. The company names have to appear somewhere, and one file is the point of the design; every other consumer imports these helpers instead of re-deriving them.",
+      "whoSetIt": "Phase 0b multi-company design (docs/2026-07-多公司合并设计.md, locked)."
+    },
+    {
+      "file": "backend/src/scm/lib/migrated-chain.ts",
+      "text": "export const MIGRATED_NUMBER_PREFIX = 'HC-';",
+      "why": "'HC-' is the prefix the AutoCount carry-over invoices must mint under so a migrated invoice mirrors the AutoCount number one-for-one. It names a numbering series, which is per-company DATA.",
+      "whoSetIt": "Owner, 2026-08-07 — 'HC-' is the house code he chose."
+    },
+    {
+      "file": "backend/src/scm/lib/migrated-chain.ts",
+      "text": "return `${MIGRATED_NUMBER_PREFIX}${acInvoiceNo.trim()}`;",
+      "why": "'HC-' is the prefix the AutoCount carry-over invoices must mint under so a migrated invoice mirrors the AutoCount number one-for-one. It names a numbering series, which is per-company DATA.",
+      "whoSetIt": "Owner, 2026-08-07 — 'HC-' is the house code he chose."
+    },
+    {
+      "file": "backend/src/scm/lib/so-po-lock.ts",
+      "text": "const docs = [...new Set(docNos.filter((d): d is string => !!d && isMirroredDocNo(d)))];",
+      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
+      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
+    },
+    {
+      "file": "backend/src/scm/lib/so-po-lock.ts",
+      "text": "if (!docNo || !isMirroredDocNo(docNo)) return false;",
+      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
+      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
+    },
+    {
+      "file": "backend/src/scm/lib/so-po-lock.ts",
+      "text": "import { isMirroredDocNo } from './companyScope';",
+      "why": "The SO edit lock once a PO exists applies to 2990 orders ONLY. Scoped by doc-number prefix rather than company_id, with the reason written at the call site: locking HOUZS would have flipped a two-year backlog of ~302 orders to amendment-only in one deploy, against an exposure of 2 orders on the 2990 side.",
+      "whoSetIt": "Owner, 2026-08-12, after the order named in the file header."
+    },
+    {
+      "file": "backend/src/scm/lib/so-revision.ts",
+      "text": "if (isMirroredDocNo(docNo) && !houzsOwns2990(c?.env)) {",
+      "why": "A 2990-originated sales order is read-only in this ERP until the HOUZS_OWNS_2990 cutover flips, because 2990 is still the writer of its own book. Reverses in one deploy — do NOT delete this as dead symmetry before the flip.",
+      "whoSetIt": "Cutover design, owner-approved; runbook step documented in companyScope.ts."
+    },
+    {
+      "file": "backend/src/scm/lib/so-revision.ts",
+      "text": "import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';",
+      "why": "A 2990-originated sales order is read-only in this ERP until the HOUZS_OWNS_2990 cutover flips, because 2990 is still the writer of its own book. Reverses in one deploy — do NOT delete this as dead symmetry before the flip.",
+      "whoSetIt": "Cutover design, owner-approved; runbook step documented in companyScope.ts."
+    },
+    {
+      "file": "backend/src/scm/routes/mfg-sales-orders.ts",
+      "text": "if (mintsIntoMirroredNamespace(c as unknown as Context<any>) && !houzsOwns2990(c.env)) {",
+      "why": "Mirrored 2990 sales orders are read-only here and cannot be CREATED into the 2990 namespace, until the HOUZS_OWNS_2990 cutover flips. Same cutover rule as so-revision.ts.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/routes/mfg-sales-orders.ts",
+      "text": "if (touchesMirrored && !houzsOwns2990(c.env)) return c.json(MIRRORED_SO_READONLY, 409);",
+      "why": "Mirrored 2990 sales orders are read-only here and cannot be CREATED into the 2990 namespace, until the HOUZS_OWNS_2990 cutover flips. Same cutover rule as so-revision.ts.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/routes/mfg-sales-orders.ts",
+      "text": "isMirroredDocNo, mintsIntoMirroredNamespace, houzsOwns2990,",
+      "why": "Mirrored 2990 sales orders are read-only here and cannot be CREATED into the 2990 namespace, until the HOUZS_OWNS_2990 cutover flips. Same cutover rule as so-revision.ts.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/routes/mfg-sales-orders.ts",
+      "text": "return isMirroredDocNo(s);",
+      "why": "Mirrored 2990 sales orders are read-only here and cannot be CREATED into the 2990 namespace, until the HOUZS_OWNS_2990 cutover flips. Same cutover rule as so-revision.ts.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/routes/so-amendments.ts",
+      "text": "import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';",
+      "why": "Same cutover rule applied to amendments: a mirrored 2990 amendment is read-only until the flip.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/routes/so-amendments.ts",
+      "text": "return { ok: true, mirrored: isMirroredDocNo(amendment.so_doc_no) && !houzsOwns2990(c.env), amendment };",
+      "why": "Same cutover rule applied to amendments: a mirrored 2990 amendment is read-only until the flip.",
+      "whoSetIt": "Cutover design, owner-approved."
+    },
+    {
+      "file": "backend/src/scm/shared/order-rules.ts",
+      "text": "String(companyCode ?? '').trim().toUpperCase() === '2990'",
+      "why": "The deposit fraction before a Processing Date may be set: HOUZS 30%, 2990 50%. The one per-company BUSINESS rule the owner stated outright, and the fallback for an unknown company is deliberately the looser one.",
+      "whoSetIt": "Owner, 2026-07-14, restated 2026-07-31: 'Houzs 30%, 2990 50%'."
+    },
+    {
+      "file": "backend/src/scm/shared/so-branding-label.ts",
+      "text": "const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;",
+      "why": "The Branding column's label: a sofa or mattress line under the non-HOUZS company reads '2990 Sofa' / '2990 Mattress'. A label on a row, not a capability. Frontend twin is byte-identical and pinned by check-shared-mirrors.",
+      "whoSetIt": "Owner, 2026-08-17 — the complaint that a branding cell must never be blank."
+    },
+    {
+      "file": "backend/src/services/agents/agent-company.ts",
+      "text": "const base = list.find((r) => r.code === BASE_COMPANY_CODE);",
+      "why": "Resolving the BASE company as the default when an agent has no company in hand. Asymmetric on purpose — one company has to be the base — and it is constrained to the caller's allowed set downstream.",
+      "whoSetIt": "Phase 0b multi-company design."
+    },
+    {
+      "file": "backend/src/services/assr.ts",
+      "text": "const houzs = rows.filter((r) => !r.company_code || r.company_code === \"HOUZS\");",
+      "why": "Routes a delivery-order lookup to the right SOURCE: base-company cases are enriched from the legacy D1 sales_orders table, everything else from scm.delivery_orders. A fact about where each company's history physically lives during the merge, not a difference in what the screen offers.",
+      "whoSetIt": "The merge's dual-source reality; fail-soft by design, documented above the function."
+    },
+    {
+      "file": "backend/src/services/branding.ts",
+      "text": "if (code === \"2990\") return { ...DEFAULT_BRANDING_2990 };",
+      "why": "Which branding defaults and which cache key a company gets. Logo, name, colours — presentation.",
+      "whoSetIt": "House branding — each company has its own identity."
+    },
+    {
+      "file": "backend/src/services/branding.ts",
+      "text": "if (code === HOUZS_COMPANY_CODE) return { ...DEFAULT_BRANDING };",
+      "why": "Which branding defaults and which cache key a company gets. Logo, name, colours — presentation.",
+      "whoSetIt": "House branding — each company has its own identity."
+    },
+    {
+      "file": "backend/src/services/branding.ts",
+      "text": "return code === HOUZS_COMPANY_CODE ? BRANDING_KEY : `branding:${code}`;",
+      "why": "Which branding defaults and which cache key a company gets. Logo, name, colours — presentation.",
+      "whoSetIt": "House branding — each company has its own identity."
+    },
+    {
+      "file": "backend/src/services/email.ts",
+      "text": "(code && code !== HOUZS_COMPANY_CODE && COMPANY_PUBLIC_URLS[code]) ||",
+      "why": "Which public URL a company's outbound mail links to. Each company has its own host.",
+      "whoSetIt": "House branding / per-company hosts."
+    },
+    {
+      "file": "frontend/src/auth/AuthGate.tsx",
+      "text": "{hostDefaultCompanyCode() === HOUZS_COMPANY_CODE",
+      "why": "TWO different things, both stated. The splash line is branding. `mobileEnabled` is a real CAPABILITY difference and the owner set it himself: the mobile build exists only for the base company, so the 2990 host serves the desktop app even on a phone. Recorded here precisely so it is never mistaken for an accident — if the owner ever wants a 2990 mobile UI, this is the line.",
+      "whoSetIt": "Owner — '2990 手机关闭' (2990 mobile closed), quoted at the call site."
+    },
+    {
+      "file": "frontend/src/auth/AuthGate.tsx",
+      "text": "const mobileEnabled = isMobile && hostDefaultCompanyCode() === HOUZS_COMPANY_CODE;",
+      "why": "TWO different things, both stated. The splash line is branding. `mobileEnabled` is a real CAPABILITY difference and the owner set it himself: the mobile build exists only for the base company, so the 2990 host serves the desktop app even on a phone. Recorded here precisely so it is never mistaken for an accident — if the owner ever wants a 2990 mobile UI, this is the line.",
+      "whoSetIt": "Owner — '2990 手机关闭' (2990 mobile closed), quoted at the call site."
+    },
+    {
+      "file": "frontend/src/auth/AuthScreens.tsx",
+      "text": "{branding.companyCode === HOUZS_COMPANY_CODE && (",
+      "why": "The wordmark watermark on the login screen renders only for the base company, because the asset is bundled and no other company has one. Presentation.",
+      "whoSetIt": "House branding — bundled asset, no per-company upload on this screen."
+    },
+    {
+      "file": "frontend/src/components/BrowserPushSink.tsx",
+      "text": "(getBrandingCompanyCode() === HOUZS_COMPANY_CODE",
+      "why": "Fallback TITLE on a browser notification: the base company keeps the historic literal, another company reads its short name from the branding cache. Presentation of the same notification.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/components/CompanyMark.tsx",
+      "text": "className={isHouzs ? imgClassName : uploadedImgClassName ?? imgClassName}",
+      "why": "The company mark itself: bundled assets for the base company, the uploaded R2 logo for anyone else. This file IS the branding component.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/components/CompanyMark.tsx",
+      "text": "const isHouzs = branding.companyCode === HOUZS_COMPANY_CODE;",
+      "why": "The company mark itself: bundled assets for the base company, the uploaded R2 logo for anyone else. This file IS the branding component.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/components/CompanyMark.tsx",
+      "text": "const logoKey = !isHouzs ? branding.logoR2Key : \"\";",
+      "why": "The company mark itself: bundled assets for the base company, the uploaded R2 logo for anyone else. This file IS the branding component.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/components/CompanyMark.tsx",
+      "text": "const src = isHouzs ? HOUZS_ASSETS[variant] : logoUrl;",
+      "why": "The company mark itself: bundled assets for the base company, the uploaded R2 logo for anyone else. This file IS the branding component.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/components/CompanyMark.tsx",
+      "text": "style={isHouzs ? imgStyle : undefined}",
+      "why": "The company mark itself: bundled assets for the base company, the uploaded R2 logo for anyone else. This file IS the branding component.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/hooks/useBranding.ts",
+      "text": "companyCode === HOUZS_COMPANY_CODE",
+      "why": "The browser-tab title carries the company's own name, so two tabs open on the two organisations are distinguishable. Presentation, not capability.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/lib/branding.ts",
+      "text": "if (code === \"2990\") return { ...DEFAULT_BRANDING_2990 };",
+      "why": "Per-company branding defaults on the client, twin of backend/src/services/branding.ts.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileCalendar.tsx",
+      "text": "const brandEyebrow = isHouzsBrand",
+      "why": "Brand mark and eyebrow wording in the mobile calendar header.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileCalendar.tsx",
+      "text": "const brandMark = isHouzsBrand ? \"HOUZS\" : (brandWords[0] ?? \"\").toUpperCase();",
+      "why": "Brand mark and eyebrow wording in the mobile calendar header.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileCalendar.tsx",
+      "text": "const isHouzsBrand = branding.companyCode === HOUZS_COMPANY_CODE;",
+      "why": "Brand mark and eyebrow wording in the mobile calendar header.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileLogin.tsx",
+      "text": "{isHouzsHost ? (",
+      "why": "Mobile login screen brand words and logo.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileLogin.tsx",
+      "text": "<span style={{ fontSize: 10, fontWeight: 700, letterSpacing: \".14em\", textTransform: \"uppercase\", color: \"rgba(231,234,228,.4)\" }}>{isHouzsHost ? \"Houzs ERP\" : `${loginCompanyName} ERP`}</span>",
+      "why": "Mobile login screen brand words and logo.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileLogin.tsx",
+      "text": "const isHouzsHost = loginCompanyCode === HOUZS_COMPANY_CODE;",
+      "why": "Mobile login screen brand words and logo.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileLogin.tsx",
+      "text": "const loginCompanyName = isHouzsHost",
+      "why": "Mobile login screen brand words and logo.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/mobile/MobileProfile.tsx",
+      "text": "return getBrandingCompanyCode() === HOUZS_COMPANY_CODE",
+      "why": "Product name shown on the mobile profile screen.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx",
+      "text": "const is2990 = branding.companyCode === \"2990\";",
+      "why": "Which of two column layouts the Sales Orders list OPENS on per company — 2990 gets the production/delivery view, the base company the sales-desk view. BOTH layouts are offered to BOTH companies in the Columns panel and an admin-saved default takes the seed out of play, so this is a default, not a capability.",
+      "whoSetIt": "Owner, 2026-08-01, quoted at the call site."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx",
+      "text": "isDefault: !is2990,",
+      "why": "Which of two column layouts the Sales Orders list OPENS on per company — 2990 gets the production/delivery view, the base company the sales-desk view. BOTH layouts are offered to BOTH companies in the Columns panel and an admin-saved default takes the seed out of play, so this is a default, not a capability.",
+      "whoSetIt": "Owner, 2026-08-01, quoted at the call site."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx",
+      "text": "isDefault: is2990,",
+      "why": "Which of two column layouts the Sales Orders list OPENS on per company — 2990 gets the production/delivery view, the base company the sales-desk view. BOTH layouts are offered to BOTH companies in the Columns panel and an admin-saved default takes the seed out of play, so this is a default, not a capability.",
+      "whoSetIt": "Owner, 2026-08-01, quoted at the call site."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "{r.company_code && r.company_code !== \"HOUZS\" && (",
+      "why": "Two roles, both presentational: a company chip that renders only for non-base-company rows so a mixed list stays readable, and the print entity deciding whose letterhead a service-case document carries.",
+      "whoSetIt": "House branding + the print-entity rule shared with assr_print.ts."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "{s.company_code && s.company_code !== \"HOUZS\" && (",
+      "why": "Two roles, both presentational: a company chip that renders only for non-base-company rows so a mixed list stays readable, and the print entity deciding whose letterhead a service-case document carries.",
+      "whoSetIt": "House branding + the print-entity rule shared with assr_print.ts."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "chosen === \"2990\" ? \"2990\" : HOUZS_COMPANY_CODE,",
+      "why": "Two roles, both presentational: a company chip that renders only for non-base-company rows so a mixed list stays readable, and the print entity deciding whose letterhead a service-case document carries.",
+      "whoSetIt": "House branding + the print-entity rule shared with assr_print.ts."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "const caseEntity: PrintEntity = companyCode === \"2990\" ? \"2990\" : \"houzs\";",
+      "why": "Two roles, both presentational: a company chip that renders only for non-base-company rows so a mixed list stays readable, and the print entity deciding whose letterhead a service-case document carries.",
+      "whoSetIt": "House branding + the print-entity rule shared with assr_print.ts."
+    },
+    {
+      "file": "frontend/src/pages/SurveyPublic.tsx",
+      "text": "return hostDefaultCompanyCode() === HOUZS_COMPANY_CODE",
+      "why": "Public survey page title per company.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/pages/Team.tsx",
+      "text": "return code === \"HOUZS\" ? \"Houzs\" : code;",
+      "why": "Display name for a company code in the Team screen ('HOUZS' renders as 'Houzs').",
+      "whoSetIt": "House branding — a label, nothing else."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/delivery-order-pdf.ts",
+      "text": "const isHouzs = getBrandingCompanyCode() === HOUZS_COMPANY_CODE;",
+      "why": "Which SO reference rows the delivery-order PDF prints under each company's letterhead.",
+      "whoSetIt": "House branding — document presentation."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/delivery-order-pdf.ts",
+      "text": "const soRows = isHouzs",
+      "why": "Which SO reference rows the delivery-order PDF prints under each company's letterhead.",
+      "whoSetIt": "House branding — document presentation."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/pdf-common.ts",
+      "text": "if (getBrandingCompanyCode() === HOUZS_COMPANY_CODE) return 'Houzs ERP';",
+      "why": "Producer/application name written into PDF metadata.",
+      "whoSetIt": "House branding."
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-branding-label.ts",
+      "text": "const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;",
+      "why": "Byte-identical vendored twin of backend/src/scm/shared/so-branding-label.ts; check-shared-mirrors.mjs --strict pins the pair. Same reason as the backend copy.",
+      "whoSetIt": "Owner, 2026-08-17 — same rule, vendored copy."
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-branding-label.ts",
+      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
+    },
+    {
+      "file": "backend/src/scm/shared/so-branding-label.ts",
+      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
+    },
+    {
+      "file": "backend/src/scm/lib/doc-no.ts",
+      "text": "if (upper === BASE_COMPANY_CODE) return '';",
+      "why": "THE JE-NUMBER PREFIX — numbering, which is the one per-company difference the rule names as legitimate. HOUZS mints journal entries BARE (JE-2607-0001) and always has; every other company keys off the SAME resolver the SO/PO minters use, so 2990 gets '2990-' and a future third company gets '<CODE>-'. Deliberately unlike its own SO/PO numbers, which do carry 'HC-'. Renaming a live series would orphan every reference to an existing JE number. NOT a capability: both organisations post, read and reverse journals through identical code.",
+      "whoSetIt": "Owner — it is his live JE book's existing series. The design is recorded in docs/MULTICOMPANY-SCALING.md section 1 ('journal entries use jePrefixForCompany()'), and #2427 preserved the bare HOUZS series on purpose when it moved the resolver off a hardcoded companies.id."
+    }
+  ]
+}
