@@ -27,6 +27,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(scriptDir, "..");
@@ -141,7 +142,8 @@ const output = lines.join("\n");
 
 if (checkOnly) {
   const existing = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "";
-  if (existing !== output) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (!sameIgnoringEol(existing, output)) {
     console.error("route-locator.md is stale — run: node backend/scripts/gen-route-locator.mjs");
     process.exit(1);
   }
