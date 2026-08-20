@@ -24,6 +24,8 @@ import { useOutstandingPcOrderLines, type OutstandingPcOrderLine } from '../../v
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
+import { buildVariantSummary } from '@2990s/shared';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -155,9 +157,28 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
       searchValue: (r) => r.itemCode ?? '',
     },
     {
-      key: 'materialName', label: 'Material', width: 220, sortable: true,
-      accessor: (r) => r.materialName || <span className={styles.muted}>—</span>,
-      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''}`.trim(),
+      /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+         A consigned sofa order carries one line per MODULE (9028-1A(LHF),
+         9028-1A(RHF), 9028-1NA …) and the module rows share a material name, so
+         the name alone cannot tell the receiver which one he is ticking. The
+         line's `variants` already ride in on this read
+         (routes/purchase-consignment-receives.ts:601 selects them; :628 returns
+         them), so the SAME VariantDescription the other pickers use renders the
+         live summary underneath — no new fetch, no server change. */
+      key: 'materialName', label: 'Material', width: 240, sortable: true,
+      accessor: (r) => (
+        <div>
+          <div>{r.materialName || <span className={styles.muted}>—</span>}</div>
+          <VariantDescription
+            itemCode={r.itemCode}
+            itemGroup={r.itemGroup}
+            variants={r.variants}
+            description={r.description}
+            mutedClassName={styles.muted}
+          />
+        </div>
+      ),
+      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''} ${buildVariantSummary(r.itemGroup, (r.variants as Record<string, unknown> | null) ?? null)}`.trim(),
     },
     {
       key: 'ordered', label: 'Ordered', width: 80, align: 'right', sortable: true,
