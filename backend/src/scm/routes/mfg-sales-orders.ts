@@ -6433,17 +6433,17 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  /* Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed,
-     stamp the header — as ONE atomic RPC (migration 0214, ported from 2990
-     migration 0211). The Backend SO Detail Save fires one line PATCH per changed
-     line IN PARALLEL, and each PATCH ends here; when this was two statements
-     (delete, then insert) two rebuilds could interleave as
-     delete/delete/insert/insert and double the delivery fee on the bill
-     (SO-2606-043 2026-06-28, SO-2607-010 2026-07-12). Being inside the
-     atomic-command transaction does not fix it — under READ COMMITTED the second
-     DELETE cannot see the first transaction's new rows. The RPC takes a per-doc_no
-     advisory xact lock, so concurrent rebuilds serialize and the last writer
-     leaves exactly one consistent set. */
+  /* Re-derive the SVC-DELIVERY* lines and stamp the header as ONE atomic RPC
+     (0214, ported from 2990's 0211). SO Detail Save fires line PATCHes IN
+     PARALLEL and each ends here; as two statements (delete, then insert) two
+     rebuilds interleaved and DOUBLED the fee on the bill (SO-2606-043
+     2026-06-28, SO-2607-010 2026-07-12) — READ COMMITTED hides the first
+     transaction's rows from the second DELETE — so the RPC takes a per-doc_no
+     advisory xact lock. It also REUSES each fee line rather than replacing it
+     (0310): a DO can carry a fee line and so_item_id is ON DELETE SET NULL
+     (0235), so replacing one silently blanked that DO's link, leaving a
+     same-item_code row that looked untouched. Lines pair per item_code by
+     POSITION here (CROSS appears twice on a follow-up) — keep `specs` order. */
   {
     const lineDateToday = todayMyt();
     // disc = preserved operator discount, clamped to THIS rebuilt line's own total.

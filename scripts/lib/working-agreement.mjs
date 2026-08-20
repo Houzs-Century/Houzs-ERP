@@ -518,10 +518,9 @@ const CN_OUTCOME =
    cheapest possible way to get 「跑了 all 模式，但是补不回来」 right. */
 const CN_NEGATED = /[不没无未别]/;
 
-const prescribesCn = (line) => CN_PRESCRIPTION.test(line);
-
+/** The instruction's MATCH (so the promise can be sought after it), or null. */
 const prescribes = (line) =>
-  IMPERATIVE_RX.test(line) || PRESCRIPTION_RX.test(line) || prescribesCn(line);
+  IMPERATIVE_RX.exec(line) ?? PRESCRIPTION_RX.exec(line) ?? CN_PRESCRIPTION.exec(line);
 
 /**
  * The first promise in `text` that is not denied right where it stands.
@@ -603,7 +602,8 @@ export function findRemedyClaims(text) {
     if (open[i]) continue;
     const line = raw[i].trim();
     if (!line || QUESTION_RX.test(line)) continue;
-    if (!prescribes(line)) continue;
+    const instruction = prescribes(line);
+    if (!instruction) continue;
 
     // The window: this line plus the next few PROSE lines, joined. A promise
     // may trail the instruction by a sentence or two.
@@ -614,6 +614,20 @@ export function findRemedyClaims(text) {
     }
     const joined = window.join(" ");
 
+    /* THE PROMISE MUST FOLLOW THE INSTRUCTION. Searching the whole window let a
+       sentence that merely NARRATES read as a prescription, and BUG-HISTORY.md
+       had a live example the moment the corpus grew:
+
+         「...独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处...」
+
+       「跑 MRP」 matches the 跑 + latin-token pattern and 「补上」 matches the
+       promise vocabulary — but 补上 sits BEFORE 跑 MRP and belongs to a different
+       clause entirely. The text is describing a disease that was already cured,
+       not telling anyone to run anything. Every real claim reads
+       instruction-then-promise ("Run X and it collects Y", 「跑这个就能补回来」),
+       so the search starts where the instruction ends. */
+    const after = joined.slice(instruction.index + instruction[0].length);
+
     /* Two languages, each with its own promise vocabulary AND its own lookback
        distance. 34 characters is about a clause of English; Chinese says the
        same thing in a fraction of that, so a 34-character Chinese lookback
@@ -621,7 +635,7 @@ export function findRemedyClaims(text) {
        A line may satisfy either side — mixed-language bodies are the norm here
        ("dispatch 一次这个 workflow 就能修复"). */
     const promise =
-      matchPromise(joined, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(joined, CN_OUTCOME, CN_NEGATED, 4);
+      matchPromise(after, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(after, CN_OUTCOME, CN_NEGATED, 4);
     if (!promise) continue;
 
     claims.push({

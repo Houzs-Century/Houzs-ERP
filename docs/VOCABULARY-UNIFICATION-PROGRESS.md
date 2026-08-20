@@ -67,6 +67,48 @@ that is NOT safe to ship blind against money/stock tables:
 | **Warehouse** | `warehouse_id` (uuid, per-line); header snapshot `sales_location` | registry entry, declaredIn `warehouse-label.ts` | migration: derive+backfill header `warehouse_id` from free-text `sales_location`, then retire `sales_location`. Touches `scm.mfg_sales_orders` (money/stock-adjacent) and its `mfg_sales_orders_with_payment_totals` view — the 0189 grant hazard |
 | **Customer ref** | `ref` (owner ruling #2429) | registry entry, declaredIn `customer-ref.ts` | migration: DROP dead `po_doc_no` / `customer_po` / `customer_po_id` / `customer_po_date` from `scm.mfg_sales_orders`. They are 0%-filled but projected by `mfg_sales_orders_with_payment_totals` — the recreate MUST restore its `service_role` + `hyperdrive_staging` grants (0190/0191 precedent). Also stop selecting them in the backend router first |
 
+## Batch 3 PHYSICAL — census run, two migrations built (2026-08-19)
+
+Worktree `naming-physical`. **Salesperson** needs no physical work (canonical
+`salesperson_id` already exists). The two that need migrations were built
+census-first.
+
+**Census (read-only, merged inert as #2508, dispatched run 32280818981,
+2026-08-19)** — `backend/scripts/census-naming-physical.mjs` +
+`.github/workflows/census-naming-physical.yml`. Live prod numbers:
+
+- **Warehouse.** 2829 non-cancelled SOs; 2823 carry a non-empty `sales_location`.
+  **2772 resolve to exactly one `scm.warehouses` row by code (0 by name, 0
+  ambiguous); 51 do NOT resolve** — all the single value `"SLGR WAREHOUSE"` in
+  company 2 (no matching warehouse row). No header `warehouse_id` existed yet.
+- **Customer-ref.** All four of `po_doc_no` / `customer_po` / `customer_po_id` /
+  `customer_po_date` are **filled = 0 (DEAD)** (as is the out-of-scope
+  `customer_po_image_b64`). Dependencies: **one view**
+  (`mfg_sales_orders_with_payment_totals`) projects all four; **one index**
+  (`trgm_mfg_so_po_doc_no`) is on `po_doc_no`; NO constraints, functions or
+  policies. View grants (correcting 0305's "no grants" note — Supabase default
+  privileges re-grant on CREATE): owner `postgres`, full privileges to
+  `postgres` (WITH GRANT OPTION) and **`service_role`**, byte-identical to the
+  never-dropped grant-donor sibling `suppliers_with_derived_category`.
+
+**Migrations built (STAGED — NOT merged; parent reviews):**
+
+| Concept | Migration | Shape | View recreate? |
+| --- | --- | --- | --- |
+| Warehouse | `0309_scm_so_header_warehouse_id.sql` | ADDITIVE: `ADD COLUMN warehouse_id` + backfill the 2772 unambiguous rows (code-then-name, company-scoped), keep `sales_location` for the 51. Resolver `scripts/lib/resolve-warehouse-location.mjs` unit-tested. | **No** — additive column does not change the enumerated view projection, so no 0189 hazard |
+| Customer-ref | `0310_scm_drop_dead_customer_po.sql` [planned] (lives on branch `feat/naming-customer-ref-drop`) | DROP `trgm_mfg_so_po_doc_no` + DROP VIEW + DROP the 4 dead columns + recreate the view WITHOUT them + restore owner/grants via the 0191 self-adapting sibling copy. Backend stops selecting them first (mfg-sales-orders / reports / search / so-identity-lock). | **Yes** — grants restored from `suppliers_with_derived_category` (census-proven identical) |
+
+**Retirement in the guard is NOT applied for either, and this is deliberate**
+(a finding of this pass): the `retired: []` lists stay empty. `sales_location`
+is KEPT (additive), so it is not retired. `po_doc_no` / `customer_po*` are dropped
+only from `scm.mfg_sales_orders` but remain LEGITIMATE columns on
+`scm.sales_invoices`, `scm.delivery_orders` and the consignment tables (their own
+snapshots). The vocabulary guard is a repo-wide substring matcher with no
+table-awareness, so adding these to `retired` would fire on ~15 legitimate
+sibling-table files — exactly the false-positive the registry header warns
+against. The registry entries record the canonical word; there is no spelling to
+globally forbid.
+
 **Correction carried into the registry:** an earlier line in this doc named
 `customer_so_no` canonical for the customer reference. #2429's owner ruling
 (2026-08-18, audited against production: `ref` filled on 2717 orders,
