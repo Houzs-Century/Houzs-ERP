@@ -6,7 +6,7 @@ import type { Variables } from '../env';
    transaction wrapper was to give this back rather than raise a ceiling.
    Swallows its error on purpose: audit metadata that cannot be read must not
    fail the write it is describing; the caller records nulls. */
-async function loadGrnAuditMeta(
+export async function loadGrnAuditMeta(
   sb: Variables['supabase'],
   grnId: string,
 ): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
