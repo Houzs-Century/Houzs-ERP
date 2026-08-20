@@ -210,8 +210,9 @@ function scopedFrom(sb: ScmClient, table: string, scope: QueryScope) {
      *  `string` erases it and every `data` in every converted handler degrades
      *  to `GenericStringError[]` — which surfaces as a pile of TS2352 casts that
      *  look like conversion work and are pure wrapper artefact. Measured on the
-     *  pilot: 4 of the 19 first-pass errors were exactly this, and they vanished
-     *  when the generic was added. */
+     *  pilot, the draft that typed it `string` produced 19 errors at the swap
+     *  step and 25 after retyping its two `sb: any` parameters; the generic took
+     *  those to 17 and 21, so 2 and then 4 of them were this and nothing else. */
     select<Cols extends string = '*'>(
       columns?: Cols,
       options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },

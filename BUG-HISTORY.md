@@ -60,9 +60,9 @@ abstraction meant to end it, so it is pinned by test, not by comment
 The 12-vs-14 gap is the honest part: two `.from(` sites sit inside a helper
 taking `sb: any`, and `any` absorbs the requirement until the parameter is
 typed. A first draft of the wrapper typed `select(columns?: string)`, which
-erased supabase-js's column-literal row types and added 4 phantom TS2352/TS2322
-casts (19 / 25 instead of 17 / 21) — a generic `Cols extends string` removed
-them. A wrapper that manufactures conversion work is a wrapper nobody adopts.
+erased supabase-js's column-literal row types and added phantom TS2352/TS2322
+casts — 2 at the swap step and 4 after the retype, so 19 / 25 instead of 17 / 21.
+A generic `Cols extends string` removed them. A wrapper that manufactures conversion work is a wrapper nobody adopts.
 
 **No defect was found by this conversion.** Every statement kept the scope it
 already had; the four that carry no predicate today now carry a `CENTRALISED`
