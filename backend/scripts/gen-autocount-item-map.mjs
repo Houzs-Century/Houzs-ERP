@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CSV = path.join(here, "data", "autocount-erp-mapping-1561.csv");
@@ -62,12 +63,8 @@ export const AC_ITEM_MAP_TSV = \`${body.replace(/\\/g, "\\\\").replace(/`/g, "\\
 
 if (process.argv.includes("--check")) {
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-  /* Compare CONTENT, not line endings. This repo is developed on Windows with
-     core.autocrlf=true, so the checkout carries CRLF while the generator writes
-     LF — an exact compare fails on every developer machine and passes on the
-     Linux runner. A gate that cries wolf locally is a gate somebody deletes. */
-  const lf = (s) => s.replace(/\r\n/g, "\n");
-  if (lf(current) !== lf(text)) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (!sameIgnoringEol(current, text)) {
     console.error(
       "autocount-item-map.ts is STALE. Run: node scripts/gen-autocount-item-map.mjs",
     );

@@ -33,6 +33,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sameIgnoringEol } from './lib/eol.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BACKEND = path.resolve(HERE, '..');
@@ -183,7 +184,8 @@ const next = lines.join('\n');
 const prev = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : null;
 
 if (process.argv.includes('--check')) {
-  if (prev === next) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (sameIgnoringEol(prev, next)) {
     console.log(`AutoCount coverage is current (${ops.length} operations).`);
     process.exit(0);
   }

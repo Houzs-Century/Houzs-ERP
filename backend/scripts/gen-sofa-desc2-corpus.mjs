@@ -21,6 +21,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -152,11 +153,8 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = ${JSON.stringify(rows,
 
 if (process.argv.includes("--check")) {
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-  /* Content, not line endings — see the same note in gen-autocount-item-map.mjs.
-     core.autocrlf=true rewrites the checkout to CRLF and this file is written
-     with LF, so an exact compare is red on Windows and green in CI. */
-  const lf = (s) => s.replace(/\r\n/g, "\n");
-  if (lf(current) !== lf(text)) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (!sameIgnoringEol(current, text)) {
     console.error("autocount-sofa-corpus.ts is STALE. Run: node scripts/gen-sofa-desc2-corpus.mjs");
     process.exit(1);
   }

@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 import { diffMatrices, formatDiff } from "./lib/route-matrix-diff.mjs";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(scriptDir, "..");
@@ -665,10 +666,8 @@ if (locationsOnly) {
   // The summary is DERIVED from the matrix — if the rows match, the counts must
   // match, so a mismatch here means the checked-in summary was hand-edited or
   // mangled by a merge, not that routes drifted. Say that, so nobody reads it as
-  // an authorization finding. Compared with line endings normalised (autocrlf
-  // checks this artifact out as CRLF on Windows, LF in Actions).
-  const normalise = (text) => text.replace(/\r\n/g, "\n");
-  if (!fs.existsSync(summaryPath) || normalise(fs.readFileSync(summaryPath, "utf8")) !== normalise(summaryBody)) {
+  // an authorization finding. Content, not line endings — see scripts/lib/eol.mjs.
+  if (!fs.existsSync(summaryPath) || !sameIgnoringEol(fs.readFileSync(summaryPath, "utf8"), summaryBody)) {
     console.error(
       "Route capability SUMMARY is stale while the matrix is current — the summary is\n" +
         "derived from the matrix, so this is a regeneration problem, not a gate change.\n" +
