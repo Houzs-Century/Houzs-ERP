@@ -184,13 +184,138 @@ Two modes, per the owner's model, confirmed:
   `PoLineCard` (supplier side: PO-detail, PI). GAPS:
   1. **SI-detail mounts NO editor** — the dead Edit button above. Fix per the
      decision (header-only edit; lines stay read-only).
-  2. **GRN hand-rolls a weaker `VariantSelect`** (`GoodsReceivedDetail.tsx:93`):
-     bedframe has NO fabric picker, sofa fabric is a free-text `<input>` instead of
-     the `FabricColourCombobox` SO/PO use. Fix: mount the shared `PoLineCard` so GRN
-     variant fidelity matches PO. DEFECT.
+  2. **GRN variant editor — CORRECTED 2026-08-20.** Earlier plan was to mount the
+     full shared `PoLineCard` on GRN so it could edit variants like PO. **That was
+     wrong.** Per the owner's editability ruling (§8): the GRN variant is INHERITED
+     from the PO and must be **read-only** at the GRN. To change a variant after a
+     PO is received you cancel the GRN and edit the PO (§8 cancel-to-source). So the
+     fix is the opposite: GRN shows the variant SUMMARY (read-only, same as every
+     other doc), and the weak hand-rolled `VariantSelect` (`GoodsReceivedDetail.tsx:93`)
+     is REMOVED, not upgraded. GRN keeps editing only its own-stage fields (received
+     qty, batch, rack, unit cost). The line-PATCH back door that today lets a GRN
+     line's `item_code`/variant be rewritten (§8 GAP-2) must be closed at the same time.
   3. DO edits via a different route (`/delivery-orders/new?edit=`) not inline —
      behaviour matches, entry path differs; align in Phase 2 (note, not a defect).
 - **Unification lever:** point GRN + SI at the EXISTING shared editors; do not invent
   new components. Optionally replace the per-page `buildVariantSummary || description2`
   render wrappers with the shared `VariantDescription` component (exists, currently
   used only on convert pickers) for one display path.
+
+## 8. Editability + lock + cancel-to-source model (traced 2026-08-20)
+
+The owner's rule, in his words: "如果 PO 开成 GR,那我不可以在 GR 里改那个 variant —
+我应该把 GR cancel 掉,再去 PO 里改。" This is exactly the SAP / AutoCount
+**document-flow** model: a downstream document inherits the source's identity/spec
+fields as READ-ONLY; to change an inherited field you cancel the downstream (which
+reverses its stock/GL), edit the source, and re-convert. A parent cannot be
+cancelled while a live child exists.
+
+### 8.1 The target model (three lock scopes)
+
+1. **Own-stage fields — always editable** at a document's own stage: the fields THIS
+   document creates (GRN received qty/batch/cost; DO dispatch/POD; SI/PI payment
+   dates). Editable even after children exist, as long as they are not inherited.
+2. **Inherited fields — read-only on every downstream** (item, variant, ordered qty).
+   To change: cancel downstream → edit source → re-convert. Never edited in place.
+3. **Cancel ordering — child before parent, always;** cancelling a stock-moving
+   downstream (GRN, DO) must reverse the stock in the same action.
+
+### 8.2 What is ALREADY correct (do not rebuild)
+
+- **Cancel-child-first is enforced on all 8 parents** (SO, PO, DO, GRN, CO, CN, PCO,
+  PC-Receive) via the shared `backend/src/scm/lib/downstream-lock.ts`
+  (`downstreamVerdict`, `soHasDownstream`/`poHasDownstream`/`doHasDownstream`/
+  `grnHasDownstream`). Cancelled children do not lock (every count filters
+  `status <> 'CANCELLED'`); a failed read fails CLOSED. PROVEN.
+- **Cancel reverses stock where stock moved:** GRN cancel (`grns.ts` reversing OUT +
+  `reconcileUncostedOuts`), DO cancel (`fn_reverse_do_out`). PO/SO cancel reverse
+  nothing (they hold no stock) — correct. PROVEN.
+- **SO already models field-level inheritance correctly:** `SO_IDENTITY_LOCK_COLS`
+  (`shared/so-identity-lock.ts`) freezes the 34 identity/value columns once a DO/SI
+  exists but keeps payment/remarks/scheduling editable. This is the pattern every
+  other document should copy.
+
+### 8.3 The gaps to close (from the traced audit)
+
+| # | Gap | Direction |
+|---|---|---|
+| GAP-1 | PO/DO/GRN/consignment freeze the WHOLE document once a child exists (document-level 409). Only SO is field-level. Result: a PO whose GRN exists cannot edit even a PO-own field (supplier remark, expected date). | **Loosen** — give each parent an identity-lock column set like SO's; own-stage fields stay editable. |
+| GAP-2 | Line-PATCH back door: a downstream line's `item_code`/variant (inherited) can be rewritten by adding a free line then editing its code. Only the guard on CREATE/convert exists; the per-line PATCH calls no unlinked-line guard. Open on GRN, purchase-returns, delivery-returns; SI closed 2026-08-17. **This is the "editing GRN variant" hole.** | **Tighten (integrity)** — run the unlinked-line guard on the line-PATCH path too, so an inherited line cannot be re-pointed. |
+| GAP-8 | Stock reversal on GRN/DO cancel is BEST-EFFORT (log-and-continue on RPC error): a failed reversal leaves the doc CANCELLED with stock un-returned. And terminal-doc REOPEN (SI/PI CANCELLED→SENT) has no check that the parent DO/GRN is still live. | **Tighten (integrity)** — make cancel+reversal atomic (fail the cancel if the reversal RPC fails); block reopen when the source is cancelled. |
+
+GAP-3..7 (unlinked-line guard missing on 5 chains, non-atomic converts, drifted
+`received_qty` cache, split DRAFT-consumption policy, no per-transfer audit row) are
+documented in `docs/modules/document-conversion.md` §10.4 and folded into the Phase-2
+state-machine work; they are integrity items, not restriction-loosening.
+
+### 8.4 Per-document editability matrix (target)
+
+| Doc | Own-stage (always editable) | Inherited (read-only once child/converted) | Cancel needs child cancelled first | Cancel reverses |
+|---|---|---|---|---|
+| SO | payment, remarks, scheduling, salesperson | debtor, addresses, venue, branding, currency, lines/variants (once DO/SI) | DO/SI | nothing (deposit→credit) |
+| PO | supplier remark, expected date, non-received lines | supplier, item, variant, ordered qty (once GRN) | GRN | nothing |
+| GRN | received qty, batch, rack, unit cost | item, **variant**, source PO link | PI/PR | stock IN |
+| DO | dispatch, POD, driver/vehicle | item, variant, ordered qty (from SO) | DR/SI | stock OUT |
+| SI | invoice/payment dates, allocation | lines + variants (from DO) — HEADER-only edit | (terminal) | revenue/AR |
+| PI | invoice/payment dates, allocation | lines (from GRN) | (terminal) | AP |
+
+Consignment mirrors follow the same rows as their siblings.
+
+## 9. Field-restriction model — "loosen as much as possible" (owner 2026-08-20)
+
+**Governing principle (owner):** "我们公司也小,所以限制越松动、越容易、越不影响
+workflow 是最好的." Block as little as possible; where a block is truly needed, prefer
+a one-tick acknowledge over a hard wall. Only rules that keep stock/money/document-
+chain math correct stay hard.
+
+### 9.1 Three layers
+
+| Layer | Action | What it blocks |
+|---|---|---|
+| **Draft** | Save Draft | **Nothing.** One line is enough; doc date auto-today; amount blank/0 fine. |
+| **Confirm / Post** | Confirm | **Only what makes downstream math wrong:** (1) required variant missing, (2) qty ≤ 0. Amount 0 → one-tick "set later", not a wall. Everything else allowed or warned. |
+| **Convert / Edit-source** | Convert/Edit | Only the §8 integrity guard: cancel downstream before editing source; cancel reverses stock. |
+
+### 9.2 Current required-field state (traced) and the decisions
+
+Every doc's **document date already auto-defaults to today** (`dateOrNull(x) ?? todayMyt()`
+or DB `now()`), so no doc is ever blocked on a blank doc date. Amount 0/blank is
+allowed at create AND confirm on **every** document; the only money guard in the whole
+workflow is the GRN-post zero-cost-line guard (with `zeroCostAck` one-tick escape).
+
+Decisions locked 2026-08-20:
+
+- **PO date: OK as-is** — `po_date` auto-today, never blocks. (Confirmed.)
+- **PO amount: OK as-is** — 0/blank allowed at create and confirm; no guard. (Confirmed.
+  A 0-value PO records a 0-value commitment; fill price later.)
+- **PO `expected_at` (Expected Delivery = "when the supplier should deliver"): keep
+  required-but-AUTO-DEFAULT-TODAY, never blocks (owner 2026-08-20).** This is a
+  SEPARATE field from `po_date` (the doc/raise date): `po_date` = when you open the PO;
+  `expected_at` = when you want the goods. Today `expected_at` hard-blocks create even
+  for a draft (`mfg-purchase-orders.ts:1123` 400 `expected_at_required`; FE
+  `PurchaseOrderNew.tsx:601`) — the ONE pure-field rule that can stop you opening a PO,
+  and only PO + PCO enforce it (SO's delivery date is optional). Fix: give it the SAME
+  treatment as `po_date` — if blank, default to today (`?? todayMyt()`) instead of
+  returning 400. The column stays populated (still "required" in the data sense) but the
+  save never blocks. Remove the FE hard-block too. Same for PCO.
+- **Customer phone on SO / CO: KEEP REQUIRED (owner decided 2026-08-20).** Phone is the
+  delivery contact; worth the one required field even though DO/CN don't ask for it.
+- **PO variant: REQUIRED at confirm, and enforce in the BACKEND.** Today the PO variant
+  gate is frontend-only (`PurchaseOrderNew.tsx:616`); a direct-API confirm bypasses it.
+  Add `missingRequiredVariants` to `confirmMfgPurchaseOrderHandler`. (This is the one
+  deliberate tightening; it is not a field-nicety, it is "supplier must know what to make.")
+- **PC Receive zero-cost guard: ADD (match GRN).** PC Receive posts stock IN like GRN but
+  runs no `checkReceiptCosts` — a previously-priced SKU received at 0 opens a silent
+  zero-cost lot. Add the same guard + `zeroCostAck` escape. Integrity, not strictness.
+- **Consignment docs have no draft (CO/CN/PCO/PC-Receive commit on create).** Lower
+  priority: add `asDraft` to the consignment mirrors so they match their siblings.
+- **≥1 line required on GRN/PI/PC-Receive:** keep (you cannot receive/invoice nothing);
+  harmless.
+
+### 9.3 Restriction changes summary (loosen vs keep-hard)
+
+- **Loosen:** PO/PCO `expected_at` → optional; consignment drafts → add; document-level
+  parent lock → field-level (§8 GAP-1). Everything pure-field defaults/allows/warns.
+- **Keep hard (integrity only):** required variant at confirm (SO done, PO to add to
+  backend), qty > 0, cancel-child-first + atomic stock reversal, GRN + PC-Receive
+  zero-cost guard, the line-PATCH inherited-line guard (§8 GAP-2).
