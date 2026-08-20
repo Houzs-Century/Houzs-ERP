@@ -81,6 +81,7 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -565,6 +566,15 @@ export default {
             else if (r.processed || r.reason) console.log(`[cron so-allocation] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron so-allocation]", e))
+      );
+    } else if (event.cron === "*/15 * * * *") {
+      // MRP stored-planning snapshot refresh (option B, 2026-08-19): recompute
+      // each company's default-view MRP and save it, so the MRP page opens
+      // instantly from a fresh plan. Best-effort + fire-and-forget — a slow or
+      // failed run logs and never stalls the slot.
+      ctx.waitUntil(
+        refreshAllMrpSnapshots(env, new Date().toISOString())
+          .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
