@@ -25,6 +25,8 @@ import { useReturnablePcReceiveLines, type ReturnablePcReceiveLine } from '../..
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
+import { buildVariantSummary } from '@2990s/shared';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -156,9 +158,26 @@ export const PurchaseConsignmentReturnFromReceive = () => {
       searchValue: (r) => r.itemCode ?? '',
     },
     {
-      key: 'materialName', label: 'Material', width: 220, sortable: true,
-      accessor: (r) => r.materialName || <span className={styles.muted}>—</span>,
-      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''}`.trim(),
+      /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+         Same reasoning as the PC-Receive picker: sofa/bedframe modules share a
+         material name, so returning "the wrong one" is a naming accident unless
+         the variant summary is on the row. `variants` already ride in on this
+         read (routes/purchase-consignment-returns.ts:340 selects them; :366
+         returns them). */
+      key: 'materialName', label: 'Material', width: 240, sortable: true,
+      accessor: (r) => (
+        <div>
+          <div>{r.materialName || <span className={styles.muted}>—</span>}</div>
+          <VariantDescription
+            itemCode={r.itemCode}
+            itemGroup={r.itemGroup}
+            variants={r.variants}
+            description={r.description}
+            mutedClassName={styles.muted}
+          />
+        </div>
+      ),
+      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''} ${buildVariantSummary(r.itemGroup, (r.variants as Record<string, unknown> | null) ?? null)}`.trim(),
     },
     {
       key: 'accepted', label: 'Accepted', width: 80, align: 'right', sortable: true,
