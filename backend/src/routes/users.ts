@@ -925,6 +925,9 @@ app.get("/:id/profile-pic", async (c) => {
     "cache-control",
     avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
   );
+  // Block MIME-sniffing the server-derived content-type back into html/svg
+  // (parity with mail-center.ts's INLINE_SAFE serve).
+  headers.set("X-Content-Type-Options", "nosniff");
   return new Response(obj.body, { headers });
 });
 

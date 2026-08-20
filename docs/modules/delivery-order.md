@@ -268,7 +268,7 @@ Refusals the operator sees, in the order they fire:
 |---|---|
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
-| over-delivery re-check on first ship | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
@@ -364,23 +364,33 @@ about-to-ship qty exceeds its live remaining. This closes the DRAFT door: the
 create-path cap is gated `if (body.asDraft !== true)`, so a DRAFT DO lands its
 full qty uncapped — without this recheck, confirming it (or a second full draft)
 shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
-`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
-stay uncapped, exactly as at create.
+`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`).
 
-> **Known blind spot at this same chokepoint — unlinked lines.**
-> `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with NONE
-> contributes nothing and is invisible here, even though it still ships stock.
-> That is the `2990-DO-2607-005` shape: six lines, all `so_item_id = null`, none
-> counted against `2990-SO-2606-019`, so the order's own goods went out twice
-> (`docs/unlinked-line-duplicate-coe.md`). The **create** and **add-line** paths
-> refuse this (`findUnlinkedSoLines`), but this **CONFIRM** path does not.
-> `lib/do-over-delivery.ts` now carries the quantity-aware guard for it —
-> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)`, which
-> flags an unlinked line only when the named SO ordered that item AND has no open
-> qty left (a partial / multi-DO split still ships). **It is not yet wired into
-> the Status PATCH** — that wiring touches `delivery-orders-mfg.ts` and is
-> sequenced after `fix/cross-tenant-leaks-round2` (#2406) to avoid a collision.
-> Until then the confirm-path over-delivery cap remains linked-only.
+Since 2026-08-20 (PR #2522) the same block ALSO runs the unlinked check
+(`findOverDeliveredUnlinkedItems`, keyed by `item_code`), so an unlinked line
+for an item the named SO already fully delivered is refused too — see the
+now-CLOSED blind-spot note below. A genuinely ad-hoc unlinked line (a code the
+SO never ordered) still stays uncapped, exactly as at create.
+
+> **Unlinked-line blind spot at this same chokepoint — CLOSED (wired 2026-08-20,
+> PR #2522).** `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with
+> NONE contributes nothing to the linked tally and is invisible to it, even
+> though it still ships stock. That is the `2990-DO-2607-005` shape: six lines,
+> all `so_item_id = null`, none counted against `2990-SO-2606-019`, so the
+> order's own goods went out twice (`docs/unlinked-line-duplicate-coe.md`). The
+> **create** and **add-line** paths already refused this (`findUnlinkedSoLines`);
+> the **CONFIRM** path now does too. The Status PATCH builds
+> `unlinkedByItemCode` from the DO's lines WITHOUT `so_item_id`, computes
+> `openByItemCode` by aggregating `soDeliverableRemaining` for the header's named
+> SO per ordered `item_code` (that engine excludes DRAFT + CANCELLED deliveries,
+> so THIS draft being confirmed is already out of the tally), and calls
+> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)` alongside
+> the existing linked check — returning **409 `over_delivery`** on either. An
+> unlinked line is flagged only when the named SO ordered that item code AND has
+> no open qty left, so a legitimate partial / multi-DO split still ships and an
+> ad-hoc line the SO never ordered is never flagged. Pinned end-to-end by
+> `backend/tests/doOverDeliveryUnlinkedRoute.test.ts` (the pure guard by
+> `lib/do-over-delivery.test.ts`).
 
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`

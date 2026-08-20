@@ -54,8 +54,8 @@ import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttr
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
-import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
-import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
+import { findOverDeliveredSoItems, findOverDeliveredUnlinkedItems } from '../lib/do-over-delivery';
+import { findUnlinkedSoLines, unlinkedSoLinesResponse, itemCodeKey } from '../lib/do-unlinked-so-lines';
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
@@ -5383,7 +5383,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status').eq('id', id), co.companyId,
+    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), co.companyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5477,20 +5477,55 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      uncapped, exactly as at create. Read-only: no flip, no stock moved yet. */
   if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
     const { data: shipLines } = await sb.from('delivery_order_items')
-      .select('so_item_id, qty').eq('delivery_order_id', id);
+      .select('so_item_id, item_code, qty').eq('delivery_order_id', id);
+    const rows = (shipLines ?? []) as Array<{ so_item_id: string | null; item_code: string | null; qty: number | null }>;
+    /* Two tallies, keyed differently on purpose. A line WITH so_item_id is
+       counted against the linked check (findOverDeliveredSoItems). A line
+       WITHOUT one contributes nothing there — it is invisible to a so_item_id
+       key — yet it still ships stock, which is the 2990-DO-2607-005 hole. It
+       goes into unlinkedByItemCode for the item-code check below. */
     const linkedQty = new Map<string, number>();
-    for (const l of (shipLines ?? []) as Array<{ so_item_id: string | null; qty: number }>) {
-      if (l.so_item_id) linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+    const unlinkedByItemCode = new Map<string, number>();
+    for (const l of rows) {
+      if (l.so_item_id) {
+        linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+      } else if (l.item_code) {
+        unlinkedByItemCode.set(l.item_code, (unlinkedByItemCode.get(l.item_code) ?? 0) + Number(l.qty ?? 0));
+      }
     }
+    const overDeliveryRefusal = {
+      error: 'over_delivery',
+      message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
+    };
+    /* Linked lines — keyed by so_item_id, against each SO line's live remaining. */
     if (linkedQty.size > 0) {
       const remaining = await soRemainingByItemId(sb, [...linkedQty.keys()]);
       const over = findOverDeliveredSoItems(linkedQty, remaining);
       if (over.length > 0) {
-        return c.json({
-          error: 'over_delivery',
-          message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
-          conflicts: over,
-        }, 409);
+        return c.json({ ...overDeliveryRefusal, conflicts: over }, 409);
+      }
+    }
+    /* Unlinked lines — keyed by item_code, against the NAMED SO's open qty per
+       ordered code. The named SO's open figure is aggregated from
+       soDeliverableRemaining, which excludes DRAFT (and CANCELLED) deliveries —
+       so THIS DO (a draft being confirmed) is already out of the tally, exactly
+       as "this DO excluded" requires. A partial / multi-DO split still ships
+       because it stays within the open qty; a code the SO never ordered is
+       ad-hoc and never flagged. */
+    if (unlinkedByItemCode.size > 0) {
+      const soDocNo = (cur as { so_doc_no?: string | null }).so_doc_no ?? null;
+      if (soDocNo) {
+        const remainingMap = await soDeliverableRemaining(sb, [soDocNo]);
+        const openByItemCode = new Map<string, number>();
+        for (const line of remainingMap.values()) {
+          const key = itemCodeKey(line.itemCode);
+          if (!key) continue;
+          openByItemCode.set(key, (openByItemCode.get(key) ?? 0) + line.remaining);
+        }
+        const overCodes = findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode);
+        if (overCodes.length > 0) {
+          return c.json({ ...overDeliveryRefusal, conflicts: overCodes }, 409);
+        }
       }
     }
   }
