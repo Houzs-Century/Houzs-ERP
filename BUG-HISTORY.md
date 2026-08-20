@@ -1,3 +1,100 @@
+## The Sales Orders list served ZERO rows to every account in both companies — the auth bridge ran twice and permissions came back empty [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 8 月 18 号傍晚起，销售订单列表对两家公司的每一个帐号都是空的，连老板的全权
+帐号也一样，一直到隔天早上 11 点多才好——整整 11 个钟头，而且是上班时间。原因不在单据，
+单据一直都在：同一个网址 `/mfg-sales-orders` 被挂了两次，负责「认人」的那段程式就跑了
+两遍。它本来是一次性的翻译——把真正的使用者收起来，再把身份换成系统帐号；跑第二遍时，
+它把系统帐号当成使用者去读，结果读出一个空的身份，权限全没了。系统没有报错，只是安静
+地判定「你什么都不能看」，列表就滤到 0 张。
+
+**Symptom.** From 2026-08-18 16:00Z until 2026-08-19 03:12:56Z (11h13m, ending
+11:12 MYT — during working hours), `GET /api/scm/mfg-sales-orders` returned zero
+rows for **every** account in **both** companies, the owner's `*` wildcard
+included. Nothing threw and nothing appeared in the console; the grid drew an
+empty list.
+
+**Root cause.** Recorded from #2461's commit message and the test it ships, not
+re-derived here. Two routers are mounted at the same `/mfg-sales-orders` prefix
+in `backend/src/scm/index.ts` — the deferred list-enrichment router added
+2026-08-18, then the main SO router — and each declares its own
+`use('*', supabaseAuth)`. Hono runs the first mount's middleware, matches no
+handler for the list path, falls through to the second mount, and runs the auth
+bridge a SECOND time. The bridge is a one-way translation: it stashes the real
+Houzs caller on `houzsUser`, then REPLACES `user` with the pinned `scm.staff`
+system uuid. On the second pass it read that pinned uuid as if it were the Houzs
+caller, so `Number("00000000-0000-4000-8000-000000000001")` gave `NaN` and
+`houzsUser` came back with no id and no permissions. `canViewAllSales` went
+false for everyone and `resolveSalesScopeIds` fail-closed to the match-nothing
+staff uuid, so every list read went out as
+`salesperson_id=in.(00000000-0000-0000-0000-000000000000)`.
+
+**Fix.** Make the bridge idempotent: if `user` is already the pinned staff uuid
+the translation has already run and a second pass has nothing left to do. Fixed
+there rather than by un-double-mounting the prefix, because "no prefix is ever
+mounted twice" is not something a route file can promise. Test:
+`backend/tests/scmAuthBridgeIdempotent.test.ts` — one, two and three passes.
+
+**Why this entry exists now, four days late.** It did not have one. `grep -c
+"auth bridge" BUG-HISTORY.md` returned **0** and `scmAuthBridgeIdempotent`
+returned **0** on 2026-08-20, while three OTHER entries for the same day's
+symptom were present. The fix that carries a test was the one missing from the
+ledger. See the entry directly below.
+
+**Ref.** #2461 (`f6bb1345`, merged 2026-08-19T03:12:56Z); logged
+`chore/one-symptom-four-causes`, 2026-08-20.
+
+## One empty Sales Orders list, four incompatible root causes in this file — recorded as unresolved, not reconciled [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 同一件事——8 月 18 号销售订单列表空白、HOUZS 明明有 2,726 张单——这个档案里
+现在有四个不同的原因，互相打架。最要命的是：两条说那支检查脚本「证明」问题出在 Supabase
+对外那层（PostgREST），第三条说同一支脚本「已经排除」了那个可能。同一个工具，相反的结论。
+这里不假装知道哪个对。**下次列表再空，四条一起读完再动手**，不要照碰到的第一条就去重启
+Supabase——那可能是在修一个根本不存在的毛病。
+
+**Symptom (shared by all four).** 2026-08-18: the Sales Orders list rendered
+"No sales orders yet" for a company holding 2,726 real orders. The frontend
+masked the underlying failure, so the console was clean.
+
+**The four accounts, and what each rests on.**
+
+| Blames | Evidence it cites |
+|---|---|
+| Hosted PostgREST serving the recreated view stale after 0305's DROP+CREATE; a Supabase project restart recovered it | `backend/scripts/check-so-list-empty.mjs`: direct pg 2,726 vs hosted PostgREST 0 |
+| `?status=all` filtering on a status no order carries, plus a page past the end 500'ing | the SAME script, which it says **RULED OUT** the view and PostgREST theories: `service_role` read all 2,726 *through* the recreated view |
+| Hosted PostgREST serving the recreated views stale (second entry, same mechanism as the first) | the same script again, read as proving the 0 is emitted by the PostgREST layer |
+| The auth bridge running twice, permissions resolving empty | #2461's commit and `backend/tests/scmAuthBridgeIdempotent.test.ts` |
+
+**The contradiction, stated plainly.** Two entries cite
+`check-so-list-empty.mjs` as PROVING the PostgREST layer emitted the zero. A
+third cites the same script as RULING THAT OUT. Both readings cannot be right
+about the same run.
+
+**What is NOT claimed here.** Which of the four is correct; whether more than one
+fault was live in an overlapping window (the timestamps allow it — #2461 puts the
+start at 16:00Z, and 0305 applied at 16:27:59Z, twenty-eight minutes later); or
+what actually ended the outage — a Supabase restart and #2461's merge are both
+recorded as the recovery.
+
+**Why it is written as an open contradiction.** CLAUDE.md: *a contradiction is a
+finding — STOP, do not bridge it.* A COE was drafted (#2453) that resolved it by
+assertion and got both the duration and the cause wrong; it was closed on
+2026-08-20 rather than left to be believed. Marking three entries "superseded"
+would have been the same mistake in smaller handwriting — there is no evidence
+they are wrong, only evidence they disagree.
+
+**What would settle it.** A replay of `check-so-list-empty.mjs` is not enough,
+because it cannot reach 2026-08-18's state. The decidable half is the ORDER:
+Cloudflare request logs for `/mfg-sales-orders` across 16:00Z–16:28Z would show
+whether the zero predates 0305's view rebuild. If it does, the PostgREST theory
+cannot be the ORIGINAL cause whatever else it explains.
+
+**Ref.** `chore/one-symptom-four-causes`, 2026-08-20. Closes out #2453 (closed
+unmerged). Related: `docs/so-list-postgrest-stale-coe.md`.
+
 ## A calendar pick landed on the hidden input and the visible box never blurred [medium]
 
 <!-- area: Service cases (ASSR) -->
@@ -2634,6 +2731,13 @@ same way — by a person who cannot do their job.
 
 ## Sales Orders list showed "No sales orders yet" for a 2,726-order company — hosted PostgREST served a recreated view STALE [high]
 
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
+
 <!-- area: Sales orders + pricing -->
 
 **白话.** 8 月 18 号凌晨（约 00:23 大马时间）改钱的字段（_centi 改 _sen）那次上线之后，销售单列表变成「还没有销售单」——其实那家公司有 2,726 张单。因为是半夜没人看到，整整挂了一天没人报。真正的原因不在我们的单据，单据一直都在；是 Supabase 那台负责对外的服务（PostgREST）在视图被重建之后，还在用旧的连线回答「0 张」。重启一次 Supabase 项目就好了。已经在上线脚本加了提醒：以后哪次上线重建了视图，日志会大声叫人去检查列表、必要时回收连线。
@@ -2715,6 +2819,13 @@ digits-only re-search that separates *absent* from *spelled differently*.
 
 **Ref.** `chore/tenant-isolation-probe`, 2026-08-19.
 ## Sales Orders list showed "no orders" for a company that has 2,726 of them — `?status=all` filtered on a status no order carries, and a page past the end 500'd [high]
+
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
 
 <!-- area: Sales orders + pricing -->
 
@@ -2827,6 +2938,13 @@ on every successful deploy, so any view recreate self-heals. Best-effort and las
 **Ref.** fix/auto-reload-postgrest-on-deploy, 2026-08-19 (follows #2450).
 
 ## Sales Orders list stayed EMPTY after the money-rename deploy — hosted PostgREST kept serving the recreated views stale [high]
+
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
 
 <!-- area: Sales orders + pricing -->
 
