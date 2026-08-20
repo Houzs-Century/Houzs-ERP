@@ -17,7 +17,7 @@ import { useToast } from "../hooks/useToast";
  *     identity card and the team roster, both of which drew initials
  *     unconditionally before, so a photo uploaded from a PC was invisible here.
  *   · MobileAvatarEditor — WRITE. The identity card's camera badge: a file input
- *     with `capture` so the phone offers its camera, plus Remove.
+ *     the OS answers with camera-or-gallery, plus Remove.
  * ------------------------------------------------------------------------- */
 
 /** Same rule as the desktop `Avatar`: first + last initial, or the first two. */
@@ -116,9 +116,12 @@ export function MobileAvatarEditor({
         ref={fileRef}
         type="file"
         accept="image/*"
-        /* The phone's own camera, not just the gallery — the whole point of
-           putting this on the device that has one. */
-        capture="user"
+        /* `accept="image/*"` with NO `capture` is deliberate. iOS and Android
+           already answer it with "Take Photo / Photo Library / Browse", so the
+           camera is offered on the device that has one AND an existing photo can
+           still be chosen. Adding `capture` would have narrowed it to the camera
+           only and taken the gallery away, which is the opposite of the gap this
+           is closing. */
         aria-label="Profile photo"
         style={{ display: "none" }}
         onChange={(e) => {
