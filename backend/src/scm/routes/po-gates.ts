@@ -19,15 +19,19 @@ export type PoVariantGapsResult = { checkFailed: string } | { gaps: PoVariantGap
 export type PoWarehouseGap = { missing: true; codes: string[] } | { missing: false };
 
 /* Warehouse gate (owner 2026-08-02) — a warehouse-less PO cannot go live / be
-   GRN-receivable: the receive would land its goods in the wrong warehouse. */
+   GRN-receivable: the receive would land its goods in the wrong warehouse. A read
+   that ERRORS fails CLOSED (require the warehouse) rather than confirming a PO we
+   could not verify — consistent with the confirm gates' fail-closed posture. */
 export async function poWarehouseGap(
   sb: Variables['supabase'],
   poId: string,
 ): Promise<PoWarehouseGap> {
-  const { data: hdr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
+  const { data: hdr, error: hErr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
+  if (hErr) return { missing: true, codes: [] };
   const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
   if (headerWh) return { missing: false }; // header default covers every line
-  const { data: lines } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
+  const { data: lines, error: lErr } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
+  if (lErr) return { missing: true, codes: [] };
   const bad = ((lines ?? []) as Array<{ item_code: string | null; warehouse_id: string | null }>).filter((l) => !l.warehouse_id);
   if (bad.length === 0) return { missing: false };
   return { missing: true, codes: bad.map((l) => l.item_code ?? '?') };
