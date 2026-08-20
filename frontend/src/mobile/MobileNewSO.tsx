@@ -273,17 +273,12 @@ type PaymentsResp = { payments: SoPayment[] };
    static allowlist here: the SHARED reconciler (vendor/scm/lib/scan-prefill) has
    already snapped those against the LIVE catalog before the value reaches this
    file, so both the interactive seed and the headless createDraftFromPrefill
-   trust the reconciled value.
-
-   The payment METHOD now follows the same rule, 2026-08-20. It used to be
-   re-checked here against a PAY_METHODS list built from the static
-   FALLBACK_OPTIONS — a second, stale allow-list applied on top of a value
-   reconcilePayment had ALREADY snapped against the live payment_method catalog
-   (scan-prefill.ts: snapValue, and it returns null rather than a bad method).
-   It dropped nothing while the static list happened to be a superset, and it
-   was one maintenance edit away from silently blanking a correctly scanned
-   method — which is exactly what the paragraph above says re-guarding did to
-   customer type. One list, one place. */
+   trust the reconciled value. The payment METHOD joined that rule 2026-08-20:
+   a PAY_METHODS list from the static FALLBACK_OPTIONS re-checked a value that
+   reconcilePayment had ALREADY snapped against the live catalog (scan-prefill.ts:
+   snapValue returns null, never a bad method). It dropped nothing while that list
+   was a superset, and was one edit from silently blanking a scanned method — the
+   re-guard this paragraph records removing for customer type. */
 /* Sentinel for "the signed-in creator has no scm.staff row" — shows their name
    in the Salesperson select but sends null so the backend stamps the caller. */
 const SELF_SALESPERSON = "__self__";
