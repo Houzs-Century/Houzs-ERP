@@ -8,7 +8,7 @@ name: Document numbers — integrity (read-only)
 # a month hands its number back to the next create — and nothing in the ERP
 # records that the number was already used. On 2026-08-20 that re-issued three
 # numbers the AED_HOUZS account book already held and AutoCount refused them
-# with `Primary Key Error`. See docs/diagnosis/doc-no-reissue-2026-08-20.md.
+# with `Primary Key Error`. See docs/doc-number-reissue-coe.md.
 #
 # Manual trigger only. A production DB read on a schedule turns a real question
 # into CI noise nobody reads — the standing rule in CLAUDE.md. When this needs

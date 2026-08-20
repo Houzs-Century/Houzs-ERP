@@ -45,14 +45,3 @@ jobs:
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
-      # TEMPORARY (audit/docno-reissue branch only — reverted before the PR).
-      # A new workflow file cannot be dispatched until it is on the default
-      # branch, so the doc-number census rides this already-dispatchable
-      # workflow to get its production answer today. Its permanent home is
-      # .github/workflows/doc-no-integrity.yml, added in the same branch.
-      - run: node scripts/check-doc-no-reissue.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
-          # for the full Happy-Eyeballs reasoning.
-          NODE_OPTIONS: --dns-result-order=ipv4first
