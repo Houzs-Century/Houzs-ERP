@@ -427,7 +427,9 @@ re-check the cited file rather than trusting the line.
 
 ## 9. Where to look next
 
-- `BUG-HISTORY.md` — read the entries for a subsystem before changing it. It is the
+- `docs/bugs/` — the bug ledger, one file per entry (`NNNN-slug.md`). Read the
+  entries for a subsystem before changing it; `npm --prefix backend run gen:bug-index`
+  groups them by subsystem and `docs/bugs/README.md` explains the layout. It is the
   record of what has already been tried and why it failed.
 - `docs/generated/route-capability-matrix.csv` — every mounted route with its full
   path, auth boundary, company boundary and gate. The `source` column is the

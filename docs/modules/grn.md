@@ -113,7 +113,7 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | POST | `/from-po-items` | `:1775` | Line-level multi-select convert; one GRN per source PO, each created DRAFT then posted via the shared helper. |
 | PATCH | `/:id/post` | `:1764` (handler `:1682`) | **The stock chokepoint**: DRAFT → POSTED. |
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
-| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PI/PR exists, `supplier_id` / `currency` / `exchange_rate` / `allocation_method` freeze (the invoice/return was billed/costed against them); `received_at` / `delivery_note_ref` / `warehouse_id` / `notes` stay editable. Rule in `backend/src/scm/lib/grn-inherited-lock.ts` (`grnHeaderInheritedChanges` + `GRN_HEADER_INHERITED_COLS`, whose columns are sourced from the ONE rulebook `shared/document-policy.ts` so they can't drift), 409 `grn_header_inherited_locked`. The FE (`GoodsReceivedDetail.tsx`) splits the same way — `identityLocked` disables supplier/currency, own-stage fields stay open. |
+| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PI/PR exists, `supplier_id` / `currency` / `exchange_rate` / `allocation_method` freeze (the invoice/return was billed/costed against them); `received_at` / `delivery_note_ref` / `warehouse_id` / `notes` stay editable. Rule in `backend/src/scm/lib/grn-inherited-lock.ts` (`grnHeaderInheritedChanges` + `GRN_HEADER_INHERITED_COLS`, whose columns are sourced from the ONE rulebook `shared/document-policy.ts` so they can't drift), 409 `grn_header_inherited_locked`. **The refusal's human LABELS come from the same rulebook** (`GRN_LOCK_LABELS`) as of 2026-08-20 — they used to be a second copy typed inside `grnHeaderInheritedRefusal`, so a column added to the rulebook would have read as a raw `allocation_method` here while its siblings said "cost allocation method". The FE (`GoodsReceivedDetail.tsx`) splits the same way — `identityLocked` disables supplier/currency, own-stage fields stay open. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
 
 ## 2a. The from-PO picker's read, and why an empty grid must name its cause
@@ -539,6 +539,26 @@ the control people learn to tick without reading. It is deliberately NOT a
 button on the refusal dialog: one click waiving a whole receipt is the reflex
 the gate exists to prevent.
 
+**Both remedies exist on the phone too (2026-08-20).** They did not until then,
+and that is the shape of the defect: `zeroCostAck` appeared NOWHERE in
+`frontend/src/mobile`, `MobileModuleDetail.tsx`'s `grns` case offered only Post
+and Cancel, and `MobileConvertWizard.tsx`'s own copy of the message ended "open
+the receipt on desktop". A receiver on the warehouse floor got a correct,
+readable refusal naming two fixes and neither of them on the screen in their
+hand. The refusal itself rendered fine on both surfaces — the gap was the remedy.
+
+- `frontend/src/mobile/MobileGrnZeroCost.tsx` is the phone's remedy: the 409
+  opens a bottom sheet with ONE CARD PER REFUSED LINE carrying a unit-price box
+  and a "Received free" tick with its reason, then writes each through the same
+  `PATCH /scm/grns/:id/items/:itemId` and re-runs `PATCH /scm/grns/:id/post`.
+  The per-line rule above is preserved literally: there is no waive-all control,
+  and Post stays disabled until every listed line carries a price or a tick.
+- `frontend/src/vendor/scm/lib/zero-cost-refusal.ts` is the one reader of the
+  409 body. `authed-fetch.ts` composes the operator's sentence through it
+  (moved, not rewritten) and now also attaches `status` + the raw body to the
+  thrown error — parsing the refusal and discarding the parse is what left a
+  surface able to show it and nothing else.
+
 | surface | field | route |
 | --- | --- | --- |
 | create a receipt | `items[].zeroCostAck`, `items[].zeroCostReason` | `POST /scm/grns` |
@@ -669,8 +689,8 @@ exists. The two must land together or not at all.
 Required rather than optional is deliberate, per `CLAUDE.md`: a parameter that
 DECIDES something is never optional. This one decides which transaction the row
 belongs to, and optional would let a future transactional caller silently keep
-the wrong client with no compile error — the `optional-param-noop` class at the
-top of `BUG-HISTORY.md`.
+the wrong client with no compile error — the `optional-param-noop` class —
+`docs/bugs/0098-bug-class-optional-param-noop-an-optional-argument-that-deci.md`.
 
 Two checks watch this and both have already fired on it:
 `backend/tests/autocountWritebackCells.test.ts` pins the ARGUMENTS of all four
@@ -680,11 +700,16 @@ live.
 
 Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
-## 7c. Line DELETE runs in a TRANSACTION — the first GRN route that does
+## 7c. Two GRN routes run in a TRANSACTION - line DELETE and CANCEL
 
-`DELETE /:id/items/:itemId` is wrapped in `runScmPgCommand`, so everything it
-writes — the line delete, the reversing stock OUT, the entity audit, the
-AutoCount outbox row and the SO-allocation recompute request — **commits
+`DELETE /:id/items/:itemId` and `PATCH /:id/cancel` are each wrapped in
+`runScmPgCommand` (both 2026-08-20). They are the first two of the six GRN
+write paths to get there.
+
+### The line DELETE
+
+Everything it writes — the line delete, the reversing stock OUT, the entity
+audit, the AutoCount outbox row and the SO-allocation recompute request — **commits
 together or not at all**.
 
 **What that fixes.** The recompute used to be a best-effort call after the
@@ -695,22 +720,66 @@ unrelated mutation happened to sweep. Now the queue row is written by
 `scheduleStockAllocationAfterCommand` inside the same transaction, so that state
 is unreachable.
 
-**What it costs.** `runScmPgCommand` answers **503 `scm_pg_command_required`**
-where `DATABASE_URL` is absent. Deliberate: refusing is the honest failure when
-the alternative is half-writing a stock reversal.
+**What it costs, for BOTH routes.** `runScmPgCommand` answers **503
+`scm_pg_command_required`** where `DATABASE_URL` is absent. Deliberate: refusing
+is the honest failure when the alternative is half-writing a stock reversal.
 
-**Where the body lives.** In `deleteGrnLineCommandHandler`, above the route,
-which is now one line. Two tests anchor on that function name rather than on the
-route — `autocountWritebackCells.test.ts` for the outbox row and the retired-key
-read.
+A second consequence to know before converting the next one: a NON-2xx response
+from the body also rolls the transaction back and is then returned unchanged
+(`if (!response.ok) throw new CommandRollback(response)` in
+`pg-supabase-transaction.ts`). So every `refuseWithoutWriting` in a converted
+route keeps its body, its status and its idempotency-release header, and any
+partial write it made is undone for free.
+
+**Where the body lives: INSIDE the route.** This paragraph used to say the body
+sat in a named `deleteGrnLineCommandHandler` above a one-line route. That was
+the FIRST attempt, reverted before merge: hoisting broke three checks, because
+`grnPreWriteRefusalsReleaseKey.test.ts` and `autocountWritebackCells.test.ts`
+scan `grns.ts` BY ROUTE BLOCK - delimited by lines starting `grns.<verb>(` - and
+a hoisted body sits outside every block they can see. Wrapping needs no hoist.
+Verify with `grep -rn "deleteGrnLineCommandHandler" backend/src`, which matches
+nothing. Two tests anchor on the route line rather than on a function name —
+`autocountWritebackCells.test.ts` for the outbox row and the retired-key read.
 
 **Proof.** `backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` drives real
 Postgres: commit leaves the line gone AND the request queued; a throw after the
 enqueue leaves **neither**; a throw before it leaves the line intact; and the
 queue stays a singleton across two deletes.
 
-**The other five GRN routes are unchanged** and still best-effort — header
-PATCH, line add, line edit, and the two create paths, with `postGrnHandler`
+### The CANCEL
+
+The second route through, same shape. What now commits as one unit: the atomic
+ACTIVE->CANCELLED status flip, the reversing stock OUT per line, the rack
+reversal, the CANCEL audit row, the AutoCount cancel outbox row (`enqueueCancel`
+already took its client explicitly) and the allocation-recompute request.
+
+**Its reversal-row builder moved out** to
+`backend/src/scm/lib/grn-cancel-reversal.ts`. The file-size ratchet charges
+GROWTH on `grns.ts`, which already sits ~90 lines above its ceiling, and the
+gate's own message names moving new code into a module as one of the two ways
+out - the same move `ac-grn-outbox.ts` made (7b). It is a MOVE, not a rewrite,
+and the two rules it carries are now pinned by
+`backend/tests/grnCancelReversals.test.ts`: a SERVICE line is never reversed,
+and each line reverses its OWN dye lot (mig 0120). Deliberately NOT shared with
+the line-DELETE reversal, which builds one row for one line and does not filter
+service lines - folding them together would silently change that behaviour.
+
+**The enqueue sits OUTSIDE the best-effort catch**, behind a `stockReversed`
+flag, so a failed enqueue fails the cancel. That is the point of the exercise:
+"stock pulled back, allocation never re-walked" is exactly the state the
+transaction exists to make unreachable, and a swallowed enqueue recreates it.
+The line DELETE shipped with its enqueue INSIDE that catch and a comment
+claiming otherwise; fixed the same day (`BUG-HISTORY.md` 2026-08-20).
+
+**Proof.** `backend/tests-pg/grnCancelAtomicity.pg.test.ts` drives real Postgres
+through the REAL shim, the REAL `writeMovements` and the REAL
+`enqueueStockAllocationRecompute`: commit leaves the GRN cancelled, the OUT
+written and the request queued; a throw after the enqueue leaves **none of the
+three**; a throw before it leaves the GRN POSTED; a FAILED enqueue takes the
+cancel down with it; and the queue stays a singleton.
+
+**The other four GRN routes are unchanged** and still best-effort — header
+PATCH, line add, line edit, and the create paths, with `postGrnHandler`
 deliberately last because it is the largest handler in the file. One PR each.
 `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
@@ -722,6 +791,7 @@ deliberately last because it is the largest handler in the file. One PR each.
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
+| Zero-cost refusal → the remedy | the per-line "Received free" tick + price box on `GoodsReceivedDetail.tsx` | `mobile/MobileGrnZeroCost.tsx`, opened by `mobile/MobileModuleDetail.tsx`'s action footer. The 409 body is parsed once, by the SHARED `vendor/scm/lib/zero-cost-refusal.ts`, which `vendor/scm/lib/authed-fetch.ts` also uses for the sentence — so the message and the remedy cannot name different lines |
 | PO→GRN conversion + per-line received qty | `pages/scm-v2/GrnFromPo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "grn"`) — note the surfaces differ **by design**: desktop can pick lines, mobile converts the whole PO (`:60-61`), and mobile posts `asDraft:true` rather than the auto-posting `/from-pos` (`:370-374`) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/grn-queries.ts` (must include `['inventory']`) | `mobile/sharedInvalidate.ts:72` (`grns` roots + `STOCK_ROOTS`, which includes the SO roots) |
 

@@ -17,6 +17,7 @@ import { describe, expect, test } from 'vitest';
 import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import recompute from '../src/scm/lib/mfg-pricing-recompute.ts?raw';
 import salesOrderDetail from '../../frontend/src/pages/scm-v2/SalesOrderDetail.tsx?raw';
+import zeroPriceClaimSrc from '../../frontend/src/vendor/scm/lib/zeroPriceClaim.ts?raw';
 
 /** Source with comments stripped — the comments deliberately quote the shapes
  *  this file forbids in code. */
@@ -26,6 +27,7 @@ const code = (s: string): string =>
 const SO = code(soRoutes);
 const RECOMPUTE = code(recompute);
 const EDITOR = code(salesOrderDetail);
+const CLAIM = code(zeroPriceClaimSrc);
 
 describe("operator-zero wiring", () => {
   /* 2026-08-19 — both line writes now ask ONE helper, `erpLineTrust`. Editing a
@@ -43,15 +45,27 @@ describe("operator-zero wiring", () => {
     );
   });
 
-  test('BOTH line writes go through it — PATCH and ADD', () => {
+  /* 2026-08-20 — SO CREATE joined them. It was the third path that prices a
+     line and the only one that never asked, because it computed ONE boolean per
+     request; a line marked RM 0 on a NEW order therefore took the catalogue
+     price on both surfaces. Trace in zeroPriceCreatePath.test.ts. */
+  test('ALL THREE line-pricing paths go through it — CREATE, ADD and PATCH', () => {
     expect(SO).toMatch(/erpLineTrust\(posTablet, clientUnit, it\.zeroPriceIntended\)/);
     expect(SO).toMatch(/erpLineTrust\(addLinePosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/);
-    expect(SO.match(/erpLineTrust\(/g) ?? []).toHaveLength(2);
+    expect(SO).toMatch(/erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/);
+    expect(SO.match(/erpLineTrust\(/g) ?? []).toHaveLength(3);
   });
 
-  test('the ERP line editor sends the claim, and only at zero', () => {
-    expect(EDITOR).toMatch(/sen === 0 \? \{ zeroPriceIntended: true \}/);
-    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen\)/g) ?? []).toHaveLength(2);
+  /* 2026-08-20 — the claim moved out of this one file into
+     frontend/src/vendor/scm/lib/zeroPriceClaim.ts, because SO CREATE and the
+     whole mobile surface needed to make it too and had no way to. The rule is
+     unchanged (claim only AT zero) and the assertion follows it to its new
+     home; WHERE each surface calls it is pinned in the frontend's own
+     zeroPriceClaimWiring.test.ts. */
+  test('the RM 0 claim is made only AT zero, from ONE shared helper', () => {
+    expect(CLAIM).toMatch(/unitPriceSen === 0 && authored \? \{ zeroPriceIntended: true \} : \{\}/);
+    expect(EDITOR).not.toMatch(/const zeroPriceClaim\s*=/);
+    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen, true\)/g) ?? []).toHaveLength(2);
   });
 
   /* The migrated-document arm must stay exclusive to migrated documents: it

@@ -456,3 +456,62 @@ export function hasAnyScmPageAccess(user: AuthUser | null | undefined): boolean 
   if (!pa) return false;
   return Object.entries(pa).some(([key, level]) => key.startsWith("scm") && level !== "none");
 }
+
+/**
+ * SALES-ENTRY WRITE gate — "may this user LOG a sale", and the SINGLE source for
+ * it across desktop and mobile.
+ *
+ * Mirrors the backend rule on the WRITE route exactly:
+ * `POST /api/sales/entries` is `requirePageAccess("sales")`
+ * (`routes/sales.ts`), i.e. the `*` wildcard or a `sales` page-access level at
+ * or above `partial`. `pageAccess()` already collapses the wildcard to "full",
+ * so comparing the level through ACCESS_RANK is the whole rule.
+ *
+ * IT IS NOT `can("sales.write")`, which is what the desktop project page asked.
+ * That flat key is not a term the write route reads at all, so it was wrong in
+ * both directions at once: a rep holding it without a `sales` page row was shown
+ * the button and got a 403, and an office user with the page row but no flat key
+ * never saw it.
+ *
+ * IT IS ALSO NOT the READ rule. `GET /entries` is `requirePageAccessOrSalesView`,
+ * whose extra arm admits Sales staff and directors by ORG POSITION — which is
+ * why a Sales Director reads the list. The write route has no such arm, so
+ * widening this helper to match the read gate would re-offer "+ Quick Log" to
+ * exactly the cohort the server refuses. Two routes, two rules.
+ */
+export function canLogSalesEntry(salesPageLevel: AccessLevel): boolean {
+  return ACCESS_RANK[salesPageLevel] >= ACCESS_RANK.partial;
+}
+
+/**
+ * PROJECT-FINANCE WRITE gate — "may this user set a project's money fields"
+ * (Total Sales, and every other `PATCH /api/projects/:id/finance` write).
+ *
+ * The backend rule is TWO terms and this reproduces both, in order:
+ *   1. `requirePermission("projects.write")` — the flat write key.
+ *   2. `denyFinance(c)` — a 403 when `pmsAccess.financeHiddenForUser(user)`.
+ *
+ * `financeHiddenForUser` is `position_id != null && !isFinanceViewer(user)`, and
+ * `/auth/me` ships `isFinanceViewer` verbatim as `project_finance_viewer` — so
+ * the second term is read off the server's own answer rather than re-derived
+ * from position names here. The un-positioned arm is mirrored too: the backend
+ * lets a user with NO position through, so this does as well. A client that
+ * hides what the server would accept is still a wrong answer — that half is the
+ * one that left a finance user with no button for a number they are authorised
+ * to set.
+ *
+ * Deliberately NOT `access.canFinancial`. That flag is the per-project PMS
+ * SECTION tier (role === DIRECTOR), which is a strict SUBSET: it excludes the
+ * granular `projects.finance.view` holders (the BD role, owner 2026-07-23) that
+ * `isFinanceViewer` admits. Gating a WRITE on the section flag would hide the
+ * control from people the write route accepts.
+ */
+export function canWriteProjectFinance(
+  user: AuthUser | null | undefined,
+  can: (perm: string) => boolean,
+): boolean {
+  if (!user) return false;
+  if (!can("projects.write")) return false;
+  if (user.position_id == null) return true; // financeHiddenForUser's legacy arm
+  return user.project_finance_viewer === true;
+}

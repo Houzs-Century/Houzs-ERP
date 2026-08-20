@@ -1,3 +1,4 @@
+import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 // ----------------------------------------------------------------------------
 // do-next-step — what a Delivery Order may do next, and why it may not yet, in
 // ONE place, as words an operator can act on.
@@ -77,16 +78,32 @@
 // salesperson may never take is noise and leaks org structure.
 // ----------------------------------------------------------------------------
 
-/* Statuses a Sales Invoice can be raised from. Owner decision 2026-08-19: a DO
-   no longer has to be marked signed/delivered before its Sales Invoice — every
-   CONFIRMED delivery order (anything past DRAFT that is not CANCELLED) may be
-   invoiced directly. This matches what the server has always permitted: the
-   SI-from-DO create (routes/sales-invoices.ts) refuses ONLY a CANCELLED source,
-   never an un-signed one, so the "mark signed first" step was a front-end gate
-   with no backend rule behind it. DRAFT still needs Confirm first (no committed
-   lines/stock yet); CANCELLED stays blocked. "Mark signed" survives as an
-   OPTIONAL delivery-tracking action (doAdvanceStep), no longer a prerequisite. */
-export const SI_TRANSFERABLE_DO_STATUSES = ['loaded', 'dispatched', 'in_transit', 'signed', 'delivered'] as const;
+/* THE OWNER'S RULE, FROM ITS ONE HOME — NOT A HAND-TYPED LIST. `['signed',
+   'delivered']` stood here until 2026-08-18 and was the narrowest of three live
+   spellings of "this delivery may be invoiced". Two things fixed it, a day
+   apart, and BOTH are kept:
+
+     · WHERE the rule lives (2026-08-18). SI_TRANSFERABLE_DO_STATES in
+       shared/do-shipped-states.ts is the single declaration; the backend
+       ENFORCES it in routes/sales-invoices.ts, the server's own DO picker and
+       the phone's convert wizard read the same constant, and the frontend twin
+       is held byte-identical by check-shared-mirrors.mjs --strict. This module
+       derives from it instead of restating it.
+     · WHAT the rule says (2026-08-19, #2485). Every CONFIRMED delivery order —
+       anything past DRAFT that is not CANCELLED — may be invoiced, LOADED
+       included. That superseded the previous day's four-state list, and it is
+       what the server has always permitted: the SI-from-DO create refuses only
+       a CANCELLED source. "Mark signed" survives as an OPTIONAL delivery-
+       tracking action (doAdvanceStep), never a prerequisite.
+
+   It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
+   no company term and never did; it fired on one organisation because of DATA.
+   2990's source system has no "delivered" step, so its imported deliveries sit
+   at DISPATCHED, while the HOUZS AutoCount carry-overs were inserted as literal
+   'DELIVERED'. One build, one permission set — and 2990 was told the transfer
+   did not exist. */
+export const SI_TRANSFERABLE_DO_STATUSES =
+  SI_TRANSFERABLE_DO_STATES.map((s) => s.toLowerCase()) as readonly string[];
 
 /** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {

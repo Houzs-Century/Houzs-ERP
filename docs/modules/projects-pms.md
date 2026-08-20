@@ -981,6 +981,43 @@ Enforcement points, in one place:
 - **Writes** — `requirePermission` / `requireAnyPermission` against
   `roles.permissions`.
 
+### The four project-detail ACTION controls, and the rule each one must ask
+
+Added 2026-08-20. Every control below is a live write button on the project
+detail page. Desktop rendered all four with no permission condition at all (or
+on a key the route does not read), so the operator clicked and got a raw 403;
+mobile gated each of them. The desktop gate is now the rule the SERVER enforces,
+and the two composite predicates live once, in `frontend/src/auth/salesAccess.ts`.
+
+| Control | Route | Server rule | Desktop gate | Mobile gate |
+|---|---|---|---|---|
+| Archive / Restore | `POST /:id/archive`, `POST /:id/unarchive` | `projects.manage` | `can("projects.manage")` | `canManage` |
+| Status dropdown | `PATCH /:id` | `projects.write` | `can("projects.write") && canEditDetail` | `canWrite && access.canEdit` |
+| + Total Sales | `PATCH /:id/finance` | `projects.write` + `denyFinance` | `canWriteProjectFinance(user, can)` | `canWrite`, inside the finance-visible snapshot |
+| + Quick Log / + New Sale | `POST /api/sales/entries` | `requirePageAccess("sales")` | `canLogSalesEntry(salesLevel)` | same helper |
+
+Three traps this table exists to stop:
+
+- **`disabled` is not a gate.** The Archive and Restore menu items each carried a
+  `disabled` derived from `archived_at` — that is STATE. A state condition next
+  to a missing permission condition reads, at a glance, as if the control were
+  gated.
+- **The sales READ rule is not the sales WRITE rule.** `GET /api/sales/entries`
+  is `requirePageAccessOrSalesView`, whose extra arm admits Sales staff and
+  directors by ORG POSITION; `POST /entries` is plain `requirePageAccess`. A
+  Sales Director therefore READS the list and cannot WRITE to it, so the two
+  gates on this one panel must not share a predicate.
+- **`sales.write` gates nothing here.** It was the desktop condition on both
+  write buttons and is a term in neither route, so it was wrong in both
+  directions at once: it showed "+ Total Sales" to a rep the finance gate
+  refuses, and hid it from a finance user holding `projects.write`.
+
+`canWriteProjectFinance` mirrors `denyFinance` -> `financeHiddenForUser`
+(`position_id == null` OR `project_finance_viewer`), NOT the per-project
+`_access.pms.canFinancial` flag. The flag is the DIRECTOR-only section tier and
+is a strict subset: it excludes the granular `projects.finance.view` holders
+(the BD role, owner 2026-07-23) that the write route accepts.
+
 ### Desktop and mobile files that must change together
 
 | Change | Desktop | Mobile |

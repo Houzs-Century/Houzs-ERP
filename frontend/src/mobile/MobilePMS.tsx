@@ -10,7 +10,7 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -676,9 +676,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // PMS FINANCIAL section). The gate now reads `access.canFinancial` — the
   // server's own answer — with no second source to drift from. The desktop
   // Projects.tsx finance gate does the same.
-  // Sales quick-log gate (the Sales page-access, mirrors desktop).
+  // Sales quick-log gate — ONE helper, shared with desktop, so the two surfaces
+  // cannot drift off requirePageAccess("sales") on POST /api/sales/entries.
   const salesAccess = pageAccess("sales");
-  const canLogSale = salesAccess !== "none";
+  const canLogSale = canLogSalesEntry(salesAccess);
   const canWrite = can("projects.write");
   const canManage = can("projects.manage");
   const canTick = canWrite || can("projects.checklist.tick");

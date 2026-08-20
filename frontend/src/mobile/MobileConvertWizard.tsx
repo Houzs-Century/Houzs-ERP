@@ -11,6 +11,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
+import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -43,7 +44,10 @@ import "./mobile.css";
  *            returns all outstanding PO lines, scoped to the selected poIds)
  *
  * Create responses (the new doc number we hand to onCreated):
- *   DO  POST /delivery-orders-mfg/from-sos   → { id, doNumber, movementErrors? }
+ *   DO  POST /delivery-orders-mfg/from-sos  { asDraft:true, picks } → { id, doNumber }
+ *                    (DRAFT — NOT auto-shipped; operator confirms the DO and
+ *                    that transition writes stock. No movementErrors on a draft:
+ *                    the OUT has not run yet.)
  *   SI  POST /sales-invoices/from-dos        → { id, invoiceNumber, ... }
  *   GRN POST /grns  { asDraft:true, items }  → { id, grnNumber } (DRAFT — NOT auto-posted;
  *                    operator posts it from the receipt, PATCH /:id/post writes stock)
@@ -288,10 +292,15 @@ export function MobileConvertWizard({
   // received / cancelled POs (only open / partially_received can be received).
   const sources = useMemo(() => {
     const data = sourceQuery.data as any;
-    const isProcessible = (status: string | null) => {
-      const s = str(status).toUpperCase();
-      return s !== "DRAFT" && s !== "CANCELLED";
-    };
+    /* ONE DECLARATION, NOT A THIRD OPINION. This was a hand-typed
+       `!== DRAFT && !== CANCELLED` — a fourth spelling of the same rule, kept in
+       step with the other three only by whoever remembered. The desktop, the
+       server gate (siTransferRefusal) and the server's own DO picker all read
+       SI_TRANSFERABLE_DO_STATES; this now does too, so the phone offers exactly
+       what the create path accepts. The set includes LOADED (owner 2026-08-19,
+       #2485) and excludes INVOICED, which nothing ever writes. */
+    const isProcessible = (status: string | null) =>
+      (SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(str(status).toUpperCase());
     const isReceivablePo = (status: string | null) => {
       const s = str(status).toUpperCase();
       return s !== "DRAFT" && s !== "CANCELLED" && s !== "RECEIVED" && s !== "CLOSED";
@@ -497,7 +506,23 @@ export function MobileConvertWizard({
       let newDocNo = "";
 
       if (target === "do") {
-        const body = { picks: picks.map((l) => ({ soItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
+           `status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED'`, and the
+           same flag gates the write half (deductInventoryForDo +
+           syncSoDeliveredFromDo + the customer email). OMITTING the field is
+           not a neutral default, it is "ship it now" — a tap in a driveway
+           emptied the shelf, advanced the SO to delivered and emailed the
+           customer, with no review step and no undo.
+
+           Same reasoning as the GRN arm below, and the same shape: the phone
+           creates the document, a human confirms it from the receipt. For a DO
+           that confirm is the Confirm transition (PATCH /:id/status), which is
+           the single stock-writing chokepoint. */
+        const body = { asDraft: true, picks: picks.map((l) => ({ soItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* The short-stock pre-flight runs REGARDLESS of asDraft (it also
+           resolves the incoming-PO commitments), so the "Ship anyway?" confirm
+           below still fires on a draft — it is the binding decision, taken once,
+           at the moment the operator picked the lines. */
         // authedFetch handles the short_stock 409 in-app (Ship anyway? → replay).
         /* The short_stock 409 replay authedFetch runs internally re-sends this
            SAME key with confirmShortStock:true — correct and load-bearing. The
@@ -512,7 +537,21 @@ export function MobileConvertWizard({
         newDocNo = str(res?.doNumber);
         await qc.invalidateQueries({ queryKey: ["mobile-module"] });
       } else if (target === "si") {
-        const body = { picks: picks.map((l) => ({ doItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* SI — create a DRAFT, never a SENT invoice (owner 2026-08-20:
+           「以电脑为准 —— 手机也先出草稿」). This body carried `picks` alone, and
+           the route lands `status: isDraft ? 'DRAFT' : 'SENT'` with `sent_at` +
+           `confirmed_at` stamped and `invoice_date` forced to today
+           (sales-invoices.ts) — so three taps on a phone ISSUED a
+           customer-facing invoice with no due date, no terms and no review. The
+           desktop cannot reach this endpoint at all: it goes SalesInvoiceFromDo
+           -> SalesInvoiceNew with a full header form, which is the review step
+           the phone had no equivalent of.
+           Same shape and same reasoning as the GRN arm below — post the draft,
+           let the operator confirm it from the document (PATCH /:id/status
+           DRAFT -> SENT, which the mobile detail screen already offers as
+           "Confirm Invoice"). Confirm is the single AR/revenue-writing
+           chokepoint, exactly as /post is for stock. */
+        const body = { asDraft: true, picks: picks.map((l) => ({ doItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
         const res = await authedFetch<{ invoiceNumber?: string }>("/sales-invoices/from-dos",
           idempotentInit(idemKey, {
             method: "POST",
@@ -743,7 +782,13 @@ export function MobileConvertWizard({
             onClick={submit}
             style={{ opacity: !canCreate || submitting ? 0.55 : 1 }}
           >
-            {submitting ? "Creating…" : target === "grn" ? "Create draft Goods Receipt" : `Create ${meta.docTitle}`}
+            {/* The two targets that land a DRAFT say so on the button. A CTA
+                reading "Create Delivery Order" over a parked document misstates
+                it just as badly as the old body did: the operator needs to know
+                a confirm step is still owed before the goods are counted out. */}
+            {submitting ? "Creating…" : (target === "grn" || target === "do")
+              ? `Create draft ${meta.docTitle}`
+              : `Create ${meta.docTitle}`}
           </button>
         </footer>
       )}
@@ -1125,9 +1170,11 @@ function humanize(msg: string): string {
     nothing_to_invoice: "No billable lines came back for this Goods Receipt. Open it and check its invoiced balance before treating it as billed in full.",
     nothing_to_return: "No returnable lines came back for this Goods Receipt. Open it and check its returned balance before treating it as returned in full.",
     /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
-       tick lives on the desktop receipt screen, so this says where to go rather
-       than leaving the operator at a code they cannot act on. */
-    zero_cost_receipt: "Some lines would be received at zero cost, but those items have been bought at a real price before. Enter the unit price from the supplier's goods-received document, or open the receipt on desktop and tick \"Received free\" on the line.",
+       tick lives on the RECEIPT screen, which since fix/mobile-rep-blockers
+       exists on the phone too (MobileGrnZeroCost) — this used to end "open the
+       receipt on desktop", which was the only instruction that was true while
+       the phone had no remedy at all. */
+    zero_cost_receipt: "Some lines would be received at zero cost, but those items have been bought at a real price before. Enter the unit price from the supplier's goods-received document, or open the Goods Receipt and tick \"Received free\" on the line.",
     grn_not_posted: "Only a posted Goods Receipt can be converted. Post it first.",
     grn_not_found: "That Goods Receipt no longer exists. Refresh and try again.",
     grn_id_required: "Select a Goods Receipt first.",

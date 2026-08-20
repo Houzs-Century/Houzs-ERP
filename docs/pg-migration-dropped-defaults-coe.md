@@ -64,7 +64,7 @@ This is the two-tree hazard `CLAUDE.md` now warns about, discovered by walking i
 
 - **No enumeration of the total blast radius was ever done.** Four repairs recovered `sales_reps` (2 cols), 7 core tables (12 cols), `is_active` (4 tables), and creation stamps (77 columns). Nobody has diffed the full D1 schema's `dflt_value` set against the live `information_schema` to prove the list is complete. Non-`NOT NULL`, non-timestamp defaults — status strings, sort orders, numeric zeros on nullable columns — would fail exactly as quietly as the timestamps did, and would still be failing.
 - **The 2026-06-14 dashboard 500 repairs (`b0e00159`) are not attributable.** They land the same day and in the same class of symptom, but the commit does not name dropped defaults, so this COE does not claim them.
-- **BUG-HISTORY.md:3421 says "~10 tables."** The evidence in the migration tree says at least 88 tables across the four episodes. The `~10` line is from the 2026-07-14 backfill-from-memory pass (PR #449) and predates PR #373; treat the migrations as authoritative.
+- **`BUG-HISTORY.md` line 3421 says "~10 tables."** The evidence in the migration tree says at least 88 tables across the four episodes. The `~10` line is from the 2026-07-14 backfill-from-memory pass (PR #449) and predates PR #373; treat the migrations as authoritative.
 
 ---
 
@@ -74,7 +74,7 @@ This is the two-tree hazard `CLAUDE.md` now warns about, discovered by walking i
 |------|-------|------|
 | ~~**The loader still drops defaults.**~~ **CLOSED 2026-07-21** by `fix/d1-pg-loader-carry-defaults` — the loader now emits `dflt_value` as a Postgres `DEFAULT` (292 carried against the current schema, 1 refused with a named warning), translating date/time stamps through the app's own `rewriteDialect()` rather than a second copy of the rules. `NOT NULL`, types, PKs and the DROP/CREATE order are untouched, and the two remaining gaps in this row — `foreign_key_list`, `CHECK`, `UNIQUE` — are still NOT read. Original text: `load-d1-dump-to-pg.mjs:141-143` was unchanged at `9db13349`. It reads `dflt_value` in a comment and emits nothing for it, and never reads `foreign_key_list`, `CHECK`, or `UNIQUE` at all. | Owner / whoever runs the next cutover | It has one guard, and it is about a different hazard: `:16-22`, added after "the 2026-06-17 incident where this wiped prod", refuses to run against the prod project ref without `ACK_PROD_WIPE=yes`. Nothing warns that a run which *is* authorised will produce a schema missing every default. If this script is ever pointed at a fresh environment, all four episodes recur at once. Either carry `dflt_value` through, or delete the script now that the cutover is done. |
 | **Completeness audit of surviving dropped defaults.** | Owner | The repo has `check-money-types.mjs` and `check-indexes.mjs` but no defaults checker. A one-shot `information_schema.columns.column_default IS NULL` comparison against the D1 schema would either close this out or produce the fifth episode's list before a user does. |
-| **Restoring dropped FK `ON DELETE` actions in the schema.** | Owner | `61fb5064` fixed this in *application code* — five delete paths now clear children by hand. The constraints themselves are still `NO ACTION` in prod, so every future delete path inherits the same trap. `BUG-HISTORY.md:2096` records `positions.ts:299` clearing children "because the D1→PG load dropped the FK to NO ACTION" — the workaround is now load-bearing and undocumented at the schema level. |
+| **Restoring dropped FK `ON DELETE` actions in the schema.** | Owner | `61fb5064` fixed this in *application code* — five delete paths now clear children by hand. The constraints themselves are still `NO ACTION` in prod, so every future delete path inherits the same trap. `BUG-HISTORY.md` line 2096 records `positions.ts:299` clearing children "because the D1→PG load dropped the FK to NO ACTION" — the workaround is now load-bearing and undocumented at the schema level. |
 
 ---
 
@@ -93,4 +93,4 @@ This is the two-tree hazard `CLAUDE.md` now warns about, discovered by walking i
 
 - `docs/system-foundation-coe.md` — §3B covers the sibling class from the same cutover (SQLite dialect surviving into Postgres), and §3E is the money-column claim refuted against the live DB.
 - `docs/api-fetch-hardening-coe.md` — §D records the `is_active` episode (2026-06-26) as one line of a wider hardening campaign; this COE is its full write-up.
-- `BUG-HISTORY.md:3421` — the one-line backfilled entry this document replaces.
+- `BUG-HISTORY.md` line 3421 — the one-line backfilled entry this document replaces.

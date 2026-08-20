@@ -61,7 +61,25 @@ The shared layer is a plain module, **not a React hook**:
 `vendor/scm/lib/scan-jobs.ts` exports the `ScanJob` type, `normalizeJobs`,
 `jobTs`, `isTodayTs`, `hhmm` and `isActiveJob`. Its header says it exists so the
 desktop modal reuses mobile's code path rather than keeping a third copy
-(`scan-jobs.ts:1-12`).
+(`scan-jobs.ts:1-12`). Since 2026-08-20 it also owns the known-reps list —
+`SCAN_SALESPEOPLE_PATH` + `normalizeScanSalespeople` — so the endpoint behind the
+salesperson box is named once and the two shells cannot offer different lists.
+
+### The salesperson box, and what it actually decides
+
+Both shells now default it to the signed-in user and keep it **editable** against
+that list, "for the occasional someone-else slip". Mobile did not until
+2026-08-20: it held `const salesperson = (user?.name || user?.email || "")` with
+no setter and no list, so an office person working through a stack of
+colleagues' slips could name the writer at the desk and not on the phone.
+
+What the value decides is the **OCR learning key**, not the order's salesperson:
+`repGiven` feeds `loadPromptInjections` on the synchronous `/extract` path
+(`scan-so.ts:3061`) and on the background job (`:3973`, off
+`scan_jobs.salesperson` written at `:4303`), keys the `so_scan_samples` row
+(`:3072`), and filters `GET /scan-so/jobs`. The SO's own `salesperson_id` is
+stamped server-side from the authed caller (`resolveScanUploaderStaffId`,
+`:4270`) on BOTH shells and is not caller-trusted — see section 7.
 
 Where the two surfaces still differ (all deliberate):
 
@@ -127,7 +145,7 @@ plus `scanSo.use('*', supabaseAuth)` (`scan-so.ts:99`). Full public prefix is
 | POST | `/jobs/clear-failed` | `:4677` | delete the caller's `status='error'` rows **in the active company** (`*` clears every rep's, same company) |
 | POST | `/extract` | `:2967` | the blocking client-driven path — kept as mobile's fallback |
 | POST | `/samples/:id/confirm` | `:4718` | store the operator-reviewed JSON; triggers the distillers |
-| GET | `/salespeople` | `:2269` | distinct reps across samples + rules (the modal datalist) |
+| GET | `/salespeople` | `:2269` | distinct reps across samples + rules — the datalist behind the salesperson box on **both** shells (`SCAN_SALESPEOPLE_PATH` in `scan-jobs.ts`) |
 | GET | `/rules/:salesperson` | `:2302` | view a rep's distilled rules |
 | POST | `/rules/:salesperson/distill` | `:2325` | manually regenerate a rep's rules |
 | GET | `/slip-image` | `:2345` | stream a stored slip photo |
@@ -756,6 +774,8 @@ Both are annotated `// company-scope:` in `backend/src/scm/routes/scan-so.ts` so
 | The sample-labelling comparison (`maybeLearnFromScan`) | `pages/scm-v2/SalesOrderNew.tsx:1216-1324` | `mobile/MobileNewSO.tsx:1327-1395` — **two copies of one rule**; keep them in step |
 | Draft-landed notification | `pages/scm-v2/MfgSalesOrdersListV2.tsx` (none today) | `mobile/MobileSalesOrders.tsx:270-340` |
 | The `ExtractedSlip` type | declared in `ScanOrderModal.tsx`, imported by `scan-prefill.ts:34` — a desktop file the mobile path depends on | |
+| Known-reps list behind the salesperson box | **`vendor/scm/lib/scan-jobs.ts`** — `SCAN_SALESPEOPLE_PATH` + `normalizeScanSalespeople`; shared, edit once | |
+| Slip / receipt R2 keys carried into the create | `pages/scm-v2/SalesOrderNew.tsx` → `slipImageKey` / `receiptImageKey` | `MobileScanPrefill.slipImageKey` / `.receiptImageKey` (`MobileScan.tsx`) → `createDraftFromPrefill` (`MobileNewSO.tsx`). Mobile dropped both until 2026-08-20, so an order minted by the CLIENT fallback path carried no slip photo and `MobileSODetail`'s "Scanned photos" card was always empty. The `/enqueue` path was never affected — the background job sets them server-side (`scan-so.ts:3899`) |
 | Anything server-side (prompt, rules, pipeline) | `backend/src/scm/routes/scan-so.ts` — one implementation, both shells | |
 
 ---

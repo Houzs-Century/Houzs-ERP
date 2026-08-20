@@ -143,10 +143,27 @@ flag removes, before the `continue` that removes them:
 | `hidden` | `!includeUndated` — the response states what it DID |
 
 The two paths are counted separately on purpose: blending them would overstate
-every non-sofa tab by the whole sofa book. `Mrp.tsx` picks by tab and renders the
-count in BOTH states, with a one-click **Show them** / **Hide them** wired to the
-existing toggle; it reads `hidden` from the SERVER, not from its own checkbox, so
-a request the server did not honour is described as it came back.
+every non-sofa tab by the whole sofa book.
+
+> **NOTHING IN THE UI READS `undated` ANY MORE — owner, 2026-08-20.** `Mrp.tsx`
+> used to pick by tab and render the count in BOTH states, with a one-click
+> **Show them** / **Hide them** wired to the existing toggle, reading `hidden`
+> from the SERVER rather than from its own checkbox. The owner deleted that
+> banner: 「黄色的也delete掉」, said after he was told it carried DATA (a count and
+> an action) rather than instruction. His call, and a deliberate deletion — do
+> not restore it as an accidental removal.
+>
+> The field is still computed, still returned, and still pinned by
+> `backend/src/scm/routes/mrp.test.ts`. It is now an API-only fact. If it is ever
+> surfaced again, the two rules above are what it has to obey: pick the tally by
+> tab, and take `hidden` from the response.
+>
+> What ended the SILENCE now is the ROW: `DeliveryCell` in `Mrp.tsx` tags every
+> undated line **No date**, and the always-visible **Show no-date** checkbox in
+> the filter row is the only affordance that flips `includeUndated`. Both are
+> pinned by `frontend/src/pages/scm-v2/mrpUndated.test.tsx` (renamed from
+> `mrpUndatedBanner.test.tsx` in the same PR), which also pins the banner's
+> absence as a negative so a quiet re-add fails.
 
 ### The default STAYS hidden — what changed is the silence (owner, 2026-08-18)
 
@@ -159,8 +176,13 @@ The measurement that prompted a flip was real — the default view held 82 of 16
 live 2990 SO-item ids and 8 of 68 short sofa sets — but the inference was wrong.
 What the operator could not see was never the ROWS; it was that rows were being
 withheld at all, because the page said nothing. **Hiding is legitimate. Hiding
-SILENTLY is not.** The banner is the fix, and it speaks in both directions, so a
-future flip cannot restore the silence.
+SILENTLY is not.**
+
+The banner was the 2026-08-16 answer to that silence. It is gone since
+2026-08-20 (owner: 「黄色的也delete掉」), so what carries the point now is the
+always-visible **Show no-date** checkbox plus the per-row **No date** tag — the
+withholding is one tick from being undone and every withheld row identifies
+itself once shown. The page-level COUNT is the part he chose to give up.
 
 **Requiring a delivery date was considered and REJECTED.** 43% of 2990's sales
 orders carry no delivery date, flat across June/July/August — a habit, not an
@@ -168,9 +190,10 @@ import artefact (HOUZS's 81.9% above IS one: its AutoCount importer's INSERT
 carries neither delivery nor processing date). Forcing the field makes people
 type a FAKE date, and a fake date is worse than a null one, because allocation is
 BY DELIVERY DATE — a fake promise would jump the queue ahead of a real one. So
-undated demand keeps its null and stops being SILENT instead: hidden by default
-but always counted and announced, one click from view, and when shown it is
-tagged **No date** on the row and sorted last.
+undated demand keeps its null instead: hidden by default, one click from view via
+**Show no-date**, and when shown it is tagged **No date** on the row and sorted
+last. (It is still always COUNTED — see the box above — but since 2026-08-20 the
+count is not ANNOUNCED on the page.)
 
 **This is safe only because the flag is display-only.** The allocation order is
 unchanged and pinned by `mrp.test.ts` ("a dated line wins the scarce bucket over
@@ -215,9 +238,17 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   deliberately: aligning either moves the Inventory page's
   committed / available / surplus figures and needs the owner's decision.
 - Effective qty per line = `qty - (delivered net of returns)` via
-  `soDeliverableRemaining` (delivery-orders-mfg.ts) — DRAFT and CANCELLED DOs
-  never count as delivered. `so-stock-allocation.ts` step 3 follows the same
-  rule (aligned 2026-08-01, audit D5).
+  `soDeliverableRemaining` (delivery-orders-mfg.ts) — a DO in
+  `DO_NOT_DELIVERED_STATES` never counts as delivered.
+  `so-stock-allocation.ts` step 3 follows the same rule (aligned 2026-08-01,
+  audit D5).
+  **That set gained LOADED on 2026-08-20**, and until then this line read "DRAFT
+  and CANCELLED". LOADED is a PRE-SHIP state — the inventory OUT fires only on
+  ENTRY to a shipped state — so a delivery still on the lorry was shrinking MRP
+  demand and the allocation job's remaining. It is one predicate now,
+  `doCountsAsDelivered` in `shared/do-shipped-states.ts`; the full trace, and
+  the dispatch it was blocking, are in `docs/modules/delivery-order.md` under
+  *"Has this delivery counted?" is ONE predicate now*.
 - **"Delivered" is read TWO ways, and has to be** (2026-08-17). The delivered
   sum lives in `lib/do-unlinked-coverage.ts::netDeliveredBySoItem` and counts
   (a) DO lines linked by `so_item_id`, plus (b) DO lines whose link is NULL but
