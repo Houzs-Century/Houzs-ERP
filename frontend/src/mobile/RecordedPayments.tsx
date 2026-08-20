@@ -46,7 +46,7 @@ import {
   FALLBACK_OPTIONS,
   type SoDropdownOption,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
-import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
+import { paymentMethodCodeForValue, PAYMENT_METHOD_CODE_TO_VALUE } from "../vendor/scm/lib/payment-methods";
 import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
@@ -73,8 +73,6 @@ export type RecordedPayment = RecordedPaymentLike & {
 const slipKeyOf = (p: RecordedPayment) => p.slipKey ?? p.slip_key ?? null;
 const createdAtOf = (p: RecordedPayment) => p.createdAt ?? p.created_at ?? null;
 
-export const PAY_METHODS = ["Cash", "Merchant", "Online", "Installment"] as const;
-export type PayMethodLabel = (typeof PAY_METHODS)[number];
 
 /* Offline fallback + parsing seed only; the rendered dropdowns read the LIVE
    maintenance catalog via useSoDropdownOptions. Single-sourced from
@@ -92,10 +90,10 @@ const monthsToPlan = (months: number | null | undefined): string => {
   if (!months) return PLAN_OPTS[0];
   return PLAN_OPTS.find((p) => planToMonths(p) === months) ?? `${months} months`;
 };
-/* Reverse of the shared method map (backend enum → sheet label). */
-const CODE_TO_PAY_METHOD: Record<string, PayMethodLabel> = {
-  cash: "Cash", transfer: "Online", merchant: "Merchant", installment: "Installment",
-};
+/* Reverse of the shared method map (backend enum → sheet label). Imported, not
+   retyped: this file carried its own byte-identical copy, which is the same
+   hand-copied-list bug the Method picker below had. */
+const CODE_TO_PAY_METHOD = PAYMENT_METHOD_CODE_TO_VALUE as Record<string, string>;
 const toSen = (s: string) => Math.round((parseFloat(String(s).replace(/,/g, "")) || 0) * 100);
 
 type Opt = { value: string; label: string };
@@ -282,7 +280,7 @@ export function AddPaymentSheet({
      with a new key, while every retry of THIS submit reuses this one. */
   const idemKey = useIdempotencyKey();
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const [method, setMethod] = useState<PayMethodLabel>(
+  const [method, setMethod] = useState<string>(
     () => (editPayment ? CODE_TO_PAY_METHOD[editPayment.method ?? "cash"] ?? "Cash" : "Cash"),
   );
   const [date, setDate] = useState<string>(
@@ -322,6 +320,12 @@ export function AddPaymentSheet({
   const bankOpts = withStoredOption(optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data), bank);
   const planOpts = withStoredOption(optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data), plan);
   const onlineOpts = withStoredOption(optionsOrFallback("online_type", useSoDropdownOptions("online_type").data), online);
+  /* Method was the ONE picker on this sheet still rendering a hardcoded list,
+     while its three sub-pickers above already read the live catalog. It offered
+     'Installment', which mig 0037 retired as an L1 method, and it could not
+     offer anything maintenance added. withStoredOption keeps a grandfathered
+     stored value selectable for the same reason the Bank picker needs it. */
+  const methodOpts = withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method);
   const [slipName, setSlipName] = useState("");
   const [slipSession, setSlipSession] = useState("");
   const [slipPhase, setSlipPhase] = useState<"" | "uploading" | "done" | "error">("");
@@ -413,8 +417,8 @@ export function AddPaymentSheet({
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
             <div className="fld">
               <span className="fld-l">Method</span>
-              <select className="fld-i" value={method} onChange={(e) => setMethod(e.target.value as PayMethodLabel)}>
-                {PAY_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+              <select className="fld-i" value={method} onChange={(e) => setMethod(e.target.value)}>
+                {methodOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
             <div style={{ display: "flex", gap: 9 }}>

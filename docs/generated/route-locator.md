@@ -1086,10 +1086,10 @@ Total: 1038 route registrations across 139 files.
 - L260  PATCH  /:id/cancel
 
 ## backend/src/scm/routes/so-dropdown-options.ts  (4)
-- L103  GET    /
-- L175  POST   /
-- L217  PATCH  /:id
-- L279  DELETE /:id
+- L119  GET    /
+- L191  POST   /
+- L233  PATCH  /:id
+- L295  DELETE /:id
 
 ## backend/src/scm/routes/venues.ts  (4)
 - L80  GET    /
