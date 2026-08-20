@@ -104,6 +104,7 @@ import { acParentlessCreateReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
 import { persistLineKeys } from './autocount-line-keys';
+import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
   present,
@@ -1574,13 +1575,17 @@ async function bindingsFor(
     .map((s) => `${s.model}-1S`);
   const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
-  let q = sb.from('supplier_material_bindings')
-    .select('item_code, supplier_id, supplier_sku, is_main_supplier')
-    .in('item_code', wanted)
-    .eq('material_kind', 'mfg_product')
-    .order('is_main_supplier', { ascending: false });
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const rows = await readOrThrow('supplier_material_bindings', q);
+  /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
+     TOTALLY ordered. `is_main_supplier` first is the rule this resolver depends
+     on — "a code bound to several suppliers resolves to the one the business
+     actually buys from" is decided by which row arrives first — and on its own
+     it leaves every tie in planner order. `readOrThrow`'s contract is kept: a
+     failed read still throws rather than resolving to a silently short map. */
+  const rows = await readOrThrow('supplier_material_bindings', readMfgProductBindings<Record<string, unknown>>(sb, {
+    codes: wanted,
+    companyId,
+    select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+  }));
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
     const code = String(r.item_code ?? '').trim().toUpperCase();
