@@ -8,9 +8,10 @@ import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { UploadDropZone, clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesStaff } from "../auth/salesAccess";
+import { isSalesStaff, isSalesNonDirector } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { MobileVirtualList } from "./MobileVirtualList";
+import { MobileMyCaseDetail } from "./MobileMyCaseDetail";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
@@ -287,15 +288,19 @@ const slaText = (h: number | null): { label: string; overdue: boolean } | null =
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
  *  (Overview / Stage / Info / Timeline) + new-case sheet, all wired to
- *  the core /api/assr backend. */
+ *  the core /api/assr backend. A non-director Sales rep opens the READ-ONLY
+ *  detail instead (owner 2026-07-23), keeping the list + create sheet as on
+ *  desktop. The predicate is IMPORTED; the why is in MobileMyCaseDetail. */
 export function MobileServiceCase({ onBack, startNew = false }: { onBack?: () => void; startNew?: boolean }) {
+  const { user } = useAuth();
   const [openId, setOpenId] = useState<number | null>(null);
   // `startNew` (from the Orders FAB "+ New Service Case") opens the create sheet
   // straight away.
   const [showNew, setShowNew] = useState(startNew);
 
   if (openId != null) {
-    return <CaseDetail id={openId} onBack={() => setOpenId(null)} />;
+    const Detail = isSalesNonDirector(user) ? MobileMyCaseDetail : CaseDetail;
+    return <Detail id={openId} onBack={() => setOpenId(null)} />;
   }
   return (
     <>
