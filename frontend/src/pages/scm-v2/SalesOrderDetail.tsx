@@ -60,8 +60,7 @@ import {
   amendmentEligible as soAmendmentEligible,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
-import { parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
@@ -1034,16 +1033,7 @@ export const SalesOrderDetail = () => {
            at once in a POPUP the owner can't miss (owner 2026-07-18: he wanted a
            modal listing all reasons, not a banner to scroll to). Anything else
            keeps the inline banner. */
-        const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-        if (problems && problems.length > 0) {
-          notify({
-            title: saveProblemsTitle(problems.length),
-            body: <SaveProblemsList problems={problems} />,
-            tone: 'error',
-          });
-        } else {
-          setSaveError(e instanceof Error ? e.message : 'Something went wrong.');
-        }
+        void notifySaveProblems(notify, e, setSaveError);
       });
   };
 

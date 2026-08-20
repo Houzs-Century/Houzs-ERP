@@ -898,3 +898,36 @@ Three things it will not do, and the reasons are the rule rather than caution:
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+---
+
+## When the accounts will not take the order, the buyer is told at save
+
+Owner 2026-08-19. The rule and the block-or-warn reasoning live in
+`docs/modules/autocount-writeback.md` §6b; the sentences in
+`backend/src/scm/lib/ac-preflight.ts`.
+
+All three PO create anchors — `POST /` (`createMfgPurchaseOrderHandler`),
+`POST /from-sos` (per created PO), and `PATCH /:id/confirm` — now return
+`acNotSent: SaveProblem[]` when the AutoCount composer refused the order. The key
+is ABSENT when the order composed cleanly. `POST /from-sos` carries it per PO
+inside `created[]`, because that route raises several and which one was refused
+is the whole point.
+
+**It never refuses the save**, and that is a decision, not an omission. Both live
+causes on this side need master data a buyer does not own:
+
+| Cause | What the buyer is told to do |
+|---|---|
+| The ERP code maps to several AutoCount items and this order's supplier owns none of them | raise the order against the supplier the product is actually bought from, or ask for the duplicate AutoCount item to be retired |
+| `scm.suppliers.code` is empty — no AutoCount creditor | ask accounts to give the supplier its creditor code, then re-raise |
+
+Blocking either would stop procurement over an accounting-map defect and blame
+the person who cannot fix it. Measured against the compiled cutover map: 117
+ambiguous ERP codes, all 117 refused under a creditor that owns none of their
+candidates — this is the purchase side's problem alone, because a sales order
+names no supplier and resolves to the ERP's own code.
+
+Surfaced on `frontend/src/pages/scm-v2/PurchaseOrderNew.tsx`, before the
+navigation so the page change cannot swallow it. `PurchaseOrderFromSo.tsx` is
+NOT wired yet and still saves in silence.
