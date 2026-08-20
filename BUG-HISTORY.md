@@ -125,6 +125,586 @@ caught this bug.** The predicate that broke had no company term in it. What
 catches that class is one declaration per concept, mirrored and pinned — and a
 gate that let its own limits go unsaid would be the same failure in a new
 costume.
+## Service Maintenance's SLA Hours cell saved, said OK, and changed nothing [medium]
+
+<!-- area: Service cases (ASSR) -->
+
+**白话.** 「服务维护 -> Priorities」那一栏「SLA hrs」，是给主管改「这个紧急程度要几个
+小时内处理完」用的。改了会显示存好了 —— 但系统开新案子的时候根本没去看那一栏，一直
+用程式里写死的数字。因为写死的数字刚好跟当初预设的一样（低 336 小时 / 普通 168 /
+高 72 / 紧急 24），所以看起来完全正常，直到有人真的去改它 —— 改完没有任何反应，也没有
+任何错误讯息。现在改了就算数：**新开的案子**跟**改紧急程度的案子**都会用主管填的时数。
+**已经开好的案子不会重算**，这一点跟当初 065 的说明一致，没有变。另外那一格现在会挡掉
+乱填的值（0、负数、小数、文字），以前是照单全收然后默默忽略。
+
+**Symptom.** A manager edits the SLA Hours cell on a priority in Service
+Maintenance. The row saves, the API answers `{ ok: true }`, the new number is
+displayed on reload — and every case created afterwards still uses the old
+window. No error, no log, no signal of any kind.
+
+**Root cause (traced in source, not guessed).** `assr_priorities.sla_hours` had
+a complete WRITE path and no READ path. `ServiceSettings.tsx` offers the cell
+("SLA window in hours; blank = use module default"); `routes/assr.ts` INSERTs it
+on `POST /lookups/priorities` and allows it on `PATCH /lookups/priorities/:id`.
+But both places that COMPUTE an SLA — `createAssrCase` and the priority-change
+arm of `patchAssrCase` in `services/assr.ts` — called `slaHoursFor()`, whose
+entire body was a lookup in the hardcoded `SLA_HOURS_BY_PRIORITY`. Nothing in
+`backend/src` ever selected the column. The mig 065 seed writes exactly the
+constant's values (low 336 / normal 168 / high 72 / urgent 24), so the two
+agreed for every unedited row and the gap was invisible until somebody edited
+one. Migration `065_assr_lookups.sql:42` calls the column "optional override of
+slaHoursFor()" and `:66-68` says editing it makes new cases pick up the change;
+both sentences were false from the day they were written.
+
+**Fix.** New `backend/src/services/assrSla.ts` holds the case-level SLA clock —
+the read beside the write validation, so they cannot drift apart again, and
+because both former homes were at their file-size ceiling. Its
+`slaHoursForPriority(env, slug)` reads `assr_priorities.sla_hours`
+for the slug and falls back to `slaHoursFor()` when the cell is blank, the row
+is missing, the value is junk, or the read throws — the same try/catch posture
+`lookupStageTargetDays()` already uses, so a config read can never fail a case
+create. No `active` predicate, matching that same function: deactivating a
+priority must not swing the SLA of a case still carrying it. Both call sites now
+use it. **Existing deadlines are NOT recomputed** — mig 065 already said so and
+that stays true. `sla_hours` writes are now validated (positive whole number, or
+blank): the PATCH allow-list previously bound `body[k] ?? null` straight through,
+so `"abc"` stored successfully and was then silently ignored at read time, which
+is this same defect a second time.
+
+**Why live rather than deleted.** Two honest fixes existed. Making it live wins
+because the promise is written in four places (the migration comment, the column
+comment, the section description "The SLA Hours column overrides the default
+per-priority SLA window", and the cell title) and because the sibling axis on
+the SAME table — per-priority per-stage targets, mig 082 — is already read live
+by `lookupStageTargetDays()`. Deleting the cell would have left `assr_priorities`
+as a live config table with exactly one inert column, and left the case-level
+clock as the only SLA a manager cannot tune while the per-stage clock is
+manager-editable through the Lead Time Portal.
+
+**Production values: UNKNOWN, and now answerable without asking.** Whether any
+priority row was ever edited away from the 065 seed lives only in production.
+`backend/scripts/check-assr-sla-priorities.mjs` +
+`.github/workflows/assr-sla-priorities-check.yml` (Actions -> **Service SLA
+priorities check (read-only)**) print each priority's stored value beside the
+fallback and say plainly whether making the column live moves any deadline. One
+SELECT, no writes, exit 0 for every legitimate answer. **UNTESTED — a
+`workflow_dispatch` workflow cannot be dispatched until it is on the default
+branch, so this one has never run. It is not proven shipped until it has.**
+
+**Found while fixing it, NOT fixed here.** `assr_cases.priority` carries
+`CHECK (priority IN ('low','normal','high','urgent'))`
+(`backend/src/db/migrations/010_assr_redesign.sql:16`, restated by `074:93`), so
+Service Maintenance can ADD a priority, save it, list it in the picker — and
+every case create using it fails. That is a second control of this same shape.
+Widening a CHECK is a schema decision with its own migration and this PR must
+not weaken a constraint as a side effect; the constraint is pinned by an
+assertion in `backend/tests/assrSlaHoursOverride.test.ts` so whoever widens it
+reads this note first.
+
+**Guards, each proved RED before being trusted.**
+`backend/tests/assrSlaHoursOverride.test.ts` — putting `slaHoursFor` back at the
+two call sites fails 2 of its 6; deleting the `normalizeSlaHours` branch from
+PATCH fails 1. `backend/tests/assrSlaFallbackMirror.test.ts` keeps the
+prod-check script's hand-copied fallback table equal to the service's — changing
+`high: 72` to `71` in the script fails it — and asserts its own regex matched,
+so a verdict computed over nothing cannot read as a pass.
+
+**Ref.** `fix/assr-sla-hours-override`, 2026-08-20.
+## Typing a customer name on a new SO fired one search per keystroke, most answered 503 [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 开销售单打客户名字的时候，每敲一个字母系统就去后台查一次旧客户。一个名字
+敲完打了 35 次，其中 34 次后台顶不住回 503（服务器忙）。画面上看不到红字 —— 只是
+「旧客户建议」那个下拉一直空着，人不会知道后台一直在报错。旁边一模一样的寄售单画面
+早就做了「停手再查」，销售单漏了。
+
+**Symptom (measured, not guessed).** Reproduced on prod 2026-08-20 in the Chrome
+network panel while typing a customer name into New Sales Order (Houzs Century):
+`GET /api/scm/mfg-sales-orders/debtors/search?q=…` fired once per character, 36
+requests for one name, and **34 of them returned 503**. Only the final request,
+after typing stopped, returned 200. Silent to the user — the failed requests just
+leave the suggestion dropdown empty.
+
+**Root cause (traced in source).** `SalesOrderNew.tsx` passed the raw
+`debtorName` state — which updates on every keystroke — straight into
+`useDebtorSearch`, with no debounce. Each character change re-ran the query. The
+backend handler is a plain scoped SELECT that returns 500 on a query error, so
+the 503 is not from application code: it is the serialized API tier shedding load
+under the keystroke burst (same class as the 卡顿 root cause — many small requests
+on a serialized connection). The consignment sibling already avoids this —
+`ConsignmentOrderDetail.tsx:806` wraps the term in `useDebouncedValue(…, 200)`
+before searching.
+
+**Fix.** Debounce the SO form's debtor term at 200ms with the same
+`useDebouncedValue` hook the consignment form uses, so one name is 2-3 requests
+instead of one per keystroke. Behaviour-preserving: suggestions still appear,
+just after a 200ms pause. Desktop-only — the mobile SO surface has no debtor
+autocomplete (`grep -rn "debtors/search" frontend/src/mobile` is empty), so there
+is no paired mobile file.
+
+**Verified against.** Frontend `tsc -b` clean; the fix mirrors the already-shipped
+consignment debounce. The 503 burst cannot recur because the query term can no
+longer change faster than every 200ms.
+
+Ref: 2026-08-20.
+## The announcements banner read the WHOLE table on every page, every minute [medium]
+
+<!-- area: Mail, search, notifications -->
+
+**Symptom.** The browser console logged `[perf] slow GET /api/announcements/banner
+~900ms` on prod, repeating from every page every ~60s. Measured 2026-08-20 on
+erp.houzscentury.com (console open) — no JS error, but the banner poll was the
+one call consistently over the slow threshold.
+
+**Root cause (traced, not guessed).** `GET /banner` is cached per-user in KV for
+60s, but on a cache MISS the handler ran `SELECT * FROM announcements ORDER BY
+created_at DESC` — the ENTIRE table, no `WHERE`, no `LIMIT` — then filtered
+active / not-expired / company / user in JS. Migration 0058 had already created
+the index `announcements (is_active, created_at DESC)`, but with no `WHERE` the
+planner could not use it, so every miss was a full sequential scan. The banner is
+polled from every desktop page (`NotificationBell`, `useAnnouncementBanner`) and
+every mobile page (`MobileAnnouncements`), all hitting the same endpoint, so the
+scan ran constantly as caches expired across users.
+
+**Fix.** Push the active filter into SQL: `SELECT * FROM announcements WHERE
+is_active = 1 ORDER BY created_at DESC`. `is_active` is `integer NOT NULL DEFAULT
+1`, so the column holds only 0/1 and `is_active = 1` selects EXACTLY the rows the
+JS `isActiveFlag` filter already kept — behaviour-identical, no announcement that
+used to show is lost. The query now matches the `(is_active, created_at DESC)`
+index as a range scan instead of a full-table read. The JS filters (expired /
+company / user targeting) are unchanged. One backend endpoint feeds both desktop
+and mobile, so this fixes both surfaces at once.
+
+**Verified against.** `announcementsBannerFilter.test.ts` +
+`announcementsListAccess.test.ts` (5 tests) green; backend typecheck clean.
+
+Ref: 2026-08-20.
+## The date fix reached every literal `type="date"`, and three other spellings of the same bug went straight through [medium]
+
+<!-- area: Frontend + mobile -->
+
+The owner, on two delivery orders side by side: "我又不是两套系统." The answer
+given on 2026-08-18 was that a rule with no single home gets re-typed at each
+surface. This is the same shape one layer down — inside the fix, and inside the
+gate shipped to protect it.
+
+`DateField` was built on 2026-06-18 because a native `<input type="date">`
+renders its value in the OPERATING SYSTEM's locale — the "有时候 MMDDYYYY" bug.
+It reached 14 of 189 inputs and sat there two months. #2390 finished it: all 175
+native date inputs now go through `DateField`, and `check-date-formatting.mjs`
+fails a new one. Verified here rather than trusted — `<DateField` is at 163
+usages across 77 files, the 26 remaining `type="date"` lines are wrapper PROPS,
+and all five wrappers were read to confirm each routes `type === 'date'` to
+`DateField`: `components/InlineEdit.tsx:100`,
+`mobile/MobileServiceCase.tsx:2864`, `scm-v2/LorryDetail.tsx:625`,
+`scm-v2/DeliveryOrderNewV2.tsx:166`, `scm-v2/DeliveryRateCards.tsx:760`. That
+half is genuinely done, and the allowlist entries covering it are true rather
+than a doc labelling a live bug as intended.
+
+**Both the sweep and the gate keyed on a LITERAL `type="date"`.** Two spellings
+of the identical bug were therefore invisible to both.
+
+**One — `<input type="datetime-local">`.** It renders its DATE half in the OS
+locale by exactly the same mechanism. The `raw-date-input` pattern cannot see
+it: `["']date["']` needs the closing quote immediately after `date`. Proven by
+executing the rule against `<input type="datetime-local" value={x} />` — false.
+Six were left. The sharpest pair is on one screen: in the delivery-planning
+drawer, **Arrival** and **Departure** were native `datetime-local` while
+**Shipout Date**, rendered directly beneath them in the same column, was already
+a `DateField`. On any machine whose OS is not day-first that drawer spelled a
+date two ways, one field apart — the owner's complaint reproduced inside the
+component built to end it. The mobile twin had the same three fields in the same
+order with the same split.
+
+- `vendor/scm/components/DeliveryFieldsDrawer.tsx` — Arrival, Departure
+- `mobile/MobileDeliveryPlanning.tsx` — Departure, Arrival
+- `pages/Announcements.tsx` — "Hide automatically after"
+- `pages/Projects.tsx` — the OUT/RETURN transfer timestamp
+
+**Two — the input type decided in a VARIABLE.** `components/UdfCell.tsx` had
+`const type = field.type === "number" ? "number" : field.type === "date" ? "date"
+: "text";` and then `<input type={type} …>`. `"date"` is a first-class
+`UdfFieldType`, so this one was USER REACHABLE with no code change at all: every
+operator who added a date column to a table got a native OS-locale input in the
+grid. It survived the June build, the sweep of all 175, and the gate — the type
+never appears next to the input. Found only because the repo's own
+completeness-claim gate refused the phrase "all five wrappers" without a
+reproducible enumeration, and the enumeration listed two files I had not read.
+
+**Three — a native date input written as an EXPRESSION.**
+`mobile/MobileServiceCase.tsx`'s `EditableAcc` rendered
+`<input type={f.type === "date" ? "date" : "text"} …>`. Every rule keyed on a
+quote straight after `type=`; here the next character is `{`. So this one input
+survived the June build, the August sweep of all 175, AND the gate that sweep
+shipped — three passes over the same tree. Stated precisely because it changes
+the severity: NO caller passes a date field today, so nothing was misreading on
+screen. The `EditField` union offers `"date"` and handles it in three places, so
+the first one added would have got the OS locale back with nothing failing.
+
+**The fix.** `vendor/scm/components/DateTimeField.tsx`: the date half goes
+through `DateField`, the time half stays a native `type="time"`. That split is
+not invented here — `Projects.tsx` already used it, which is why the
+`type="date"` sweep correctly found nothing to do in that file. Its local
+component is now `LogisticsDateTimeField`, because it and the shared control
+differ in CONTRACT (commit-on-blur with a label and a midnight normalisation,
+versus a plain controlled value) and not in date rendering; a name collision is
+a bad way to learn that.
+
+THE WIRE CONTRACT IS BYTE-IDENTICAL, AND THAT IS THE WHOLE SAFETY ARGUMENT.
+`value` is the same wall-clock `YYYY-MM-DDTHH:mm` a native `datetime-local`
+reads and writes; `onChange` emits the same; nothing in the component parses
+through `Date`. The callers that convert TIMESTAMPTZ to and from that shape
+(`toDtLocal` in both delivery files, `new Date(expiresAt).toISOString()` in
+Announcements) are untouched. A date input that stops CLEARING, or that shifts a
+day across a timezone, is a worse bug than the one being fixed, so both are
+pinned rather than argued: 20 tests in `DateTimeField.test.tsx` cover clearing
+the date, clearing the time, refilling a cleared field, a date-only stored
+value, both half-filled states, and an external reset — and the file passes
+identically under `America/New_York`, `Pacific/Kiritimati`, `UTC` and
+`Asia/Kuala_Lumpur` (−5, +14, 0, +8).
+
+Half-filled emits `''`, which is native `datetime-local`'s own behaviour and is
+deliberate. `LogisticsDateTimeField` normalises a date-only entry to midnight
+instead; adopting that here would mean a field that used to save nothing starts
+saving `00:00`, and a silently invented time is not a change to make inside a
+display fix.
+
+**The gate, so there is no third rediscovery.** Three new shapes —
+`raw-datetime-input`, `computed-date-input-type` and
+`date-input-type-in-a-variable` — in the script that already runs in the
+required `backend-typecheck` job. The third was measured before it was added:
+ZERO hits across `frontend/src` and `backend/src` once UdfCell was fixed, so it
+buys its coverage at no false-positive cost. Both proven by planting in the
+REAL source tree: exit 1 naming the file and the shape, exit 0 once removed
+(1454 files, 53 hits, 0 unreviewed). The existing `raw-date-input` was
+re-planted and still bites. Six new cases in `dateFormatGate.test.ts` make it
+permanent, including the wrapper-prop spelling — the bug can arrive on a line
+with no `<input` token on it, which is exactly how the 26 reviewed date entries
+are written — and two NEGATIVE cases, because `computed-date-input-type` keys on
+`type=` plus a brace and must stay silent on a `type:` annotation, an object
+literal and an `f.type === "date"` comparison, all five of which live in the very
+file that motivated the rule.
+
+WHERE THE RULE DELIBERATELY STOPS, pinned by its own test so it reads as a
+decision and not an oversight: `type="time"`, `type="month"` and `type="week"`
+are also OS-locale rendered and are NOT gated. None puts a day number beside a
+month number, which is the only way a date gets MISREAD — 14:30 and 2:30 PM are
+the same minute. A gate that fires on cosmetic variation is a gate somebody
+switches off, which is how the previous generation of checks here died. And one
+hole is named rather than papered over: a date literal assigned to a variable
+NOT named like a type is still invisible to any regex, and is not claimed.
+## A batch of Sales Agents lost every Service Case at once — visibility was decided by a NAME typed into a mirrored text field [high]
+
+<!-- area: Service cases (ASSR) -->
+
+**白话.** 有一批 sales 突然一张 Service Case 都看不到了。不是单据不见，也不是
+AutoCount 出问题——是我们自己的「谁能看谁」的规则用错了根据。以前系统是拿**名字的文字**
+去比对：把 AutoCount 抄过来的「业务员」那一栏，跟这个人（和他手下）的名字做「包含」比
+较。名字改过、多一个空格、拼法不一样，比对就不中，这个人手上所有的单就整批消失，而且
+系统一句话都不说。老板的决定是：AutoCount 那边的业务员资料本来就不准，所以那边的单
+**只看公司授权**——有 Houzs 这家公司的授权就看得到，不看职称、不看上下线；ERP 自己开的
+单才继续「自己＋下线」，而且改成用**编号**认人，不再比名字。Office 维持看全部，因为他们
+要帮 sales 处理事情。
+
+**Symptom.** Reported 2026-08-20: many Sales Agents could no longer see Service
+Cases. Not their data and not the AutoCount binding — the list simply came back
+without their cases, and nothing said why.
+
+**Root cause.** Traced through the read path, not guessed. A scoped caller's
+rows were selected by `pushVisibilityScope` (`services/assr.ts`) and its
+hand-written twin `assrVisibilitySql` (`routes/assr.ts`), both of which OR-ed
+`LOWER(COALESCE(sales_agent,'')) LIKE '%<subtree member display name>%'` on top
+of the `created_by` / `assigned_to` / `assigned_to_2` id terms. `sales_agent` is
+free text mirrored out of AutoCount (mig 010). So the "binding" between a case
+and the person who owns it was a **substring comparison between two strings** —
+a rename, a stray space or a different spelling silently drops a rep out of
+every case they are not also the creator or assignee of. Three things break it
+in batches: a tier change, a reporting-line move, or the mirrored text drifting
+from the ERP user's name. The route gate had the same shape one level up:
+`canAccessServiceCases` admitted on `isSalesUser` — `/^sales/i` over
+`position_name` plus a "sales" substring over `department_name`
+(`services/pmsAccess.ts`) — so an owner-editable job title also decided access.
+
+**Fix (owner decision 2026-08-20, `docs/SERVICE-CASE-VISIBILITY-DECISION.md`).**
+Visibility is keyed off the COMPANY, and off IDs where an id exists.
+
+- Route gate: `isSalesUser` is replaced by `holdsHouzsCompanyGrant(c)`. The
+  permission and director terms are unchanged.
+- Rows: one predicate, `assrVisibilityPredicateSql`
+  (`services/assrVisibility.ts`). A case whose `doc_no` resolves to a live
+  `scm."mfg_sales_orders"` row stays self + downline, resolved BY ID through
+  `scm.staff.user_id` (mig 0066). Every other case — the AutoCount `sales_orders`
+  mirror, or no resolvable SO — is company-scoped only. The `sales_agent`
+  substring match is gone from the visibility path entirely.
+- The `assrUnrestricted` (office / director) tier is untouched, deliberately:
+  office works cases on a salesperson's behalf.
+- READ and CREATE only. Every write / manage / approve / delete route keeps its
+  `requirePermission` gate.
+
+The two SQL twins and the two TypeScript copies of the row rule (in
+`caseInCallerScope` and `assrCaseRowInScope`) all collapse into that one
+predicate, so the list, its own totals, the detail GET and the printable can no
+longer disagree.
+
+**Measured before shipping, not reasoned about.** `Census — Service Case
+visibility (read-only)`, run 32351722894 against production 2026-08-20: 859
+non-archived cases, of which **7** are ERP-sourced and **852** AutoCount-sourced;
+route admittance 49 -> 77 users (**+28 gained, 0 lost**); of 60 visibility-scoped
+users **all 60** gain cases and **36 go from ZERO visible cases to some** — the
+reported outage, counted. **0** users lose admittance and **0** user-case pairs
+are lost.
+
+**Tests.** `backend/tests/assrVisibilityRule.test.ts` — 21 assertions pinning the
+three scope states, that a Sales TITLE alone no longer admits, that the office
+tier emits no predicate, that the `sales_agent` LIKE is absent, that a NULL
+`doc_no` cannot poison the `NOT IN`, and a source scan asserting the id clause
+exists in exactly one file. Both guards were proved RED by reintroducing a
+`sales_agent LIKE` arm and a second copy of the id clause before being trusted.
+
+**A second bug, found by the MERGE QUEUE and invisible on this branch.**
+`frontend/src/auth/permissionDivergence.test.ts` is a FRONTEND test that reads
+BACKEND source and asserted `canAccessServiceCases` ORs in `isSalesUser(user)`.
+Replacing the job title with the company grant is the whole point of this fix, so
+that mirror went stale the moment the gate changed — it now asserts
+`holdsHouzsCompanyGrant(c)`, which is the same invariant (a rep the API would
+serve is never Forbidden) against the mechanism that actually decides it. The
+stale comment it mirrored, `backend/src/middleware/auth.ts` on the
+`/mfg-sales-orders` arm, said the two gates agree; they now differ on purpose and
+it says so.
+
+Worth more than the fix: **this branch's own CI could not catch it.** The PR is
+backend-only, so `changes` path-filtered every frontend job to `skipping` — the
+suite holding the assertion never ran. The merge queue builds against a different
+base, the filter matched, `frontend-checks` ran `npm run test:coverage` for the
+first time, and it failed there. A cross-tree mirror test is exactly the shape a
+path filter cannot reason about: it lives in the tree that did NOT change and
+asserts on the tree that DID. This is CLAUDE.md's *"the check that is not
+running"* trap wearing a path filter — green on the branch meant "never
+executed", not "passed".
+
+**Ref.** `fix/service-case-visibility-by-company`, 2026-08-20. Census merged
+separately as #2534.
+## Sixteen screens each decided a bedframe's Total Height, and two of them refused to clear it [high]
+
+<!-- area: Sofa, fabric, variants -->
+
+**The rule.** A bedframe line's Total Height is not typed by anyone — no form in
+the system has a Total Height input. It is derived from three pickers
+(Divan + Leg + Gap) by whichever screen is open, written into the line's
+`variants` blob, and sent to the server, which then prices and validates it.
+
+**Sixteen homes, zero imports, three answers.** `grep -rn 'const parseInches'
+frontend/src` returned 16 definitions and `grep -rn 'import.*parseInches'`
+returned 0. Fourteen of the sixteen — the purchasing screens (New/Detail PO, PI,
+PR, GRN, Goods Received, Stock Adjustment, and the four consignment pairs) —
+were byte-identical. The other two had drifted, and they drifted on the SECOND
+half of the question, which is the half nobody writes down: *what is written
+when divan, leg and gap are all blank?*
+
+| | behaviour when all three parts are blank |
+|---|---|
+| 14 purchasing screens | always assign; write `''` — the total is CLEARED |
+| `SoLineCard.tsx` (Sales Order) | computed `''`, then the writer effect bailed on `if (!computedTotalHeight) return;` — the OLD value stayed |
+| `MobileNewSO.tsx` (`buildVariants`) | `if (th > 0)` — the OLD value stayed, and on a fresh line the key was omitted entirely |
+
+**Why the two stragglers cost money.** Blanking divan/leg/gap on a Sales Order
+line that already carried a Total Height left the stale number in the draft, and
+the draft is what gets saved. Downstream that stale number is not cosmetic:
+`mfg-pricing.ts` prices a selling surcharge off it via `lookupSelling(
+maintenanceConfig.totalHeights, input.totalHeight)`, and
+`allowed-options-check.ts` refuses the whole line with `variant_not_allowed` /
+field `total_height` when it is not in the Model's pool. That refusal names a
+field the operator has no box to correct — the same shape as the curly-inch
+refusal recorded above, which the owner has already paid for once.
+
+**Behaviour was CHOSEN, not preserved, and the choice is the fourteen.** Two of
+the sixteen change behaviour here; that is the fix, not a side effect. Clearing
+is what keeps the stored value honest — a line reading `T.Heights 21"` with no
+divan, no leg and no gap is a number the paperwork cannot justify. `''` was
+verified safe against every consumer rather than assumed:
+
+- `mfg-pricing.ts` — `lookupSelling` / `lookupCost` both open `if (!pool ||
+  !value) return 0;`, so an empty height contributes no surcharge instead of
+  missing a lookup.
+- `allowed-options-check.ts` — short-circuits on `if (v.totalHeight && …)`, so
+  `''` SKIPS the gate rather than tripping `variant_not_allowed`.
+- `variant-key.ts` — `computeVariantKey` runs every axis through `norm()` then
+  `if (val) parts.push(…)`, so `''` and an ABSENT key produce byte-identical
+  stock-bucket keys. This is what makes MobileNewSO's old "omit the key" and the
+  new "write `''`" interchangeable, and it was the one place the two were not
+  obviously the same.
+- `variant-summary.ts` — guards `if (total)`, so the `T.Heights` segment simply
+  does not render.
+- `so-amendment-line-diff.ts` — `hasAxis` / `unrenderedVariantAxes` both test
+  `bag[k] != null && String(bag[k]).trim() !== ''`, so `''` reads as absent, and
+  `resolveVariantGroup` trusts the stamped `item_group` before it ever consults
+  those axes.
+
+**The fix.** `backend/src/scm/shared/total-height.ts`, mirrored byte-for-byte to
+`frontend/src/vendor/shared/total-height.ts`, exporting `parseInches`,
+`TOTAL_HEIGHT_PARTS`, `isTotalHeightPart`, `isTotalHeightCategory`,
+`computeTotalHeight` and `totalHeightPatch`. Sixteen call sites collapse to one
+import each; the fifteen surplus `parseInches` definitions are gone.
+
+`totalHeightPatch` exists because the arithmetic was never the bug — the WRITE
+decision was. It returns `null` only when the stored value already equals the
+computed one, and never merely because the computed one is empty. That is
+precisely the distinction `if (!computedTotalHeight) return;` got wrong, and
+keeping it inside the module means a caller cannot spell it wrong again.
+
+The shared layer is the right home even though the server never computes this
+value: the client must author it BEFORE the round-trip, because there is no
+input box, so a server-only home would be unreachable at the moment of need —
+which is exactly how sixteen copies were born. The frontend cannot import from
+`backend/src`, so the pair is a mirror, and the mirror is only safe because
+`total-height.canonical.test.ts` asserts byte-identity. `check-shared-mirrors`
+now reports the pair IDENTICAL (its module count went 48 → 49).
+
+**What stops it coming back.** `total-height.canonical.test.ts` (24 tests) pins
+the rule, the write decision, the byte-identical mirror, and the call sites: no
+file outside the module may define `parseInches`, none may re-derive
+divan + leg + gap inline, and all sixteen named screens must still call
+`computeTotalHeight`. Proven non-vacuous rather than asserted — four violations
+were planted and each was caught by name:
+
+- un-wiring `GrnNew.tsx` back to a private copy → 3 assertions fired, two naming
+  `src/pages/scm-v2/GrnNew.tsx`;
+- drifting the backend mirror by one token → the byte-identity test failed;
+- swapping in MobileNewSO's rejected `th > 0` rule → "parts that are set but sum
+  to zero are a REAL total" failed;
+- reintroducing `if (!next) return null;` — the original bug, exactly — → the two
+  `totalHeightPatch` clearing tests failed.
+
+Each plant was reverted and the tree confirmed byte-identical afterwards.
+
+**Also corrected.** `allowed-options-check.ts`'s comment cited
+`SoLineCard.tsx:439-445` as the writer; line-number citations into a file that
+moves are a stale reference by construction, so it now names the shared module
+and records why an empty height is safe to skip the gate.
+## The allocation gate quotes the owner's Processing-Date rule and then reads a different column [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** An order shows a Processing Date on screen, is locked for editing,
+sits on the Delivery Planning board and has been pushed to AutoCount as `PDate` —
+and never reaches READY_TO_SHIP. Every line stays PENDING with the stock
+physically on the floor. No error, no log line, nothing on screen says why. The
+module guide has been calling this "the single most common 'why is my order not
+READY'" and labelling it **intended**.
+
+**Root cause (traced, read-only, on `origin/main` `12322f31b`).**
+`backend/src/scm/lib/so-stock-allocation.ts:211-218` carries a comment titled
+*"Processing-date allocation gate"* quoting the owner verbatim (2026-08-10:
+*"有 processing date 才来分配"*). The predicate underneath it, at `:219`, is
+`orders.filter((o) => !o.proceeded_at)` — and the `.select()` at `:190` never
+fetches `processing_date`. Two different columns.
+
+They diverge on the ORDINARY path. Every surface that sets a Processing Date
+writes `processing_date` and leaves `proceeded_at` NULL: the SO Detail screen,
+both mobile surfaces, the amendment approve, the 2990 mirror. `proceeded_at` has
+exactly two writers left — create-time auto-proceed
+(`routes/mfg-sales-orders.ts:4984`) and `PATCH /:docNo/status` → IN_PRODUCTION
+(`:5838`) — and **no shipped client reaches either after create**:
+`grep -rn "proceededAt" frontend/` returns 0, and nothing in `frontend/src` POSTs
+`IN_PRODUCTION` (14 hits, all labels and constants). So an order created without a
+Processing Date — which is every AutoCount-imported order, since
+`backend/scripts/import-ac-outstanding-so.mjs` writes neither a processing nor a
+delivery date — and then given one on the detail screen is proceeded by the
+owner's rule, locked by `soProcessingLocked`, on the board, and invisible to
+allocation.
+
+This is the unfinished half of the 2026-08-13 unification, and the repo already
+said so: `backend/scripts/unify-processing-date.mjs` states in its own header that
+`so-stock-allocation.ts` gates on `proceeded_at`, that it does not touch or drop
+that column, and that **"the reader flip must wait until this reports zero
+remaining on EVERY company"**. Both companies reported zero on 2026-08-13; mig
+`0286` then renamed `internal_expected_dd` → `processing_date`. The reader flip
+was never done, and nothing re-manufactures the split as loudly as the ordinary
+UI path now does.
+
+Two more things kept it invisible. `backend/tests/soAllocationReadShape.test.ts`
+sets `proceeded_at` non-null in its fixture, so the gate never fires in test — it
+pins the read shape, not the rule. And no migration under
+`backend/src/db/migrations-pg` ever back-fills `proceeded_at` from
+`processing_date` (13 SQL hits on the name, all DDL, no `UPDATE`).
+
+**Fix.** NOT in this PR — this is a docs-only change and other workflows own the
+source files right now. The fix is one line plus one column: read
+`processing_date` at `:219` and add it to the select at `:190`. It is independent
+of every rename in `docs/modules/dates.md` and should land first and alone.
+Retiring `proceeded_at` afterwards must go the long way — stop accepting
+`['proceededAt','proceeded_at']` in the header PATCH map, keep stamping for one
+release, then stop reading, then drop the column in a LATER deploy, never the
+same one, for the reason mig `0189` records (migrations run before
+`wrangler deploy`, so the old Worker meets the new schema).
+
+**Doc corrections shipped with this entry.** `docs/modules/sales-order.md` §0.2
+no longer calls the current reading "intended"; the same file's claims that POS
+Proceed "never writes `processing_date`" (it does — `:5821`), that the allocator
+"sorts by" `proceeded_at` (it gates on it), and that *every* server write path
+runs the pair rule (`routes/so-mirror.ts` deliberately does not) are corrected in
+place, and a stale three-row table that had been left standing above its own
+corrections is deleted rather than appended to. The full census is the new
+`docs/modules/dates.md`.
+## Mobile PMS Floor Plans: the Display floor plan was a black banner with no preview, and every stock-transfer record showed a file name with no picture [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版「Floor Plans」卡里，Display 楼面图跟其他图不一样：它是一条黑色横幅，
+只写「几个档」，看不到图本身；3D、2D、Unfilled、Filled 四张都有缩图，就它没有。
+下面「Stock transfer record」那一排也一样，只有档名。现在 Display 变成一张正常的图砖
+（跨满一行、自带预览），顺序改成 Display -> 3D + 2D -> Unfilled + Filled，库存转移纪录
+每一列也加了可点的缩图。
+
+**Symptom.** In the mobile Floor Plans card, the Display floor plan alone showed
+no preview of what had been uploaded. It rendered as a dark full-width row
+(`background: "#15161a"`) carrying an icon, a title and the text
+`N files - tap to view / download`, while the four sibling tiles (Unfilled,
+Filled, 3D Design, 2D Design) each rendered an 80px `R2Thumb` of the actual file.
+The Display document is the one staff look at most, and it was the only one you
+had to open to see. The `Stock transfer record` rows below had the same gap:
+badge + file name + a View button, no image.
+
+**Root cause (traced in source, not guessed).** Not a regression — three
+independently-grown renderers inside `FloorPlans` in
+`frontend/src/mobile/MobilePMS.tsx`. Display was written as a standalone
+list-row (the banner) with its own `ReviewBadge` / `ReviewButtons` block beneath
+it, before the tile grid existed; the tile grid arrived later for
+Unfilled/Filled and gained the 3D/2D tiles on 2026-07-23. Nothing ever moved
+Display into the grid, so it never inherited the grid's preview. `stockOutAtts`
+is a third renderer again and never had one.
+
+**Fix.** Display becomes a normal tile in the same grid, spanning
+`gridColumn: "1 / -1"` with a 140px preview so the 3D + 2D pair keeps its own
+row; order is Display -> 3D + 2D -> Unfilled + Filled. The standalone banner and
+its separate review block are gone — Display now takes the same `ReviewBadge` /
+`checklistReviewVisible` -> `ReviewButtons` path the 3D/2D tiles already used.
+That fold is behaviour-preserving, and it was verified by reading both guards
+rather than assumed: `checklistReviewVisible` opens with
+`if (!item || !hasFiles) return false`, and `ReviewBadge` returns `null` when
+`review_status` is empty and `hasFiles` is false. Those are exactly the cases the
+old outer guard `displayItem && (displayItem.review_status ||
+displayPlanFiles.length > 0)` excluded, so neither badge nor button can appear
+anywhere it did not before. Each `stockOutAtts` row gains a 54x44 tappable
+thumbnail opening the same viewer as its View button; non-images keep the hatched
+placeholder.
+
+**Desktop twin: none needed, checked.** `frontend/src/pages/Projects.tsx` has no
+floor-plan card and no tile grid — it renders each checklist document as one
+uniform row of its `DocumentTable`. Grepped over `frontend/src`, the identifiers
+this change depends on — `R2Thumb`, `FloorPlans`, `stockOutAtts` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. "Display Floor
+Plan", "3D Design" and "2D Design" reach desktop only as `REVIEWABLE_TITLES`
+members. Tile width, tile order and previews are concepts the desktop surface
+does not express, so this is presentation-only and one-sided by construction,
+not by omission.
+
+**Also in this PR.** Two comments this change made false — the ones deciding
+`hideFilledPlan` and `hidePlanTiles` — still called Display a "banner" after the
+banner was deleted. Corrected in the same diff.
+
+**Ref.** `fix/floorplan-card`, PR #2349, 2026-08-20.
 ## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
 
 <!-- area: Database + schema -->

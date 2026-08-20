@@ -41,6 +41,7 @@ import {
   type AnnMediaLayout,
 } from "../components/AnnouncementMedia";
 import { fmtDateTime } from "../vendor/shared/format";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Domain types — mirrors backend/src/routes/announcements.ts public shape.
@@ -1032,10 +1033,10 @@ function Composer({
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">
             Hide automatically after
           </label>
-          <input
-            type="datetime-local"
+          <DateTimeField
+            aria-label="Hide automatically after"
             value={expiresAt}
-            onChange={(e) => setExpiresAt(e.target.value)}
+            onChange={setExpiresAt}
             className="h-10 rounded-md border border-border bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
