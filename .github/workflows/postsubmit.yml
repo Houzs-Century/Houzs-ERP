@@ -2,19 +2,32 @@ name: Postsubmit
 
 # Jobs that run AFTER merge, on main, instead of on every pull request.
 #
-# WHY THESE TWO AND NOT OTHERS. Measured over the last 40 ci.yml runs
-# (2026-08-18), counting each job's own conclusion:
+# ⚠️ ONE JOB LEFT. `frontend-perf` WENT BACK TO PRESUBMIT on 2026-08-21, under
+# the last rule in this header. Read that story before moving anything else
+# here — it is the counter-example to the reasoning immediately below.
 #
-#   scale-postgres-contract   37 success   0 failure    <- moved here
-#   frontend-perf             37 success   0 failure    <- moved here
+# WHY THESE WERE MOVED HERE. Measured over the last 40 ci.yml runs (2026-08-18),
+# counting each job's own conclusion:
+#
+#   scale-postgres-contract   37 success   0 failure    <- still here
+#   frontend-perf             37 success   0 failure    <- RETURNED to ci.yml
 #   backend-postgres          34 success   4 failure    <- STAYS in presubmit
 #   file-size                          2 real findings  <- STAYS in presubmit
 #
-# A presubmit job earns its place by having caught something. These two never
-# have: together they spent ~180 runner-seconds on every pull request to restate
-# a result that has not changed in forty runs. On main they still run, still
-# report, and still block nothing that was not already blocked - the repo
-# ruleset requires only `backend-typecheck` and `frontend`.
+# A presubmit job earns its place by having caught something. Neither had: they
+# spent ~180 runner-seconds on every pull request to restate a result that had
+# not changed in forty runs, against the 20-slot ceiling in
+# docs/ci-capacity-coe.md.
+#
+# ⚠️ WHAT THAT TABLE CANNOT TELL YOU, learned the expensive way. A pass count
+# measures how often a gate FIRED, not what it GUARDS. `frontend-perf` owns the
+# ONLY typecheck of frontend/perf-lab/ — a separate tsc project that `tsc -b`
+# structurally cannot reach — so its forty greens meant "nobody broke it yet",
+# not "nothing can break it". #2568 broke it, and because this workflow triggers
+# only on push to main, the gate ran 18 times AFTER each merge and blocked
+# nothing. Before moving a job here, ask what would be UNGUARDED if it never ran
+# again; if the answer is "an input nothing else checks", the pass count is not
+# the relevant evidence.
 #
 # backend-postgres and file-size were candidates for this file and were kept in
 # presubmit on purpose: both have real failures on the record (backend-postgres
@@ -27,8 +40,9 @@ name: Postsubmit
 # guard now. That also means the merge-queue reasoning in their old comments no
 # longer applies to them - see docs/ci-capacity-coe.md.
 #
-# If either job starts failing on main, that is the signal to move it back to
-# presubmit, not to ignore it.
+# If the remaining job starts failing on main, that is the signal to move it
+# back to presubmit, not to ignore it. That is not hypothetical advice: it is
+# what happened, and honouring it is what this header now records.
 
 on:
   push:
@@ -99,39 +113,6 @@ jobs:
           path: backend/artifacts/scale-pg-100k.json
           if-no-files-found: error
           retention-days: 30
-
-  frontend-perf:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      # Non-skippable local Chromium proof for 10k list geometry/search state.
-      # This suite starts its own Vite lab and never depends on staging data,
-      # credentials, network timing, or optional environment variables.
-      - run: npm run typecheck:perf-local
-      # The browser is ~27s of download on every run and changes only when the
-      # Playwright dependency does, so it is keyed on the lockfile.
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-      # `--with-deps` installs OS packages too, and those are NOT in the cached
-      # directory, so a cache hit still needs the system half.
-      - run: npx playwright install-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-      - run: npm run test:perf-local
 
   # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
   # dependencies — so adding it costs the queue a few seconds, not a runner

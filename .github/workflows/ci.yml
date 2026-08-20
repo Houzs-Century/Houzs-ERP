@@ -871,6 +871,12 @@ jobs:
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.
       - run: node --test scripts/check-typecheck-gate.test.mjs
+      # Pins that `frontend-perf` stays on the PR path, stays in the `frontend`
+      # roll-up's needs AND its assertions, and that ci.yml keeps `merge_group`.
+      # It lives HERE, not in frontend-perf, on purpose: a checker inside the job
+      # it guards dies with that job. Proved red against all five ways the gate
+      # can silently un-fix itself before it was trusted.
+      - run: node --test scripts/check-perf-lab-gate.test.mjs
 
   frontend-build:
     needs: changes
@@ -942,6 +948,86 @@ jobs:
       - run: npm run check:sw
       - run: npm run test:smoke-script
 
+  # ── perf-lab: MOVED BACK FROM postsubmit.yml (2026-08-21) ─────────────────
+  # postsubmit.yml said, in its own header: "If either job starts failing on
+  # main, that is the signal to move it back to presubmit." It then did exactly
+  # that, and this is that move being honoured.
+  #
+  # WHAT HAPPENED. `typecheck:perf-local` failed 18 consecutive postsubmit runs
+  # (first 32390289786, head 80f4f9756 = the merge commit of #2568; last
+  # 32405172079) and blocked NOTHING, because postsubmit.yml triggers only on
+  # push to main — so it can only ever run AFTER the merge that broke it. The
+  # required contexts are `backend-typecheck`, `frontend`, `company-scope-ratchet`
+  # and `completeness-claim`; none of them covered this.
+  #
+  # WHY THE 2026-08-18 "37 success, 0 failure" EVIDENCE DID NOT PREDICT IT. That
+  # count is a measure of how often the gate FIRED, not of what it GUARDS. This
+  # is a second tsc PROJECT, not a laxer one: perf-lab/tsconfig.json extends
+  # ../tsconfig.app.json and narrows `types`, while frontend/tsconfig.json
+  # references only tsconfig.app.json + tsconfig.node.json. So `tsc -b` — the
+  # whole of `npm run typecheck` in frontend-typecheck — structurally CANNOT see
+  # perf-lab/. Nothing else in the repo typechecks these files. A quiet gate over
+  # an unguarded project is not evidence the project is safe.
+  #
+  # WHY ITS OWN JOB AND NOT A STEP IN frontend-typecheck. Measured on postsubmit
+  # run 32405631087: typecheck:perf-local 43s + Playwright 13s + install/checkout
+  # ≈ 92s for the job. Folding it into frontend-typecheck would add ~55s to a job
+  # that already sits on the frontend path, and would leave the browser suite
+  # homeless. In parallel it costs +0s of wall clock — see below — for one runner
+  # slot, and the slot is there: across the last 12 ci.yml runs (2026-08-21) the
+  # WORST job-level queue wait was 3s and runs carried 14-16 jobs against the
+  # 20-slot ceiling docs/ci-capacity-coe.md reasons from. Re-measure before
+  # assuming that is still true.
+  #
+  # THE +0s, from run 32404531239: `changes` finishes at +32s, so this job runs
+  # +34s..+126s. frontend-checks ends at +163s and backend-typecheck at +187s.
+  # This job finishes 37s inside the frontend path and 61s inside the run's true
+  # critical path, so it decides nothing about how long a PR waits.
+  #
+  # It is gated on `changes` like every other frontend job: perf-lab/ lives
+  # wholly under frontend/, and the `frontend` roll-up accepts `skipped` — see
+  # the note there. It inherits `merge_group` from this workflow's own trigger,
+  # which is not optional: a queue gate weaker than the PR gate would let this
+  # through again on the merge-group ref.
+  frontend-perf:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Non-skippable local Chromium proof for 10k list geometry/search state.
+      # This suite starts its own Vite lab and never depends on staging data,
+      # credentials, network timing, or optional environment variables.
+      - run: npm run typecheck:perf-local
+      # The browser is ~27s of download on every run and changes only when the
+      # Playwright dependency does, so it is keyed on the lockfile.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # `--with-deps` installs OS packages too, and those are NOT in the cached
+      # directory, so a cache hit still needs the system half.
+      - run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+      # This step had been DARK since 2026-08-20 15:43Z: a failing first step
+      # hides every step behind it, so 18 runs reported "frontend-perf failure"
+      # while the browser suite ran zero times. It passes 5/5. It moves WITH the
+      # typecheck, not instead of it.
+      - run: npm run test:perf-local
+
   file-size:
     runs-on: ubuntu-latest
     steps:
@@ -972,7 +1058,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build, lint]
+    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -995,9 +1081,17 @@ jobs:
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
           echo "frontend-build:     ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"
+          # frontend-perf came back from postsubmit.yml on 2026-08-21. Adding the
+          # job WITHOUT this line is the precise bug being fixed — it would run,
+          # go red, and gate nothing, exactly as it did on main for 18 runs. The
+          # note above about frontend-typecheck is the same lesson; this is the
+          # second time, so treat the pair as the rule: a job absent from this
+          # list is advisory, and nothing will say so.
+          ok frontend-perf "${{ needs.frontend-perf.result }}"
           # See the note on the `backend` roll-up: `lint` had no required context
           # covering it at all, so the eslint ratchet could not block a merge.
           ok lint "${{ needs.lint.result }}"
