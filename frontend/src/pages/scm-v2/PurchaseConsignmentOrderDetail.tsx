@@ -176,16 +176,23 @@ export const PurchaseConsignmentOrderDetail = () => {
   const [savingDraft, setSavingDraft] = useState(false);
 
   const hasChildren = Boolean(po?.has_children);
-  const isLocked = po ? (!(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') || hasChildren) : true;
-  const lockedDueToChildren = po ? ((po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && hasChildren) : false;
+  const editableStatus = po ? (po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') : false;
+  /* Owner 2026-08-20 (§8 GAP-1) — a PC Receive no longer freezes the whole header.
+     hardLocked (non-editable status) gates the Edit button + own-stage fields;
+     lockedDueToChildren (a live PC Receive) freezes only supplier / currency /
+     purchase location + the LINES. `isLocked` (= hard OR children) still gates
+     lines + inherited fields. */
+  const hardLocked = po ? !editableStatus : true;
+  const isLocked = po ? (!editableStatus || hasChildren) : true;
+  const lockedDueToChildren = po ? (editableStatus && hasChildren) : false;
 
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setEditLines([]);
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
 
   /* Seed/clear the whole-line drafts (T12) — entering Edit populates a PcLineCard
      draft for EVERY current line; leaving Edit wipes them. */
@@ -328,6 +335,10 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(po)), [k]: v }));
+    /* When a PC Receive exists the LINES are locked, so a header date edit must
+       NOT fan down into the line drafts — that would dirty a locked line and Save
+       would 409 on the line PATCH (owner 2026-08-20, §8 GAP-1). */
+    if (lockedDueToChildren) return;
     // Header Expected Delivery cascades to every line's delivery date.
     if (k === 'expectedAt') {
       setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined })));
@@ -549,7 +560,7 @@ export const PurchaseConsignmentOrderDetail = () => {
               </Button>
             )}
             {!isEditing ? (
-              <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+              <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -565,8 +576,8 @@ export const PurchaseConsignmentOrderDetail = () => {
 
       {lockedDueToChildren && (
         <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
-          <strong>Locked — has a Purchase Consignment Receive.</strong>{' '}
-          Cancel or delete the downstream receive to edit this order again.
+          <strong>Has a Purchase Consignment Receive.</strong>{' '}
+          Its supplier, currency, purchase location and line items are locked — cancel the downstream receive to change them. Dates and notes are still editable.
         </div>
       )}
 
@@ -575,7 +586,8 @@ export const PurchaseConsignmentOrderDetail = () => {
         po={po}
         draft={headerView}
         onField={setHeaderField}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -705,15 +717,21 @@ export const PurchaseConsignmentOrderDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  po, draft, onField, locked, isEditing = true,
+  po, draft, onField, locked, identityLocked = false, isEditing = true,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   po: any;
   draft: HeaderDraft;
   onField: (k: keyof HeaderDraft, v: string) => void;
+  /** Hard lock — a non-editable status: every field read-only. */
   locked: boolean;
+  /** A live PC Receive exists: the inherited fields (supplier / currency /
+   *  purchase location) freeze; the PCO's own dates + notes stay editable
+   *  (owner 2026-08-20, §8 GAP-1). */
+  identityLocked?: boolean;
   isEditing?: boolean;
 }) => {
+  const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   const warehousesQ = useWarehouses();
@@ -770,7 +788,7 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.supplierId} disabled={inheritedLocked}
                 onChange={(e) => onField('supplierId', e.target.value)}>
                 <option value="">— Pick supplier —</option>
                 {sortByText(suppliers).map((s) => (
@@ -783,7 +801,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.currency} disabled={inheritedLocked}
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
@@ -811,7 +829,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={inheritedLocked}
                 onChange={(e) => onField('purchaseLocationId', e.target.value)}>
                 <option value="">— No default —</option>
                 {sortByText(warehouses.filter((w) => w.is_active)).map((w) => (

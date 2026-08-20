@@ -51,6 +51,7 @@ import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { PCO_LOCK_COLS, PCO_LOCK_LABELS } from '../shared/document-policy';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -67,9 +68,10 @@ purchaseConsignmentOrders.use('*', supabaseAuth);
    apps/api/src/routes/mfg-purchase-orders.ts, but points at
    purchase_consignment_receives instead of the real grns table. Returns the
    blocking JSON, or null if the PC Order is free to edit. */
-/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — mirrors the mfg PO. */
-const PCO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>(['supplier_id', 'currency', 'purchase_location_id']);
-const PCO_IDENTITY_LABELS: Record<string, string> = { supplier_id: 'supplier', currency: 'currency', purchase_location_id: 'purchase location' };
+/* Header field-level lock — column set + labels from the ONE rulebook
+   (shared/document-policy.ts); mirrors the mfg PO. */
+const PCO_IDENTITY_LOCK_COLS = PCO_LOCK_COLS;
+const PCO_IDENTITY_LABELS = PCO_LOCK_LABELS;
 
 async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string; message: string } | null> {
   const { count, error } = await sb.from('purchase_consignment_receives')
