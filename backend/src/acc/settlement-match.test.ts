@@ -250,15 +250,45 @@ describe('one swipe, one reference, several documents', () => {
     expect(d.matched).toHaveLength(3);
   });
 
-  /* If only SOME of them add up, the remainder is unexplained money wearing
-     the same reference — a person should see that, not have it hidden by an
-     auto-match of the convenient subset. */
-  it('will not auto-match when they do not all add up, and names both numbers', () => {
+  /* The owner, when this used to insist that ALL of them add up: 这个情况当他对
+     的上卡机报告的数额也不应该出现不是? He is right. The usual cause of an extra
+     payment wearing this reference is a code mis-keyed onto an unrelated sale,
+     and the documents that add up ARE the swipe. */
+  it('takes the ones that add up and leaves the odd one out, saying so', () => {
     const d = decide(125000, [pay('a', 80000, 'A123'), pay('b', 45000, 'A123'), pay('c', 30000, 'A123')]);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched.map((p) => p.id)).toEqual(['a', 'b']);
+    expect(d.clue).toMatch(/1 other payment\(s\) carry this reference and are not part of it — they stay open/);
+  });
+
+  /* And the one left behind is not swept away: it is unsettled, so it shows on
+     the watchlist, which is exactly where a mis-keyed code should surface. */
+  it('leaves the odd one unclaimed, so the watchlist can carry it', () => {
+    const pool = [pay('a', 80000, 'A123'), pay('b', 45000, 'A123'), pay('c', 30000, 'A123')];
+    const d = decide(125000, pool);
+    const taken = new Set(d.matched.map((p) => `SOPAY:${p.id}`));
+    expect(recordedNotArrived(pool, taken, '2026-08-05').map((p) => p.id)).toEqual(['c']);
+  });
+
+  /* One payment among them making the amount by itself is still one way. */
+  it('takes a single payment when that is what adds up', () => {
+    const d = decide(125000, [pay('a', 125000, 'A123'), pay('b', 30000, 'A123')]);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched.map((p) => p.id)).toEqual(['a']);
+  });
+
+  /* TWO ways to make it is a question no evidence here can answer: 700 + 550
+     + 550 against a line of 1,250 — which 550 was on the swipe? */
+  it('asks when the amount can be made two ways', () => {
+    const d = decide(125000, [pay('a', 70000, 'A123'), pay('b', 55000, 'A123'), pay('c', 55000, 'A123')]);
     expect(d.bucket).toBe('NEEDS_CONFIRM');
-    expect(d.clue).toMatch(/add up to 1550\.00 and this line is 1250\.00/);
-    /* And the pair that DOES make it is still pointed at. */
-    expect(d.comboHints).toContainEqual(['a', 'b']);
+    expect(d.comboHints.length).toBeGreaterThan(1);
+  });
+
+  it('asks when no combination of them makes the line, naming both totals', () => {
+    const d = decide(125000, [pay('a', 80000, 'A123'), pay('b', 30000, 'A123')]);
+    expect(d.bucket).toBe('NEEDS_CONFIRM');
+    expect(d.clue).toMatch(/no combination of them makes 1250\.00 \(they come to 1100\.00\)/);
   });
 
   /* The claim is on all of them: a second line of the same file must not take

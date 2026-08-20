@@ -83,6 +83,36 @@ const dayGap = (a: string, b: string): number =>
 /** Pairs (i<j) of candidates whose amounts sum exactly to the target. Bounded
     at 40 candidates: past that the window is too wide to be a useful hint, and
     the quadratic scan stops earning its keep. */
+/**
+ * The ONE set of payments that makes the amount exactly — or nothing.
+ *
+ * Sizes from one upward, unlike exactPairs: this is used where the payments
+ * already share the statement's reference, so a single one of them making the
+ * amount is an answer and not the amount+date branch's business.
+ *
+ * "One way" is the whole point. 700 + 550 + 550 against a line of 1,250 can be
+ * made two ways, and no evidence available here says which 550 was on the
+ * swipe — so it returns nothing and a person decides.
+ */
+function soleExactSubset(pool: PaymentCandidate[], targetSen: number): PaymentCandidate[] {
+  const MAX_PICK = 4;
+  const list = pool.slice(0, 12);
+  const found: PaymentCandidate[][] = [];
+  const walk = (from: number, picked: PaymentCandidate[], sum: number) => {
+    if (found.length > 1) return;
+    if (picked.length > 0 && sum === targetSen) { found.push([...picked]); return; }
+    if (picked.length >= MAX_PICK || from >= list.length) return;
+    for (let i = from; i < list.length; i += 1) {
+      picked.push(list[i]!);
+      walk(i + 1, picked, sum + list[i]!.amountSen);
+      picked.pop();
+      if (found.length > 1) return;
+    }
+  };
+  walk(0, [], 0);
+  return found.length === 1 ? found[0]! : [];
+}
+
 function exactPairs(candidates: PaymentCandidate[], targetSen: number): string[][] {
   /* Sets of payments that add up to the line EXACTLY.
 
@@ -177,19 +207,35 @@ export function matchStatement(
            Only when they ALL add up: if some subset does and the rest do not,
            the remainder is unexplained money wearing the same reference, and
            that is exactly a line a person should look at. */
+        /* The reference AND the amount both agree — take it.
+           The owner, when this used to stop at "they must ALL add up":
+           这个情况当他对的上卡机报告的数额也不应该出现不是? He is right. The
+           common cause of an extra payment wearing this reference is a code
+           mis-keyed onto an unrelated sale, and in that case the documents
+           that add up ARE the swipe. Nothing is hidden by taking them: what is
+           left over stays unsettled and shows on the watchlist (未对上的收款),
+           which is where a mis-keyed code should surface.
+           Still only when there is ONE way to make the amount — 700 + 550 + 550
+           against a line of 1,250 is a question no evidence here can answer. */
         const together = hits.reduce((s, p) => s + p.amountSen, 0);
-        if (together === row.grossSen) {
-          for (const p of hits) claimed.add(key(p));
+        const sole = soleExactSubset(hits, row.grossSen);
+        if (sole.length > 0) {
+          for (const p of sole) claimed.add(key(p));
+          const rest = hits.length - sole.length;
           decisions.push({
             row,
             bucket: 'MATCHED',
             matchReason: 'ref',
-            matched: hits,
+            matched: sole,
             candidates: [],
             comboHints: [],
             suggested: [],
-            clue: `Reference ${row.ref} matches ${hits.length} payments that add up to it exactly`
-              + ` — ${hits.map((p) => p.docNo).join(' + ')}`,
+            clue: `Reference ${row.ref} matches ${sole.length === 1 ? sole[0]!.docNo : `${sole.length} payments that add up to it exactly — ${sole.map((p) => p.docNo).join(' + ')}`}`
+              /* Say what was NOT taken. A payment left behind wearing the same
+                 reference is worth a look even though this line is settled. */
+              + (rest > 0
+                ? `. ${rest} other payment(s) carry this reference and are not part of it — they stay open.`
+                : ''),
           });
           continue;
         }
@@ -201,11 +247,11 @@ export function matchStatement(
           candidates: hits,
           comboHints: exactPairs(hits, row.grossSen),
           suggested: [],
-          /* Say BOTH numbers. A reference shared by payments that do not add up
-             is either a mis-keyed code or a document missing from the swipe,
-             and the difference is the clue to which. */
-          clue: `${hits.length} payments carry reference ${row.ref}, but they add up to `
-            + `${(together / 100).toFixed(2)} and this line is ${(row.grossSen / 100).toFixed(2)}`
+          /* Say BOTH numbers. A reference shared by payments that cannot make
+             this line is either a mis-keyed code or a document missing from the
+             swipe, and the difference is the clue to which. */
+          clue: `${hits.length} payments carry reference ${row.ref}, but no combination of them makes `
+            + `${(row.grossSen / 100).toFixed(2)} (they come to ${(together / 100).toFixed(2)})`
             + ' — pick the ones that belong to it.',
         });
         continue;
