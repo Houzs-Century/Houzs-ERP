@@ -763,8 +763,8 @@ export function MobileConvertWizard({
             style={{ opacity: !canCreate || submitting ? 0.55 : 1 }}
           >
             {/* The two targets that land a DRAFT say so on the button. A CTA
-                that promises a Delivery Order while creating a parked one is
-                the same lie in the other direction — the operator needs to know
+                reading "Create Delivery Order" over a parked document misstates
+                it just as badly as the old body did: the operator needs to know
                 a confirm step is still owed before the goods are counted out. */}
             {submitting ? "Creating…" : (target === "grn" || target === "do")
               ? `Create draft ${meta.docTitle}`
