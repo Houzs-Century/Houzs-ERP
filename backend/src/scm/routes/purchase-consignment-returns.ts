@@ -48,6 +48,7 @@ import { recomputePcoReceived } from './purchase-consignment-receives';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
+import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 
 export const purchaseConsignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseConsignmentReturns.use('*', supabaseAuth);
@@ -1094,6 +1095,20 @@ purchaseConsignmentReturns.patch('/:id/items/:itemId', async (c) => {
       requested: qtyReturned, ownPriorDraw: prevQty, what: 'PC Receive line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* The EDIT half of the same back door: the qty cap above and the returned_qty
+     recount below both key on pc_receive_item_id, so an unlinked line whose code
+     is re-typed to one the PC Receive carries counts against no receive line and
+     the same goods go out again. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'purchase-consignment-return', {
+      parent: { table: 'purchase_consignment_returns', column: 'pc_receive_id', id: prId, companyId: co.companyId },
+      storedLink: receiveItemId,
+      storedCode: (prev as { item_code: string | null }).item_code,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_consignment_return_items').update(updates).eq('id', itemId), co.companyId);
