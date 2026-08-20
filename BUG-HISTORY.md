@@ -162,6 +162,297 @@ caught this bug.** The predicate that broke had no company term in it. What
 catches that class is one declaration per concept, mirrored and pinned — and a
 gate that let its own limits go unsaid would be the same failure in a new
 costume.
+## BUG CLASS - unscoped-query-by-omission: forgetting the company predicate and choosing to omit it are the same text [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**白话.** 我们两家公司（Houzs 和 2990）的资料能不能分开，全靠每一句查询里面那一句
+「只看这家公司」。数据库那层的保护是关掉的（mig 0061 开了 RLS 但一条规则都没写），
+而系统用的是最高权限的连线，所以那句话就是唯一的墙。问题是：**写漏了，跟故意不写，
+在代码里长得一模一样。** 谁看都看不出来。这次做的是让「不写」变成一件要**打出来**的
+事——不写就编译不过。先只改一支单（库存调拨），量一量改一支要多少工。
+
+**The shape.** A statement's `company_id` predicate is the entire tenant boundary
+— mig 0061 enabled RLS on every scm table with ZERO policies and the SCM client
+is the service-role client, so no policy is ever evaluated on an app request.
+The predicate is written by hand at 2,654 `.from(` call sites across 213 files
+in `backend/src/scm` (measured 2026-08-20:
+`git grep -c ".from(" -- backend/src/scm`), and its ABSENCE is invisible: `sb.from('stock_transfers').update(x).eq('id', id)` is
+either a forgotten predicate or a deliberate cross-company write, and the source
+does not say which. No compile error, no failing test, no runtime signal. This
+is **BUG CLASS optional-param-noop** with the parameter removed entirely.
+
+**It is not hypothetical, and this module is where it landed.** The 2026-07-22
+owner audit scoped the sibling flows and missed `PATCH /stock-transfers/:id/cancel`:
+a caller in company A holding company B's transfer UUID could cancel B's POSTED
+transfer and drive `reverseMovements` over B's stock. Found 2026-08-13 by a code
+audit, fixed then. Nothing structural stopped it recurring — the fix was a
+predicate somebody had to remember.
+
+**Why the existing guards do not close it.** `check-company-scope.mjs` is
+regexes over lines and says so in its own header: a NON-ZERO result is worth
+reading, a ZERO result means "this heuristic found nothing". It has been wrong
+in five distinct ways in a single day, one of them the *stamp is not a predicate*
+blind spot — seven cross-company MONEY writes hid behind
+`insert({ company_id: activeCompanyId(c) })` while it printed `0 WRITE`.
+
+**The remedy, and its measured cost.** `backend/src/scm/lib/scopedDb.ts` makes
+the scope a REQUIRED second argument: `db.from(table, scope)`. Omitting it is a
+TS2554. "This one is deliberately centralised" is `CENTRALISED('<why>')` with a
+non-empty reason — a sentence in the diff instead of an absence. The four
+constructors DELEGATE to `companyScope.ts` and re-derive none of its logic; in
+particular the two context-derived scopes carry the CONTEXT rather than a
+resolved id, because the three-state sentinel's UNRESOLVED state is not a number
+and collapsing it either way is a leak or an app-wide blank (asserted in
+`scopedDb.test.ts` against `fake-postgrest.ts`, all three states, both scopes).
+
+**The one trap inside the remedy.** The INSERT arm STAMPS; every other arm
+PREDICATES. Swapping them is silent — a predicate on an insert filters nothing,
+and a stamp on an update rewrites `company_id` on every row the statement
+matched. That would rebuild the seven-money-writes blind spot inside the
+abstraction meant to end it, so it is pinned by test, not by comment
+(`update PREDICATES and never stamps`, proven red by making `update` stamp).
+
+**MEASURED on the pilot** (`backend/src/scm/routes/stock-transfers.ts`, 14
+`.from(` sites), with `npm --prefix backend run typecheck`:
+
+| step | errors |
+| --- | --- |
+| swap the 5 `c.get('supabase')` for `scmDb(c)`, change nothing else | **17** (12 TS2554 + 5 TS2345) |
+| also retype the file's two `sb: any` parameters | **21** (14 TS2554 + 6 TS2345 + 1 TS2339) |
+
+The 12-vs-14 gap is the honest part: two `.from(` sites sit inside a helper
+taking `sb: any`, and `any` absorbs the requirement until the parameter is
+typed. A first draft of the wrapper typed `select(columns?: string)`, which
+erased supabase-js's column-literal row types and added phantom TS2352/TS2322
+casts — 2 at the swap step and 4 after the retype, so 19 / 25 instead of 17 / 21.
+A generic `Cols extends string` removed them. A wrapper that manufactures conversion work is a wrapper nobody adopts.
+
+**No defect was found by this conversion.** Every statement kept the scope it
+already had; the four that carry no predicate today now carry a `CENTRALISED`
+reason saying why. `check-company-scope.mjs` reports the same 12 findings / 0
+WRITE over 1034 handlers before and after.
+
+**What it does NOT solve, stated so a green run is not over-read.** It binds
+CONVERTED files only (1 of the 99 modules in `backend/src/scm/routes` on day
+one, and 14 of those 2,654 call sites). It cannot check the scope is the RIGHT
+one — `companyIdScope(theOtherCompany)` compiles. `any` absorbs it: 371
+`sb: any` declarations across 105 files in `backend/src/scm`, measured the same
+day with `git grep -c "sb: any" -- backend/src/scm`. Raw
+`env.DB` SQL and `.rpc()` are outside it entirely. And one
+`const sb = c.get('supabase')` re-opens a converted file completely — which is
+why `backend/scripts/company-scope-converted.json` plus a fourth pass in
+`check-company-scope.mjs --strict` (inside the required `backend-typecheck` job)
+fails on exactly that line, with a startup self-test and a FATAL on a missing or
+empty list so a verdict computed over nothing can never read as a pass.
+
+**Ref.** feat/scoped-db-pilot, 2026-08-20.
+## The GRN line DELETE's "durable" allocation enqueue was swallowed by a best-effort catch [medium]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 删掉收货单的一行，系统会把那笔货退出库存，然后本来要叫「重算订单可出货
+状态」。那句叫重算的指令被包在一个「出错就当没事」的壳里 —— 一旦它出错，货已经退
+出去了，订单那边却还标着可以出，而且没有任何声音。旁边的注解偏偏写着「这句不会被
+吞掉」，所以看代码的人只会更放心。
+
+**Symptom.** No incident reported. Found while converting the NEXT GRN route to
+the same pattern: the line-delete route shipped the day before carried the
+comment *"DURABLE: queues with the OUT above, and is NOT caught - a failed
+enqueue must fail the delete"*, and the statement it described sat inside a
+`try { ... } catch { /* best-effort */ }`.
+
+**Root cause, traced.** `grns.ts`'s `DELETE /:id/items/:itemId` reverses a
+posted line's receipt inside a best-effort block — the reversing OUT must never
+block the delete — and `scheduleStockAllocationAfterCommand` was written on the
+line after `writeMovements`, INSIDE that block. Read top-down the comment is
+true of the line beside it; read for reachability, the enclosing `catch` eats a
+throw from the enqueue and the request goes on to return 204. The transaction
+then COMMITS the stock reversal with no queue row — which is the exact state
+(`stock moved, no recompute, no retry`) the PG-command conversion exists to make
+unreachable. Confirmed by brace nesting, not by inference: the `try` opens at
+the `qty_accepted > 0` branch and its `catch` closes after the `if (warehouseId)`
+block that holds the enqueue.
+
+**Why nothing caught it.** `stockAllocationDurabilityScope.test.ts` counts the
+CALL, not its reachability; `grnLineDeleteAtomicity.pg.test.ts` injects a throw
+AFTER the enqueue rather than making the enqueue itself fail; and the comment
+made a reviewer's read agree with the intent.
+
+**Fix.** Both GRN transactional routes now set a `stockReversed` flag inside the
+best-effort block and call `scheduleStockAllocationAfterCommand` AFTER it, so a
+failed enqueue propagates and rolls the whole command back. The new
+`tests-pg/grnCancelAtomicity.pg.test.ts` adds the assertion that was missing —
+it renames the queue table out from under the enqueue mid-transaction, so the
+real upsert really fails, and asserts the CANCEL did not survive.
+
+**Class.** A comment is not a control-flow proof. Where a guarantee depends on a
+statement NOT being caught, put the statement outside the `try` where a reader
+can see it, rather than asserting it in prose next to a line that is inside one.
+
+**Ref.** 2026-08-20.
+## The two CONSIGNMENT return docs let an unlinked line be re-pointed at the parent's own goods by editing the code — GAP-2 edit back door [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 寄售退货（consignment return）和采购寄售退货（purchase consignment return）
+这两张退货单，之前可以这样钻空子：先加一条源单里没有的货（系统允许，因为那是正常的
+临时/赠品行），存一次；再把这条行的货号改成源单本来就有的货，第二次存。改完之后这条行
+和源单的行还是没连上（link 还是空），而所有"这批货退过没有"的核对全都是看这个 link 的，
+所以同一批货可以退第二次——寄售退货是把货收回来（IN），采购寄售退货是把货送出去（OUT），
+两边都会重复动库存。GRN / 采购退货 / 交货退货 / 销售发票这四张单早就堵了这个洞，就差这
+两张寄售退货没堵。
+
+**Symptom.** `PATCH /consignment-returns/:id/items/:itemId` and
+`PATCH /purchase-consignment-returns/:id/items/:itemId` mapped `item_code` /
+`variants` straight into the update with no guard. An operator could add a line
+whose code is NOT on the parent document (correctly allowed — the ad-hoc /
+goodwill carve-out), then edit that line's code to one the parent DOES carry.
+
+**Root cause (traced).** The stored link column stays NULL through that edit
+(`consignment_do_item_id` for the CN return, `pc_receive_item_id` for the PC
+return), and every cap + recount on both chains is gated on that link being
+non-null: the consignment-return over-return cap (`checkCrOverRemaining`, gated
+on `noteItemId`) and its inventory resync, and the purchase-consignment-return
+qty cap (`qtyCapRefusal` on `purchase_consignment_receive_items`, gated on
+`receiveItemId`) and `adjustPcReceiveReturnedQty`. So a re-pointed unlinked line
+counts against no parent line and the same goods can be returned twice. Identical
+to the GRN / purchase-return / delivery-return / sales-invoice edit hole closed
+2026-08-17; these two routes were added without the guard and nobody noticed —
+the exact "a rule at N call sites ends up at N-1" failure the shared guard exists
+to prevent.
+
+**Fix.** Wired `unlinkedEditRefusal` (`scm/lib/unlinked-line-edit-guard.ts`) into
+both line-PATCH handlers, after the qty/over-return cap and before the update,
+with two new chains in its CHAINS map: `'consignment-return'` (parent = the
+Consignment Note, codes from `consignment_delivery_order_items` via new
+`cnItemCodesOf`) and `'purchase-consignment-return'` (parent = the PC Receive,
+codes from `purchase_consignment_receive_items` via new `pcReceiveItemCodesOf`).
+Same narrow rule as the other four: refused only on the transition
+not-on-parent -> on-parent (409 `unlinked_line_repoint`); a genuinely ad-hoc
+code, a linked line, and a code-untouched qty edit all still pass; a failed
+parent read fails CLOSED (`unlinked_check_failed`). Tests added to
+`unlinked-line-edit-guard.test.ts` (exploit refuse per chain, parent-from-header
+resolution, ad-hoc allow, linked-qty allow, fail-closed) plus both handlers
+added to the source-slice WIRING assertion.
+
+**Ref.** refactor/txn-consignment-return-guard, 2026-08-20.
+## A second line in the SAME Save silently put the delivery fee back to 250 [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 销售员把运费从 250 改成 125，同一次「储存」里又顺手改了沙发的数量 —— 结果
+运费自己变回 250。客人拿到的报价是 125，出的单是 250，中间没有任何提示。原因是：一按
+储存，系统是**同时**把每一行改动送上去的（不是一行一行送）。改沙发那一行的请求，在读
+运费资料的时候，改运费那一行的请求还没写进资料库，所以它读到的还是「没有折扣」的旧数
+字；等它稍后写回去的时候，就把 125 覆盖成 250。系统本来有一道「同一张单一次只准一个人
+重算运费」的锁，但那道锁是在**要写的时候**才上，读的时候没上 —— 等于两个人先各自抄了
+一份旧数字，再排队把旧数字写回去。现在改成：写之前先核对「我抄的那份数字现在还一样
+吗」，不一样就整个重算一次再写。
+
+**Symptom.** On the ERP Sales Order editor, reduce a `SVC-DELIVERY` line 250 -> 125
+and change any other line (a sofa quantity, a description) in the SAME Save. The
+fee reads 125 for a moment and then reads 250 again. Reducing the fee ALONE always
+worked, which is what made it look intermittent.
+
+**Root cause (traced, not guessed).** Read, THEN lock.
+
+`scm.rebuild_mfg_so_delivery_lines` takes a per-doc_no `pg_advisory_xact_lock`
+(migration 0214) — but it takes it when it is CALLED.
+`recomputeDeliveryFeeCore` reads the `SVC-DELIVERY*` lines first
+(`mfg-sales-orders.ts`, the `mfg_sales_order_items` select at the top of the
+function) and calls the RPC ~170 lines later. Between those two points there is no
+lock at all, and the two things the OPERATOR owns on those lines — the free-form
+`SVC-DELIVERY-ADD` gross and the per-line `discount_sen` that #2490 taught the
+rebuild to carry — are read in that gap.
+
+The parallelism is not exotic, it is one ordinary Save.
+`runSoLineWrites` (`frontend/src/pages/scm-v2/so-add-lines.ts:184`) hands the
+dirty-line stage to `settleParallelLineWrites`, which is
+`Promise.allSettled(jobs.map((job) => job.run()))` at `:124`. The ADD stage next to
+it is sequential and its comment says exactly why — `POST /:docNo/items` is a
+read-modify-write against the order. The UPDATE stage is the same shape and was
+left parallel. Every one of those PATCHes ends in `rederiveDeliveryFee`, and the
+SO edit lease does not separate them: all the PATCHes of one Save carry the same
+`X-SO-Edit-Lease` token, so `requireSoLineWriteLease` passes them all.
+
+    P_fee   writes discount_sen = 12500, reads the fee lines, derives 125
+    P_sofa  reads the fee lines BEFORE that commit, derives 250 (discount 0)
+    P_fee   takes the lock, writes 125
+    P_sofa  takes the lock, writes 250      <- the reduction is gone
+
+The lock made that ordering deterministic. It never made it impossible, because
+serialising the WRITES does nothing for a value that was READ before the queue.
+
+**The owner ruling this sits under, which also settles a contradiction on record.**
+#2490 wrote that the typed fee number "is never read ... by design"; #2527 wrote
+that it "has always been typed in". The owner: *"运费应该根据实际的价钱去填写。我们的
+POS System 已经 preset 了 250，但进到 ERP 其实也只是把那个 amount 填进来而已，所以正常
+来说 ERP 里是可以随意填写 amount 的"* — **in the ERP the typed amount IS the value
+and stays freely editable.** The two PRs turned out to be complementary rather than
+opposed: #2490 is the backend half (the reduction survives a rebuild) and
+#2527/#2529 are the frontend half (where the operator types it, and what the cell
+means). Neither was reverted here. What was missing is that the typed amount only
+holds while nothing else is saving.
+
+**Fix.** Migration 0314 turns read-then-lock into lock-read-compare-write. The
+caller passes the operator-owned fee state it DERIVED FROM as `p_expect_state`
+(`deliveryFeeStateKey`, keyed by row id so the comparison is order-free); the
+function re-reads that same state AFTER its advisory lock and returns **false
+without writing** when it has moved. `recomputeDeliveryFeeCore` becomes a bounded
+loop over `recomputeDeliveryFeeAttempt` — re-read, re-derive, call again — and
+writes nothing at all if the lines keep moving, the same fail-closed posture as the
+failed header read next to it.
+
+A boolean rather than a `RAISE`, deliberately: this RPC is also called inside
+`runScmPgCommand` (tbc-update / tbc-swap / tbc-swap-sofa), where an exception would
+roll back a whole save that only needed recomputing. In that path the retry is
+guaranteed to converge — the advisory xact lock the first call took is held for the
+rest of that transaction, so nothing can move the state under attempt two.
+
+The write half moved out of the 12,000-line router into
+`backend/src/scm/lib/so-delivery-fee-rebuild.ts`, which now owns the whole lock
+contract (0214 serialisation, 0310 line reuse, 0314 staleness refusal) in one
+readable place. `mfg-sales-orders.ts` got 35 lines SHORTER.
+
+**Carried in the same migration: the grants 0305 dropped.** 0214 ended
+`REVOKE ALL ... FROM PUBLIC` + `GRANT EXECUTE ... TO service_role`, with a comment
+saying why (the function takes arbitrary line rows for an arbitrary doc_no). 0305
+re-created it with DROP + CREATE and did not restore either statement, so since
+2026-08-18 it has carried the default PUBLIC execute privilege. 0314 is another
+DROP + CREATE, so restoring the 0214 posture is the same statement either way. **The
+prod ACL was not queried** — this is read from the migration files, so LIKELY, not
+PROVEN; restoring it returns the function to the state it ran in from 2026-07-14 to
+2026-08-18 regardless.
+
+**Proved RED first.** The three route-level cases in
+`soDeliveryFeeLineIntegrity.test.ts` fail on the unfixed source with
+`expected undefined to deeply equal { Object (fee-1) }` (no expectation sent) and
+`expected [ { ... } ] to have a length of 2 but got 1` (no re-derivation), while the
+14 pre-existing cases in that file stay green. The postgres cases in
+`deliveryRebuildKeepsIdentity.pg.test.ts` run the interleave for real against
+`backend-postgres` and pair `deliveryFeeStateKey` with the function's own
+`jsonb_object_agg`, which is the one way this guard could be silently wrong: an
+integer rendered `1.00` on one side would refuse every rebuild forever.
+
+**One trap found while writing it.** `isDeliveryFeeServiceCode` is a PREFIX match
+(`startsWith('SVC-DELIVERY')`) while the RPC names three exact codes. Built from
+the prefix, the expectation would carry a hand-added `SVC-DELIVERY-BESPOKE` row
+that the function never re-reads — a mismatch that never resolves, so that order
+would stop re-deriving its fee FOREVER, silently. `deliveryFeeStateKey` therefore
+filters on `REBUILT_DELIVERY_FEE_CODES`, the same three the RPC's own `live` CTE
+and DELETE name, and a pg case plants such a row to prove both sides ignore it.
+
+**What this does NOT cover.** Only the SVC-DELIVERY* lines are in the expectation.
+A concurrent edit to a GOODS line is still read without a lock — deliberately, so
+an ordinary multi-line Save does not retry n times. The delivery derivation reads
+goods lines for their CATEGORY and item code, not their quantity or price, so a
+qty edit cannot move the fee; a concurrent product SWAP theoretically can, and is
+untested and unfixed here.
+
+**Ref.** fix/so-fee-lock-ordering, 2026-08-20. Fourth entry of the fee chain
+(#2516 -> #2527 -> #2529 -> here), and the first one that is about concurrency
+rather than about the cell.
 ## Service Maintenance's SLA Hours cell saved, said OK, and changed nothing [medium]
 
 <!-- area: Service cases (ASSR) -->

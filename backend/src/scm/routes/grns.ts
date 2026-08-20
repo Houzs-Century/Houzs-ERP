@@ -11,6 +11,7 @@ import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { buildGrnCancelReversals } from '../lib/grn-cancel-reversal';
 import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
 import { runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
@@ -2401,13 +2402,22 @@ grns.post('/from-po-items', createGrnsFromPoItemsHandler);
    Steps 2+3 are best-effort (mirrors postGrnAndRollup's best-effort write) — a
    movement/rollback failure does not un-cancel the GRN.
    NOTE: grns has no cancelled_at column, so we set status + updated_at only. */
-grns.patch('/:id/cancel', async (c) => {
+/* Second GRN route in the PG command txn: the CANCELLED flip, the reversing
+   stock OUT, the rack reversal, the audit rows, the AutoCount cancel and the
+   allocation request commit together or not at all. 503s without DATABASE_URL
+   by design. `sb` is the TRANSACTIONAL client - the body must not reach for
+   c.get('supabase'). The body stays INSIDE the route on purpose: several checks
+   scan grns.ts by route block, and hoisting it to a named handler moved it out
+   of their sight. docs/modules/grn.md 7c. */
+grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as the line DELETE below.
+  sb: any,
+) => {
   /* Surfaced in the response, like the POST path's movementErrors/recountError.
      The GRN stays CANCELLED either way; what changes is that a failed reversal
      or recount no longer reports a clean 200. */
   const cancelErrors: string[] = [];
   const id = c.req.param('id');
-  const sb = c.get('supabase');
   const user = c.get('user');
 
   /* Cancelling reverses stock and re-opens a PO, so it must never reach another
@@ -2517,42 +2527,17 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
+  /* Set only where the reversal was actually attempted, so the DURABLE enqueue
+     below can sit OUTSIDE this best-effort catch and still fire on exactly the
+     condition the old inline recompute did. */
+  let stockReversed = false;
   try {
     const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
-      /* Migration 0120 — the original IN stamped batch_no = source PO number so a
-         sofa set's components share a dye lot. The reversing OUT must consume that
-         EXACT batch. Resolve EACH line's OWN batch from its source PO
-         (purchase_order_item_id → PO number) — deterministic per line, so two lines
-         of the same product/variant from different POs each reverse their own dye
-         lot, instead of a per-bucket collapse that kept only the last batch.
-         Manual lines (no PO link) stay un-batched → plain FIFO, as before. */
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
-      const movements = lineList
-        /* Mirrors the POST filter. Without it the cancel writes an OUT for a
-           freight line that never had an IN — a permanent negative on-hand for a
-           non-stock SKU. */
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
-        .filter((it) => (it.qty_accepted ?? 0) > 0)
-        .map((it) => {
-          const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
-          const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
-          return {
-            movement_type: 'OUT' as const,
-            warehouse_id: warehouseId,
-            item_code: it.item_code,
-            variant_key,
-            product_name: it.material_name,
-            qty: it.qty_accepted,
-            source_doc_type: 'GRN' as const,
-            source_doc_id: id,
-            source_doc_no: head.grn_number,
-            performed_by: user.id,
-            // Only carry batch_no when the IN had one (omit → non-batched lines stay plain FIFO).
-            ...(batch_no != null ? { batch_no } : {}),
-            notes: 'GRN cancelled — reversing receipt',
-          };
-        });
+      const movements = buildGrnCancelReversals(lineList, batchByItem, {
+        warehouseId, grnId: id, grnNumber: head.grn_number, performedBy: user.id,
+      });
       if (movements.length > 0) {
         /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
            — so the enclosing best-effort catch caught nothing, and discarding the
@@ -2565,15 +2550,16 @@ grns.patch('/:id/cancel', async (c) => {
             'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
           );
         }
-        /* GRN cancel pulled stock back out → other READY SOs that relied on
-           this stock may need to regress. Re-walk allocation. Best-effort. */
-        try {
-          const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-          await recomputeSoStockAllocation(sb);
-        } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-cancel failed:', e); }
+        stockReversed = true;
       }
     }
   } catch { /* best-effort: never un-cancel on a movement failure */ }
+  /* DURABLE: GRN cancel pulled stock back out, so other READY SOs that relied
+     on it may need to regress. The request commits with the OUT above, and it
+     is NOT inside that best-effort catch — a failed enqueue must fail the
+     cancel, because "stock pulled back, allocation never re-walked" is the
+     exact state this transaction exists to make unreachable. grn.md 7c. */
+  if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
@@ -2615,7 +2601,7 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
-});
+}));
 
 /* ════════════════════════════════════════════════════════════════════════
    GRN PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
@@ -3537,6 +3523,10 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
     //     this lands; the FIFO trigger consumes the line's lot + computes COGS.
     //     Best-effort — a movement failure never blocks the delete.
     if ((l.qty_accepted ?? 0) > 0) {
+      /* Same reason as the cancel route's flag: the enqueue below must not sit
+         inside this best-effort catch. It did until 2026-08-20, and the comment
+         beside it claimed the opposite. BUG-HISTORY 2026-08-20. */
+      let stockReversed = false;
       try {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
@@ -3567,11 +3557,12 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* DURABLE: queues with the OUT above, and is NOT caught - a failed
-             enqueue must fail the delete. docs/modules/grn.md 7c. */
-          await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
+          stockReversed = true;
         }
       } catch { /* best-effort */ }
+      /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+         enqueue must fail the delete. docs/modules/grn.md 7c. */
+      if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
     }
   }
 
