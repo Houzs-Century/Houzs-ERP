@@ -1,6 +1,6 @@
 ## A batch of Sales Agents lost every Service Case at once — visibility was decided by a NAME typed into a mirrored text field [high]
 
-<!-- area: Service case (ASSR) -->
+<!-- area: Service cases (ASSR) -->
 
 **白话.** 有一批 sales 突然一张 Service Case 都看不到了。不是单据不见，也不是
 AutoCount 出问题——是我们自己的「谁能看谁」的规则用错了根据。以前系统是拿**名字的文字**
