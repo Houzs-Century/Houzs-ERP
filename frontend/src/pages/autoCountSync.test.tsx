@@ -49,6 +49,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   remedy: null,
   needs_attention: false,
   can_requeue: false,
+  can_send_now: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -136,7 +137,9 @@ const rows = [
     needs_attention: true,
     reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
     reason_kind: "missing-location", remedy: "set the warehouse on the line" }),
+  /* WAITING with tries left, so the server offers it a Send now. */
   row({ id: "p", doc_no: "SO-P", doc_type: "SO", status: "pending", state: "pending", attempts: 2,
+    can_send_now: true,
     reason: "AcSyncService threw: timeout opening the book" }),
   row({ id: "s", doc_no: "GR-S", doc_type: "GR", op: "po_to_gr", status: "sent", state: "sent",
     ac_doc_no: "GR-00123", sent_at: "2026-08-15T01:00:00.000Z" }),
@@ -929,5 +932,66 @@ describe("AutoCountSync — a partial count says so", () => {
     await mount(busy);
     await screen.findByText("SO-F");
     expect(screen.queryByText(/at least this many and possibly more/)).toBeNull();
+  });
+});
+
+/* SEND NOW — the WAITING row's control.
+   The owner asked for a manual push beside the automatic sync
+   (「自动的 可是我要可以manual push」). Until it existed a queued row had no
+   button at all, because a RE-QUEUE of a pending row would put a second create
+   for the same document in the queue — correctly refused. This dispatches the
+   row that is already there, so the questions worth asking on this surface are
+   the same three Send again answers: is it offered on the right row, does the
+   answer land ON that row, and does a refusal reach the reader at all. */
+describe("AutoCountSync — Send now", () => {
+  const sendNowAnswer = (over: Record<string, unknown> = {}) => ({
+    accepted: true,
+    code: "sent-now",
+    message: "Sent, and AutoCount took it. It is in the account book now — you did not have to wait for the five-minute sweep.",
+    row_id: "p",
+    doc_type: "SO",
+    doc_no: "SO-P",
+    op: "create_so",
+    new_row_id: null,
+    reason: null,
+    ...over,
+  });
+
+  it("is offered on the waiting row, and NOT on the refused one", async () => {
+    await mount(busy);
+    await screen.findByText("SO-P");
+    expect(within(cardOf("SO-P")).getByRole("button", { name: "Send now" })).toBeTruthy();
+    /* SO-F has given up: its action is Send again, which starts a fresh set of
+       attempts. Offering both would be two buttons meaning "send it". */
+    expect(within(cardOf("SO-F")).queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(within(cardOf("SO-P")).queryByRole("button", { name: "Send again" })).toBeNull();
+  });
+
+  it("pushes THAT row, and says on it that the account book took it", async () => {
+    apiPost.mockResolvedValue(sendNowAnswer());
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/p/send-now");
+    expect(await within(cardOf("SO-P")).findByText(/in the account book now/i)).toBeTruthy();
+  });
+
+  it("prints a REFUSAL on the row rather than swallowing it", async () => {
+    apiPost.mockResolvedValue(sendNowAnswer({
+      accepted: false,
+      code: "already-in-flight",
+      message: "It is going out right now — either the five-minute sweep picked it up, or somebody else pressed this a moment ago. Nothing was sent twice.",
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await within(cardOf("SO-P")).findByText(/Nothing was sent twice/i)).toBeTruthy();
+  });
+
+  it("says so when the call never got through at all", async () => {
+    apiPost.mockRejectedValue(new Error("Network request failed"));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    /* The documented failure class this repo names: a refusal that reaches
+       nobody reads as "the button does nothing". */
+    expect(await within(cardOf("SO-P")).findByText(/never got through/i)).toBeTruthy();
   });
 });

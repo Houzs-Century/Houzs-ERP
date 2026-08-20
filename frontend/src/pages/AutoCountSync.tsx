@@ -71,6 +71,8 @@ import {
   AC_REPLACED_GROUP_NOTE,
   AC_REPLACED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
+  AC_SEND_NOW_LABEL,
+  AC_SEND_NOW_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
   AC_TECHNICAL_LABEL,
@@ -250,7 +252,7 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
  * hidden — and that line is the button that opens the rest.
  */
 function OutboxRowCard(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -260,6 +262,7 @@ function OutboxRowCard(
     historyOpen: boolean;
     onToggleHistory: () => void;
     onSendAgain: () => void;
+    onSendNow: () => void;
   },
 ) {
   const row = group.current;
@@ -303,6 +306,24 @@ function OutboxRowCard(
             onClick={onSendAgain}
           >
             {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+          </Button>
+        )}
+        {/* THE WAITING ROW'S CONTROL. Offered where the server says the row is
+            still queued and has tries left (`can_send_now`) — the owner asked
+            for a manual push beside the automatic sync, and until now a waiting
+            row had no button at all because a RE-QUEUE of one would duplicate
+            the document. This dispatches the row that is already there.
+
+            Never rendered beside Send again: the two server predicates are
+            disjoint, so at most one of these blocks is ever true for a row. */}
+        {row.can_send_now && (
+          <Button
+            variant="secondary"
+            className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+            disabled={sending}
+            onClick={onSendNow}
+          >
+            {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
           </Button>
         )}
       </div>
@@ -618,6 +639,7 @@ export function AutoCountSync() {
                     historyOpen={sendHistory.isOpen(g)}
                     onToggleHistory={() => sendHistory.toggle(g)}
                     onSendAgain={() => void requeue.sendAgain(g.current.id)}
+                    onSendNow={() => void requeue.sendNow(g.current.id)}
                   />
                 )}
               />
@@ -663,6 +685,7 @@ export function AutoCountSync() {
                           historyOpen={sendHistory.isOpen(g)}
                           onToggleHistory={() => sendHistory.toggle(g)}
                           onSendAgain={() => void requeue.sendAgain(g.current.id)}
+                          onSendNow={() => void requeue.sendNow(g.current.id)}
                         />
                       )}
                     />

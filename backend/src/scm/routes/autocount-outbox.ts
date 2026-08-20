@@ -54,6 +54,7 @@ import {
   REQUEUE_NOTE_PREFIX,
   acNeedsAttention,
   acOutboxState,
+  acRowCanSendNow,
   acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
@@ -61,6 +62,7 @@ import {
   AC_REQUEUE_MEANING,
   acRequeueAccepted,
   requeueOutboxRow,
+  sendOutboxRowNow,
 } from '../lib/autocount-requeue';
 
 export const autocountOutbox = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -249,6 +251,11 @@ function present(raw: Row) {
        DtlKeys for an item-map problem (#2094). This is a HINT and not the gate:
        POST /:id/requeue re-reads the row and can still refuse. */
     can_requeue: acRowIsRequeueable(String(raw.op ?? ''), status, lastError),
+    /* The WAITING row's own control, decided in the same place and for the same
+       reason. Disjoint from can_requeue by construction — one is true only of a
+       stopped row, the other only of a waiting one — so a row never offers two
+       buttons that would both mean "send it". */
+    can_send_now: acRowCanSendNow(status, lastError, Number(raw.attempts ?? 0)),
     ac_doc_no: (raw.ac_doc_no as string | null) ?? null,
     created_at: (raw.created_at as string | null) ?? null,
     updated_at: (raw.updated_at as string | null) ?? null,
@@ -573,6 +580,85 @@ autocountOutbox.get('/', listAutocountOutboxHandler);
  * Only the four things that are genuinely wrong with the CALL — no permission,
  * no company, no id, an unreadable queue — carry a non-200.
  */
+/**
+ * PUSH ONE WAITING DOCUMENT TO AUTOCOUNT NOW.
+ *
+ * A SECOND DOOR TO ONE MECHANISM, not a second mechanism. It shares this file's
+ * permission keys, the strict company resolver, the response contract and the
+ * outcome vocabulary with the re-queue handler beside it; what differs is the
+ * lib call, because dispatching a row that is already queued and inserting a
+ * fresh row for a refused one are genuinely different acts with different
+ * answers (`sendOutboxRowNow`'s own doc comment argues this in full).
+ *
+ * ITS OWN ROUTE RATHER THAN A BRANCH INSIDE /requeue, for one reason that
+ * outlives the tidiness argument: the two have different CONCURRENCY contracts.
+ * A re-queue must not take an exclusive claim — it writes a new row and never
+ * dispatches — while this one must, every time, or two presses put two documents
+ * in a licensed account book. Folding them together would have put a rule that
+ * only applies to half the traffic inside a handler that serves all of it.
+ *
+ * A REFUSAL IS STILL HTTP 200, exactly as the re-queue's is. The caller asked a
+ * question and got an answer; only a call that could not be answered at all is a
+ * non-200. The page renders both on the row that was pressed.
+ */
+export const sendNowAutocountOutboxHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  /* THE SAME KEYS AS SEND AGAIN, and deliberately not a new permission. Both
+     buttons do the one thing the key is about — put an ERP document into the
+     live account book — and inventing a second key would mean an operator could
+     hold the right to send a refused document but not a waiting one, a
+     distinction nobody could explain and nobody asked for. */
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json(
+      {
+        error: 'forbidden',
+        message:
+          'Sending a document to AutoCount writes into the live account book, '
+          + `so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+      },
+      403,
+    );
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const rowId = (c.req.param('id') ?? '').trim();
+  if (!rowId) return c.json({ error: 'invalid_row_id' }, 400);
+
+  const sb = c.get('supabase');
+  const result = await sendOutboxRowNow(c.env, sb, { rowId, companyId: co.companyId });
+
+  if (!acRequeueAccepted(result.outcome)) {
+    // eslint-disable-next-line no-console
+    console.warn('[autocount-outbox] send-now not accepted', result.outcome, result.docNo, result.detail);
+  }
+
+  const body = {
+    accepted: acRequeueAccepted(result.outcome),
+    code: result.outcome,
+    message: AC_REQUEUE_MEANING[result.outcome],
+    row_id: result.rowId,
+    doc_type: result.docType,
+    doc_no: result.docNo,
+    op: result.op,
+    new_row_id: null,
+    /* WHAT THE ACCOUNT BOOK SAID, on the outcomes where it said something. A
+       send-now that reached AutoCount and was refused carries the book's own
+       words, and those are the whole diagnosis — the same standing as
+       `still-refused` on the re-queue path. */
+    reason:
+      result.outcome === 'send-now-refused'
+      || result.outcome === 'send-now-retrying'
+      || result.outcome === 'send-now-waiting'
+        ? (result.detail || null)
+        : null,
+  };
+  if (result.outcome === 'row-not-found') return c.json(body, 404);
+  if (result.outcome === 'read-failed') return c.json(body, 500);
+  return c.json(body, 200);
+};
+
 export const requeueAutocountOutboxHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
 ) => {
@@ -628,5 +714,6 @@ export const requeueAutocountOutboxHandler = async (
 };
 
 autocountOutbox.post('/:id/requeue', requeueAutocountOutboxHandler);
+autocountOutbox.post('/:id/send-now', sendNowAutocountOutboxHandler);
 
 export default autocountOutbox;
