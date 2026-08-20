@@ -15,6 +15,10 @@
 /** Reasons a run is REJECTED before any percentage is even compared. */
 export const FATAL = {
   NO_REPORTS: 'no_reports',
+  /* The gate has no FLOORS. Distinct from NO_REPORTS, which is having no
+     measurement: this is having a measurement and nothing to hold it to, and it
+     used to be an empty-object fallback that passed everything. */
+  NO_BASELINE: 'no_baseline',
   EMPTY_AREA: 'empty_area',
   MISSING_FILES: 'missing_files',
   SHAPE_MISMATCH: 'shape_mismatch',
