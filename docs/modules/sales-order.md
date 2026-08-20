@@ -528,6 +528,20 @@ It is wired to the real backend on the **unchanged** contract:
 | PAY (slip-backed rows) | `POST /mfg-sales-orders/:docNo/payments` |
 | VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
 
+**`active-venue` resolves WITHIN one company, since 2026-08-20.** It returns the
+venue TEXT from `resolveVenueBinding` and then maps that text onto a
+`project_venues` id so the dropdown can select the row rather than only display
+it. That name lookup used to carry no company predicate: venue names are not
+unique across the two masters, so it could hand this company the OTHER company's
+venue id — and that id is what the SO stores. It now carries
+`activeCompanySql(c)`. A name this company does not master still resolves to
+`venueId: null` with the TEXT standing, which is the existing fallback and is
+unchanged. Same sweep as the venue PICKER fix in `docs/modules/projects-pms.md`
+§Venues, where the leak was visible (`GET /venues?includeShowrooms=1` listed
+every company's showrooms); guard for both halves is
+`backend/tests/showroomVenueCompanyScope.test.ts`. Owner 2026-08-19: *"我们的
+Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着看到自己公司的"*.
+
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
 client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 
