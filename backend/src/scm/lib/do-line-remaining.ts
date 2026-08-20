@@ -62,6 +62,7 @@
 // operator hunting for a duplicate that does not exist.
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST, doCountsAsDelivered } from '../shared/do-shipped-states';
 import { paginateAll, chunkIn } from './paginate-all';
 
 export type DoRemainingLine = {
@@ -168,12 +169,12 @@ export async function doLineRemaining(
     id: string; do_number: string; status: string | null;
     debtor_code: string | null; debtor_name: string | null;
   }>) {
-    const st = (d.status ?? '').toUpperCase();
-    // LEAK GUARD (DRAFT, 2026-06-25 anchoring diff vs 2990) — a DRAFT DO has NOT
-    // shipped: it delivered nothing, so its lines must never become invoiceable /
-    // returnable (the "Pending" pool both downstream pickers read). Dropped
-    // alongside CANCELLED.
-    if (st === 'CANCELLED' || st === 'DRAFT') continue; // delivered nothing
+    // LEAK GUARD (PRE-SHIP, 2026-06-25 anchoring diff vs 2990) — a DO that has
+    // NOT shipped delivered nothing, so its lines must never become invoiceable
+    // / returnable (the "Pending" pool both downstream pickers read). That is
+    // DRAFT *and* LOADED; this read named only DRAFT until 2026-08-20, and
+    // unbilled-deliveries.ts had already dropped LOADED by hand next door.
+    if (!doCountsAsDelivered(d.status)) continue; // delivered nothing
     headerById.set(d.id, { do_number: d.do_number, debtor_code: d.debtor_code, debtor_name: d.debtor_name });
   }
   const activeDoIds = [...headerById.keys()];
@@ -388,7 +389,11 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-      .not('status', 'in', '("CANCELLED","DRAFT")');
+      /* A LOADED DO is still on the lorry, so it is not invoiceable either —
+         unbilled-deliveries.ts already dropped LOADED from its own copy of this
+         list by hand, saying "billing it would be the bug". Same list now,
+         built from DO_NOT_DELIVERED_STATES. */
+      .not('status', 'in', DO_NOT_DELIVERED_IN_LIST);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);
   });

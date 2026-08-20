@@ -121,6 +121,13 @@ key off the older `is_showroom` flag and will migrate to `type` incrementally:
   `is_showroom = true`.
 - **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
   rows into the balances read so consignment/showroom stock stays visible.
+- **Free-to-sell** (`inventory.ts`, `deliveredReturnedBySoItem`) subtracts a
+  Sales Order line's delivered qty, and only counts a DO whose status is NOT in
+  `DO_NOT_DELIVERED_STATES`. **That set gained LOADED on 2026-08-20** — a
+  delivery still on the lorry was taking its units OUT of Reserved before any
+  stock had moved, which inflates free-to-sell towards over-sell. One predicate
+  now (`doCountsAsDelivered`); the trace is in `docs/modules/delivery-order.md`
+  under *"Has this delivery counted?" is ONE predicate now*.
 
 Rule of thumb when adding a new consumer: if you want "sales point", filter
 `type='showroom'`; if you want "stock location", filter `type='warehouse'`; if
