@@ -1,0 +1,47 @@
+name: So mirror skips — what the receiver declined (read-only)
+
+# Prints scm.so_mirror_skips (mig 0311): every 2990 delivery the import-once
+# receiver declined, with how many times and how long ago.
+#
+# WHAT IT IS FOR. #2515 stopped the receiver replaying 2990's copy over Houzs
+# edits. Proving that held is not the same as watching an edit survive: with
+# 2990's outbox idle, a surviving edit is equally true of a mirror that held the
+# line and a mirror that sent nothing. This is the fact that separates them —
+# an edit that survived while the doc's `last_seen` moved is proof.
+#
+# It ALSO carries migration 0311's missing production verification. 0311 is a
+# CREATE TABLE IF NOT EXISTS, so a pre-existing table of that name and a
+# different shape would be skipped in silence and the receiver's INSERT would
+# fail against it forever, logged but not fatal. The script asserts the COLUMN
+# SHAPE and refuses loudly if it differs. Run it once after 0311 deploys.
+#
+# Read-only: SELECTs only, no DDL, no writes. Manual trigger only — a production
+# read on a schedule turns a real question into CI noise nobody reads.
+#
+# Exit 0 for every legitimate answer INCLUDING "nothing declined yet"; non-zero
+# only when the check could not be performed (no credential, table absent, wrong
+# shape). A red job here means the CHECK is broken, never that the mirror is.
+on:
+  workflow_dispatch:
+
+# A diagnostic must not queue behind — or displace — a release.
+concurrency:
+  group: so-mirror-skips-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/check-so-mirror-skips.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
