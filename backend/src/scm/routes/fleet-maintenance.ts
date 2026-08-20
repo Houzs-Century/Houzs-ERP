@@ -1,3 +1,19 @@
+/* company-scope-file: the reads flagged here are DELIBERATE and the migrations
+   say so in their own headers. migs 0202 / 0203 / 0204 each state that
+   `company_id` on the fleet tables is "STAMPED on insert for provenance but NOT
+   used to scope reads" - 0202 gives the reason: a lorry's compliance must not be
+   split by company, because the lorry is one physical vehicle whichever book
+   paid for it.
+
+   So a lorry / driver / compliance row is resolved by its own id, and adding a
+   company predicate here would HIDE a real vehicle from the people responsible
+   for it. That is the opposite of the isolation this checker exists to enforce.
+
+   This annotation is not a waiver, it is a SIGNAL SEPARATOR. Before it, 13 of
+   the checker's ~20 statement findings were these, every run, and a real leak
+   would have arrived as one more line in a list everyone had learned to skim.
+   If the fleet module ever DOES need per-company reads, delete this header
+   first and let the checker fail - that is what it is for. */
 // ----------------------------------------------------------------------------
 // /api/fleet-maintenance — Fleet Maintenance & Compliance, Phase 1.
 //
