@@ -33,6 +33,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
+import { missingVariantAxes } from '../shared/so-variant-rule';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
@@ -4037,6 +4038,36 @@ const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
   lines: codes.slice(0, 20),
 });
 
+/* PO variant gate (owner 2026-08-20). A supplier cannot make a sofa/bedframe
+   without the spec, so CONFIRMING a PO requires the core variant axes on every
+   such goods line — the SAME shared rule (missingVariantAxes) the SO proceed
+   gate and the PO form use, so the three surfaces can never drift. Special
+   Orders (variants.specials) is NOT an axis, so it stays optional by design.
+   This is the BACKEND half of the gate: the PO form already blocks it, but a
+   direct-API confirm bypassed the form. Every incomplete line is collected —
+   never one-at-a-time (owner "一次过全部爆出来").
+
+   Fails CLOSED: a lines read that ERRORS refuses the confirm rather than
+   confirming on a check that never ran (owner fail-closed ruling; mirrors
+   so-confirm-gate). A genuinely line-less / variant-less PO returns no gaps. */
+async function poVariantGaps(
+  sb: Variables['supabase'],
+  poId: string,
+): Promise<{ checkFailed: string } | { gaps: Array<{ code: string; miss: string[] }> }> {
+  const { data, error } = await sb
+    .from('purchase_order_items')
+    .select('item_code, item_group, variants')
+    .eq('purchase_order_id', poId);
+  if (error) return { checkFailed: error.message };
+  const gaps = ((data ?? []) as Array<{ item_code: string | null; item_group: string | null; variants: Record<string, unknown> | null }>)
+    .map((l) => ({
+      code: (l.item_code ?? '').trim(),
+      miss: missingVariantAxes(l.item_group, l.variants, l.item_code ?? null).map((a) => a.label),
+    }))
+    .filter((x) => x.code && x.miss.length > 0);
+  return { gaps };
+}
+
 /* PATCH /:id/submit was DELETED on 2026-08-18. It had no write path: it read
    the row, echoed an already-SUBMITTED PO, 409'd on a missing warehouse and then
    returned `cannot_submit` unconditionally — so the DRAFT it existed to advance
@@ -4080,8 +4111,37 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
   }
 
   /* Owner 2026-08-02 — a warehouse-less PO cannot become live supply / GRN-
-     receivable: the receive would land its goods in the wrong warehouse. */
+     receivable: the receive would land its goods in the wrong warehouse.
+     Owner 2026-08-20 — a supplier cannot make the item without its spec, so a
+     PO with incomplete core variants cannot go live either. Both are collected
+     and shown together (never fix-one-retry-one): when variants are missing the
+     refusal lists every incomplete line AND the warehouse gap if that is also
+     open; a warehouse-only gap keeps its existing 409 contract unchanged. */
+  const variantCheck = await poVariantGaps(supabase, id);
+  if ('checkFailed' in variantCheck) {
+    return c.json({
+      error: 'variant_check_failed',
+      message:
+        'Could not check this PO against the product-options rule, so it is left as a draft '
+        + `rather than confirmed on a check that never ran — try again (${variantCheck.checkFailed}).`,
+    }, 503);
+  }
   const gap = await poWarehouseGap(supabase, id);
+  if (variantCheck.gaps.length > 0) {
+    const lines = variantCheck.gaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`);
+    const whTail = gap.missing
+      ? `\n\nThe ship-to warehouse is also missing (${gap.codes.slice(0, 20).join(', ')}) — set it too.`
+      : '';
+    return c.json({
+      error: 'variants_required',
+      message:
+        'Complete the product options before confirming this PO:\n'
+        + lines.join('\n')
+        + '\n\nThe supplier needs these to know what to make. (Special Orders stay optional.)'
+        + whTail,
+      lines: variantCheck.gaps.slice(0, 20),
+    }, 422);
+  }
   if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
 
   const { error: updErr } = await scopeToCompanyId(supabase
