@@ -29,7 +29,7 @@ import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
 import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS } from '../lib/do-audit-fields';
-import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine, type AcEnqueueOutcome } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
    queueAcSoEdit. Every DO mutation route funnels through it, so exactly one
@@ -3572,8 +3572,9 @@ deliveryOrdersMfg.post('/', async (c) => {
   /* ERP -> AutoCount SO->DO. Only an SO-linked DO can be expressed: AutoCount
      builds a DO by transferring lines FROM a source document, so a DO with no
      SO behind it has nothing to convert from. Queued, never pushed inline. */
+  let ac: AcEnqueueOutcome | null = null;   // #2499's shape, the OTHER verdict
   if ((body.soDocNo as string | undefined) ?? null) {
-    await enqueueConvert(sb, {
+    ac = (await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: String(body.soDocNo) },
@@ -3582,7 +3583,7 @@ deliveryOrdersMfg.post('/', async (c) => {
       docNo: h.do_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
+    }));
   } else {
     /* THE ELSE BRANCH IS THE POINT. A source-less DO used to fall out of this
        `if` writing nothing at all — no outbox row, no reason, nothing to find it
@@ -3666,7 +3667,7 @@ deliveryOrdersMfg.post('/', async (c) => {
     movementErrors: movementErrors.length ? movementErrors : undefined,
     emailNotice: emailNotice ?? undefined,
     so_amend_mirrored: soAmendMirrored,
-    so_mirror_error: soAmendMirrorError,
+    so_mirror_error: soAmendMirrorError, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}),
   }, 201);
 });
 
@@ -4212,8 +4213,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   /* companyId picks the AutoCount BOOK the transfer is written into, and gates
      it on that company's writeback flag. A 2990 DO belongs in 2990's book
      whoever converted it, so this is the document's company, not the active one. */
-  if (docNos.length) {
-    await enqueueConvert(sb, {
+  const mergeAc = docNos.length ? await enqueueConvert(sb, {
       companyId: doCompanyId,
       op: 'so_to_do',
       from: docNos.map((n) => ({ table: 'mfg_sales_orders' as const, keyCol: 'doc_no', key: n })),
@@ -4222,8 +4222,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       docNo: dh.do_number,
       docId: dh.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
@@ -4246,6 +4245,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     doNumber: dh.do_number,
     movementErrors: movementErrors.length ? movementErrors : undefined,
     emailNotice: emailNotice ?? undefined,
+    ...(mergeAc?.problems.length ? { acNotSent: mergeAc.problems } : {}),
   }, 201);
 };
 deliveryOrdersMfg.post('/from-sos', createDoFromSoLinesHandler);

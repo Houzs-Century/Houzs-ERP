@@ -52,6 +52,8 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -150,6 +152,7 @@ type GrnNewDraft = {
 
 export const GrnNew = () => {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [params] = useSearchParams();
 
   // ── From-PO-multi picks (Commander 2026-05-29) — read ONCE on mount.
@@ -698,6 +701,15 @@ export const GrnNew = () => {
       // Non-draft → confirm immediately (the historical Receive & Post). A draft
       // is left at DRAFT for review; the detail page's Confirm runs the commit.
       if (!asDraft) await post.mutateAsync(createRes.id);
+      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A goods receipt raised
+         from a purchase order is TRANSFERRED into AutoCount, and the transfer
+         route applies a narrower set of header fields than an edit does — so
+         the book can hold this receipt with no supplier delivery-note number
+         and no date of its own. Shown through the shared frame rather than
+         folded into the dialog below: what counts as "the accounts did not get
+         it" and how it is worded must not be re-decided per screen
+         (ac-not-sent.tsx's own header). Never blocks; the goods are received. */
+      await notifyAcNotSent(notify, createRes, 'Goods receipt');
       setDialog({
         title: `GRN ${createRes.grnNumber} ${asDraft ? 'saved as draft' : 'created'}`,
         body: asDraft

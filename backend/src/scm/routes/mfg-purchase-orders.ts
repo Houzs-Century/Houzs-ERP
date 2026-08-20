@@ -33,11 +33,14 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
+import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
+import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -1116,12 +1119,11 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
   const supplierId = body.supplierId as string | undefined;
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
 
-  // PR #157 — Commander 2026-05-26: Expected Delivery + Purchase Location are
-  // required on submit. Both fields fan out to per-line warehouse + delivery
-  // date and are required downstream for GRN. Defense-in-depth: frontend also
-  // blocks the submit button until both are filled.
-  const expectedAt = body.expectedAt as string | undefined;
-  if (!expectedAt) return c.json({ error: 'expected_at_required' }, 400);
+  // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO —
+  // a blank defaults to today (like po_date) instead of a 400; it still fans out
+  // to per-line delivery_date / GRN. Purchase Location stays required (it fans to
+  // per-line warehouse = stock location, an integrity field).
+  const expectedAt = dateOrNull(body.expectedAt) ?? todayMyt();
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
 
@@ -2573,10 +2575,6 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Tier 2 downstream-lock — PO header is read-only once a non-cancelled GRN
-     exists. Convert-to-GRN (partial receiving) is NOT routed here. */
-  const childLock = await poHasDownstream(sb, id);
-  if (childLock) return c.json(childLock, 409);
 
   /* Read BEFORE writing — this row is the from-value of every pair recorded
      below. PO_AUDIT_FIELDS is the same column list the loop writes (PR #77 =
@@ -2590,6 +2588,14 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
     if (body[from] !== undefined) updates[to] = body[from];
+  }
+
+  /* Tier-2 lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1; po-identity-lock.ts):
+     only GRN-inherited columns freeze once a GRN exists; dates + notes stay
+     editable. Downstream read paid only when an inherited column changes. */
+  const lockedChanges = changedPoIdentityLockCols(updates, before);
+  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
+    return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   }
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
@@ -4011,25 +4017,6 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
    is missing its warehouse when the header purchase_location_id is blank AND at
    least one line has no warehouse_id of its own. Returns the offending line
    codes so the operator knows what to fix. */
-async function poWarehouseGap(
-  sb: Variables['supabase'],
-  poId: string,
-): Promise<{ missing: true; codes: string[] } | { missing: false }> {
-  const { data: hdr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
-  const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
-  if (headerWh) return { missing: false }; // header default covers every line
-  const { data: lines } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
-  const bad = ((lines ?? []) as Array<{ item_code: string | null; warehouse_id: string | null }>)
-    .filter((l) => !l.warehouse_id);
-  if (bad.length === 0) return { missing: false };
-  return { missing: true, codes: bad.map((l) => l.item_code ?? '?') };
-}
-const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
-  error: 'purchase_location_id_required',
-  message:
-    'This PO has no ship-to warehouse, so its goods would be received into the wrong place. Set the ship-to warehouse (or each line\'s warehouse) before it can go live.',
-  lines: codes.slice(0, 20),
-});
 
 /* PATCH /:id/submit was DELETED on 2026-08-18. It had no write path: it read
    the row, echoed an already-SUBMITTED PO, 409'd on a missing warehouse and then
@@ -4073,9 +4060,12 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
     return c.json({ error: 'cannot_confirm', message: `Only a draft PO can be confirmed (this is ${curStatus})` }, 409);
   }
 
-  /* Owner 2026-08-02 — a warehouse-less PO cannot become live supply / GRN-
-     receivable: the receive would land its goods in the wrong warehouse. */
+  /* Confirm gates (owner 2026-08-20): core variants + a ship-to warehouse, shown
+     together, variant check fails CLOSED. See po-gates.ts. */
+  const variantCheck = await poVariantGaps(supabase, id);
+  if ('checkFailed' in variantCheck) return c.json(poVariantCheckFailedBody(variantCheck.checkFailed), 503);
   const gap = await poWarehouseGap(supabase, id);
+  if (variantCheck.gaps.length > 0) return c.json(poVariantConfirmRefusal(variantCheck.gaps, gap), 422);
   if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
 
   const { error: updErr } = await scopeToCompanyId(supabase

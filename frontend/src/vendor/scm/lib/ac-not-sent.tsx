@@ -62,6 +62,40 @@ export function acNotSentTitle(docLabel: string): string {
   return `${docLabel} saved — but the accounts have not got it yet`;
 }
 
+/** The code a problem carries when the document DID reach the accounts and a
+ *  field on it did not. Mirrors `AC_SENT_INCOMPLETE` in
+ *  backend/src/scm/lib/ac-preflight.ts; the referee test across the two
+ *  packages pins the pair. */
+export const AC_SENT_INCOMPLETE_CODE = 'ac_sent_incomplete';
+
+/**
+ * The title for the OTHER verdict: it is in the accounts, and part of it is not.
+ *
+ * A SEPARATE SENTENCE BECAUSE THE OTHER ONE WOULD BE FALSE. A transferred
+ * delivery order that reached the book without its reference is not a document
+ * "the accounts have not got" — telling an operator that sends them to re-raise
+ * a receipt the book already holds, which is worse than the silence this whole
+ * module exists to end.
+ */
+export function acSentIncompleteTitle(docLabel: string): string {
+  return `${docLabel} saved and sent — but not every field on it reached the accounts`;
+}
+
+/**
+ * Which of the two frames these problems belong in.
+ *
+ * ALL-OR-NOTHING, and it has to be: a response that somehow carried both
+ * verdicts is a response about two different facts, and the safer of the two
+ * headlines is "the accounts have not got it" — an operator who checks a
+ * document that is actually there loses a minute, one who does not check a
+ * document that is missing loses it from the books.
+ */
+export function acTitleFor(problems: SaveProblem[], docLabel: string): string {
+  const allIncomplete = problems.length > 0
+    && problems.every((p) => (p as { code?: string }).code === AC_SENT_INCOMPLETE_CODE);
+  return allIncomplete ? acSentIncompleteTitle(docLabel) : acNotSentTitle(docLabel);
+}
+
 /**
  * The tone these are shown in, and it is NOT 'error'.
  *
@@ -99,7 +133,7 @@ export async function notifyAcNotSent(
   const problems = acNotSentProblemsOf(res);
   if (problems.length === 0) return;
   await notify({
-    title: acNotSentTitle(docLabel),
+    title: acTitleFor(problems, docLabel),
     body: <SaveProblemsList problems={problems} />,
     tone: AC_NOT_SENT_TONE,
   });

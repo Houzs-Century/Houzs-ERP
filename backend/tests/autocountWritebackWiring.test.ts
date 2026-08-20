@@ -105,7 +105,10 @@ describe('the six flows are hooked at the point the document becomes permanent',
   });
 
   test('6. GRN -> Purchase Invoice — the whole-GRN and the per-line paths', () => {
-    const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);');
+    /* The end anchor stops at the RETURN, whatever that return now carries:
+       since 2026-08-20 it also spreads `acNotSent`, so anchoring on the whole
+       old line pinned a response shape this test has no opinion about. */
+    const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number');
     expect(wholeGrn).toContain("op: 'gr_to_pi'");
 
     const perLine = between(piSource, 'Converted from Goods Receipt ${bucket.grnNumbers', '// Consume the GRN lines');
