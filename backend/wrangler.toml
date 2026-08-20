@@ -265,11 +265,14 @@ dataset = "houzs_erp_metrics"
 # After the strip-to-core cutover the AutoCount pulls + gamify jobs are gone;
 # what runs:
 #   */5    → Hyperdrive keep-warm ping + durable email-outbox drain
+#   */15   → MRP stored-planning snapshot refresh, per company (option B,
+#            2026-08-19) — so the MRP page opens instantly from a fresh plan
 #   */30   → ASSR per-stage alert scan + scheduled lead-time activations
 #   0 2    → Daily batch: SLA escalation, ASSR daily digest, project
 #            checklist reminders, idempotency-key TTL sweep
 crons = [
   "*/5 * * * *",
+  "*/15 * * * *",
   "*/30 * * * *",
   "0 2 * * *"
 ]
