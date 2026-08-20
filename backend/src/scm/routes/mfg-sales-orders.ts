@@ -3292,10 +3292,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       variants: (it.variants as Record<string, unknown> | null) ?? null,
     }));
     const createProblems = collectProcessingGateProblems({
-      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-         Undefined on the synthetic-context path (:5332) and that is fine —
-         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-      companyCode: c.get('companyCode') ?? null,
       procDate,
       delivDate,
       todayMY,
@@ -4867,8 +4863,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      of the owner's pinned rule. An absent property is `undefined`, not an error,
      so nothing said a word. The helper accepts the legacy spelling too. */
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
-  const depositTotalSen = posPaymentsTotalSen
-    ?? Math.max(0, typeof body.depositSen === 'number' ? body.depositSen : 0);
+  /* `depositTotalSen` stood here and is GONE with the deposit gate (owner
+     2026-08-20). It was the create's read of the money — the POS deposit, else
+     `body.depositSen` — and the gate below was its only reader. The value that
+     is actually STORED is computed independently at the INSERT
+     (`deposit_sen: posPaymentsTotalSen ?? ...`), so removing this changes what
+     the create REFUSES and nothing about what it WRITES. */
   /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
      here — is GONE with the stamp (2026-08-18), and with it this file's last
      `meetsProceedGate` call. #2383 had just documented this site as "THE ONE
@@ -4880,14 +4880,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      unless the same conditions pass. "Proceeded at create" is now the date
      landing on the row, and the 422 block below is the gate that refuses. */
 
-  /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date RELEASES
-     the order to purchasing (owner 2026-08-18: "Processing Date 就代表这张单可以
-     安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"). So it must NOT
-     be set until the company's deposit is collected (processingDateThresholdFor — Houzs 30%,
-     2990 50%). THE deposit rule for this create: since the auto-proceed marker
-     went with the second storage, this is the only place the create weighs
-     money, which is the point of one storage. depositTotalSen = the POS
-     deposit on this create; grandTotal = the order total. */
+  /* Processing-Date gate, post-pricing half — a Processing Date RELEASES the
+     order to purchasing (owner 2026-08-18: "Processing Date 就代表这张单可以
+     安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"), so the order
+     must be one purchasing can actually act on: a customer, a delivery address
+     line 1, a postcode and a delivery date.
+
+     It used to be the DEPOSIT gate as well (Loo 2026-06-30 — the company's
+     fraction, Houzs 30% / 2990 50%). The owner removed that condition on
+     2026-08-20 (「以电脑为准 —— 两边都不查」); see the block below. The block
+     stays because the four completeness conditions still need the priced order's
+     own header, and it still cannot live in the early gate block above. */
   {
     /* Same helper as the INSERT, or a legacy create writes an unjudged date. */
     const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
@@ -4897,33 +4900,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        isn't priced until now. Single-problem list here, but consistent shape.
        rollbackPwpClaims first: a rejected order must not burn a voucher (matches
        every other bail in this pricing block). */
-    /* GATE-ONLY money, never booked (owner 2026-07-31). The desktop New-SO screen
-       books a manually-added payment through the strict per-payment route AFTER
-       the order exists, so at CREATE time `depositTotalSen` sees only a
-       receipt-backed deposit (SalesOrderNew.tsx requires `receiptImageKey`) and
-       reads 0 for a hand-entered one. The operator then gets
-       "Deposit RM 0 of RM X needed" with the money plainly on screen, the create
-       422s, and the post-create payment flush never runs — a DEADLOCK: an SO with
-       a Processing Date and a hand-entered deposit could not be saved at all.
-       `pendingDepositSen` is the total the client is about to post; the client
-       only sends it for drafts that already carry a verified slip session, and it
-       is counted HERE and NOWHERE ELSE — not in deposit_sen, not in any
-       ledger — so it cannot double-book and cannot mark an order proceeded
-       against money that has not landed. */
-    const pendingDepositSen = Math.max(
-      0,
-      typeof body.pendingDepositSen === 'number' && Number.isFinite(body.pendingDepositSen)
-        ? Math.trunc(body.pendingDepositSen)
-        : 0,
-    );
-    /* Strict `=== true`: a stray truthy value must not waive a money condition. */
-    const manualEntry = body.manualEntry === true;
-    const depositProblems = procDateOnCreate
+    /* NO DEPOSIT CONDITION ON THIS CREATE — owner ruling, 2026-08-20:
+       「以电脑为准 —— 两边都不查」.
+
+       What stood here was the money half of the gate plus the machinery that had
+       grown around it: a `pendingDepositSen` read, and a `manualEntry` flag the
+       desktop New-SO screen set to `true` on EVERY create so the condition would
+       be dropped for it. The phone sent no such flag, so the identical order was
+       accepted on the desk and refused on the phone — the rule depended on the
+       screen, not on the order. Both are gone; the condition itself was removed
+       from collectProcessingGateProblems, so this call site cannot re-introduce
+       it and neither can the phone's.
+
+       The four remaining conditions still apply on create, unchanged. */
+    const pricedGateProblems = procDateOnCreate
       ? collectProcessingGateProblems({
-          /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-             Undefined on the synthetic-context path and that is fine —
-             processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-          companyCode: c.get('companyCode') ?? null,
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
@@ -4934,26 +4925,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
             hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
           },
-          /* `null` = this path has no deposit condition, the same way the
-             consignment mirror passes null (ProcessingGateFacts.deposit).
-             HAND-KEYED ORDERS ONLY. The desktop New-SO screen sets the flag
-             read above; a salesperson writes the order up for a
-             customer who has not paid yet, and it still has to be released for
-             purchasing to order against. The other four conditions — name,
-             address, postcode, delivery date — are untouched, so a manual order
-             is not a way to release an order nobody can deliver.
-             This is NOT a security boundary and does not pretend to be. The
-             route runs supabaseAuth, so only signed-in staff reach it, and the
-             same person can already open the New-SO screen and get this result
-             legitimately. The flag routes; it grants nothing new. */
-          deposit: manualEntry
-            ? null
-            : { paidSen: depositTotalSen + pendingDepositSen, totalSen: grandTotal },
         })
       : [];
-    if (depositProblems.length > 0) {
+    if (pricedGateProblems.length > 0) {
       await rollbackPwpClaims();
-      return c.json(validationFailedBody(depositProblems), 422);
+      return c.json(validationFailedBody(pricedGateProblems), 422);
     }
   }
 
@@ -5821,14 +5797,20 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       const lock = await soProcessingLockBlocked(sb, docNo);
       if (lock) return c.json(lock, 409);
       /* Setting the date here must clear what setting it on the header clears —
-         variants, colour-KIV, deposit, completeness, the date rules — or this
-         route is the way around them, and it supersedes the proceed gate below
-         (the aggregated list already carries both of that gate's conditions). */
+         variants, colour-KIV, completeness, the date rules — or this route is
+         the way around them, and it supersedes the proceed gate below (the
+         aggregated list already carries both of that gate's conditions).
+
+         The deposit is no longer among them (owner 2026-08-20), and the
+         `companyCode` argument went with it — it only ever picked the deposit
+         fraction. Proceeding through /status is the third surface of the same
+         act, so leaving the money condition here would have re-created the
+         split the ruling closes, one screen further along. */
       const problems = await soProcessingDateProblemsForDoc(sb, docNo, resolved.date, {
         customerName: curRow?.debtor_name,
         address1: curRow?.address1, postcode: curRow?.postcode,
         deliveryDate: curRow?.customer_delivery_date,
-      }, c.get('companyCode') ?? null);
+      });
       if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
       /* The pair rule, on the one write path that reaches the date without a
          header patch. The helper above already refuses a missing delivery date
@@ -6900,7 +6882,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      problems, and each carries a distinct HTTP status. */
   let variantOffenders: VariantOffender[] = [];
   let kivOffenders: ColourKivOffender[] = [];
-  let depositFacts: { paidSen: number; totalSen: number } | null = null;
 
   /* PR — Commander 2026-05-28 — Server-side variant rule enforcement.
      When the caller sets processingDate (Processing Date) to a non-null
@@ -7023,35 +7004,23 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
-  /* Processing-Date payment gate (Loo 2026-06-30) — the same ≥30%-collected rule
-     the CREATE path enforces, applied when a header PATCH SETS or CHANGES the
-     Processing Date to a non-null value. The date RELEASES the order to
-     purchasing, so it can't go in until ≥30% of the money is in. Fires ONLY on a genuine
-     change (clearing it, or an unchanged re-save, passes — so an unrelated edit on
-     an already-dated, since-refunded SO isn't blocked). Money-only — customer-info
-     / address are deliberately not gated (they resolve later in Proceed). `paid` =
-     sum(mfg_sales_order_payments.amount_sen), mirroring the paid_total_sen the
-     payment view computes; `total` = the header local_total_sen. */
-  {
-    const proc = body['processingDate'];
-    if (typeof proc === 'string' && proc) {
-      const origProc = String(
-        ((before as unknown as Record<string, unknown> | null)?.['processing_date'] as string | null) ?? '',
-      ).slice(0, 10);
-      if (proc.slice(0, 10) !== origProc) {
-        const [{ data: totRow }, { data: pays }] = await Promise.all([
-          sb.from('mfg_sales_orders').select('local_total_sen').eq('doc_no', docNo).maybeSingle(),
-          sb.from('mfg_sales_order_payments').select('amount_sen').eq('so_doc_no', docNo),
-        ]);
-        const totalSen = Number((totRow as { local_total_sen?: number } | null)?.local_total_sen ?? 0);
-        const paidSen = ((pays ?? []) as Array<{ amount_sen?: number | null }>)
-          .reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
-        // Collected (not returned) — the aggregated report weighs this alongside
-        // any variant / date problems and reports the concrete amount + threshold.
-        depositFacts = { paidSen, totalSen };
-      }
-    }
-  }
+  /* THE EDIT PATH'S DEPOSIT GATE IS GONE — owner ruling, 2026-08-20:
+     「以电脑为准 —— 两边都不查」.
+
+     What stood here (Loo 2026-06-30) read the order total and summed
+     `mfg_sales_order_payments` whenever a header PATCH SET or CHANGED the
+     Processing Date, and handed the result to the aggregated report as
+     `depositFacts`. It had NO waiver — the create path had one and this did not
+     — so the two halves of one order's life disagreed: a hand-keyed RM 0 order
+     was accepted at create and then REFUSED the moment anyone rescheduled it,
+     naming a deposit the operator had been told was fine the day before. That
+     asymmetry is what the owner's ruling closes, and it is closed by removing
+     the condition rather than by copying the create's waiver down here.
+
+     Two DB round-trips per dated header PATCH go with it — this block existed
+     only to feed the condition, and the aggregated report below no longer has a
+     money term to weigh. Everything else that block reports (variants, KIV,
+     completeness, the date rules) is untouched. */
 
   /* THE `proceededAt` PROCEED PATH IS GONE (2026-08-18), not merely ungated.
      `['proceededAt','proceeded_at']` left the map above, so no request body can
@@ -7127,17 +7096,17 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDeliv,
     });
     if (pairRefusal) return c.json(pairRefusal, 400);
-    /* The aggregated report — variants (collected above), the 30% deposit
-       (collected above), and the past-date / processing-≤-delivery date rules,
-       ALL in one response so the coordinator fixes them in a single pass. The
-       helper re-derives the past-date grandfather + processing-≤-delivery from the
+    /* The aggregated report — variants (collected above), the customer/delivery
+       completeness, and the past-date / processing-≤-delivery date rules, ALL in
+       one response so the coordinator fixes them in a single pass. The helper
+       re-derives the past-date grandfather + processing-≤-delivery from the
        effective + original dates, exactly matching the checks this block used to
-       `return` on one at a time. */
+       `return` on one at a time.
+
+       No deposit term and no `companyCode` any more (owner 2026-08-20): the
+       company code was here only to pick the deposit fraction, and the deposit
+       is no longer a condition of this gate. */
     const problems = collectProcessingGateProblems({
-      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-         Undefined on the synthetic-context path (:5332) and that is fine —
-         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-      companyCode: c.get('companyCode') ?? null,
       procDate: effProc,
       /* Post-cascade, so the aggregated report judges the row this save will
          actually leave behind rather than the one the body described. */
@@ -7165,7 +7134,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
           hasPostcode: !!eff('postcode'),
         };
       })(),
-      deposit: depositFacts,
     });
     if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
   }

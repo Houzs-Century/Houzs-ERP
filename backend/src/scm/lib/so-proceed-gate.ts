@@ -112,13 +112,17 @@ export async function soProcessingDateProblemsForDoc(
     customerName?: string | null;
     address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
   },
-  companyCode?: string | null,
 ): Promise<SaveProblem[]> {
-  const [{ data: liveItems }, deposit] = await Promise.all([
-    sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo),
-    soDepositFacts(sb, docNo),
-  ]);
+  /* NO DEPOSIT READ — owner ruling 2026-08-20, 「以电脑为准 —— 两边都不查」. This
+     used to `soDepositFacts(sb, docNo)` alongside the line read and hand the
+     result to the collector, which no longer has a money condition to weigh.
+     The `companyCode` parameter went with it: it existed only to pick the
+     deposit fraction (Houzs 30% / 2990 50%), and dropping it from the SIGNATURE
+     rather than ignoring it is what makes the compiler name every caller — an
+     optional parameter here would have let a call site keep passing a company
+     and believe it still decided something. */
+  const { data: liveItems } = await sb.from('mfg_sales_order_items')
+    .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo);
   const lines = ((liveItems ?? []) as Array<{
     id: string; item_code: string; item_group: string;
     variants: Record<string, unknown> | null; cancelled: boolean;
@@ -126,7 +130,6 @@ export async function soProcessingDateProblemsForDoc(
     .filter((it) => !it.cancelled)
     .map((it) => ({ id: it.id, itemCode: it.item_code, group: it.item_group, variants: it.variants }));
   return collectProcessingGateProblems({
-    companyCode,
     procDate,
     delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
     todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
@@ -139,6 +142,5 @@ export async function soProcessingDateProblemsForDoc(
       hasAddress: !!header.address1?.trim(),
       hasPostcode: !!header.postcode?.trim(),
     },
-    deposit,
   });
 }

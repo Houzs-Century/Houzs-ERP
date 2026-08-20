@@ -1436,9 +1436,66 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 |------|------|------|
 | Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`), **minus the by-SKU exemptions below** |
 | Colour KIV | `fabric_colour_kiv` | **no line may still be colour-KIV** (series committed via `fabricId`/`fabricLabel`, no `fabricCode` — `isColourKiv` in `variant-summary.ts`). Owner rule 2026-07-24 after SO-2607-016: a Processing Date means every line is a fully-confirmed maintained selection. Fires only when the date is genuinely SET or CHANGED — unrelated edits to an old KIV order, and clearing the date, never block. Also enforced on line-ADD / line-EDIT against an already-dated SO (409). |
-| Deposit, PER COMPANY | `processing_date_unpaid` | **Houzs 30%, 2990 50%** of the order total collected (`processingDateThresholdFor` in `order-rules`). Until 2026-07-31 the split existed only in a comment and both constants applied to everyone, so a 2990 order was refused at the Houzs 30%. An unknown/absent company code falls back to the LOOSER 30% on purpose — over-gating stops the shop floor with no signal. |
+| ~~Deposit, PER COMPANY~~ | ~~`processing_date_unpaid`~~ | **REMOVED 2026-08-20 by owner ruling — see "THE DEPOSIT IS NO LONGER A SAVE GATE" below.** It was Houzs 30% / 2990 50% of the order total collected (`processingDateThresholdFor` in `order-rules`). No save path weighs it any more, on any surface. The predicate `meetsDepositGate` still EXISTS and is still correct — the orphaned proceed refusal renders it — but nothing live consults it. |
 | Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. (A 2026-07-31 impact measurement over the then-live dated SOs found none blocked by the four kept fields. The figures are not restated here: nothing in the repo re-measures them, and they predate the 0286 rename, so they are a record of that day rather than a current claim.) |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
+
+### THE DEPOSIT IS NO LONGER A SAVE GATE (owner ruling, 2026-08-20)
+
+His words: **「以电脑为准 —— 两边都不查」** — the desktop is the standard, and
+NEITHER surface checks the money. This is a POLICY change, not a bug fix.
+
+**Why he was asked.** The rule had become a property of the SCREEN rather than
+of the order:
+
+| path | before the ruling |
+|---|---|
+| desktop create (`SalesOrderNew.tsx`) | sent a bare literal `manualEntry: true` on EVERY create — tied to no checkbox and to no operator decision — and the backend dropped the deposit condition for it |
+| mobile create (`MobileNewSO.tsx`) | sent nothing, so the phone REFUSED the identical order the desk had just accepted |
+| header edit (`PATCH /:docNo`) | no waiver at all. Fires when the patch SETS or CHANGES the Processing Date (an unchanged value is dropped by the normalisation at the top of the handler, so an unrelated header edit never reached it) — so a hand-keyed RM 0 order was accepted at create and then refused the moment anyone RESCHEDULED it, naming a deposit the operator had been told was fine the day before |
+| `/status` → IN_PRODUCTION | applied it through `soProcessingDateProblemsForDoc` |
+| amendment approve (`so-amendments.ts`) | summed the payment ledger and applied it again |
+
+**What changed.** The condition was removed **where it is decided** —
+`ProcessingGateFacts.deposit` and step 2 of `collectProcessingGateProblems`
+(`shared/so-save-problems.ts`) are gone, so all five paths above lose it from one
+place. The alternative (a second `manualEntry` flag on the phone) would have been
+a second copy of the thing that made this surface-dependent in the first place.
+`companyCode` went with it on that type and on `soProcessingDateProblemsForDoc`'s
+signature — it existed only to pick the deposit fraction, and removing it from
+the SIGNATURE rather than ignoring it is what made the compiler name every
+caller. That is how the amendment-approve path was found; a grep had missed it.
+
+**What did NOT change, and must not be read as loosened:**
+
+- The other four conditions still refuse — customer name, delivery address line
+  1, postcode, delivery date. An order purchasing cannot deliver against is
+  still not releasable.
+- Variants, colour-KIV, the past-date rules and the pair rule are untouched.
+- The deposit is still COLLECTED and still booked; `deposit_sen` is written at
+  the create exactly as before. Only the REFUSAL is gone.
+- Payments still cannot be recorded against a cancelled order, etc. — none of
+  the payment module moved.
+
+**Two live traps this leaves, deliberately out of scope:**
+
+1. **`proceedGateFailures` / `collectProceedGateProblems` (`order-rules.ts`)
+   still carry a deposit condition.** They are reachable only through
+   `soProceedGateBlocked`, which has had NO callers since 2026-08-18, so they
+   refuse nothing today — but whoever wires a future proceed path to them will
+   silently resurrect a rule the owner removed. Read this paragraph first.
+2. **`pendingDepositSen` is now inert.** Both `SalesOrderNew.tsx` and
+   `MobileNewSO.tsx` still compute and send it, and the create no longer reads
+   it — it existed only to feed this gate ("GATE-ONLY money, never booked"). It
+   is harmless and it is the `optional-param-noop` shape; removing it touches
+   `so-slip-optional-contract.test.ts`, which belongs to the SEPARATE
+   slip-optional ruling of 2026-08-13, so it was left for a follow-up rather
+   than folded in here.
+
+Pinned by `backend/src/scm/shared/deposit-not-a-save-gate.test.ts` (behaviour)
+and `backend/tests/depositGateOffWiring.test.ts` (that no surface re-introduces
+it), plus the inverted route-level case in
+`backend/tests/soProceedRefusalNamesCondition.test.ts`.
 
 ### The by-SKU variant exemptions
 
@@ -1599,9 +1656,11 @@ enforced separately in `so-save-problems.ts`, which never calls it; see *WHAT
 WAS UNIFIED IS THE RULE, NOT THE FUNCTION* below before editing either. Net
 effect of the unification: the proceed paths LOOSENED by one condition (email),
 the processing-date path TIGHTENED by four (name / address / postcode / delivery
-date), and the threshold became per-company. The money half is one predicate,
-`meetsDepositGate` — the Proceed gate and the aggregated report above both read
-it, so they cannot come to different verdicts about the same deposit.
+date), and the threshold became per-company. The money half was one predicate,
+`meetsDepositGate`, read by both — **and since the owner's ruling of 2026-08-20
+the aggregated save report no longer reads it at all** (see *THE DEPOSIT IS NO
+LONGER A SAVE GATE* above). The two cannot disagree about a deposit because only
+one of them still has an opinion, and that one is the orphaned proceed refusal.
 
 **PROCEED IS THE DATE (owner, pinned 2026-08-13).** *"只要有 Processing Date，就
 代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
@@ -1668,7 +1727,7 @@ that is not what the code does:
 | path | enforced by |
 |---|---|
 | create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts`). The create site reads it directly; both manual proceed paths reach it through `soProceedGateBlocked` (`backend/src/scm/lib/so-proceed-gate.ts`) → `collectProceedGateProblems` (`so-save-problems.ts`) |
-| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions plus `meetsDepositGate` for the money. It contains **zero** references to `meetsProceedGate` |
+| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions, the variant / KIV rules and the date rules. **No money term since 2026-08-20** (owner ruling). It contains **zero** references to `meetsProceedGate` and, now, zero to `meetsDepositGate` |
 
 Both sites read the same per-company threshold through the shared
 `processingDateThresholdFor` and demand the same four facts, so the rule is one
