@@ -115,6 +115,156 @@ guard `a header fact reaches a route, or the build says which one does not`.
 Guide §7c5. **The host binary must be rebuilt** (`deploy-on-host.ps1`) for the
 four `SalesHeader` slots; the ERP half lands with the merge and an old binary
 ignores the keys.
+## Three convert pickers printed a sofa's modules as identical rows — no variants shown [high]
+
+<!-- area: Sofa, fabric, variants -->
+
+**白话.** 一张沙发拆成好几个 module（9028-1A(LHF)、9028-1A(RHF)、9028-1NA），名字
+一模一样，分别只在布码、座高、脚高。以前有三个转单画面只印名字不印这些，所以老板在收货
+的时候看到的是三行长得一样的东西，根本分不出在收哪一个。手机上更严重：手机的转单精灵
+（SO→DO、SO→PO、DO→SI、PO→GRN 四个全部）连一行 variant 都没有。现在这三个画面都补上
+了跟其他画面同一条 variant 文字，资料本来就有，不用改后端。
+
+**Symptom.** Owner rule, 2026-08-19: *"我们全部 Transaction Workflow 该有的相关
+文件，by right 应该都是要有那些 variants 的… 只要有 variants 的，你就应该要显示
+variants"*. Three line-pickers rendered only a name: a sofa model's modules came
+out as N identical-looking rows, and the operator ticking one was guessing.
+
+**Root cause (traced in source, and the "the data isn't there" theory refuted by
+reading the handlers).** Two separate misses, both purely display-side:
+
+- `PurchaseConsignmentReceiveFromOrder.tsx` and
+  `PurchaseConsignmentReturnFromReceive.tsx` printed `r.materialName` alone and
+  used `r.description` only inside `searchValue`. Neither imported
+  `VariantDescription`, which the other ten `*From*.tsx` pickers all use.
+- `MobileConvertWizard.tsx` — the phone's ONLY create-by-convert surface for DO,
+  SI, GRN and PO — threw the fields away at the map: its local `PickLine` had
+  `label: description || itemCode` and no variant field at all, and its
+  `SoDeliverableLine` / `DoInvoiceableLine` / `OutstandingSoLine` payload types
+  omitted `itemGroup` and `variants`. The GRN branch's `GrnPickLine` *did* carry
+  both (the create needs them) and still printed neither.
+
+The variants were never missing from the wire. All four reads already select and
+return them — `routes/delivery-orders-mfg.ts:2258/:2266`,
+`lib/do-line-remaining.ts:292/:303`, `routes/mfg-purchase-orders.ts:694/:699`,
+`lib/outstanding-po-lines.ts:418`, `routes/purchase-consignment-receives.ts:601/:628`,
+`routes/purchase-consignment-returns.ts:340/:366`. Every one was read in the
+handler, not inferred from a payload type: a field in a TS type is not a field
+on the wire, and a rendered `<VariantDescription>` over a row whose endpoint
+never selected `variants` shows nothing and looks exactly like a missing
+component. The other nine pickers were audited the same way and all pass.
+
+**Fix.** The two consignment pickers get the same `VariantDescription` the other
+ten use (and the summary joins their `searchValue`, so searching `SEAT 24"`
+finds the row). The mobile wizard carries `itemGroup` + `variants` through the
+map and prints the shared `buildVariantSummary` string under the name on ALL
+FOUR targets — the same string the desktop renders, so the two surfaces cannot
+word a module differently. On the phone the line is omitted when the summary is
+empty rather than printing `Standard` filler (the existing mobile convention,
+`MobileModuleDetail.tsx:491`). No endpoint changed; no money touched.
+
+**Test.** `frontend/src/pages/scm-v2/convertPickerVariants.test.tsx` and
+`frontend/src/mobile/mobileConvertWizardVariants.test.tsx` mount the REAL
+screens with only the data hook / `authedFetch` faked, and assert the operator
+SEES `PC151-01 Pearl / SEAT 24" / LEG 6"` — not that a component is imported,
+which is the half-fix these files exist to keep out. One case uses a BEDFRAME
+bag so a wrong `item_group` (which silently renders the wrong summary branch)
+fails too. All six cases fail on the pre-fix files, verified by reverting each
+file and re-running: `Unable to find an element with the text: PC151-01 Pearl /
+SEAT 24" / LEG 6"`, while the sibling assertion that both rows print the shared
+name `9028 SOFA` still passed — so the harness was rendering and only the
+variant line was absent.
+
+**Ref.** 2026-08-19, branch `fix/variants-on-every-picker`.
+
+## Raising a Purchase Invoice answered 500, and went on answering it [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 老板从 Goods Receipt 开 Purchase Invoice,`POST /purchase-invoices` 回 500,
+屏幕只写「系统出问题了」。真正卡住人的不是那第一次失败,是**之后再按 Save 也一样**:这个
+画面从打开到关闭只用一把 Idempotency-Key,而中间层会把**任何**回应存起来 —— 包括 500 ——
+同样的内容再送一次就把那个 500 原封不动还给你,后端根本没跑。改了内容再送,变成 409
+「这把钥匙用过了」。唯一的出路是整页重开,单据全部重打。GRN 那边 2026-08-17 已经修过这
+个死路,PI 这边没有。现在:凡是「什么都没写」的拒绝,都会把钥匙放掉,改好再按就能存;单据
+一旦真的存进去了,后面就算出事也一定回 201,不会骗人说没存。顺带把讯息修好 —— 服务器本来
+就写了给人看的句子,是前端挑错了字段、又把整句丢掉。
+
+**Symptom.** Owner, production, 2026-08-19, walking SO → PO → GRN → PI on the
+receipt behind `HC-PO-2608-002` (three sofa modules, all at unit price 0.00 —
+the chain descends from an all-FOC order). `POST /api/scm/purchase-invoices` →
+**500**, screen shows only *"The system hit a problem. Please try again — if it
+keeps happening, let IT know."* It kept happening. Two sibling signals in the
+same console: `/api/scm/grns` → 409 and the `new?grnId=…&fromPicks=1` page load
+→ 504.
+
+**Root cause (traced, and the first theory refuted by test).** The 500 is not a
+crash. `POST /` has fifteen exits and every 5xx among them is a deliberate
+fail-closed refusal; the zero-price theory was tested directly and is wrong —
+`purchaseInvoiceZeroPriceCreate.test.ts` drives the real handler on that exact
+document and gets 201, because the arithmetic is guarded where it is done
+(`landed-allocation.ts` states the no-op guarantee for a zero pool and the
+divide-by-zero fallback for a zero basis; `recost.ts` reads 0 as "no price
+known" rather than dividing by it).
+
+What made ONE refusal permanent is the idempotency claim. `PurchaseInvoiceNew`
+mints one `Idempotency-Key` per page mount (`lib/idempotency.ts`
+`useIdempotencyKey`), `middleware/idempotency.ts:363-373` persists **every**
+terminal response "not only 2xx", and `:289-296` replays it for the identical
+payload — so the first refusal is frozen against that key, the handler is never
+reached again, and a corrected payload gets `idempotency_key_reused`
+(`:167`) instead. Only a page reload escapes, and it throws away the invoice.
+`grns.ts` closed exactly this on 2026-08-17 (`lib/no-write-refusal.ts` carries
+the trace); `purchase-invoices.ts` contained `refuseWithoutWriting` zero times,
+so the step after the receipt kept the dead end the receipt lost.
+
+The screen said nothing for a second, independent reason.
+`humanApiError` preferred `reason` over `message` and then dropped it: `reason`
+on these bodies is the driver's own text, which its hygiene filter is right to
+refuse — so the operator's sentence sitting beside it was never even read. And
+sixteen refusals across the tree staple the driver's words onto the END of the
+operator sentence (`…Please try again (column … does not exist).`), which made
+the whole sentence unsayable, not just the bracket.
+
+**Fix.** Three, and the first two had to ship together. (1) Every refusal
+`POST /` can emit now answers through `refuseWithoutWriting`, which releases the
+claim — the twelve pre-write exits unconditionally, and the three past the first
+write only on a rollback whose delete error came back null, because releasing a
+claim wrongly costs a duplicate payable while keeping one costs a retype.
+(2) Once the invoice is committed the answer is 201 whatever happens after: the
+five best-effort side-effects are wrapped, so a throw above one of their catches
+can no longer tell an operator that a saved invoice failed — which, with (1) in
+place, is the one shape that could produce a second payable. (3) `humanApiError`
+tries `message` before `reason` and, when a sentence fails only because of a
+trailing bracket, drops the bracket instead of the sentence; `insert_failed` /
+`items_insert_failed` / `load_failed` gained the sentence they never had.
+
+**The other two signals, named rather than fixed here.** The `/grns` **409** is a
+legitimate refusal — almost certainly `zero_cost_receipt`, the guard that
+refuses receiving at RM 0 an item bought at a real price before. Its message is
+**202 characters** and `humanApiError` drops a server sentence at 200, so the
+operator got the generic 409 line and not the two remedies the body carries.
+Measured, not inferred; the message is one word from fitting. The **504** on the
+`new?grnId=` page load is a gateway timeout on the SPA document request, outside
+this handler and not reproduced.
+
+**Ref.** this PR, 2026-08-20. Reproduced first, then fixed:
+`backend/tests/purchaseInvoiceCreateRefusalDeadEnd.test.ts` (the replayed 500
+and the corrected-payload 409, through the real middleware and the real router),
+`backend/src/scm/routes/purchaseInvoiceCommittedNeverFails.test.ts` (500 before
+the wrap, 201 after), `frontend/.../authed-fetch.message-beats-reason.test.ts`.
+Completeness gate: `backend/tests/piCreatePreWriteRefusalsReleaseKey.test.ts`,
+the PI sibling of `grnPreWriteRefusalsReleaseKey.test.ts` — it lists all twelve
+missed exits when run against the pre-fix router.
+## Four dead customer-PO columns + an orphaned trigram index carried on every SO header [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** `scm.mfg_sales_orders` carried `po_doc_no`, `customer_po`, `customer_po_id`, `customer_po_date` — four columns no surface has written since PR #140 dropped the Customer PO card (owner ruling #2429 made `ref` the canonical customer reference). A GIN/trgm search index `trgm_mfg_so_po_doc_no` was still maintained on the always-empty `po_doc_no`, and `/api/search` still ran an ILIKE against it, on every SO search.
+
+**Root cause (traced, census-verified — not guessed).** Read-only production census (run 32280818981, 2026-08-19, PR #2508): all four columns are filled = 0 across all 2830 SO rows. Exactly one view (`mfg_sales_orders_with_payment_totals`) projected them and one index (`trgm_mfg_so_po_doc_no`) was on `po_doc_no`; no constraint, function or policy referenced them. They were dead weight — projected by the SO list view, selected by the SO/reports/search/AutoCount-outbox routes, and frozen in the SO identity lock — but never carrying a value.
+
+**Fix.** Migration 0310 drops the index, drops the four columns, and recreates the payment-totals view without them, restoring the view's owner + grants via the 0191 self-adapting copy from `scm.suppliers_with_derived_category` (the 0189 grant-loss hazard). Every backend read of them on `mfg_sales_orders` was removed first — the SO HEADER select / insert / PATCH map (`mfg-sales-orders.ts`), the reports embed (`reports.ts`), the `/api/search` ILIKE (`search.ts`), the AutoCount outbox `SO_HEADER_COLS` + `ErpSoHeader` + `soCustomerRef` (`autocount-outbox.ts`, `autocount-writeback.ts`), the SO identity lock (`so-identity-lock.ts`) and the scale contract (`scale-pg-real-schema.mjs`). Sibling tables (`sales_invoices`, `delivery_orders`, consignment) keep their own `po_doc_no` snapshots — untouched. **Ref:** migration 0310 / 2026-08-19 (STAGED, awaiting review).
 ## A document AutoCount refused was still reported to the operator as saved [high]
 
 <!-- area: AutoCount sync + write-back -->
@@ -232,6 +382,60 @@ which is how progress here is recorded — it FAILS if a count drifts silently.
 
 **Ref.** `feat/grn-line-delete-in-transaction`, 2026-08-20.
 
+## #2516 turned the delivery-fee cell into a dead input on the SO create page [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 昨天那个「运费格可以直接打要收多少」的改动，把新建销售单那边弄坏了。手动加一
+行运费，打 250，一离开格子就变回 0.00，怎么打都没用。原因是新单上那一行运费本来就是 0，
+系统把 250 当成「我要收 250」，於是去算折扣 = 0 − 250，负数被夹成 0，单价一次都没写进
+去。而 Houzs 这边自己开的单，运费从来都是人手打单价的 —— 会叫伺服器自己算运费的那个
+旗标只有 POS 交单才会送 —— 所以那一刻起，新单根本放不了运费。现在改成：那一行还没有价
+钱的时候，格子就还是单价格；已经有价钱了，才是「要收多少」。
+
+**Symptom.** New Sales Order, add a `Delivery fee` line by hand, type 250, press
+Enter or click away: the cell reads `0.00`. Every retry does the same. Reported
+by the owner with a screenshot within the hour of #2516 deploying.
+
+**Root cause (traced).** #2516 routes fee lines through
+`feeDiscountForAmount(feeGrossSen, typed)` with
+`feeGrossSen = qty * unitPriceSen`. A hand-added fee line starts at
+`unitPriceSen: 0` (`emptySoLine`), so the gross is 0 and:
+
+    feeDiscountForAmount(0, 25000) = min(max(0 - 25000, 0), 0) = 0
+
+The clamp is correct — a figure at or above the gross is not a reduction — but
+the case is wrong. `unitPriceSen` was never written, and the blur handler
+reformats from `feeAmountSen(0, 0)` = 0. Typing any figure at all is a no-op.
+
+**Why it is worse than it looks.** `applyDeliveryFee` — the create flag that
+makes the server derive a fee — is sent ONLY by the POS handover;
+`git grep applyDeliveryFee -- frontend/src` returns nothing, and the route says
+so at `mfg-sales-orders.ts:4477`. So a Houzs-authored SO has ALWAYS had its fee
+typed in as a unit price, and #2516 removed the only way to do that. This was
+not a cosmetic edge: between deploy and this fix, a new Houzs order could not
+carry a delivery fee at all.
+
+**Fix.** The discount reading applies only once there is a fee to reduce.
+`editsFeeAsDiscount(isFeeCode, grossSen)` returns false at gross 0, so the cell
+goes back to writing `unitPriceSen` — that is the initial fee entry, not a
+reduction. An existing 250 fee still books 250 → 125 as a discount, untouched.
+
+The GROSS decides, not the net, so a fee waived to zero keeps fee semantics —
+otherwise waiving one would flip the cell's meaning and the next keystroke would
+do something different from the last.
+
+**What I got wrong, and the shape of it.** I assumed a fee line always carries a
+server-derived gross. True on the detail page, false while authoring. The tests
+in #2516 were all written against an existing 250 fee, so the whole suite passed
+green over a case that could not work — the arithmetic was right and the
+question of WHEN to apply it was never asked. `editsFeeAsDiscount` exists so
+that question now has an executable answer rather than living inline in the JSX.
+
+Five cases added, including the regression itself (`gross 0 -> not a fee edit`).
+
+**Ref.** fix/delivery-fee-line-can-be-priced-when-new, 2026-08-20. Fixes #2516,
+same day.
 ## company-scope: round2's stricter checker DEFERRED, leak fixes land on main's #2484 ratchet [minor]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->

@@ -126,14 +126,23 @@ test("the guard refuses rather than proceeds when the source lookup FAILS", () =
   for (const g of GUARDED) {
     if (!g.guard.startsWith("migratedRefusal")) continue;
     const body = bodies.get(g.src).get(g.route);
+    /* The ANSWER is asserted, not the spelling of the call. A refusal may be
+       returned through `c.json(...)` or through `refuseWithoutWriting(c, ...)`
+       — the second one additionally releases the request's idempotency claim,
+       which is what lets an operator correct the payload and try again
+       (lib/no-write-refusal.ts). Both are refusals and both are 500 here; a
+       gate that pinned one spelling would have blocked that fix while the rule
+       it guards was never in question. What stays pinned: it must RETURN, it
+       must be a 500, and `mig.reason` must ride the body so the failure is
+       findable. */
     assert.match(
       body,
-      /if \(!mig\.ok\) return c\.json\(\{ error: 'load_failed', reason: mig\.reason \}, 500\);/,
+      /if \(!mig\.ok\) return (?:c\.json\(|refuseWithoutWriting\(c, )[^;]*mig\.reason[^;]*, 500\);/,
       `${g.route} calls ${g.guard} but does not refuse when the lookup fails`,
     );
     assert.match(
       body,
-      /if \(mig\.refusal\) return c\.json\(mig\.refusal, 409\);/,
+      /if \(mig\.refusal\) return (?:c\.json\(|refuseWithoutWriting\(c, )mig\.refusal, 409\);/,
       `${g.route} calls ${g.guard} but does not return its refusal`,
     );
   }

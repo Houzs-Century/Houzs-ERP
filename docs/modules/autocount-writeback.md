@@ -292,6 +292,16 @@ delivery to an invoice call `refuseMigratedSources`
 `backend/tests/migratedConvertGuard.test.mjs` asserts the ORDER, not merely the
 presence — a refusal placed after the enqueue is no refusal at all.
 
+Since 2026-08-20 it asserts the ANSWER rather than one spelling of the call. A
+refusal may be returned through `c.json(...)` or through
+`refuseWithoutWriting(c, ...)`; the second additionally releases the request's
+idempotency claim so an operator can correct the payload and try again
+(`src/scm/lib/no-write-refusal.ts`). Both are refusals, both are the same status,
+and the rule this gate guards was never about which one is used — pinning the
+literal text would have blocked the Purchase Invoice create adopting the release.
+What stays pinned: the guard must RETURN, at the same status, carrying
+`mig.reason` so the failure is findable.
+
 Invoices for carried-over documents are written by
 `backend/scripts/create-migrated-invoices.mjs`, which enqueues nothing by
 construction. They carry `migrated_no_stock = true` (migration 0294), the same

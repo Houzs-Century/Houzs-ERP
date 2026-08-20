@@ -760,7 +760,7 @@ describe('an edit carries the fields a create carries', () => {
     doc_no: 'HC-SO-9', so_date: '2026-08-10', debtor_name: 'ACME', agent: 'KAR JIUN',
     sales_location: 'PETALING JAYA', branding: 'AKEMI', venue: 'KSL CITY MALL',
     address1: 'A1', address2: null, address3: null, address4: null,
-    phone: '012', ref: 'R', po_doc_no: 'CUST-PO-7', linked_ac_docno: 'SO-000021',
+    phone: '012', ref: 'R', customer_so_no: 'CUST-PO-7', linked_ac_docno: 'SO-000021',
   };
   const item = {
     doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1,
@@ -785,7 +785,7 @@ describe('an edit carries the fields a create carries', () => {
 
   test('a field the ERP does not have is OMITTED, never sent as null that would blank the book', async () => {
     const sb = withFlag('1', {
-      mfg_sales_orders: [{ ...so, agent: null, sales_location: null, branding: null, venue: null, po_doc_no: null }],
+      mfg_sales_orders: [{ ...so, agent: null, sales_location: null, branding: null, venue: null, customer_so_no: null }],
       mfg_sales_order_items: [{ ...item }],
     });
     await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
