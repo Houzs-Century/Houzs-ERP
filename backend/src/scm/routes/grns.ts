@@ -3425,10 +3425,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-/* Runs INSIDE runScmPgCommand's transaction — see the route below. `sb` is the
-   transactional client and is a parameter rather than a `c.get('supabase')`
-   read, because that read is what would silently put a write outside the
-   transaction this whole change exists to create. */
+/* Runs inside runScmPgCommand. `sb` is a PARAMETER, not a c.get('supabase')
+   read: that read is what would put a write outside the transaction. */
 async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const user = c.get('user');
@@ -3577,17 +3575,10 @@ async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out -> re-walk SO allocation.
-
-             DURABLE since 2026-08-20: the queue row commits in the SAME
-             transaction as the OUT above, so a Worker that dies here cannot
-             leave the stock moved and the allocation un-recomputed. The old
-             call was `recomputeSoStockAllocation(sb)` in a try/catch - if the
-             Worker died before reaching it, or the sweep threw, nothing
-             retried and SO lines stayed READY/PENDING wrongly until some
-             unrelated mutation happened to sweep. It is also no longer
-             swallowed: a failure to ENQUEUE must fail the delete, because a
-             stock move with no recompute is the exact state being removed. */
+          /* Stock went back out -> re-walk SO allocation. DURABLE: the queue
+             row commits with the OUT above, so a crash cannot leave stock moved
+             and lines still READY. NOT caught: a failed enqueue must fail the
+             delete. docs/modules/grn.md 7c. */
           await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
         }
       } catch { /* best-effort */ }
@@ -3599,16 +3590,8 @@ async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   return c.body(null, 204);
 }
 
-/* The FIRST GRN route to run inside the PG command transaction. Everything the
-   handler writes - the line delete, the reversing stock OUT, the entity audit,
-   the AutoCount outbox row and the allocation queue row - now commits together
-   or not at all.
-
-   Note what this costs: runScmPgCommand answers 503 `scm_pg_command_required`
-   where DATABASE_URL is absent. That is deliberate and is the honest failure -
-   refusing is better than half-writing a stock reversal.
-
-   The remaining five GRN routes are unchanged and still best-effort; converting
-   them is one PR each, postGrnHandler last. See
-   docs/ALLOCATION-DURABILITY-PLAN.md. */
+/* FIRST GRN route inside the PG command transaction: line delete, stock OUT,
+   audit, outbox and allocation request commit together or not at all. Costs a
+   503 where DATABASE_URL is absent - refusing beats half-writing a reversal.
+   Other five routes unchanged. docs/modules/grn.md 7c. */
 grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, (sb) => deleteGrnLineCommandHandler(c, sb)));
