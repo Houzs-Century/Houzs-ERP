@@ -182,13 +182,20 @@ The hook now returns `error` and the picker renders it **instead of** the
 not-found line. `check-silent-mutations` enforces this for `useMutation`, not
 `useQuery`, which is how it survived.
 
-**The gate is TEXT, and that is the part nobody thinks to check.**
-`canAccessServiceCases` (`assr.ts:98-106`) admits the `service_cases.read` holder
-**or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
-(`services/pmsAccess.ts:146-152`) tests `position_name` against `/^sales/i` and
+**The gate WAS TEXT, and that is the part nobody thought to check — FIXED
+2026-08-20.** `canAccessServiceCases` used to admit the `service_cases.read`
+holder **or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
+(`services/pmsAccess.ts`) tests `position_name` against `/^sales/i` and
 `department_name` for the substring "sales". So a real salesperson whose position
-or department field is blank, or spelled another way ("Executive Sales" fails
-`/^sales/i`), is refused — and their permission list looks perfectly fine.
+or department field was blank, or spelled another way ("Executive Sales" fails
+`/^sales/i`), was refused — and their permission list looked perfectly fine.
+
+The middle term is now `holdsHouzsCompanyGrant(c)` — the owner's ruling,
+"有 Houzs 这家公司的授权 就好（不看职称）". A company grant is provisioned
+deliberately, in one place, by someone who meant to; a job title is free text
+nobody re-checks against this gate. The permission and director terms are
+unchanged. See §6 *Route admission* and
+`docs/SERVICE-CASE-VISIBILITY-DECISION.md`.
 
 **Worked example, 2026-08-19.** A salesperson could not raise a case against
 `SO-005263`. Two hypotheses were raised and both were guesses, because the screen
@@ -283,9 +290,12 @@ Token-gated companions (no session): `/api/track` (customer verify),
 
 ### List (`assr.ts:807-835` → `services/assr.ts:1553-1727`)
 
-1. **Scope** — `assrVisibleUserIds(c)` (`assr.ts:148-156`) and
-   `assrVisibleAgentNames(c)` (`:163-…`), both keyed off the same tier
-   predicate `assrUnrestricted` (`:140-146`). `undefined` = unrestricted.
+1. **Scope** — `assrVisibleUserIds(c)`, keyed off the tier predicate
+   `assrUnrestricted`. `undefined` = unrestricted. The ids are turned into a
+   WHERE fragment by `assrVisibilityPredicateSql`
+   (`services/assrVisibility.ts`) — see §6 *Row visibility*.
+   `assrVisibleAgentNames` was removed on 2026-08-20 with the free-text
+   `sales_agent` match it fed.
 2. **Company** — `assrCompanyIds(c)` (`:115-117`) → `pushAllowedCompanies`.
    Service Cases are a cross-company queue that follows the caller's granted
    companies (decision trail in the header comment `:91-106`).
@@ -498,11 +508,30 @@ leak while collapsing the second into the first is an empty-list outage.
 
 Two gates, deliberately different:
 
-- `requireServiceCaseAccess(perms)` (`backend/src/routes/assr.ts:78-89`) wraps
-  `canAccessServiceCases` (`:66-74`): pass if the caller holds any of the listed
-  permissions **OR** is Sales staff (`isSalesUser`) **OR** is a director
-  (`isDirectorUser` = `*` / Super Admin / Sales Director / Finance Manager).
-  Applied only to READS and to CREATE.
+- `requireServiceCaseAccess(perms)` wraps `canAccessServiceCases`: pass if the
+  caller holds any of the listed permissions **OR** holds the **HOUZS company
+  grant** (`holdsHouzsCompanyGrant`) **OR** is a director (`isDirectorUser` =
+  `*` / Super Admin / Sales Director / Finance Manager). Applied only to READS
+  and to CREATE.
+
+  The middle term was `isSalesUser` — a job-title test — until 2026-08-20.
+  `holdsHouzsCompanyGrant` reads `allowedCompanyIds` with the usual three-state
+  sentinel: `undefined` (unresolved company context) degrades to YES, exactly as
+  `allowedCompaniesSql` degrades to no predicate, so a cold start does not 403
+  everyone; `[]` is NO; a resolved set is YES only when HOUZS is in it.
+
+  **Known consequence, measured, not guessed.** Census run 32351722894
+  (2026-08-20, production): admittance goes 49 -> 77 active users, **+28 gained,
+  0 lost**. The 28 are Operation Department staff — Drivers, Warehouse Crew,
+  Outsource Transporters — plus HR and an Operation Executive. That is what
+  "不看职称" means in this data.
+
+  **Known future gap, also measured.** Six Sales-titled active users hold no
+  HOUZS grant (the 2990-only cohort). None of them loses access today, because
+  each is admitted by the permission or director term as well — but a FUTURE
+  2990-only rep with neither would be refused by this gate. If 2990 grows its own
+  sales team, this term needs a second company, or it needs to become "holds any
+  granted company".
 - `requirePermission("service_cases.<verb>")` — plain, for every write /
   manage / approve route. Owner rule 8 widened intake for Sales; it never
   widened mutation access (comment `:52-65`).
@@ -512,13 +541,75 @@ Permission keys in play: `service_cases.read`, `.create`, `.write`, `.manage`,
 
 ### Row visibility (WHICH cases)
 
-`assrUnrestricted(user)` (`assr.ts:140-146`) — `*`, or `service_cases.manage`,
-or a director — sees everything. Everyone else is narrowed to their reporting
-subtree by `assrVisibleUserIds` (`:148-156`, `subtreeUserIds`, full depth) plus
-`assrVisibleAgentNames` (`:163-…`) for legacy cases that only carry a free-text
-`sales_agent`. Both fail **closed** (`[]`) when the caller has no resolvable
-identity. Scoped callers additionally lose creditor fields (`stripCreditorFields`
-`:800`, applied at `:832-834`).
+`assrUnrestricted(user)` — `*`, or `service_cases.manage`, or a director — sees
+everything, and **must not be narrowed**: office staff work a case on a
+salesperson's behalf ("要不然 office 的帮不到 sales 处理东西了", owner
+2026-08-20). Everyone else is narrowed to their reporting subtree by
+`assrVisibleUserIds` (`subtreeUserIds`, full depth), which fails **closed** (`[]`)
+when the caller has no resolvable identity. Scoped callers additionally lose
+creditor fields (`stripCreditorFields`).
+
+**What the subtree is matched ON changed on 2026-08-20**, and this is the whole
+rule now — `assrVisibilityPredicateSql` in
+`backend/src/services/assrVisibility.ts`:
+
+| source of the case's SO | who may see it |
+|---|---|
+| ERP-native — `doc_no` resolves to a non-DRAFT, non-CANCELLED `scm."mfg_sales_orders"` row | `created_by` / `assigned_to` / `assigned_to_2` in the subtree, **or** the order's `salesperson_id` -> `scm.staff.user_id` (mig 0066) in the subtree. BY ID. |
+| AutoCount `sales_orders` mirror, or no resolvable SO | whoever the COMPANY predicate admits. No agent test at all. |
+
+The asymmetry is about DATA QUALITY, not trust: "AutoCount 那一边，它的 SysAgent
+可能也不准吧". The old rule OR-ed
+`LOWER(sales_agent) LIKE '%<subtree member name>%'` — a substring match over text
+mirrored from AutoCount — which is what silently removed a batch of Sales Agents
+from their own cases. `assrVisibleAgentNames` is **gone**; `subtreeAgentNames`
+(`services/orgScope.ts`) stays, because `/my-cases` still uses it (below).
+
+**One predicate, four readers.** `pushVisibilityScope` (list + CSV export),
+`assrVisibilitySql` (the five aggregate endpoints), `assrCaseRowInScope` (detail
+GET + printable) and `caseInCallerScope` (the mutating `/:id` guard) all resolve
+through that one string — `assrCaseRowInScope` by asking the database with it
+rather than restating it in TypeScript. The two SQL twins and the two TS copies
+that existed before are the drift `fix/assr-aggregate-scope` had to close once
+already. `backend/tests/assrVisibilityRule.test.ts` scans the reader files and
+fails if the id clause reappears in any of them.
+
+**How much this widened, measured.** Census run 32351722894 (2026-08-20,
+production): of 859 non-archived cases, **7** are ERP-sourced and **852** are
+AutoCount-sourced — so in practice almost the whole case book is now
+company-open. All 60 visibility-scoped users gain cases; **36 go from ZERO
+visible cases to some** (the reported outage); 45,168 user-case grants added, 0
+lost.
+
+**ASSUMPTION AWAITING THE OWNER — "own" keys off the SO's SALESPERSON, not the
+case's CREATOR.** `docs/SERVICE-CASE-VISIBILITY-DECISION.md` leaves this open in
+so many words: *"for an ERP order does 'own' key off the SO's salesperson or the
+case's creator? Ask before choosing - they differ whenever office raises a case
+on a salesperson's behalf."* The shipped rule takes the SALESPERSON, because that
+is the binding the same paragraph calls real, and because the creator is already
+covered by the separate `created_by` term — so office raising a case on a rep's
+behalf leaves the case visible to office (unrestricted tier) AND to the rep and
+their upline (salesperson term), which is the outcome the tier exists to allow.
+If the owner rules the other way, the change is to drop the `es.user_id` arm from
+`assrVisibilityPredicateSql` and rely on `created_by` alone. It affects 7 cases
+today (census run 32351722894).
+
+**`/my-cases` is NOT part of this rule and still matches on the name.** It
+answers a different question — "cases that are MINE" — and lists rows whose
+`sales_agent` text matches a subtree display name (`subtreeAgentNames`). So a rep
+can see an AutoCount case in the main list that does not appear under My Cases.
+That is deliberate, and it was left alone on 2026-08-20 rather than swept in.
+
+**The FRONTEND gate is now NARROWER than the backend**, deliberately and
+temporarily. `PageGuard allowSales` still asks `org.sales.staff`
+(= `isSalesUser`), so a HOUZS grantee who is not Sales-titled needs the
+`service_cases` page grant to reach the screen even though the API would answer
+them. It is not a regression — that person could not open the page before either
+— and it cannot be closed by OR-ing two capabilities on the client, which
+`frontend/src/auth/capabilities.ts` forbids by name. The composed capability has
+to be resolved on the server, and `/auth/me` is registered BEFORE the
+`companyContext` middleware, so it has no company grant to read. Closing it means
+resolving the grant inside `/auth/me`.
 
 Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 (`assrCompanySql` `:109`, `assrCompanyIds` `:115`), every creator stamps
@@ -551,7 +642,7 @@ them — and are called by both:
 
 | exported from `services/assrVisibility.ts` | answers |
 |---|---|
-| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all (self + downline + the legacy `sales_agent` reach)? `true` for an unrestricted caller. |
+| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all? The id terms are checked in memory, then the rest is asked of the database using `assrVisibilityPredicateSql` — the SAME string the list builds its WHERE from, never a second copy. `true` for an unrestricted caller; fails CLOSED if the query throws. |
 | `assrCallerIsScoped(c)` | is this caller visibility-restricted, i.e. must not see supplier identity? |
 | `stripCreditorFields(row)` | removes the creditor columns, both naming conventions. |
 
@@ -563,7 +654,7 @@ on one of two routes that emit the same content is not enforced.
 | Surface | What it checks | File |
 |---|---|---|
 | Desktop routes `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id` | `PageGuard page="service_cases" allowSales` | `App.tsx:369, 386, 402, 410` |
-| `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")`, the same `pmsAccess.isSalesUser` classifier `requireServiceCaseAccess` admits on | `frontend/src/auth/PageGuard.tsx:70`, `backend/src/services/capabilities.ts:244` |
+| `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")` = `pmsAccess.isSalesUser`. **No longer the same classifier the API admits on**: `requireServiceCaseAccess` moved to the HOUZS company grant on 2026-08-20 and this term did not follow. See §6 *Row visibility*, last paragraph, for why and what closing it takes. | `frontend/src/auth/PageGuard.tsx`, `backend/src/services/capabilities.ts` |
 | Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx:474` |
 | Mobile list query `enabled` | `can("service_cases.read") \|\| capability(user, "org.sales.staff") \|\| capability(user, "org.director")` — `canViewCases` | `frontend/src/mobile/MobileServiceCase.tsx` |
 
