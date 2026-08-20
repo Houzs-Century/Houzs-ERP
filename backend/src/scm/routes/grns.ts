@@ -3413,8 +3413,16 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-/* Inside runScmPgCommand; `sb` is a PARAMETER so no write escapes the txn. */
-async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
+/* First GRN route in the PG command txn: line delete, stock OUT, audit, outbox
+   and allocation request commit together or not at all. 503s without
+   DATABASE_URL by design. `sb` is the TRANSACTIONAL client - the body must not
+   reach for c.get('supabase'). The body stays INSIDE the route on purpose:
+   several checks scan grns.ts by route block, and hoisting it to a named
+   handler moved it out of their sight. docs/modules/grn.md 7c. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as mfg-sales-orders' command handlers.
+  sb: any,
+) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
@@ -3573,8 +3581,4 @@ async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   await recomputeGrnTotals(sb, grnId);
   await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-}
-
-/* First GRN route in the PG command txn; 503s without DATABASE_URL by design.
-   docs/modules/grn.md 7c. */
-grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, (sb) => deleteGrnLineCommandHandler(c, sb)));
+}));
