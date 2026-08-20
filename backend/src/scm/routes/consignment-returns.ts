@@ -42,6 +42,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
+import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 
 export const consignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentReturns.use('*', supabaseAuth);
@@ -1039,6 +1040,20 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of the same back door: the over-return cap above and the
+     resync below both key on consignment_do_item_id, so an unlinked line whose
+     code is re-typed to one the Consignment Note carries counts against no note
+     line and the same goods return again. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'consignment-return', {
+      parent: { table: 'consignment_delivery_returns', column: 'consignment_do_id', id, companyId: co.companyId },
+      storedLink: (prev as { consignment_do_item_id?: string | null }).consignment_do_item_id ?? null,
+      storedCode: (prev as { item_code: string | null }).item_code,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('consignment_delivery_return_items').update(updates).eq('id', itemId), co.companyId);
