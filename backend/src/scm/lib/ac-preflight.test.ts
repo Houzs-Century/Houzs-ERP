@@ -14,6 +14,8 @@ import {
   type ErpLine, type ErpPoHeader,
 } from '../../services/autocount-writeback';
 import { ItemCodeError } from '../../services/autocount-item-code';
+import rawPreflight from './ac-preflight.ts?raw';
+import rawOutbox from './autocount-outbox.ts?raw';
 
 const codes = (ps: Array<{ code: string }>) => ps.map((p) => p.code);
 const messages = (ps: Array<{ message: string }>) => ps.map((p) => p.message).join(' || ');
@@ -244,5 +246,54 @@ describe('what this module refuses to say', () => {
 
   test('a document that composed cleanly says nothing at all', () => {
     expect(acNotSentProblems(null, 'purchase order')).toEqual([]);
+  });
+});
+
+/* ── the two lists that must not drift apart ────────────────────────────────
+   A refusal is surfaced TWICE and by two different mechanisms, and each one is
+   an instanceof chain someone has to remember to extend:
+
+     noteReadFailure (autocount-outbox.ts)  -> the durable outbox row, which is
+       what an ENGINEER reads. Anything missing from its chain hits the early
+       return: no row, no console line, nothing.
+     acNotSentProblems (this module)        -> the sentence the OPERATOR reads.
+       Anything missing from its chain returns [] — saved, not sent, nobody told.
+
+   Both were silently incomplete for the same error class on 2026-08-20
+   (`AcSoToPoAlignmentError`, added by the SO-to-PO whole-master change), which
+   is what this test exists to make impossible to repeat. It reads the two
+   SOURCES rather than calling the functions, because the failure is a missing
+   branch and a missing branch cannot be provoked by any input. */
+describe('every refusal reaches BOTH the queue and the operator', () => {
+  /** The error classes an `e instanceof X` chain names, inside one function. */
+  const instanceOfChain = (source: string, from: string, to: string): string[] => {
+    const a = source.indexOf(from);
+    expect(a, `anchor missing: ${from}`).toBeGreaterThanOrEqual(0);
+    const b = source.indexOf(to, a + from.length);
+    expect(b, `anchor missing after ${from}: ${to}`).toBeGreaterThan(a);
+    const body = source.slice(a, b);
+    return [...new Set([...body.matchAll(/e instanceof ([A-Za-z0-9_]+)/g)].map((m) => m[1]))].sort();
+  };
+
+  test('the outbox row and the operator sentence name the SAME error classes', () => {
+    const queue = instanceOfChain(
+      rawOutbox.replace(/\r\n/g, '\n'),
+      'async function noteReadFailure(',
+      'const message = (e as Error).message;',
+    );
+    const operator = instanceOfChain(
+      rawPreflight.replace(/\r\n/g, '\n'),
+      'export function acNotSentProblems(',
+      'Anything else is not a refusal the composer named',
+    );
+
+    /* Named both ways round, so the failure says WHICH side is short rather
+       than printing two sorted arrays and leaving the reader to diff them. */
+    const noSentence = queue.filter((k) => !operator.includes(k));
+    const noQueueRow = operator.filter((k) => !queue.includes(k));
+    expect(noSentence, `refused into the outbox with no operator sentence: ${noSentence.join(', ')}`).toEqual([]);
+    expect(noQueueRow, `has an operator sentence but is swallowed by the enqueue: ${noQueueRow.join(', ')}`).toEqual([]);
+    // A positive control: an empty chain on either side would satisfy both filters.
+    expect(queue.length, 'the chain was read, not missed').toBeGreaterThan(5);
   });
 });
