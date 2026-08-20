@@ -73,6 +73,15 @@ One guard, `scm.sales.returns`, over the whole router — read and write.
 |---|---|---|
 | GET | `/` | List. `?status=` filter; row-scoped by sales scope (see §4) |
 | GET | `/returnable-do-lines` | DO lines still returnable — the picker behind "from DO" |
+
+**A LOADED delivery order is NOT returnable, and that is now a stated choice
+rather than a shared default (2026-08-20).** The picker and the Pending engine
+behind it (`lib/do-line-remaining.ts`) take a REQUIRED `DoPendingBasis`, and this
+module passes `'delivered'`: goods still on the lorry never left, so nothing can
+come back. The Sales-Invoice side passes `'invoiceable'` and DOES offer a LOADED
+delivery — the owner ruled on 2026-08-20 (不要拦 —— 人自己知道) that a person
+raising an invoice by hand knows whether the goods arrived. The two bases differ
+by exactly that one status; see `docs/bugs/0480` before collapsing them.
 | GET | `/:id` | One return, header + lines |
 | POST | `/` | Create |
 | POST | `/from-do`, `/from-dos` | Convert DO line(s) into a return. Same handler (`convertDoLinesToReturn`) under both paths — the plural came later and the singular is kept for callers already on it |

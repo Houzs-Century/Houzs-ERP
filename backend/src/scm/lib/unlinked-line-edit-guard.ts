@@ -113,7 +113,11 @@ export async function doPendingItemCodesOf(
   if (error) return { ok: false, reason: error.message ?? 'delivery_order_items lookup failed' };
   const rows = (data ?? []) as Array<{ id: string; item_code: string | null }>;
   if (rows.length === 0) return { ok: true, codes: new Set() };
-  const remaining = await doRemainingByItemId(sb, rows.map((r) => r.id));
+  /* 'delivered' — UNCHANGED from what this shadow guard has always measured.
+     It asks whether a parent DO line still has open quantity, which is a stock
+     question, and the owner's 2026-08-20 ruling was about invoicing. Stated so
+     the next reader sees a decision rather than an oversight. */
+  const remaining = await doRemainingByItemId(sb, rows.map((r) => r.id), 'delivered');
   if (!remaining.ok) return { ok: false, reason: `remaining unreadable: ${remaining.reason}` };
   const out = new Set<string>();
   for (const r of rows) {

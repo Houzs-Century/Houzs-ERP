@@ -833,12 +833,12 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
   // enumerated every company's delivery orders into this picker.
-  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c), 'invoiceable');
   // NOT `{ lines: [] }` — an empty picker claims every delivered line is already
   // invoiced, and a failed read may not make that claim. Refuse to render.
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
   if (candidates.doIds.length === 0) return c.json({ lines: [] });
-  const remaining = await doLineRemaining(sb, candidates.doIds);
+  const remaining = await doLineRemaining(sb, candidates.doIds, 'invoiceable');
   if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
   const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   return c.json({ lines });
@@ -1062,7 +1062,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
       .map((r) => (r as { do_item_id?: string | null }).do_item_id)
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
-      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds, 'invoiceable');
       /* Recheck unreadable -> roll back, and never under the race message.
          lib/do-line-remaining.ts's header argues the trade-off in full. */
       if (!recheck.ok) {
@@ -1210,7 +1210,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
-  const remainingResult = await doLineRemaining(sb, doIds);
+  const remainingResult = await doLineRemaining(sb, doIds, 'invoiceable');
   /* Pre-write refusal — every qty below is capped by `line.remaining`, and an
      empty map surfaced as a 404 blaming the pick for a database error. */
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
@@ -1358,7 +1358,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       .map((r) => (r as { do_item_id?: string | null }).do_item_id)
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
-      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds, 'invoiceable');
       // Recheck unreadable -> roll back, under the honest reason (as POST / above).
       if (!recheck.ok) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
@@ -1508,7 +1508,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
      ceiling became a silent 200 with nothing appended. Refuse before both. */
   if (doItemsErr) return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
-  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string), 'invoiceable');
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
   const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb

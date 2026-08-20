@@ -1,16 +1,19 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileMailCenter } from "./MobileMailCenter";
+import { LABEL_PALETTE } from "../pages/MailCenter/mail-labels";
 
-const { apiGet, apiPost, queryData, authUser } = vi.hoisted(() => ({
+const { apiGet, apiPost, apiPatch, queryData, authUser, toastError } = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiPatch: vi.fn(),
   queryData: new Map<string, unknown>(),
   authUser: { current: null as unknown },
+  toastError: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
-  api: { get: apiGet, post: apiPost, patch: vi.fn(), fetchBlobUrl: vi.fn() },
+  api: { get: apiGet, post: apiPost, patch: apiPatch, fetchBlobUrl: vi.fn() },
 }));
 
 // Keyed by the useQuery cache key so a test can seed the addresses / labels /
@@ -26,7 +29,7 @@ vi.mock("../hooks/useQuery", () => ({
 }));
 
 vi.mock("../hooks/useToast", () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
+  useToast: () => ({ success: vi.fn(), error: toastError, info: vi.fn() }),
 }));
 
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({
@@ -350,5 +353,324 @@ describe("MobileMailCenter Auto-sent folder", () => {
     expect(screen.getByText("customer@example.com")).toBeTruthy();
     expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.getByText("550 mailbox unavailable")).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Four more phone-only gaps, same class as the three above: desktop IMPORTS a
+// shared rule and the phone re-implemented the screen without it. Every
+// assertion below is the desktop behaviour, read off the module desktop uses.
+//
+//   1. attachments  — Compose.tsx / Thread.tsx send `attachments`; the phone
+//                     sent no such key and had no picker. The phone camera is
+//                     the best attachment source in the business.
+//   2. Cc / Bcc     — Compose.tsx sends both; the phone had neither field.
+//   3. assign       — Thread.tsx writes assignedToUserId + assignedToName; the
+//                     phone carried both fields in its type and never wrote them.
+//   4. label filter — Inbox.tsx sets ?label=; the phone could APPLY a label and
+//                     then had no way to list the threads carrying it.
+// ---------------------------------------------------------------------------
+
+// jsdom's FileReader resolves on a macrotask, so the three microtask ticks in
+// flush() are not enough to see a picked file land.
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function pickFile(name: string, type: string) {
+  const input = screen.getByLabelText("Attach images or PDF files");
+  fireEvent.change(input, { target: { files: [new File(["hello"], name, { type })] } });
+}
+
+describe("MobileMailCenter outbound attachments", () => {
+  beforeEach(() => {
+    queryData.clear();
+    authUser.current = { id: 7, email: "zoe@houzs.test" };
+    queryData.set("/api/mail-center/addresses", ALPHABETICAL_ADDRESSES);
+    queryData.set(THREAD_DETAIL_KEY, threadDetail());
+    apiGet.mockReset();
+    apiGet.mockImplementation(async () => threadsPage());
+    apiPost.mockReset();
+    apiPost.mockImplementation(async () => ({ ok: true }));
+    apiPatch.mockReset();
+    toastError.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it("sends a photo attached to a NEW email", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    await flush();
+
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "customer@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Subject"), {
+      target: { value: "Site photo" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Write your email/), {
+      target: { value: "See attached." },
+    });
+    pickFile("sofa.jpg", "image/jpeg");
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await settle();
+
+    const call = apiPost.mock.calls.find(([url]) => String(url) === "/api/mail-center/compose");
+    const body = call?.[1] as Record<string, unknown>;
+    expect(body).toBeTruthy();
+    const attachments = body.attachments as { filename: string; contentBase64: string }[];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].filename).toBe("sofa.jpg");
+    expect(attachments[0].contentBase64.length).toBeGreaterThan(0);
+  });
+
+  it("sends a photo attached to a REPLY", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByText("Quotation for 3 sofas"));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    await flush();
+
+    fireEvent.change(screen.getByPlaceholderText(/Write your reply/), {
+      target: { value: "Photo of the fabric." },
+    });
+    pickFile("fabric.pdf", "application/pdf");
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await settle();
+
+    const call = apiPost.mock.calls.find(([url]) => String(url).endsWith("/reply"));
+    const body = call?.[1] as Record<string, unknown>;
+    expect(body).toBeTruthy();
+    const attachments = body.attachments as { filename: string; contentBase64: string }[];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].filename).toBe("fabric.pdf");
+  });
+
+  it("rejects a disallowed file in the SHARED rule's own words, and sends nothing", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    await flush();
+
+    pickFile(
+      "quotation.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    await settle();
+
+    // Verbatim from mail-attachments.ts — the same sentence the backend answers
+    // with, which is the point of importing the rule instead of re-writing it.
+    const wanted =
+      "is not an allowed type. Only images and PDF files can be attached.";
+    expect(
+      screen.getByText((text) => text.includes("quotation.docx") && text.includes(wanted)),
+    ).toBeTruthy();
+  });
+});
+
+describe("MobileMailCenter Cc / Bcc", () => {
+  beforeEach(() => {
+    queryData.clear();
+    authUser.current = { id: 7, email: "zoe@houzs.test" };
+    queryData.set("/api/mail-center/addresses", ALPHABETICAL_ADDRESSES);
+    apiGet.mockReset();
+    apiGet.mockImplementation(async () => threadsPage());
+    apiPost.mockReset();
+    apiPost.mockImplementation(async () => ({ ok: true }));
+    toastError.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it("sends the copied recipients the operator typed", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: /Cc \/ Bcc/ }));
+    await flush();
+
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "customer@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("cc@example.com"), {
+      target: { value: "manager@houzs.test, ops@houzs.test" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("bcc@example.com"), {
+      target: { value: "audit@houzs.test" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Subject"), {
+      target: { value: "Your quotation" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Write your email/), {
+      target: { value: "Attached." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flush();
+
+    const call = apiPost.mock.calls.find(([url]) => String(url) === "/api/mail-center/compose");
+    const body = call?.[1] as Record<string, unknown>;
+    expect(body).toBeTruthy();
+    expect(body.cc).toEqual(["manager@houzs.test", "ops@houzs.test"]);
+    expect(body.bcc).toEqual(["audit@houzs.test"]);
+  });
+
+  it("names the bad copied address instead of sending it", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /Cc \/ Bcc/ }));
+    await flush();
+
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "customer@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("cc@example.com"), {
+      target: { value: "not-an-address" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Subject"), {
+      target: { value: "Your quotation" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Write your email/), {
+      target: { value: "Attached." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flush();
+
+    expect(
+      apiPost.mock.calls.some(([url]) => String(url) === "/api/mail-center/compose"),
+    ).toBe(false);
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining("not-an-address"));
+  });
+});
+
+describe("MobileMailCenter assign to a colleague", () => {
+  beforeEach(() => {
+    queryData.clear();
+    authUser.current = { id: 7, email: "zoe@houzs.test" };
+    queryData.set("/api/mail-center/addresses", ALPHABETICAL_ADDRESSES);
+    queryData.set(THREAD_DETAIL_KEY, threadDetail());
+    queryData.set("/api/users", {
+      users: [
+        { id: 3, name: "Kris Tan", email: "kris@houzs.test" },
+        { id: 4, name: "", email: "ops@houzs.test" },
+      ],
+    });
+    apiGet.mockReset();
+    apiGet.mockImplementation(async () => threadsPage());
+    apiPatch.mockReset();
+    apiPatch.mockImplementation(async () => ({ ok: true }));
+    toastError.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  async function openThreadAndAssign(value: string) {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByText("Quotation for 3 sofas"));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Assign to"), { target: { value } });
+    await flush();
+  }
+
+  it("writes BOTH the id and the display name, the way desktop does", async () => {
+    await openThreadAndAssign("3");
+    const call = apiPatch.mock.calls.find(([url]) =>
+      String(url).startsWith("/api/mail-center/threads/"),
+    );
+    expect(call).toBeTruthy();
+    expect(call![1]).toMatchObject({ assignedToUserId: 3, assignedToName: "Kris Tan" });
+  });
+
+  it("clears the assignment when Unassigned is picked", async () => {
+    await openThreadAndAssign("");
+    const call = apiPatch.mock.calls.find(([url]) =>
+      String(url).startsWith("/api/mail-center/threads/"),
+    );
+    expect(call).toBeTruthy();
+    expect(call![1]).toMatchObject({ assignedToUserId: null, assignedToName: null });
+  });
+
+  it("says so when the assignment is refused", async () => {
+    apiPatch.mockRejectedValue(new Error("403 forbidden"));
+    await openThreadAndAssign("3");
+    expect(toastError).toHaveBeenCalled();
+  });
+});
+
+describe("MobileMailCenter label filter", () => {
+  beforeEach(() => {
+    queryData.clear();
+    authUser.current = { id: 7, email: "zoe@houzs.test" };
+    queryData.set("/api/mail-center/addresses", ALPHABETICAL_ADDRESSES);
+    queryData.set("/api/mail-center/labels", [
+      { id: "l1", name: "Urgent", color: "#B91C1C", createdAt: "" },
+    ]);
+    queryData.set(THREAD_DETAIL_KEY, threadDetail());
+    apiGet.mockReset();
+    apiGet.mockImplementation(async () => threadsPage());
+    apiPost.mockReset();
+    apiPost.mockImplementation(async () => ({ ok: true }));
+    apiPatch.mockReset();
+    apiPatch.mockImplementation(async () => ({ ok: true }));
+    toastError.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it("lists only the threads carrying the label the operator tapped", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Urgent" }));
+    await flush();
+
+    expect(apiGet.mock.calls.some(([url]) => String(url).includes("label=Urgent"))).toBe(true);
+  });
+
+  it("tapping the same label again drops the filter", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Urgent" }));
+    await flush();
+    apiGet.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Urgent" }));
+    await flush();
+
+    expect(apiGet.mock.calls.length).toBeGreaterThan(0);
+    expect(apiGet.mock.calls.every(([url]) => !String(url).includes("label="))).toBe(true);
+  });
+
+  it("creates a new label in a colour the backend will actually keep", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByText("Quotation for 3 sofas"));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /Label/ }));
+    await flush();
+
+    fireEvent.change(screen.getByPlaceholderText(/New label/), {
+      target: { value: "Escalate" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await flush();
+
+    const call = apiPost.mock.calls.find(([url]) => String(url) === "/api/mail-center/labels");
+    expect(call).toBeTruthy();
+    // normalizeColor() on the backend maps anything outside its nine-entry
+    // allow-list to the brand brown, so a colour off that list comes BACK
+    // different from the one the picker showed while creating it.
+    expect((call![1] as Record<string, unknown>).color).toBe(LABEL_PALETTE[0].value);
   });
 });

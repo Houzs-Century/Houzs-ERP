@@ -132,6 +132,10 @@ export function DateField({
         placeholder={placeholder}
         title={title}
         aria-label={ariaLabel}
+        // The red border above is the SEEN half of this state; without the
+        // attribute it was invisible to a screen reader and unassertable in a
+        // test. Painting and announcing must not be able to drift apart.
+        aria-invalid={invalid || undefined}
         disabled={disabled}
         required={required}
         value={display}

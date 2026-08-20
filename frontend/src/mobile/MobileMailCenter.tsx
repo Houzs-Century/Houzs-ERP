@@ -12,9 +12,29 @@ import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
 import {
   fetchOutbox,
   fetchOutboxDetail,
+  patchThreadAssignment,
+  createLabel,
   type OutboxRow,
   type OutboxDetail,
 } from "../pages/MailCenter/mail-actions";
+import {
+  type MailLabel,
+  LABEL_PALETTE,
+  labelColorMap,
+  colorForLabel,
+  chipStyle,
+} from "../pages/MailCenter/mail-labels";
+import {
+  pickMailAttachments,
+  attachmentPayload,
+  humanSize,
+  type OutboundAttachment,
+} from "../pages/MailCenter/mail-attach-files";
+import {
+  MAIL_ATTACH_MAX_COUNT,
+  MAIL_ATTACH_MAX_TOTAL_BYTES,
+} from "../pages/MailCenter/mail-attachments";
+import { parseRecipients, firstInvalid } from "../pages/MailCenter/mail-recipients";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
@@ -77,8 +97,6 @@ type Attachment = {
   url: string;
 };
 
-type MailLabel = { id: string; name: string; color: string };
-
 type ThreadsPage = {
   threads: Thread[];
   total: number;
@@ -105,6 +123,9 @@ type Message = {
 };
 
 type ThreadDetail = { thread: Thread; messages: Message[] };
+
+// A colleague a thread can be handed to. Shape as GET /api/users serves it.
+type UserOption = { id: string | number; name?: string; email?: string };
 
 type MailAddress = {
   id: string;
@@ -151,24 +172,14 @@ const initials = (s: string) =>
     .join("")
     .toUpperCase() || "?";
 
-// Label chip colours (from the design's MAIL_LB map). Unknown labels fall back
-// to a neutral tone so a new label never crashes the row.
-const LABEL_COLORS: Record<string, [string, string]> = {
-  Sales: ["#e2f0e9", "#15803D"],
-  Supplier: ["#f6efd9", "#B45309"],
-  Finance: ["#e4ecf8", "#1D4ED8"],
-  Urgent: ["#f8eaea", "#B91C1C"],
-  Service: ["#e0f0f4", "#0E7490"],
-};
-const labelColor = (l: string): [string, string] => LABEL_COLORS[l] ?? ["#eef0ec", "#414539"];
-
-// Catalogue-aware chip colours: a DB label carries a solid dot colour, which we
-// render as a tinted pill (label text over a soft wash). Falls back to the
-// static map, then a neutral tone, so an unknown label never crashes a row.
+// Chip colours come from the SHARED label module, so a label is the same colour
+// on the phone as on the desktop and an uncatalogued name falls back to the same
+// brand default rather than to a private five-name table this file used to keep.
+// `chipStyle` derives the soft pill wash from the dot colour; this adapter only
+// reshapes its result into the [background, foreground] pair the rows here take.
 function chipColors(label: string, catalog: Map<string, string>): [string, string] {
-  const solid = catalog.get(label.toLowerCase());
-  if (solid) return [`${solid}1f`, solid];
-  return labelColor(label);
+  const s = chipStyle(colorForLabel(label, catalog));
+  return [s.backgroundColor, s.color];
 }
 
 // List-row time: HH:mm today, "Yesterday", else numeric DD/MM/YYYY (owner
@@ -208,6 +219,11 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const [folder, setFolder] = useState<Folder>("inbox");
   const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
   const [q, setQ] = useState("");
+  /* The label the list is narrowed to, or null for all. Applying a label was
+     already possible from the phone and LISTING by one was not, so "Urgent"
+     could be put on a conversation that nobody could then find from a phone.
+     Server-side, same `?label=` the desktop sidebar sets (Inbox.tsx). */
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [compose, setCompose] = useState<{ mode: ComposeMode } | null>(null);
 
@@ -251,11 +267,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     [activeAddresses, user, ownAlias],
   );
   const { data: labelCatalog } = useQuery<MailLabel[]>("/api/mail-center/labels", () => api.get("/api/mail-center/labels"), []);
-  const colorMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const l of labelCatalog ?? []) if (l.color) m.set((l.name ?? "").toLowerCase(), l.color);
-    return m;
-  }, [labelCatalog]);
+  const colorMap = useMemo(() => labelColorMap(labelCatalog ?? []), [labelCatalog]);
 
   // Mobile uses the backend's existing paginated search contract, just like
   // desktop. The previous bare-array request was capped at 300 rows and then
@@ -273,10 +285,11 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     else if (folder === "sent") params.set("sent", "1");
     else if (folder === "trash") params.set("status", "trashed");
     if (mailbox !== "all") params.set("mailbox", mailbox);
+    if (labelFilter) params.set("label", labelFilter);
     const needle = debouncedQ.trim();
     if (needle) params.set("q", needle);
     return params.toString();
-  }, [folder, mailbox, debouncedQ]);
+  }, [folder, mailbox, labelFilter, debouncedQ]);
 
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsQuery, setThreadsQuery] = useState("");
@@ -502,6 +515,30 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
             </button>
           ))}
         </div>
+
+        {/* Label filter — the phone could TAG a conversation and never list the
+            tagged ones. Tapping a chip narrows the server query; tapping it
+            again clears it. Hidden on the two folders that do not read the
+            thread list at all (Drafts is local-only, Auto-sent is the outbox). */}
+        {usesThreadList && (labelCatalog ?? []).length > 0 && (
+          <div className="chips" style={{ display: "flex", gap: 7, overflowX: "auto", marginTop: 7 }}>
+            {(labelCatalog ?? []).map((l) => {
+              const [bg, fg] = chipColors(l.name, colorMap);
+              const on = labelFilter === l.name;
+              return (
+                <button
+                  key={l.id}
+                  className={"chip" + (on ? " on" : "")}
+                  aria-pressed={on}
+                  onClick={() => setLabelFilter(on ? null : l.name)}
+                  style={on ? undefined : { background: bg, color: fg }}
+                >
+                  {l.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: "11px 12px" }}>
@@ -636,6 +673,14 @@ function MailThread({
     () => api.get(`/api/mail-center/threads/${threadId}`),
     [threadId],
   );
+  /* Colleagues for the Assign picker. Same read desktop Thread.tsx makes, same
+     envelope ({ users: [] }, see routes/users). A member without `users.read`
+     gets nothing back and the picker disables itself, exactly as on desktop. */
+  const { data: usersResp } = useQuery<{ users: UserOption[] }>("/api/users",
+    () => api.get("/api/users"),
+    [],
+  );
+  const users = usersResp?.users ?? [];
 
   const thread = data?.thread;
   const messages = data?.messages ?? [];
@@ -700,6 +745,29 @@ function MailThread({
 
   const markUnread = () => patch({ unread: true }, "Marked as unread.", "Couldn't update.");
 
+  /* Hand the conversation to a colleague. Writes BOTH fields through the shared
+     `patchThreadAssignment` desktop uses — the id is what the thread is filtered
+     by and the NAME is what every list row renders, so writing one without the
+     other leaves a thread that is assigned and shows nobody. */
+  const assign = async (value: string) => {
+    if (!thread || busy) return;
+    const picked = users.find((u) => String(u.id) === value);
+    const assignedToUserId = value ? Number(value) : null;
+    const assignedToName = picked ? picked.name || picked.email || null : null;
+    setBusy(true);
+    try {
+      const ok = await patchThreadAssignment(thread.id, assignedToUserId, assignedToName);
+      if (!ok) {
+        toast.error("Couldn't assign this conversation. Please try again.");
+        return;
+      }
+      toast.success(assignedToName ? `Assigned to ${assignedToName}.` : "Assignment cleared.");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const trash = async () => {
     if (!thread || busy) return;
     if (trashed) {
@@ -727,14 +795,16 @@ function MailThread({
     }
     setBusy(true);
     try {
-      // Create the catalogue entry first if it is a brand-new name, so the chip
-      // gets a managed colour (matches the desktop add-label flow).
+      /* Create the catalogue entry first if it is a brand-new name, so the chip
+         gets a managed colour — through the same `createLabel` + palette desktop
+         uses. The colour MUST come off LABEL_PALETTE: the backend's
+         normalizeColor() maps anything outside its nine-entry allow-list to the
+         brand brown, so the teal this used to post came back a different colour
+         than the phone had just shown while creating it. createLabel swallows
+         its own failure by design here — a catalogue row is a nicety and the
+         thread label still applies without one. */
       if (!colorMap.has(clean.toLowerCase())) {
-        try {
-          await api.post("/api/mail-center/labels", { name: clean, color: "#16695f" });
-        } catch {
-          /* non-fatal — the thread label still applies */
-        }
+        await createLabel(clean, LABEL_PALETTE[0].value);
       }
       await api.patch(`/api/mail-center/threads/${thread.id}`, { labels: [...chips, clean] });
       reload();
@@ -819,6 +889,31 @@ function MailThread({
             >
               {trashed ? "Restore" : "Trash"}
             </button>
+          </div>
+        )}
+
+        {/* Assign — a dropdown of colleagues, the same control desktop
+            Thread.tsx renders. The phone carried assignedToUserId and
+            assignedToName in its thread type and never showed or wrote either,
+            so a mail could only be handed over from a desk. */}
+        {thread && (
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", flex: "none" }}>Assign to</span>
+            <select
+              aria-label="Assign to"
+              className="cal-sel"
+              style={{ flex: 1, minWidth: 0, height: 28, fontSize: 12, padding: "0 8px" }}
+              value={thread.assignedToUserId != null ? String(thread.assignedToUserId) : ""}
+              onChange={(e) => assign(e.target.value)}
+              disabled={busy || users.length === 0}
+            >
+              <option value="">Unassigned</option>
+              {users.map((u) => (
+                <option key={String(u.id)} value={String(u.id)}>
+                  {u.name || u.email}
+                </option>
+              ))}
+            </select>
           </div>
         )}
       </header>
@@ -1094,6 +1189,8 @@ function MailReply({
   const toast = useToast();
   const [text, setText] = useState("");
   const [from, setFrom] = useState(thread?.mailboxAddress || "");
+  const [files, setFiles] = useState<OutboundAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const subject = /^re:/i.test(thread?.subject ?? "") ? thread?.subject ?? "" : `Re: ${thread?.subject ?? ""}`;
 
@@ -1109,6 +1206,7 @@ function MailReply({
         text: text.trim(),
         ...(replyAll ? { replyAll: true } : {}),
         fromAddress: from || undefined,
+        ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
       toast.success(replyAll ? "Reply sent to everyone." : "Reply sent.");
       onSent();
@@ -1134,7 +1232,96 @@ function MailReply({
         <span className="fld-l">Message</span>
         <textarea className="fld-i" value={text} onChange={(e) => setText(e.target.value)} rows={8} style={{ resize: "none" }} placeholder="Write your reply&#8230;" />
       </label>
+      <AttachRow
+        files={files}
+        error={attachError}
+        disabled={sending}
+        onFiles={setFiles}
+        onError={setAttachError}
+      />
     </ComposeShell>
+  );
+}
+
+/** Attach images / PDFs to an outbound mail. Used by BOTH the reply box and the
+ *  composer, and the rule it enforces — 10 files, 5 MB decoded, images + PDF —
+ *  is the SHARED one (`mail-attach-files.ts` over `mail-attachments.ts`), so the
+ *  operator is refused here in the exact words the server would have used.
+ *
+ *  A plain `<input type="file">` is deliberate on the phone: it is what opens
+ *  the native Take Photo / Photo Library / Browse sheet, and the camera is the
+ *  best attachment source in this business. */
+function AttachRow({
+  files,
+  error,
+  disabled,
+  onFiles,
+  onError,
+}: {
+  files: OutboundAttachment[];
+  error: string | null;
+  disabled: boolean;
+  onFiles: (files: OutboundAttachment[]) => void;
+  onError: (error: string | null) => void;
+}) {
+  const total = files.reduce((sum, f) => sum + f.size, 0);
+  const pick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    onError(null);
+    const result = await pickMailAttachments(picked, files);
+    if (!result.ok) {
+      onError(result.error);
+      return;
+    }
+    onFiles(result.files);
+  };
+  return (
+    <div className="fld">
+      <span className="fld-l">
+        Attachments ({files.length}/{MAIL_ATTACH_MAX_COUNT} &middot; {humanSize(total)} of{" "}
+        {humanSize(MAIL_ATTACH_MAX_TOTAL_BYTES)})
+      </span>
+      <input
+        type="file"
+        multiple
+        accept="image/*,application/pdf"
+        aria-label="Attach images or PDF files"
+        className="fld-i"
+        disabled={disabled}
+        onChange={pick}
+        style={{ padding: "9px 10px", fontSize: 12 }}
+      />
+      {files.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+          {files.map((f, i) => (
+            <span
+              key={`${f.name}-${i}`}
+              className="spill"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+            >
+              {f.name}
+              <span style={{ opacity: 0.7 }}>{humanSize(f.size)}</span>
+              <span
+                role="button"
+                aria-label={`Remove ${f.name}`}
+                onClick={() => {
+                  onFiles(files.filter((_, index) => index !== i));
+                  onError(null);
+                }}
+                style={{ cursor: "pointer", opacity: 0.75, fontSize: 12, lineHeight: 1 }}
+              >
+                &times;
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      {error && (
+        <p role="alert" style={{ fontSize: 11, color: "#b23a3a", marginTop: 6 }}>{error}</p>
+      )}
+    </div>
   );
 }
 
@@ -1162,6 +1349,15 @@ function MailCompose({
 }) {
   const toast = useToast();
   const [to, setTo] = useState("");
+  /* Cc/Bcc start hidden — most mail is to one person, and two empty fields on a
+     phone screen cost more than the tap to reveal them. They were MISSING here
+     entirely: the backend has always honoured both, and a salesperson on the
+     road could not copy their manager on a customer reply. */
+  const [showCopies, setShowCopies] = useState(false);
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [files, setFiles] = useState<OutboundAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   // Derived, not state: the address list arrives from a query, so a value
   // captured at mount would freeze whatever was loaded at that instant.
   // Precedence mirrors desktop Compose.tsx — an explicit pick, then the user's
@@ -1178,13 +1374,26 @@ function MailCompose({
   const [text, setText] = useState(seed?.body ?? "");
   const [sending, setSending] = useState(false);
 
+  // Same shared parser desktop uses: comma/semicolon separated, trimmed,
+  // de-duplicated case-insensitively — and the same shape check on each entry.
+  const toList = parseRecipients(to);
+  const ccList = parseRecipients(cc);
+  const bccList = parseRecipients(bcc);
+
   const send = async () => {
     if (!from) {
       toast.error("Choose a mailbox to send from.");
       return;
     }
-    if (!to.trim()) {
+    if (toList.length === 0) {
       toast.error("Enter a recipient.");
+      return;
+    }
+    // Name the bad address rather than refusing the whole field — over a list,
+    // "enter a valid recipient" tells the operator nothing they can act on.
+    const badAddress = firstInvalid(to) ?? firstInvalid(cc) ?? firstInvalid(bcc);
+    if (badAddress) {
+      toast.error(`Not a valid email address: ${badAddress}`);
       return;
     }
     if (!subject.trim()) {
@@ -1199,9 +1408,12 @@ function MailCompose({
     try {
       await api.post("/api/mail-center/compose", {
         fromAddress: from,
-        to: to.trim(),
+        to: toList,
+        ...(ccList.length ? { cc: ccList } : {}),
+        ...(bccList.length ? { bcc: bccList } : {}),
         subject: subject.trim(),
         text: text.trim(),
+        ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
       toast.success("Email sent.");
       onSent();
@@ -1219,6 +1431,29 @@ function MailCompose({
         <span className="fld-l">To</span>
         <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
       </label>
+      {!showCopies && (
+        <button
+          type="button"
+          onClick={() => setShowCopies(true)}
+          className="tinybtn"
+          style={{ alignSelf: "flex-start", borderStyle: "dashed" }}
+        >
+          Cc / Bcc
+        </button>
+      )}
+      {/* One send carrying everyone, never one send each. */}
+      {showCopies && (
+        <>
+          <label className="fld">
+            <span className="fld-l">Cc</span>
+            <input className="fld-i" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc@example.com" />
+          </label>
+          <label className="fld">
+            <span className="fld-l">Bcc</span>
+            <input className="fld-i" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="bcc@example.com" />
+          </label>
+        </>
+      )}
       <label className="fld">
         <span className="fld-l">Subject</span>
         <input className="fld-i" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
@@ -1227,6 +1462,13 @@ function MailCompose({
         <span className="fld-l">Message</span>
         <textarea className="fld-i" value={text} onChange={(e) => setText(e.target.value)} rows={8} style={{ resize: "none" }} placeholder="Write your email&#8230;" />
       </label>
+      <AttachRow
+        files={files}
+        error={attachError}
+        disabled={sending}
+        onFiles={setFiles}
+        onError={setAttachError}
+      />
     </ComposeShell>
   );
 }
