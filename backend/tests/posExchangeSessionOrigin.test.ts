@@ -2,10 +2,20 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import posRoutes from "../src/routes/pos";
-import soRouteSource from "../src/scm/routes/mfg-sales-orders.ts?raw";
+import rawSoRouteSource from "../src/scm/routes/mfg-sales-orders.ts?raw";
 import { auth } from "../src/middleware/auth";
 import { createSession, SESSION_ORIGIN_POS } from "../src/services/auth";
 import type { Env } from "../src/types";
+
+/* Line endings normalised ONCE, where the source enters the file, rather than
+   at each anchor. This repo is developed on Windows with `core.autocrlf=true`,
+   so the checkout carries CRLF while the anchors below are written with `\n` —
+   the one anchor here that spans a line therefore never matched on a developer
+   machine and always matched on the Linux runner. A test that is red for a
+   reason unrelated to the code is how people learn to ignore red, so it has to
+   hold whichever way the tree was checked out. */
+const lf = (s: string) => s.replace(/\r\n/g, "\n");
+const soRouteSource = lf(rawSoRouteSource);
 
 /* ───────────────────────────────────────────────────────────────────────────
    OWNER RULING 2026-08-16 — an ERP session follows the ERP's rules.
@@ -194,7 +204,7 @@ describe("the REAL POS surface is unchanged", () => {
     /* If a second door ever stamps 'pos', the two tests above stop describing
        the whole POS surface. Source-level because there is no runtime way to
        enumerate callers. */
-    const posSource = (await import("../src/routes/pos.ts?raw")).default as string;
+    const posSource = lf((await import("../src/routes/pos.ts?raw")).default as string);
     const stampers = posSource
       .split("\n")
       .map((line, i) => ({ line: line.trim(), no: i + 1 }))

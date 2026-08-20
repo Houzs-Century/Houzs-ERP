@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import { VOCABULARY, ALWAYS_HISTORICAL } from "./lib/vocabulary.mjs";
 import { DRIFT_CATALOGUE } from "./lib/drift-catalogue.mjs";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(here, "..", "..", "docs", "generated", "GLOSSARY.md");
@@ -90,7 +91,8 @@ const render = () => {
 const body = render();
 if (CHECK) {
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-  if (current.replace(/\r\n/g, "\n") !== body) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (!sameIgnoringEol(current, body)) {
     console.error(
       "docs/generated/GLOSSARY.md is stale.\n" +
         "The registry in backend/scripts/lib/vocabulary.mjs changed and the page was not regenerated.\n" +
