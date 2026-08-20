@@ -704,6 +704,45 @@ main router, so its static path resolves ahead of `/:docNo`. It shares the
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### Company hazards in this router — HAZARD 1 and HAZARD 2
+
+`mfg-sales-orders.ts` carries two company traps that recur, so they are stated
+ONCE here and referenced from the code as `HAZARD 1` / `HAZARD 2`. Five copies of
+one paragraph is how a reason stops being read.
+
+**HAZARD 1 — a NULL company is not "unscoped", it is "Houzs".** The customer
+resolve RPC is defined by mig 0164 as
+
+```sql
+COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code = 'HOUZS'))
+```
+
+so passing `p_company_id: activeCompanyId(c) ?? null` does not mean "no
+preference" — it means **book it to Houzs**. A 2990 session whose company failed
+to resolve would file its customer under the other organisation, with no error.
+Both call sites (`createSalesOrderCore` and `patchMfgSalesOrderHeaderHandler`)
+therefore use `requireActiveCompanyId` and refuse with a 409 rather than pass a
+NULL. Never reintroduce `?? null` on that parameter.
+
+**HAZARD 2 — `pwp_codes` is keyed `(company_id, code)`, and the writes BURN a
+voucher.** Mig 0188 re-keyed the table, so a write keyed on `code` alone reaches
+whichever company's row sorts first. Three paths do this and all three are
+company-filtered:
+
+| path | what an unfiltered write does |
+| --- | --- |
+| the claim (bulk / create) | burns the OTHER company's voucher |
+| the rollback | un-burns the OTHER company's voucher |
+| the TBC sofa reward swap | hands the OTHER company's code back to stock |
+
+Where the company cannot be resolved these refuse — `409 company_unresolved` on a
+route, a thrown error on the command path. **Claiming nothing is the safe
+outcome; claiming another company's identically named code is not.** Widening the
+filter to every company is never the answer to an unresolved company.
+
+The rollback also carries `companyId` on each claim record rather than
+re-resolving it, because the rollback loop runs outside the loop that resolved it.
+
 ### The 2990 receiver: `POST /api/sync/so-mirror` — IMPORT-ONCE since 2026-08-20
 
 Not in the table above because it is not a staff endpoint. It is mounted
