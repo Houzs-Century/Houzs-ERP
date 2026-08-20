@@ -472,8 +472,8 @@
     },
     {
       "check": "D1",
-      "key": "DEPOSIT_REFUND,OTHER_INCOME,REBATE,SALES|backend/src/services/projects.ts frontend/src/pages/Projects.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: LEDGER_INCOME_CATEGORIES, LEDGER_INCOME_CATS. Cost of divergence is a blank chip, not a wrong number."
+      "key": "DEPOSIT_REFUND,OTHER_INCOME,REBATE,SALES|backend/src/services/projects.ts frontend/src/vendor/scm/lib/pms-ledger-categories.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: LEDGER_INCOME_CATEGORIES, LEDGER_INCOME_CATS. Cost of divergence is a blank chip, not a wrong number. MOVED 2026-08-21: the frontend home was frontend/src/pages/Projects.tsx and is now the shared vendor/scm/lib/pms-ledger-categories.ts — the SAME pair, one fewer copy, because mobile used to run a generic humanize() over these slugs and read them differently from desktop. The recorded path is updated, not the decision."
     },
     {
       "check": "D1",
