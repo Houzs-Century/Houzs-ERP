@@ -181,6 +181,13 @@ export interface AcOutboxRow {
    * and can still refuse, with a code and a sentence.
    */
   can_requeue: boolean;
+  /**
+   * Whether to OFFER this row a "Send now" button — the WAITING row's control,
+   * where `can_requeue` is the STOPPED row's. Decided by the server for the same
+   * reason nothing else here is decided locally, and disjoint from `can_requeue`
+   * by construction, so a row never shows two buttons that both mean "send it".
+   */
+  can_send_now: boolean;
   ac_doc_no: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -309,9 +316,32 @@ export async function requeueAcOutboxRow(rowId: string): Promise<AcRequeueResult
   );
 }
 
+/**
+ * Send one WAITING document to AutoCount now, instead of waiting for the sweep.
+ *
+ * SAME CONTRACT AS `requeueAcOutboxRow` in every respect that matters to a
+ * caller — it THROWS on 403 / 409 / 500 and RESOLVES with `accepted: false` on a
+ * refusal, and both have to be rendered. A different endpoint because the two
+ * acts have different concurrency contracts on the server (this one takes an
+ * exclusive claim on the row; a re-queue must not), never because the page
+ * wanted a second way to say the same thing.
+ */
+export async function sendNowAcOutboxRow(rowId: string): Promise<AcRequeueResult> {
+  return api.post<AcRequeueResult>(
+    `/api/scm/autocount-outbox/${encodeURIComponent(rowId)}/send-now`,
+  );
+}
+
 /** The word on the button, in both places, so the two cannot drift apart. */
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
+
+/* "SEND NOW", NOT "SEND AGAIN", and the difference is the whole point of the
+   button. The row it sits on has not been refused — it is queued and on its way
+   — so "again" would be false about it. What the operator is buying is TIME:
+   the five-minute sweep, now. */
+export const AC_SEND_NOW_LABEL = "Send now";
+export const AC_SEND_NOW_BUSY_LABEL = "Sending";
 
 /**
  * What to DO about each answer, keyed by the outcome code verbatim.
@@ -359,6 +389,20 @@ export const AC_REQUEUE_TODO: Record<string, string> = {
      it ever did, reading it as "queued" would tell somebody a document had been
      sent when nothing was written. */
   "would-requeue": "Nothing was written — this was a rehearsal, not a send.",
+  /* ── SEND NOW ──────────────────────────────────────────────────────────── */
+  "sent-now": "Nothing more to do — it is in the account book already, not just queued.",
+  "send-now-refused":
+    "Read what AutoCount said below. This row has now used all its tries, so once you have put that right it is Send again, not Send now.",
+  "send-now-retrying":
+    "Read what came back below. The document is still queued either way and will keep going out on its own.",
+  "send-now-waiting":
+    "Nothing to do. This document is made from an earlier one, and it goes across by itself once that one is in AutoCount.",
+  "not-waiting":
+    "Nothing to push — this row is not queued. If it was refused or held back, Send again is the one to use.",
+  "already-in-flight":
+    "Nothing, and nothing went wrong. It is being sent right this moment; give it a few seconds and look again.",
+  "attempts-spent":
+    "This one has used all its tries, so pushing it does nothing. Put right what AutoCount objected to, then use Send again.",
 };
 
 export const acRequeueTodo = (code: string): string | null => AC_REQUEUE_TODO[code] ?? null;
@@ -420,11 +464,17 @@ export function useAcRequeue(onAccepted: () => void) {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, AcRequeueNote>>({});
 
-  const sendAgain = useCallback(
-    async (rowId: string) => {
+  /* ONE PATH, TWO DOORS. `sendAgain` and `sendNow` differ only in which
+     endpoint they call: the busy flag, the notes map, the accepted/refused
+     split and the throw branch are shared, so the two buttons cannot drift into
+     rendering their answers differently. Writing a second hook would have
+     duplicated the one part of this file that has already been got wrong
+     (a refusal reaching nobody) in the one place it was got right. */
+  const run = useCallback(
+    async (rowId: string, call: (id: string) => Promise<AcRequeueResult>) => {
       setSendingId(rowId);
       try {
-        const r = await requeueAcOutboxRow(rowId);
+        const r = await call(rowId);
         const quoted = r.reason === null ? null : acSplitMachineText(r.reason);
         setNotes((prev) => ({
           ...prev,
@@ -467,7 +517,10 @@ export function useAcRequeue(onAccepted: () => void) {
     [onAccepted],
   );
 
-  return { sendingId, notes, sendAgain };
+  const sendAgain = useCallback((rowId: string) => run(rowId, requeueAcOutboxRow), [run]);
+  const sendNow = useCallback((rowId: string) => run(rowId, sendNowAcOutboxRow), [run]);
+
+  return { sendingId, notes, sendAgain, sendNow };
 }
 
 /**
@@ -781,6 +834,86 @@ export const AC_FAILED_COPY: AcReasonCopy = {
     + " number, and leave the row alone.",
 };
 
+// ── what AUTOCOUNT said, in the reader's words ───────────────────────────────
+
+/**
+ * AutoCount's own refusals, translated into the same three parts the ERP's own
+ * refusals get.
+ *
+ * WHY THIS EXISTS. The page had two classes of verdict and translated only one.
+ * A row the ERP held back reads as a headline, a sentence and a **To fix**,
+ * with the machine's note folded into *Technical detail*; a row AUTOCOUNT
+ * refused read as a generic headline with a raw string pasted under it —
+ * `Primary Key Error` and nothing else. The owner read that screen and asked
+ * for the obvious thing: 「为什么写这种的呢？没有平时 autocount reject 的 reason
+ * 直接过来？」 and 「就直接跟我们说什么被拒绝就可以了」. It was an oversight
+ * rather than a design: the disclosure that the raw text belongs in already
+ * existed on the other rows.
+ *
+ * ONLY STRINGS SOMEBODY HAS ACTUALLY SEEN GO IN HERE. A wrong plain-language
+ * explanation is far more damaging than an untranslated one, because it sends
+ * an operator to fix the wrong thing with total confidence — the exact failure
+ * `AC_FAILED_COPY`'s own comment records, when the page told the owner to
+ * repair a delivery order whose lines had been measured correct that same day.
+ * So this list is short on purpose, every entry names where it was observed,
+ * and anything unmatched falls through to `AC_FAILED_COPY`, which quotes
+ * AutoCount verbatim and says plainly that the words are the account book's.
+ * A thin dictionary with an honest fallback beats a broad one that guesses.
+ *
+ * NOT A MIRROR OF THE SERVER'S TAXONOMY, and deliberately not moved there.
+ * `AC_SKIP_KINDS` lives on the backend because the backend WRITES those reasons
+ * and two readers of one vocabulary drift (#2094). These strings are written by
+ * neither side — they are AutoCount's — and nothing on the server reads them,
+ * so a copy there would be a second home with no second reader. Same argument
+ * `acRowIsRequeueable` makes for staying out of the `.mjs` mirror.
+ */
+export interface AcAutoCountSaid {
+  /** A substring of AutoCount's reply that identifies this refusal. */
+  needle: string;
+  /** Where this string was OBSERVED, so the next reader can check it. */
+  seen: string;
+  copy: AcReasonCopy;
+}
+
+export const AC_AUTOCOUNT_SAID: readonly AcAutoCountSaid[] = [
+  {
+    needle: "Primary Key Error",
+    seen:
+      "production, 2026-08-20 (workflow run 32382073444): HC-SO-2608-001, "
+      + "HC-SO-2608-002 and HC-PO-2608-001, every one of them sending its own "
+      + "document number as DocNo and every one refused with these words.",
+    copy: {
+      /* THE BUSINESS EFFECT, NOT THE MECHANISM. "Primary key" is the database's
+         word for it; what it MEANS is that the name is taken. Justified by what
+         was actually proven: the payload carries `DocNo: HC-SO-2608-001`
+         verbatim — no prefix is stripped — and a primary-key refusal on a create
+         is the book saying that key is already in use. What is NOT claimed here
+         is WHICH document holds it, because that lives in AED_HOUZS and nothing
+         on this side can see inside it. */
+      headline: "AutoCount already has a document with this number",
+      explain:
+        "The ERP files each document in AutoCount under its own number, and AutoCount answered that this number is already taken. It will answer the same way every time until either that number is free or this document is given a different one.",
+      toFix:
+        "This one cannot be put right from the ERP, and sending it again will not help. Somebody with the AutoCount account book has to look the number up there: if what they find is this same document, it is already filed and only the link back to the ERP is missing; if it belongs to a different document, then this one needs a new number.",
+    },
+  },
+];
+
+/**
+ * The words for what AutoCount said, or null when nobody has written any.
+ *
+ * Null is the ordinary answer and must stay cheap: it is what keeps every
+ * refusal this file has never seen showing its raw text instead of a guess.
+ */
+export function acAutoCountCopy(reason: string | null | undefined): AcReasonCopy | null {
+  const text = reason ?? "";
+  if (!text) return null;
+  for (const entry of AC_AUTOCOUNT_SAID) {
+    if (text.includes(entry.needle)) return entry.copy;
+  }
+  return null;
+}
+
 /**
  * The three-part reason for a row, or null when there is nothing to explain.
  *
@@ -789,9 +922,40 @@ export const AC_FAILED_COPY: AcReasonCopy = {
  * already been sent again would send somebody to fix what is already fixed,
  * which is the whole reason `requeued` is a separate state.
  */
-export function acReasonCopy(state: string, reasonKind: string | null): AcReasonCopy | null {
+export function acReasonCopy(
+  state: string,
+  reasonKind: string | null,
+  /**
+   * What was written on the row — AutoCount's own answer, on the states where
+   * the account book is who spoke.
+   *
+   * REQUIRED, never optional. It DECIDES whether this row gets the specific
+   * translation or the generic one, and an optional parameter would let every
+   * existing caller keep the old wording with no compile error and no failing
+   * test — the repo's standing rule about a parameter that decides something.
+   */
+  reason: string | null,
+): AcReasonCopy | null {
   if (state === "requeued") return null;
+  /* THE ERP'S OWN CLASSIFICATION WINS. A `skipped` row carries a `reason_kind`
+     because the ERP refused it and knows exactly why; AutoCount was never asked,
+     so nothing on it can be AutoCount's words. */
   if (reasonKind) return AC_REASON_COPY[reasonKind] ?? AC_UNRECOGNISED_COPY;
+  /* BOTH STATES WHERE THE BOOK IS THE SPEAKER, and `pending` is not an
+     oversight. AcSyncService turns every exception into a 500 and a 500 is
+     retryable, so a document AutoCount REFUSES sits at `pending` carrying the
+     refusal until its sixth attempt — which is exactly where HC-SO-2608-002 was
+     on 2026-08-20 while HC-SO-2608-001 beside it read `failed` with identical
+     words. Translating only the failed one would explain a document to the
+     operator half an hour after it stopped being actionable.
+
+     It also settles the ambiguity `acReplySource` records for a pending row:
+     that label claims neither speaker because nothing distinguishes them. A
+     MATCH here is that distinction — these strings are AutoCount's. */
+  if (state === "failed" || state === "pending") {
+    const said = acAutoCountCopy(reason);
+    if (said) return said;
+  }
   if (state === "failed") return AC_FAILED_COPY;
   return null;
 }
@@ -921,7 +1085,21 @@ export function acWhatWasSaid(row: AcOutboxRow, pageHasItsOwnWords: boolean): Ac
   const source = acReplySource(row.state, row.reason);
   const base = { label: AC_REPLY_LABEL[source], notAsked: source === "erp" };
   if (row.reason === null) return { ...base, said: null, technical: null, silent: true };
-  if (source === "erp" && pageHasItsOwnWords) {
+  /* WAS `source === "erp" && pageHasItsOwnWords`, and the source half came off
+     on 2026-08-20. The reasoning above explains the split as "who wrote the
+     note, never what it says", and that was right while the ONLY notes this
+     file had words for were the ERP's — AutoCount's answers were always raw, so
+     the two conditions were the same condition. They stopped being the same the
+     moment `AC_AUTOCOUNT_SAID` gave a refusal of AutoCount's plain words of its
+     own, and keeping the source test would have printed the headline, the
+     sentence, the To fix line AND the raw string, which is the pile the owner
+     asked to have thinned.
+     The rule underneath is unchanged and is what the caller passes: the machine
+     text moves out of view only where this file says the same thing in the
+     reader's language. Where it does not — the generic failed copy, an
+     unrecognised refusal, a retry note — nothing may take the quote off screen,
+     because there the machine's sentence IS the diagnosis. */
+  if (pageHasItsOwnWords) {
     return { ...base, said: null, technical: row.reason, silent: false };
   }
   const { said, detail } = acSplitMachineText(row.reason);
@@ -990,7 +1168,7 @@ export interface AcRowDetail {
  *   leaves a false instruction on screen for a whole round trip.
  */
 export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDetail {
-  const copy = reasonCleared ? null : acReasonCopy(row.state, row.reason_kind);
+  const copy = reasonCleared ? null : acReasonCopy(row.state, row.reason_kind, row.reason);
   const showSaid = !reasonCleared
     && (copy !== null || (row.reason !== null && row.state !== "sent"));
   const showRequeuedNote = !reasonCleared && row.state === "requeued";
@@ -1001,9 +1179,14 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
      whole answer. Treating it as plain words would hide the only thing the row
      has. A replaced row counts — AC_REPLACED_LINE and AC_REPLACED_NOTE say all
      of it, and the note under it is the first refusal's machinery. */
-  const said = showSaid
-    ? acWhatWasSaid(row, (copy !== null && copy !== AC_UNRECOGNISED_COPY) || showRequeuedNote)
-    : null;
+  /* AC_FAILED_COPY IS EXCLUDED FOR THE SAME REASON AC_UNRECOGNISED_COPY IS, and
+     it has to be: it does not explain the row either. Its own To fix line reads
+     "Read AutoCount's own words below" and then branches on whether those words
+     name anything — so folding the quote behind the disclosure would leave an
+     instruction pointing at something no longer on screen. Only a SPECIFIC
+     translation counts as this file having said what the note says. */
+  const specific = copy !== null && copy !== AC_UNRECOGNISED_COPY && copy !== AC_FAILED_COPY;
+  const said = showSaid ? acWhatWasSaid(row, specific || showRequeuedNote) : null;
   const line = copy !== null
     ? copy.headline
     : showRequeuedNote

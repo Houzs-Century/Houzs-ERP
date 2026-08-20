@@ -12,6 +12,8 @@ import {
   AC_REPLACED_GROUP_NOTE,
   AC_REPLACED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
+  AC_SEND_NOW_LABEL,
+  AC_SEND_NOW_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
   AC_TECHNICAL_LABEL,
@@ -223,7 +225,7 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
 }
 
 function OutboxCard(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -233,6 +235,7 @@ function OutboxCard(
     historyOpen: boolean;
     onToggleHistory: () => void;
     onSendAgain: () => void;
+    onSendNow: () => void;
   },
 ) {
   /* The card is the DOCUMENT and its newest send says where it stands — same
@@ -271,6 +274,23 @@ function OutboxCard(
               }}
             >
               {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+            </button>
+          )}
+          {/* The WAITING row gets its push here too. A control on one surface
+              and not the other is the recurring bug class this repo names, and
+              the owner uses the phone on the floor. */}
+          {row.can_send_now && (
+            <button
+              onClick={onSendNow}
+              disabled={sending}
+              style={{
+                marginLeft: "auto", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                borderRadius: 7, padding: "3px 8px", cursor: sending ? "default" : "pointer",
+                border: "1px solid var(--brand)", background: "var(--brand-bg)", color: "var(--brand-d)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
             </button>
           )}
         </div>
@@ -581,6 +601,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                     historyOpen={sendHistory.isOpen(g)}
                     onToggleHistory={() => sendHistory.toggle(g)}
                     onSendAgain={() => void requeue.sendAgain(g.current.id)}
+                    onSendNow={() => void requeue.sendNow(g.current.id)}
                   />
                 )}
               />
@@ -634,6 +655,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                           historyOpen={sendHistory.isOpen(g)}
                           onToggleHistory={() => sendHistory.toggle(g)}
                           onSendAgain={() => void requeue.sendAgain(g.current.id)}
+                          onSendNow={() => void requeue.sendNow(g.current.id)}
                         />
                       )}
                     />
