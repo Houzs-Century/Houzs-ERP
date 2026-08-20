@@ -397,7 +397,7 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/pages/Profile.tsx": {
-      "@typescript-eslint/no-explicit-any": 7,
+      "@typescript-eslint/no-explicit-any": 2,
       "@typescript-eslint/no-floating-promises": 1
     },
     "src/pages/ProjectMaintenance.tsx": {
