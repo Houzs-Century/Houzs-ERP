@@ -702,6 +702,45 @@ main router, so its static path resolves ahead of `/:docNo`. It shares the
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### Company hazards in this router — HAZARD 1 and HAZARD 2
+
+`mfg-sales-orders.ts` carries two company traps that recur, so they are stated
+ONCE here and referenced from the code as `HAZARD 1` / `HAZARD 2`. Five copies of
+one paragraph is how a reason stops being read.
+
+**HAZARD 1 — a NULL company is not "unscoped", it is "Houzs".** The customer
+resolve RPC is defined by mig 0164 as
+
+```sql
+COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code = 'HOUZS'))
+```
+
+so passing `p_company_id: activeCompanyId(c) ?? null` does not mean "no
+preference" — it means **book it to Houzs**. A 2990 session whose company failed
+to resolve would file its customer under the other organisation, with no error.
+Both call sites (`createSalesOrderCore` and `patchMfgSalesOrderHeaderHandler`)
+therefore use `requireActiveCompanyId` and refuse with a 409 rather than pass a
+NULL. Never reintroduce `?? null` on that parameter.
+
+**HAZARD 2 — `pwp_codes` is keyed `(company_id, code)`, and the writes BURN a
+voucher.** Mig 0188 re-keyed the table, so a write keyed on `code` alone reaches
+whichever company's row sorts first. Three paths do this and all three are
+company-filtered:
+
+| path | what an unfiltered write does |
+| --- | --- |
+| the claim (bulk / create) | burns the OTHER company's voucher |
+| the rollback | un-burns the OTHER company's voucher |
+| the TBC sofa reward swap | hands the OTHER company's code back to stock |
+
+Where the company cannot be resolved these refuse — `409 company_unresolved` on a
+route, a thrown error on the command path. **Claiming nothing is the safe
+outcome; claiming another company's identically named code is not.** Widening the
+filter to every company is never the answer to an unresolved company.
+
+The rollback also carries `companyId` on each claim record rather than
+re-resolving it, because the rollback loop runs outside the loop that resolved it.
+
 ### The 2990 receiver: `POST /api/sync/so-mirror` — IMPORT-ONCE since 2026-08-20
 
 Not in the table above because it is not a staff endpoint. It is mounted
@@ -2221,6 +2260,44 @@ keep that order stable. A component that genuinely disappears is still deleted,
 and still takes its link, which is correct: the line it named is gone. This is
 also the precondition for ever exposing an editable delivery charge — without
 it, every edit manufactures an orphan.
+
+**Where the operator types it (2026-08-20).** The reduction had a server road
+and no door: the line PATCH accepted a bounded discount, the rebuild kept it
+(#2490) on a row that now keeps its id (0310) — but `SoLineCard.tsx` rendered
+`discountSen` only as a READ-ONLY "− Discount" row that appears once the value
+is already above zero. Its editable inputs were description, remark, qty, unit
+price, delivery date, variants and photos; `$ Override price` writes
+`unit_price_sen`, not a discount. So the only writer of a delivery-line discount
+was the POS voucher split, and an operator could not reduce a fee at all.
+
+Now the SAME amount cell does it, because that is where the operator already
+tried: on a `SVC-DELIVERY*` line the cell SHOWS the line net and WRITES the
+difference as `discountSen` (`frontend/src/vendor/scm/lib/delivery-fee-amount.ts`,
+executed by `delivery-fee-amount.test.ts`). Type the amount you want charged —
+250 → 125 books a 125 discount, and the printed SO still reads unit 250 /
+discount 125 / total 125. Three properties are deliberate: **the semantics are
+TARGET, not discount** (on a 250 fee, wanting 200 books 50 — 250 → 125 is a
+coincidence that hides the difference, which is why a test pins 200); **a higher
+figure books no discount**, since a fee rise needs its own `SVC-DELIVERY-ADD`
+line rather than a negative discount with nothing naming the money; and **a
+blank or unreadable box writes nothing**, because `Number('')` is 0 and that
+would read as charge-nothing and waive the fee on the way to retyping it. A real
+waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
+unit price, on the same `canEditPrice` gate.
+
+**All three faults were on THIS side — it was not the mirror.** An earlier draft
+of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
+#2518 withdrew that with a measurement: 2990's `sync_outbox` shows its last
+successful delivery at **2026-08-19T08:42:39Z** with an empty queue, while both
+`SVC-DELIVERY` deletes on 2990-SO-2608-033 (2026-08-20 01:41 and 02:40, mig
+0302's forensic log) postdate it and carry `application_name = PostgREST 14.5` —
+the fee rebuild, not the mirror, which reaches Postgres through postgres.js and
+appears nowhere in that log. The three faults were `discount_sen: 0` written
+over an accepted discount (#2490), the rebuild replacing rows so they changed id
+(#2514), and the discount having no input (#2516). The mirror's
+DELETE-then-INSERT is still real and still worth import-once (#2515) — it is the
+only known mechanism that orphans a WHOLE document's DO lines at once — but it
+explains the repaired delivery links, not a reverted fee.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
