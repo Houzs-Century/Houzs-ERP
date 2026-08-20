@@ -16,3 +16,23 @@
 # is genuinely append-only, and not applied to `docs/modules/*.md` or anything
 # else people revise in place.
 BUG-HISTORY.md merge=union
+
+# docs/generated/* is REGENERATED from source, never hand-edited — so when two
+# branches both regenerate it, neither side is right and both are recoverable.
+# `union` would be wrong here (it duplicates rows rather than merging them) and
+# picking a side leaves a stale file until someone notices.
+#
+# Measured 2026-08-18 on the 97 live branches: 21 conflict on bug-index.md and
+# 13 conflict on NOTHING BUT generated markdown. Nineteen commits in that
+# backlog exist only to regenerate after a merge — pure tax.
+#
+# `regen` takes either side without stopping the merge; scripts/regen-generated.sh
+# then rebuilds them from source, which is the only version that is actually
+# correct. Enable it once per clone (CI does it in the checkout step):
+#
+#     git config merge.regen.driver "scripts/regen-generated.sh %A"
+#
+# Without that config git falls back to a normal merge, i.e. today's behaviour —
+# so a clone that has not run it is no worse off, only no better.
+docs/generated/*.md  merge=regen
+docs/generated/*.csv merge=regen
