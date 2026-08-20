@@ -217,12 +217,6 @@ function acRows(total: number): AcOutboxRow[] {
       updated_at: "2026-08-15T00:00:00.000Z",
       sent_at: null as string | null,
       attempts: 0,
-      /* IN `base` BECAUSE NO SHAPE BELOW IS PENDING. acRowCanSendNow (backend
-         scm/lib/autocount-outbox-status.ts) answers true only for a WAITING row
-         under the attempt cap; every branch here is sent, failed, skipped or
-         requeued, so the route would publish false for all five. A pending
-         shape added later must set this itself. */
-      can_send_now: false,
     };
     if (i % 5 === 1) {
       return {
