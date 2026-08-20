@@ -188,6 +188,11 @@ posting.
   with `sent_at` / `confirmed_at` NULL and **commits nothing** — no AR/GL, no
   customer credit (`:872-876`). A non-draft create calls `postSiRevenue` at
   `:946`.
+- **Create from DO lines** (`POST /from-dos`, `createSalesInvoiceFromDoLinesHandler`).
+  Same `asDraft` contract, read strictly (`body.asDraft === true`) and landed at
+  `status: isDraft ? 'DRAFT' : 'SENT'`, with `invoice_date` forced to
+  `todayMyt()`. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
+  the ruling below.
 - **Confirm** (DRAFT → SENT, inside the status handler at `:1958-2005`). Stamps
   `sent_at` + `confirmed_at` with a `.eq('status','DRAFT')` race gate (`:1969-1971`),
   posts revenue (`:1978`, idempotent), then auto-applies any customer credit.
@@ -307,6 +312,41 @@ before recording payments` (`not_payable`).
 > for both SI and PI. **No backend path writes it and it is in no enum** — it is a
 > dead label. The live pill relabelings that DO fire are `SENT` → "Issued",
 > `SUBMITTED` / `POSTED` → "Confirmed", `DISPATCHED` → "Shipped".
+
+### THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE (owner ruling, 2026-08-20)
+
+His words: **「以电脑为准 —— 手机也先出草稿」** — the desktop is the standard, and
+the phone drafts first too.
+
+**What the phone did until this ruling.** `MobileConvertWizard`'s DO→SI arm
+posted `{ picks }` and nothing else. `POST /from-dos` reads `asDraft` strictly,
+so an absent flag is not a neutral default — it is `status: 'SENT'`, with
+`sent_at` and `confirmed_at` stamped, revenue posted, and `invoice_date` forced
+to today. **Three taps on a phone therefore ISSUED a customer-facing invoice**:
+no due date, no terms, no review, and no way back except cancelling a document
+the customer may already have been given.
+
+**Why that was a defect and not merely a difference.** The desktop cannot reach
+that endpoint at all — it goes `SalesInvoiceFromDo` → `SalesInvoiceNew` → `POST /`
+with a ~30-key header form, which IS the review step. (`useConvertDosToSi` in
+`vendor/scm/lib/sales-invoice-queries.ts` exists and has zero consumers.) So one
+surface made issuing an invoice a deliberate act and the other made it a
+side effect of transferring lines.
+
+**What it does now.** The SI arm sends `asDraft: true`, mirroring the GRN arm of
+the same wizard, which had already reasoned its way to the same answer for
+stock: post the draft, let the operator confirm it from the document. Confirm
+(DRAFT → SENT) is the single AR/revenue-writing chokepoint, exactly as
+`PATCH /:id/post` is for a GRN's stock.
+
+**The operator can still see and issue it.** The mobile detail screen already
+offers `Confirm Invoice` on a DRAFT (`mobile/MobileModuleDetail.tsx`,
+`sales-invoices` status actions: DRAFT → SENT, plus Cancel), and the wizard
+returns to the convert home screen exactly as it does for the draft GRN — no
+navigation assumed a sent invoice, so nothing else had to move.
+
+Pinned by `frontend/src/mobile/mobileConvertDraftInvoice.test.tsx`, which drives
+the real wizard and asserts the POSTED BODY, not the source text.
 
 ---
 
@@ -489,7 +529,7 @@ a warning, not a block.
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
-| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** (a straight transfer, no edit step) |
+| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** with **`asDraft: true`** (a straight transfer, no edit step — so it DRAFTS, see below) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
 
 `canOperateSalesInvoices` matters here for the same reason as on the DO: Sales

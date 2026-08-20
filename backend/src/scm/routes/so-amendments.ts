@@ -572,7 +572,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_sen')
+      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
     const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
@@ -637,12 +637,15 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
-        postcode?: string | null; local_total_sen?: number | null;
+        postcode?: string | null;
       };
-      const { data: payRows } = await sb.from('mfg_sales_order_payments')
-        .select('amount_sen').eq('so_doc_no', amendment.so_doc_no);
-      const paidSen = ((payRows ?? []) as Array<{ amount_sen?: number | null }>)
-        .reduce((sum, p) => sum + Number(p.amount_sen ?? 0), 0);
+      /* NO DEPOSIT TERM — owner ruling 2026-08-20, 「以电脑为准 —— 两边都不查」.
+         This read summed `mfg_sales_order_payments` to weigh the money before
+         approving an amendment that sets a Processing Date. Approving such an
+         amendment is the same act as setting the date on the header, so leaving
+         the condition here would have kept the rule surface-dependent — the
+         exact defect the ruling closes — one screen further along. The payments
+         read went with it; nothing else on this path used it. */
       const gateProblems = collectProcessingGateProblems({
         procDate: nextProc,
         delivDate: nextDeliv || null,
@@ -653,13 +656,11 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
            so approving a legitimately-old reschedule cannot be blocked here. */
         origProcDate: nextProc,
         origDelivDate: nextDeliv || null,
-        companyCode: c.get('companyCode') ?? null,
         completeness: {
           hasCustomerName: !!String(soRow.debtor_name ?? '').trim(),
           hasAddress: !!String(soRow.address1 ?? '').trim(),
           hasPostcode: !!String(soRow.postcode ?? '').trim(),
         },
-        deposit: { paidSen, totalSen: Number(soRow.local_total_sen ?? 0) },
       });
       if (gateProblems.length > 0) {
         return c.json({

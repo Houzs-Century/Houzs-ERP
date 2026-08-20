@@ -22,6 +22,11 @@
 
 import { serviceConfirm } from './dialog-service';
 import { describeRefusal } from './refusal-detail';
+import {
+  ZERO_COST_RECEIPT_ERROR,
+  parseZeroCostRefusal,
+  zeroCostRefusalText,
+} from './zero-cost-refusal';
 // Imported, NOT re-inlined as localStorage.getItem('auth:token'). Houzs stores
 // session-only logins (Remember me unchecked, and the owner's view-as hand-off)
 // in sessionStorage, so a localStorage-only read returns "" for a perfectly
@@ -358,21 +363,22 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
        two ways out. The escape hatch is per line and lives on the receipt
        screen, so it is deliberately NOT a dialog button here — a blanket
        "everything on this receipt was free" click is exactly the reflex the
-       gate exists to prevent. */
-    if (text.includes('"zero_cost_receipt"')) {
-      let msg = 'These lines would receive stock at zero cost, but the item has been bought at a real price before.';
-      try {
-        const b = JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as {
-          message?: string; remedy?: string[];
-          lines?: Array<{ itemCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
-        };
-        const lines = (b.lines ?? [])
-          .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
-          .join('\n');
-        const how = (b.remedy ?? []).map((r) => `— ${r}`).join('\n');
-        msg = [b.message ?? msg, lines, how].filter(Boolean).join('\n\n');
-      } catch { /* keep fallback */ }
-      throw correlateError(new Error(msg), requestIdFromResponse(res));
+       gate exists to prevent.
+
+       The RAW BODY rides the error too (status + body, as the terminal path
+       below does). Composing the sentence and DISCARDING the parse is what left
+       a surface able to show the refusal and nothing else: the phone's receipt
+       screen named two fixes and offered neither, and its convert wizard told
+       the receiver to go find a PC. `zero-cost-refusal.ts` is now the one
+       reader, so the sentence and any remedy UI cannot describe different
+       lines. */
+    if (text.includes(`"${ZERO_COST_RECEIPT_ERROR}"`)) {
+      const zeroCost = new Error(
+        zeroCostRefusalText(parseZeroCostRefusal(text)),
+      ) as Error & { status?: number; body?: string };
+      zeroCost.status = res.status;
+      zeroCost.body = text;
+      throw correlateError(zeroCost, requestIdFromResponse(res));
     }
     if (text.includes('"sofa_partial_set"')) {
       let msg = "A sofa set must ship whole from one batch — this delivery leaves part of the set behind. Include the rest of the set, or ship none of it.";

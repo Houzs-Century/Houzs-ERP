@@ -129,7 +129,12 @@ describe('repair scripts are write paths too', () => {
    rule, with nothing anywhere saying so. */
 describe('the Processing Date is read out of a request body through the helper', () => {
   test('create auto-proceed', () => {
-    expect(between(SO, 'const procDateOnCreate =', 'const depositTotalSen'))
+    /* Ends at the statement's own `;` rather than at whatever declaration
+       happens to follow. The end anchor was `const depositTotalSen`, which the
+       deposit-gate removal deleted (owner 2026-08-20) — an unrelated change
+       three lines away broke a test about the date helper. The statement's own
+       terminator cannot be moved by a neighbour. */
+    expect(between(SO, 'const procDateOnCreate =', ';'))
       .toContain('readSoProcessingDateFromBody');
   });
 
