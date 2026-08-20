@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import {
-  addsBugHistoryEntry,
+  addsBugEntry,
   buildModuleIndex,
   detectFixIntent,
   detectSurfaceChanges,
@@ -142,21 +142,54 @@ test("ESCAPE 2b: DELETING the guide also counts as updating it", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Rule 1 is satisfied by rewording someone else's heading.
+// 3. CLOSED 2026-08-20 — and rewritten rather than deleted, which is what this
+//    file asks of anyone who shuts a hole.
+//
+//    It used to read: rewording someone else's BUG-HISTORY heading reported a
+//    NEW entry. Against ONE file there was nothing to tell your entry from
+//    theirs — both are a `+## ` line in the same path. The ledger became a
+//    DIRECTORY for an unrelated reason (the merge queue; see
+//    backend/scripts/lib/bug-ledger.mjs) and closed this on the way past: an
+//    entry is now a path that did not exist, and rule 1 requires the diff to
+//    have CREATED it.
+//
+//    What is left is narrower and is asserted below, because a hole that is
+//    half-closed and described as closed is worse than one nobody touched.
 // ---------------------------------------------------------------------------
 
-test("ESCAPE 3: editing an existing BUG-HISTORY heading reports a NEW entry", () => {
-  const reworded = addsBugHistoryEntry(
+test("ESCAPE 3 is closed: rewording an existing entry no longer counts as a new one", () => {
+  const reworded = addsBugEntry(
     parseUnifiedDiff(
-      hunk("BUG-HISTORY.md", [
+      hunk("docs/bugs/0413-the-autocount-write-back-never-told-autocount-which-sal.md", [
         "## The AutoCount write-back never told AutoCount which salesperson sold the order [high]",
       ]),
     ),
   );
-  assert.equal(reworded.entry, true, "KNOWN GAP: a rewritten old heading is indistinguishable from a new one");
+  assert.equal(reworded.touched, true, "the ledger directory WAS touched");
+  assert.equal(
+    reworded.entry,
+    false,
+    "CLOSED: an edit to an existing entry file is not a new entry. If this goes red, the newness requirement in addsBugEntry has been dropped and the hole is open again.",
+  );
+});
 
-  // And an empty one is just as good.
-  assert.equal(addsBugHistoryEntry(parseUnifiedDiff(hunk("BUG-HISTORY.md", ["## x"]))).entry, true);
+test("ESCAPE 3b: a new entry file whose content is one empty heading still passes", () => {
+  /* The half that is NOT closed, stated plainly. Rule 1 asks whether an entry
+     was WRITTEN, never whether it says anything — the same bar the single-file
+     version set. `## x` in a correctly named new file is a pass, and no diff
+     shape can distinguish a thin entry from a thorough one. What the split DID
+     take away is doing it to somebody else's entry by accident. */
+  const empty = addsBugEntry(
+    parseUnifiedDiff([
+      "diff --git a/docs/bugs/0999-x.md b/docs/bugs/0999-x.md",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/docs/bugs/0999-x.md",
+      "@@ -0,0 +1,1 @@",
+      "+## x",
+    ].join("\n")),
+  );
+  assert.equal(empty.entry, true, "KNOWN GAP: content is not judged, only presence");
 });
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 /* The two derived-doc checks must separate a DEAD GENERATOR from DRIFTED OUTPUT.
 
    Both mirror something every pull request is required to change:
-   `bug-index.md` mirrors BUG-HISTORY.md, which the working agreement makes
-   every code PR append to, and `codebase-map-facts.md` embeds LINE NUMBERS,
+   `bug-index.md` and `bug-history.md` mirror the bug ledger in docs/bugs/, which
+   the working agreement makes every code PR add a file to, and
+   `codebase-map-facts.md` embeds LINE NUMBERS,
    which move on every backend merge. main-protection makes merges strictly
    serial, so the instant one PR merges the file is stale on every other open
    PR — through no act of their authors.
@@ -28,7 +29,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = path.join(here, "..", "scripts");
 const read = (f) => fs.readFileSync(path.join(SCRIPTS, f), "utf8");
 
-const GENERATORS = ["gen-bug-index.mjs", "gen-codebase-map.mjs"];
+const GENERATORS = ["gen-bug-index.mjs", "gen-bug-history.mjs", "gen-codebase-map.mjs"];
 
 test("drift does not exit non-zero, and says so in the message", () => {
   for (const g of GENERATORS) {
@@ -44,6 +45,8 @@ test("a generator that produced nothing still fails, with exit 2", () => {
      empty measurement is the failure it is supposed to catch. */
   assert.match(read("gen-bug-index.mjs"), /entries\.length === 0[\s\S]*?process\.exit\(2\)/,
     "gen-bug-index: zero parsed entries must exit 2");
+  assert.match(read("gen-bug-history.mjs"), /usable\.length === 0[\s\S]*?process\.exit\(2\)/,
+    "gen-bug-history: zero parsed entries must exit 2");
   assert.match(read("gen-codebase-map.mjs"), /routeTotals\.modules \|\| !desktopRoutes\.length[\s\S]*?process\.exit\(2\)/,
     "gen-codebase-map: an empty scan must exit 2");
 });
@@ -103,9 +106,14 @@ const GOOD_TAG = "Repo tooling: tests, ratchets, generators";
 function scratchLedgerRepo(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bugindex-"));
   t.onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(dir, "backend", "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "backend", "scripts", "lib"), { recursive: true });
   fs.mkdirSync(path.join(dir, "docs", "generated"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "docs", "bugs"), { recursive: true });
   fs.copyFileSync(path.join(SCRIPTS, "gen-bug-index.mjs"), path.join(dir, "backend", "scripts", "gen-bug-index.mjs"));
+  /* The generator reads the ledger through this module now, so the scratch repo
+     needs it too. Copied rather than stubbed: a stub would let the real reader
+     rot while these tests stayed green. */
+  fs.copyFileSync(path.join(SCRIPTS, "lib", "bug-ledger.mjs"), path.join(dir, "backend", "scripts", "lib", "bug-ledger.mjs"));
   const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
   git("init", "-q");
   git("config", "user.email", "t@t");
@@ -113,7 +121,15 @@ function scratchLedgerRepo(t) {
   return { dir, git };
 }
 
-const entry = (title, tag) => `## ${title} [low]\n\n<!-- area: ${tag} -->\n\n**Symptom.** x.\n`;
+const entryText = (title, tag) => `## ${title} [low]\n\n<!-- area: ${tag} -->\n\n**Symptom.** x.\n`;
+
+/** Write one entry FILE. `n` is the ordinal; the slug only has to be unique. */
+function writeEntry(dir, n, title, tag) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "entry";
+  const name = `${String(n).padStart(4, "0")}-${slug}.md`;
+  fs.writeFileSync(path.join(dir, "docs", "bugs", name), entryText(title, tag), "utf8");
+  return name;
+}
 
 function runGenerator(dir) {
   const r = spawnSync(process.execPath, [path.join(dir, "backend", "scripts", "gen-bug-index.mjs")], {
@@ -125,14 +141,15 @@ function runGenerator(dir) {
 
 test("a bad area tag INHERITED from the merge base is reported, not charged", (t) => {
   const { dir, git } = scratchLedgerRepo(t);
-  const ledger = path.join(dir, "BUG-HISTORY.md");
 
-  fs.writeFileSync(ledger, entry("Someone else's entry", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  writeEntry(dir, 1, "Someone else's entry", "Not An Area");
+  writeEntry(dir, 2, "Ordinary", GOOD_TAG);
   git("add", "-A"); git("commit", "-qm", "base");
   git("update-ref", "refs/remotes/origin/main", "HEAD");
 
-  // This branch appends a perfectly clean entry of its own.
-  fs.writeFileSync(ledger, entry("My entry", GOOD_TAG) + "\n" + fs.readFileSync(ledger, "utf8"));
+  // This branch adds a perfectly clean entry of its own — a NEW FILE, which is
+  // the whole reason two branches doing this at once no longer collide.
+  writeEntry(dir, 3, "My entry", GOOD_TAG);
   git("add", "-A"); git("commit", "-qm", "mine");
 
   const r = runGenerator(dir);
@@ -146,13 +163,12 @@ test("a bad area tag INHERITED from the merge base is reported, not charged", (t
 
 test("...but a bad area tag this change INTRODUCES still fails, exit 1", (t) => {
   const { dir, git } = scratchLedgerRepo(t);
-  const ledger = path.join(dir, "BUG-HISTORY.md");
 
-  fs.writeFileSync(ledger, entry("Ordinary", GOOD_TAG));
+  writeEntry(dir, 1, "Ordinary", GOOD_TAG);
   git("add", "-A"); git("commit", "-qm", "clean base");
   git("update-ref", "refs/remotes/origin/main", "HEAD");
 
-  fs.writeFileSync(ledger, entry("My typo", "Not An Area") + "\n" + fs.readFileSync(ledger, "utf8"));
+  writeEntry(dir, 2, "My typo", "Not An Area");
   git("add", "-A"); git("commit", "-qm", "mine");
 
   const r = runGenerator(dir);
@@ -163,13 +179,13 @@ test("...but a bad area tag this change INTRODUCES still fails, exit 1", (t) => 
 
 test("with the tag broken on main AND a second added here, only MINE is charged", (t) => {
   const { dir, git } = scratchLedgerRepo(t);
-  const ledger = path.join(dir, "BUG-HISTORY.md");
 
-  fs.writeFileSync(ledger, entry("Theirs", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  writeEntry(dir, 1, "Theirs", "Not An Area");
+  writeEntry(dir, 2, "Ordinary", GOOD_TAG);
   git("add", "-A"); git("commit", "-qm", "base");
   git("update-ref", "refs/remotes/origin/main", "HEAD");
 
-  fs.writeFileSync(ledger, entry("Mine", "Not An Area") + "\n" + fs.readFileSync(ledger, "utf8"));
+  writeEntry(dir, 3, "Mine", "Not An Area");
   git("add", "-A"); git("commit", "-qm", "mine");
 
   const r = runGenerator(dir);
@@ -182,9 +198,9 @@ test("with the tag broken on main AND a second added here, only MINE is charged"
 
 test("an unresolvable merge base charges everything — a gate that cannot tell must not pass", (t) => {
   const { dir, git } = scratchLedgerRepo(t);
-  const ledger = path.join(dir, "BUG-HISTORY.md");
 
-  fs.writeFileSync(ledger, entry("Theirs", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  writeEntry(dir, 1, "Theirs", "Not An Area");
+  writeEntry(dir, 2, "Ordinary", GOOD_TAG);
   git("add", "-A"); git("commit", "-qm", "only commit");
   // No refs/remotes/origin/main at all.
 

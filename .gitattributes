@@ -1,21 +1,23 @@
-# BUG-HISTORY.md is append-at-the-top and MANDATORY (see CLAUDE.md), so with
-# several branches open at once every one of them adds an entry to the same
-# first line of the same file. Git's default merge calls that a conflict; it is
-# not one. Both entries are wanted, always.
+# THE BUG LEDGER NO LONGER NEEDS A MERGE DRIVER, and that is the point.
 #
-# Measured 2026-08-13 while draining the backlog: of the first five pull
-# requests that turned DIRTY after an unrelated merge, FOUR conflicted on this
-# file alone and none on code. Each one cost a manual resolution against a
-# `main` that was still moving.
+# It used to be BUG-HISTORY.md: one file that every code PR was required to
+# prepend to, so every open branch edited the same first line. This file carried
+# `BUG-HISTORY.md merge=union` (PR #2133) to resolve that silently, and it did —
+# but ONLY when our git performs the merge. The attribute is applied by whichever
+# git does the merging, and GitHub's git does not read this repository's
+# .gitattributes.
 #
-# `union` is a built-in git merge driver: on a conflicting hunk it keeps both
-# sides instead of stopping. That is exactly right for a newest-first ledger
-# where each branch prepends its own block. The failure mode to know about is
-# two branches EDITING the same existing entry — union would keep both copies
-# rather than merging them — which is why this is scoped to the one file that
-# is genuinely append-only, and not applied to `docs/modules/*.md` or anything
-# else people revise in place.
-BUG-HISTORY.md merge=union
+# That distinction stopped being academic when `main` got a merge QUEUE, which
+# stacks entry 2 on entry 1's result using GitHub's git. Measured on the live
+# queue 2026-08-20: seven entries, six UNMERGEABLE, all seven touching
+# BUG-HISTORY.md. The queue was serialised to one PR at a time by the repo's own
+# mandatory rule.
+#
+# Since 2026-08-20 the ledger is docs/bugs/, ONE FILE PER ENTRY. Two PRs adding
+# entries write two different paths, so there is nothing for any git — ours or
+# GitHub's — to call a conflict, with or without a merge driver. Do not add one
+# back: a driver that only half the merges honour is how this was missed for a
+# week. See docs/bugs/README.md.
 
 # docs/generated/* is REGENERATED from source, never hand-edited — so when two
 # branches both regenerate it, neither side is right and both are recoverable.

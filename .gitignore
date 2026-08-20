@@ -54,9 +54,17 @@ backend/scale-*.json
 PROJECT_BRIEF.md
 FRONTEND_PROMPT.md
 
-# GENERATED from BUG-HISTORY.md by backend/scripts/gen-bug-index.mjs.
-# NOT tracked: every PR must append to BUG-HISTORY.md and merges are strictly
-# serial, so a committed copy conflicts on every pair of concurrent PRs — all
-# 50 of the last 50 commits touched it. `audit:bug-index` regenerates and gates
-# on the generator working, which needs no copy in git.
+# The two views GENERATED from the bug ledger in docs/bugs/.
+#
+# NOT tracked, and that is load-bearing rather than tidy. Every code PR is
+# required to add an entry, so a committed copy of either view is rewritten by
+# every PR and therefore conflicts on every PAIR of concurrent PRs — by
+# construction, not by carelessness. That is the same failure the single-file
+# BUG-HISTORY.md had, and re-tracking these would import it straight back.
+#
+# `audit:bug-index` and `audit:bug-history` regenerate them in memory and gate
+# on the GENERATOR working (parse failure, unresolvable area tag, zero entries),
+# which never needed a copy in git. Read them locally with
+# `npm --prefix backend run gen:bug-index` / `gen:bug-history`.
 docs/generated/bug-index.md
+docs/generated/bug-history.md

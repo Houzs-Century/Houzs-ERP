@@ -40,7 +40,25 @@ const COMMENT_ONLY_RX = /^\s*(\/\/|\/\*|\*\/|\*(?!\/)|--|#(?!!))/;
 
 const MIGRATIONS_PG = "backend/src/db/migrations-pg/";
 
-export const BUG_HISTORY_PATH = "BUG-HISTORY.md";
+/**
+ * THE BUG LEDGER IS A DIRECTORY, one file per entry, since 2026-08-20.
+ *
+ * It was `BUG-HISTORY.md`: a single file that every code PR was required to
+ * prepend to, so every open branch edited the same first line.
+ * `.gitattributes` carried `BUG-HISTORY.md merge=union` and OUR git resolved
+ * that silently — but the attribute is applied by whichever git PERFORMS the
+ * merge, and `main` now runs a MERGE QUEUE, whose stacking is done by GitHub's
+ * git reading its own configuration. Measured on the live queue 2026-08-20:
+ * seven entries, six UNMERGEABLE, all seven touching `BUG-HISTORY.md`. The
+ * repo's own mandatory rule was serialising the queue to one PR at a time.
+ *
+ * Two PRs adding entries now write two different paths, so there is nothing
+ * for any git to call a conflict. Full trace: backend/scripts/lib/bug-ledger.mjs.
+ */
+export const BUG_ENTRY_DIR = "docs/bugs/";
+
+/** `docs/bugs/0462-the-thing-broke.md`. The README in that directory is not an entry. */
+export const BUG_ENTRY_FILE_RX = /^\d{4,}-[a-z0-9][a-z0-9-]*\.md$/;
 export const MODULE_GUIDE_DIR = "docs/modules/";
 
 export const LABEL_NO_BUG_HISTORY = "no-bug-history-needed";
@@ -78,6 +96,13 @@ export function parseUnifiedDiff(patch) {
       file = {
         path: m ? m[2] : raw.slice(11),
         oldPath: m ? m[1] : null,
+        /* Whether git CREATED this path in this diff. Rule 1 needs it: now that
+           the ledger is one file per entry, "added an entry" means "added a
+           file", and editing somebody else's entry must not read as writing
+           your own. Read from the `new file mode` header AND from
+           `--- /dev/null`, because the two diff producers this gate is fed by
+           (`git diff` and `gh pr diff`) do not both always emit the first. */
+        isNew: false,
         added: [],
         removed: [],
       };
@@ -86,6 +111,17 @@ export function parseUnifiedDiff(patch) {
       continue;
     }
     if (!file) continue;
+    if (raw.startsWith("new file mode ")) {
+      file.isNew = true;
+      continue;
+    }
+    /* `--- /dev/null` marks a creation. It is intercepted here for a second
+       reason too: it starts with `-`, so without this line it was collected as
+       a REMOVED line of text `-- /dev/null` on every file the diff adds. */
+    if (raw.startsWith("--- /dev/null")) {
+      file.isNew = true;
+      continue;
+    }
     if (raw.startsWith("+++ b/")) {
       const p = raw.slice(6);
       if (p !== "/dev/null") file.path = p;
@@ -165,14 +201,42 @@ export function detectFixIntent({ title, branch, body, templateBody }) {
 }
 
 /**
- * A NEW entry, not merely a touched file. `BUG-HISTORY.md` is 10,000+ lines;
- * a typo fix in it is not a bug log. An entry is a new `## ` heading.
+ * A NEW entry, which since 2026-08-20 means a NEW FILE under `docs/bugs/`
+ * carrying a `## ` heading.
+ *
+ * Both halves are load-bearing, and neither is new strictness:
+ *
+ *   · NEW FILE, because the ledger no longer has one file everyone appends to.
+ *     Requiring newness is also what closes the hole ESCAPE 3 recorded against
+ *     the old shape — rewording somebody else's existing heading counted as
+ *     writing your own entry, and against a single file there was no way to
+ *     tell the two apart. Against a directory there is: your entry is a path
+ *     that did not exist.
+ *   · A `## ` HEADING, because an empty file is not an entry. Same bar the old
+ *     rule set ("a typo fix in BUG-HISTORY.md is not a bug log").
+ *
+ * The FILENAME SHAPE is checked as well, and reported separately: a mis-named
+ * file is invisible to the ledger, the index and this gate all at once, which
+ * is the one failure that would otherwise look like a clean pass.
  */
-export function addsBugHistoryEntry(files) {
-  const f = files.find((x) => x.path === BUG_HISTORY_PATH);
-  if (!f) return { touched: false, entry: false, heading: null };
-  const heading = f.added.map((a) => a.text).find((t) => /^\s{0,3}##\s+\S/.test(t));
-  return { touched: true, entry: Boolean(heading), heading: heading ? heading.trim() : null };
+export function addsBugEntry(files) {
+  const touched = files.filter((x) => x.path.startsWith(BUG_ENTRY_DIR) && x.path.endsWith(".md"));
+  if (touched.length === 0) return { touched: false, entry: false, heading: null, file: null, misnamed: [] };
+
+  const misnamed = [];
+  for (const f of touched) {
+    const base = f.path.slice(BUG_ENTRY_DIR.length);
+    if (!f.isNew || base === "README.md") continue;
+    if (!BUG_ENTRY_FILE_RX.test(base)) misnamed.push(f.path);
+  }
+
+  for (const f of touched) {
+    const base = f.path.slice(BUG_ENTRY_DIR.length);
+    if (!f.isNew || !BUG_ENTRY_FILE_RX.test(base)) continue;
+    const heading = f.added.map((a) => a.text).find((t) => /^\s{0,3}##\s+\S/.test(t));
+    if (heading) return { touched: true, entry: true, heading: heading.trim(), file: f.path, misnamed };
+  }
+  return { touched: true, entry: false, heading: null, file: null, misnamed };
 }
 
 // ---------------------------------------------------------------------------
@@ -713,7 +777,7 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
   // --- rule 1 -------------------------------------------------------------
   const fix = detectFixIntent({ title, branch, body, templateBody });
   const codeFiles = files.filter((f) => isCodePath(f.path));
-  const bh = addsBugHistoryEntry(files);
+  const bh = addsBugEntry(files);
 
   if (fix.isFix && codeFiles.length > 0) {
     const why = fix.signals.map((s) => `${s.where}: "${s.match}"`).join(", ");
@@ -721,25 +785,34 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
       add(
         "escape",
         "bug-history",
-        `SKIPPED by label \`${LABEL_NO_BUG_HISTORY}\` — this PR reads as a fix (${why}) and touches ${codeFiles.length} code file(s), and is shipping with NO BUG-HISTORY.md entry.`,
+        `SKIPPED by label \`${LABEL_NO_BUG_HISTORY}\` — this PR reads as a fix (${why}) and touches ${codeFiles.length} code file(s), and is shipping with NO ${BUG_ENTRY_DIR} entry.`,
       );
     } else if (bh.entry) {
-      add("pass", "bug-history", `New BUG-HISTORY.md entry: ${bh.heading}`);
+      add("pass", "bug-history", `New bug entry ${bh.file}: ${bh.heading}`);
     } else if (bh.touched) {
       add(
         "fail",
         "bug-history",
-        `BUG-HISTORY.md was touched but no new entry was added (no new "## " heading).`,
-        `Fix signals — ${why}. CLAUDE.md: one entry, Symptom -> Root cause -> Fix -> Ref, newest first, in the SAME PR.`,
+        bh.misnamed.length
+          ? `${BUG_ENTRY_DIR} gained ${bh.misnamed.length} file(s), and none of them is a usable entry.`
+          : `${BUG_ENTRY_DIR} was touched but NO NEW entry file was added.`,
+        [
+          `Fix signals — ${why}`,
+          bh.misnamed.length
+            ? `Mis-named — ${bh.misnamed.join(", ")}. An entry file is \`${BUG_ENTRY_DIR}NNNN-slug.md\`; anything else is invisible to the ledger, the index AND this gate.`
+            : `Editing an existing entry is not logging a new bug. Add a FILE.`,
+          `Scaffold it with \`node scripts/new-bug.mjs "<title>"\`. CLAUDE.md: one entry, Symptom -> Root cause -> Fix -> Ref, in the SAME PR.`,
+        ].join("\n    "),
       );
     } else {
       add(
         "fail",
         "bug-history",
-        `This PR reads as a fix and changes code, but BUG-HISTORY.md is untouched.`,
+        `This PR reads as a fix and changes code, and adds no bug entry under ${BUG_ENTRY_DIR}.`,
         [
           `Fix signals — ${why}`,
           `Code files — ${codeFiles.slice(0, 6).map((f) => f.path).join(", ")}${codeFiles.length > 6 ? ` (+${codeFiles.length - 6} more)` : ""}`,
+          `Scaffold the entry with \`node scripts/new-bug.mjs "<title>"\` — it writes ${BUG_ENTRY_DIR}NNNN-slug.md, which is a path no other branch is writing.`,
           `CLAUDE.md marks this MANDATORY. Add the entry, or apply the \`${LABEL_NO_BUG_HISTORY}\` label so the exception is on the record.`,
         ].join("\n    "),
       );
