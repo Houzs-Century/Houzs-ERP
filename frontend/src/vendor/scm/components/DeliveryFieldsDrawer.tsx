@@ -35,12 +35,15 @@ import { procLockActive } from '../lib/so-detail-gates';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
+import { DateTimeField } from "./DateTimeField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A TIMESTAMPTZ ISO string → the value a <input type="datetime-local"> wants
-   (local-ish YYYY-MM-DDTHH:mm). Best-effort: slice the ISO; empty when null. */
+/* A TIMESTAMPTZ ISO string → the wall-clock YYYY-MM-DDTHH:mm that DateTimeField
+   reads and writes (the same shape a native datetime-local used, unchanged when
+   Arrival/Departure moved onto DateTimeField on 2026-08-18).
+   Best-effort: slice the ISO; empty when null. */
 const toDtLocal = (iso: string | null): string =>
   iso ? String(iso).slice(0, 16) : '';
 /* A YYYY-MM-DD date string → the ISO value DateField takes. */
@@ -252,16 +255,18 @@ export const DeliveryFieldsDrawer = ({
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Arrival</div>
-              <input type="datetime-local" className={styles.searchInput} style={inputStyle}
+              <DateTimeField fullWidth className={styles.searchInput} style={inputStyle}
+                aria-label="Arrival"
                 value={form.arrivalAt}
-                onChange={(e) => set('arrivalAt', e.target.value)} />
+                onChange={(v) => set('arrivalAt', v)} />
             </label>
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Departure</div>
-              <input type="datetime-local" className={styles.searchInput} style={inputStyle}
+              <DateTimeField fullWidth className={styles.searchInput} style={inputStyle}
+                aria-label="Departure"
                 value={form.departureAt}
-                onChange={(e) => set('departureAt', e.target.value)} />
+                onChange={(v) => set('departureAt', v)} />
             </label>
 
             <label style={fieldRow}>
