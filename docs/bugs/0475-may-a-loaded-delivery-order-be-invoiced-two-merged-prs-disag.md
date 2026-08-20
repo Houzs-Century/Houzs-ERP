@@ -1,6 +1,12 @@
-## May a LOADED delivery order be invoiced? Two merged PRs disagree [OWNER DECISION]
+## May a LOADED delivery order be invoiced? Two merged PRs disagreed — SETTLED [OWNER DECISION]
 
 <!-- area: Delivery, DO, returns -->
+
+> **ANSWERED 2026-08-20: yes, it may.** The owner ruled 不要拦 —— 人自己知道.
+> The ruling, what changed and what deliberately did not are in entry **0480**.
+> Everything below is the state of the question BEFORE he answered, kept
+> because the evidence in it is what the ruling was made on.
+
 
 **Not a defect report — an open question, recorded so it is not lost.** Nothing
 here is broken today; two rulings simply point opposite ways and the system is
