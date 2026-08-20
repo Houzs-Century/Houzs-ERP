@@ -38,3 +38,20 @@ jobs:
           # GitHub-hosted runners have no IPv6 egress; mirror the soak-gate and
           # deploy workflows so an IPv4-only pooler host resolves.
           NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Proof-of-delivery census — the second DO question you cannot answer by
+      # reading code: how many already-CLOSED deliveries carry no customer
+      # signature, no photo and no GPS fix. It rides this workflow rather than a
+      # new one on purpose: a workflow_dispatch file is only dispatchable once it
+      # is on the default branch, so a brand-new workflow answers HTTP 404 until
+      # it merges — which is exactly when you still need to run it. Extending a
+      # workflow that is already dispatchable lets `--ref <branch>` run THIS
+      # version of the file before the PR lands.
+      #
+      # `if: always()` so the census still reports when the integrity check above
+      # finds something. They answer different questions and neither is a gate.
+      - run: node scripts/check-pod-evidence.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

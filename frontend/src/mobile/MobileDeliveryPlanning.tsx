@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { useUpdateMfgDeliveryOrderStatus } from "../vendor/scm/lib/delivery-order-queries";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -254,9 +255,12 @@ const seqBgFor = (st: TrackState): string =>
 export function MobileDeliveryPlanning({
   onBack,
   onOpen,
+  onPod,
 }: {
   onBack: () => void;
   onOpen?: (docNo: string) => void;
+  /* Open the Proof-of-Delivery screen for a DO NUMBER — see onComplete. */
+  onPod?: (doNumber: string) => void;
 }) {
   const [day, setDay] = useState<Day>("today");
   // The stop currently open in the detail view (its SO doc_no).
@@ -373,6 +377,7 @@ export function MobileDeliveryPlanning({
         isToday={isToday}
         onBack={() => setOpenStop(null)}
         onOpen={onOpen}
+        onPod={onPod}
       />
     );
   }
@@ -1141,12 +1146,14 @@ function StopDetail({
   isToday,
   onBack,
   onOpen,
+  onPod,
 }: {
   order: BoardRow;
   seq: number;
   isToday: boolean;
   onBack: () => void;
   onOpen?: (docNo: string) => void;
+  onPod?: (doNumber: string) => void;
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
@@ -1268,26 +1275,15 @@ function StopDetail({
   const createAmendment = useCreateAmendment();
 
   // "On the way" / "Mark arrived" → IN_TRANSIT. Inventory-idempotent (DO OUT).
-  const start = useMutation({
-    mutationFn: () => {
-      if (!doId) throw new Error("no_do");
-      return authedFetch<{ deliveryOrder: unknown }>(
-        `/delivery-orders-mfg/${encodeURIComponent(doId)}/status`,
-        { method: "PATCH", body: JSON.stringify({ status: "IN_TRANSIT" }) },
-      );
-    },
-    onSuccess: async () => {
-      await invalidate();
-    },
-    /* A failed "On the way" said NOTHING either — same silent-tap gap the
-       "Mark arrived" onError below closes. Surface it the same way. */
-    onError: async (e) => {
-      await notify({
-        title: "Couldn't start the delivery",
-        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
-      });
-    },
-  });
+  /* THE SHARED HOOK, not a hand-rolled PATCH. The board used to build this
+     request itself, which is how the DO status endpoint came to have four
+     private implementations and only one of them carrying proof of delivery.
+     IN_TRANSIT is a departure marker and takes no evidence, but it belongs on
+     the same writer so there is exactly one.
+
+     A failed "On the way" said NOTHING before — the hook's own onError now
+     surfaces it, and the per-call onError below keeps the board's wording. */
+  const start = useUpdateMfgDeliveryOrderStatus();
 
   /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
      
@@ -1322,27 +1318,20 @@ function StopDetail({
     },
   });
 
-  // "POD complete" → DELIVERED (stamps delivered_at).
-  const complete = useMutation({
-    mutationFn: () => {
-      if (!doId) throw new Error("no_do");
-      return authedFetch<{ deliveryOrder: unknown }>(
-        `/delivery-orders-mfg/${encodeURIComponent(doId)}/status`,
-        { method: "PATCH", body: JSON.stringify({ status: "DELIVERED" }) },
-      );
-    },
-    onSuccess: async () => {
-      await invalidate();
-    },
-    /* A failed "POD complete" was silent too — the driver taps, the button
-       returns, and the delivery never gets marked done. Match the arrive path. */
-    onError: async (e) => {
-      await notify({
-        title: "Couldn't complete the delivery",
-        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
-      });
-    },
-  });
+  /* "POD complete" was a raw PATCH `{ status: "DELIVERED" }` from here. It is
+     now a NAVIGATION to the POD screen — what the button has always been
+     labelled ("Take POD photo — complete") and never did. That deletion closes
+     two defects a warning here could not have fixed:
+
+     1. NO EVIDENCE. Signature pad, photo and GPS live on MobilePOD, so the same
+        stop had a signature or had nothing depending on the screen used.
+     2. THE REMEDY IT NAMED DID NOT EXIST. Its confirm said "Open the order
+        afterwards to attach the POD photo and signature" — but MobilePOD
+        withholds its whole capture path once delivered (MobilePOD.tsx, the
+        `!delivered && !cancelled && canOperate` gate). There was no afterwards.
+
+     Nothing is taken from the driver: MobilePOD still closes a delivery the
+     customer will not sign for; it now says so instead of staying quiet. */
 
   // Offer to CUT the DO on the spot (same endpoint the desktop board uses) when
   // a stop has none yet, instead of dead-ending at "ask the office".
@@ -1387,7 +1376,16 @@ function StopDetail({
     // button is already withheld for a view-only user; guard the handler too.
     if (!canOperateDo) return;
     if (!(await requireDo())) return;
-    start.mutate();
+    if (!doId) return; // requireDo guarantees this; narrows the type.
+    start.mutate({ id: doId, status: "IN_TRANSIT" }, {
+      onSuccess: async () => { await invalidate(); },
+      onError: async (e) => {
+        await notify({
+          title: "Couldn't start the delivery",
+          body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+        });
+      },
+    });
   };
 
   /* Step 2's own handler. It used to call onStart — so "Mark arrived" re-posted
@@ -1402,16 +1400,20 @@ function StopDetail({
   const onComplete = async () => {
     if (!canOperateDo) return;
     if (!(await requireDo())) return;
-    const go = await confirm({
-      title: "Mark delivered?",
-      body: "This records the stop as delivered and sends the completion time to the office. Open the order afterwards to attach the POD photo and signature.",
-      confirmLabel: "Mark delivered",
-    });
-    if (!go) return;
-    complete.mutate();
+    /* The DO NUMBER, not the id — MobilePOD resolves a document number through
+       the list route. `requireDo()` above guarantees a DO exists by now. */
+    const doNumber = doRef?.do_number;
+    if (!doNumber || !onPod) {
+      await notify({
+        title: "Can't open Proof of Delivery",
+        body: "This stop's delivery order number isn't available yet. Pull to refresh, then try again.",
+      });
+      return;
+    }
+    onPod(String(doNumber));
   };
 
-  const busy = start.isPending || arrive.isPending || complete.isPending;
+  const busy = start.isPending || arrive.isPending;
   const goToDo = () => onOpen?.(order.so_doc_no);
   const [editingFields, setEditingFields] = useState(false);
 
@@ -1921,12 +1923,12 @@ function StopDetail({
             <span className="card-sub">On the way → Arrived → POD</span>
           </div>
           <div className="card-b">
-            {(start.error || complete.error) && (
+            {start.error && (
               <div
                 style={{ fontSize: 12, color: "var(--red)", marginBottom: 9 }}
               >
                 {(() => {
-                  const e = start.error || complete.error;
+                  const e = start.error;
                   return e instanceof Error && e.message !== "no_do"
                     ? e.message
                     : "Couldn't update this stop. Please try again.";
@@ -1981,9 +1983,7 @@ function StopDetail({
               <TrackButton
                 onClick={onComplete}
                 busy={busy}
-                label={
-                  complete.isPending ? "Saving…" : "Take POD photo — complete"
-                }
+                label="Take POD photo — complete"
                 icon="camera"
                 primary
               />
