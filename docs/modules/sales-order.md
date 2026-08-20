@@ -1492,6 +1492,19 @@ caller. That is how the amendment-approve path was found; a grep had missed it.
    slip-optional ruling of 2026-08-13, so it was left for a follow-up rather
    than folded in here.
 
+   The exact sites, so the follow-up does not have to rediscover them
+   (`git grep -n "pendingDepositSen" -- frontend/src`, run 2026-08-20):
+
+   | file:line | what it is |
+   |---|---|
+   | `mobile/MobileNewSO.tsx:2061` | the mobile create body's key |
+   | `pages/scm-v2/SalesOrderNew.tsx:1587` | the desktop's computation |
+   | `pages/scm-v2/SalesOrderNew.tsx:1594` | the desktop create body's key |
+   | `vendor/scm/lib/so-slip-optional-contract.test.ts:95,98,130,132` | the contract test that pins both — and the reason this is a follow-up, not a tidy-up |
+
+   Under `backend/src` the only remaining mention is the comment recording the
+   removal (`scm/routes/mfg-sales-orders.ts`). No code reads the key.
+
 Pinned by `backend/src/scm/shared/deposit-not-a-save-gate.test.ts` (behaviour)
 and `backend/tests/depositGateOffWiring.test.ts` (that no surface re-introduces
 it), plus the inverted route-level case in
