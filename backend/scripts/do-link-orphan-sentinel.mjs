@@ -17,6 +17,21 @@
 // to DELIVERED six seconds later — impossible without the links. A third
 // mechanism blanked them and it is still live.
 //
+// THE THIRD MECHANISM NOW HAS A NAME — for the 2026-08-20 batch, not for the
+// 2026-08-17 one. This alarm printed ten orphans across FOUR documents, whole
+// documents at a time. The 2990 mirror receiver replaced each order's entire
+// item set with a DELETE-then-INSERT on every inbound message, and the FK's
+// ON DELETE SET NULL blanked every DO line naming those rows — the only known
+// mechanism that can orphan a whole document at once. #2515 made the receiver
+// import each order ONCE. Whether the same path explains the twenty-six of
+// 2026-08-17 is UNKNOWN and is not claimed here.
+//
+// THE ALARM DOES NOT RETIRE WITH THE FIX. #2518 measured 2990's own outbox
+// (run 32326411962): pending=0, stuck=0, newest delivery 2026-08-19T08:42:39Z.
+// The queue is DRAINED, and a drained queue is a state, not a guarantee — any
+// 2990-side change re-arms it, and while it is idle "the edit stuck" is equally
+// true of a mirror that never fired. This sentinel is what tells the two apart.
+//
 // The fix makes that mechanism SILENT, and that is the exact reason this file
 // exists. Before, corruption announced itself as a wrong MRP row somebody
 // eventually complained about. Now the fallback absorbs it and nothing looks
@@ -98,12 +113,23 @@ try {
          printing only a COUNT. There was nothing to cross-check against, so the
          instruction could not be followed by anyone, ever.
 
-         Naming the documents is what turns this from an alert into a diagnosis:
-         the leading theory (2026-08-20) is that the SVC-DELIVERY rebuild at
-         mfg-sales-orders.ts:6436 deletes and reinserts the delivery-charge line,
+         Naming the documents is what turned this from an alert into a
+         diagnosis, and it has already earned its keep once. The theory it was
+         written to test (2026-08-20) was that the SVC-DELIVERY rebuild at
+         mfg-sales-orders.ts:6436 deletes and reinserts the delivery-charge line
          and ON DELETE SET NULL blanks any DO line pointing at the old one. That
-         theory predicts these rows are DELIVERY-CHARGE lines. If they are beds
-         and mattresses, it is wrong — which is the point of printing them. */
+         predicted DELIVERY-CHARGE rows. This query printed SOFAS AND A MATTRESS,
+         ten of them across four documents — so the rebuild is not what orphans
+         these, and the 2990 mirror's whole-item-set replace is (#2515, and the
+         header above).
+
+         READ THE REFUTATION CORRECTLY, because the first reading of it was
+         wrong. The failed prediction narrowed the MECHANISM; it did not clear
+         the CODE. That same rebuild really was destroying the owner's delivery
+         fee — 250 typed as 125 came back 250 — and it took three fixes on the
+         Houzs side to stop it: #2490, #2514 with mig 0310, and #2516. A theory
+         that fails its prediction is incomplete, not innocent, and the cheapest
+         way to learn that twice is to write it here instead of relearning it. */
   const orphanRows = await pg`
     SELECT d.do_number AS do_doc_no, d.so_doc_no, di.item_code, di.qty
       FROM scm.delivery_orders d
