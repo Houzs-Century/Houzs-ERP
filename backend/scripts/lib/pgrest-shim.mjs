@@ -7,7 +7,7 @@
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY secrets (the APPLY died asking for
 // them), and hand-replicating restampDoActualCost's warehouse resolution +
 // sofa batch map + variant keys in SQL is exactly the "subtly-different sweep
-// is worse than none" trap (recompute-2990-so-allocation.mjs header). So the
+// is worse than none" trap (recompute-so-allocation.mjs header). So the
 // LOGIC stays canonical and only the TRANSPORT is mimicked.
 //
 // SCOPE — deliberately the exact surface those functions use, nothing more:
