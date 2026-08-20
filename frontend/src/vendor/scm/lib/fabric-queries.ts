@@ -68,6 +68,26 @@ export type FabricTrackingRow = {
   is_active?: boolean | null;
 };
 
+/* The NON-SENSITIVE subset served by GET /fabric-tracking/lite — name + price
+   tiers, NO cost/stock. Everything the SO fabric dropdown + PC-Order detail need
+   to pick a fabric and price a line, and safe to read without products access
+   (the full FabricTrackingRow carries cost/stock and stays gated). */
+export type FabricLite = Pick<
+  FabricTrackingRow,
+  | 'id'
+  | 'fabric_code'
+  | 'fabric_description'
+  // supplier_code is the DISPLAY dual-code (the "(DC-151-03)" shown in the picker
+  // label), not cost/stock — safe and needed by fabricOptionLabel.
+  | 'supplier_code'
+  | 'fabric_category'
+  | 'price_tier'
+  | 'sofa_price_tier'
+  | 'bedframe_price_tier'
+  | 'series'
+  | 'is_active'
+>;
+
 /* ─── Fabric dual-code display (owner request 2026-06-12) ──────────────────
  * Wherever a fabric is picked or displayed, show BOTH codes:
  *   "CG-015 (DC-151-03) — description"
@@ -120,6 +140,38 @@ export function useFabricTrackings(opts?: {
        row has been explicitly retired; null/undefined is a pre-0167 row and
        counts as live. */
     select: (fabrics: FabricTrackingRow[]) =>
+      opts?.includeRetired === false
+        ? fabrics.filter((f) => f.is_active !== false)
+        : fabrics,
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+  });
+}
+
+/* DISPLAY/PICK read — names + price tiers only, hits GET /fabric-tracking/lite
+   which is openRead (no cost/stock). Use this on surfaces gated by scm.sales.* /
+   scm.consignment.* (the SO fabric dropdown, PC-Order detail) so a user without
+   scm.procurement.products does NOT hit the 403 the full useFabricTrackings gave
+   them. The full hook stays for the products/fabric pages that show cost/stock. */
+export function useFabricTrackingsLite(opts?: {
+  category?: FabricCategoryValue;
+  search?: string;
+  includeRetired?: boolean;
+}) {
+  return useQuery({
+    queryKey: ['fabric-tracking-lite', opts?.category ?? 'all', opts?.search ?? ''],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams();
+      if (opts?.category) params.set('category', opts.category);
+      if (opts?.search) params.set('search', opts.search);
+      const res = await authedFetch<{ fabrics: FabricLite[] }>(
+        `/fabric-tracking/lite${params.toString() ? `?${params.toString()}` : ''}`,
+        { signal },
+      );
+      return res.fabrics;
+    },
+    select: (fabrics: FabricLite[]) =>
       opts?.includeRetired === false
         ? fabrics.filter((f) => f.is_active !== false)
         : fabrics,

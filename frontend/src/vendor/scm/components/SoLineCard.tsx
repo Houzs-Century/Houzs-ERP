@@ -45,7 +45,7 @@ import {
   type MfgProductRow,
   type SpecialAddonRow,
 } from '../lib/mfg-products-queries';
-import { useFabricTrackings, useFabricColoursSearch, type FabricTrackingRow, type FabricColourRow } from '../lib/fabric-queries';
+import { useFabricTrackingsLite, useFabricColoursSearch, type FabricLite, type FabricColourRow } from '../lib/fabric-queries';
 import { useFabricLibrary } from '../lib/queries';
 import {
   useUploadSoItemPhoto,
@@ -231,7 +231,7 @@ const SoLineCardInner = ({
   /* fabric_trackings stays ONLY for the read-only pricing-tier breakdown
      (pickedFabric below) — the Fabrics DROPDOWN now sources the selling-side
      fabric_colours, same as POS (SO-parity, Loo 2026-06-06). */
-  const fabricsQ = useFabricTrackings();
+  const fabricsQ = useFabricTrackingsLite();
   const fabrics = useMemo(() => fabricsQ.data ?? [], [fabricsQ.data]);
   const fabricLibQ     = useFabricLibrary();
   /* Special Add-ons (the per-Model system POS sells from + the server prices
@@ -516,7 +516,7 @@ const SoLineCardInner = ({
      variant. Pull the per-context tier (sofa_price_tier vs
      bedframe_price_tier) so the shared compute function can switch
      basePriceSen ↔ price1Sen exactly the same way the server does. */
-  const pickedFabric: FabricTrackingRow | null = useMemo(() => {
+  const pickedFabric: FabricLite | null = useMemo(() => {
     const code = String(draft.variants.fabricCode ?? '');
     if (!code) return null;
     return fabrics.find((f) => f.fabric_code === code) ?? null;
