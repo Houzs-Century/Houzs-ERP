@@ -2773,3 +2773,52 @@ drift-gated POS caller is not: it must send `sofaSellingSen + surcharges + …` 
 in either tree** — it is a WIRING GAP, not dead code, and must not be deleted.
 It is inert only while every add-on is priced 0; the first add-on the owner
 prices is the moment a price-submitting client has to call it.
+
+---
+
+## The AutoCount answer arrives with the save, not five minutes later
+
+Owner 2026-08-19. Two changes to this module's surface; the rule and the reasons
+live in `docs/modules/autocount-writeback.md` §6b, and the code in
+`backend/src/scm/lib/ac-preflight.ts`.
+
+**1. CONFIRM now asks the write-back's own salesperson question (a 422, and it
+is narrower than it sounds).** `backend/src/scm/lib/so-confirm-gate.ts` used to
+accept `salesperson_id` OR any non-blank `agent` text. `agent` is free text with
+no writer that keeps it honest — production rows hold bare `scm.staff` UUIDs and
+the literal placeholder `"Unassigned"` — so the order the rule was written for
+(HC-SO-2607-008, owner 2026-08-08) satisfied it, and then died in the write-back
+queue as `MissingAgentError` where nobody saw it. The gate now calls
+`resolveAcAgent`, the same function that decides what the account book is given.
+
+- **What is newly refused:** an order with NO salesperson link whose `agent` is
+  not an AutoCount sales agent. Message names the text — *"'Unassigned' is not a
+  salesperson this order can be credited to"* — because telling someone to
+  assign a salesperson while the box visibly holds a value sends them in a
+  circle.
+- **What is NOT refused, and is pinned by tests:** an order carrying a
+  salesperson (any real `scm.staff.name`, including a rep hired since the
+  cutover), or an `agent` the book already spells. Same `salesperson_required`
+  code as before, so no confirm surface changes.
+- **Cost:** zero extra reads. Both callers already select `salesperson_id,
+  agent`.
+
+**2. CREATE returns `acNotSent` when the accounts will not take the order.**
+`POST /api/scm/mfg-sales-orders` now carries `acNotSent: SaveProblem[]` beside
+`docNo` when the write-back composer refused the document — absent otherwise.
+Never a 422: the order is committed by then, and every remaining cause needs
+master data the salesperson does not own. Rendered by
+`frontend/src/vendor/scm/lib/ac-not-sent.tsx`, which owns the whole dialog so a
+new surface cannot get it subtly different.
+
+**Not yet wired**, and recorded here rather than counted as done: the mobile
+wizard (`frontend/src/mobile/MobileNewSO.tsx`), the POS handover, and the
+DRAFT → live transition (its response object is built inside the status command,
+so it carries no key). Those three still save in silence.
+
+**Also folded in:** the aggregated save-gate popup — the renderer for every
+refusal above — moved from three hand-written copies into `notifySaveProblems`
+(`frontend/src/vendor/scm/components/SaveProblemsList.tsx`). What is shared is
+"is this an aggregated gate failure, and if so, this popup". What is deliberately
+NOT shared is each surface's own fallback: this page's inline banner and the
+mobile wizard's own wording both survive.
