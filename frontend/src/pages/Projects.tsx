@@ -103,6 +103,7 @@ import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
@@ -1402,10 +1403,9 @@ function ProjectsListView() {
     !!user?.permissions?.includes("*") ||
     /\b(super admin|sales director|finance manager)\b/i.test(_pos);
   const _isDriver = /\bdriver\b/i.test(_pos);
-  // Helpers/storekeepers are FORCE-scoped to their assigned events server-side
-  // (isCrewScopedUser in backend); drivers are not (they opt in).
-  const _isForceScopedCrew = /\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos);
-  const _isCrew = _isDriver || _isForceScopedCrew;
+  // Helpers/storekeepers are FORCE-scoped server-side, drivers are not (they opt
+  // in). The predicate — and why it moved here — is in auth/crewScope.ts.
+  const _isCrew = _isDriver || isCrewScopedUser(user);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const cohortTickOnly = can("projects.checklist.tick") && !can("projects.write");
