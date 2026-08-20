@@ -1,6 +1,6 @@
 ## Four project-detail buttons rendered for people the server refuses [high]
 
-<!-- area: Projects (PMS) -->
+<!-- area: Projects + PMS + fair report -->
 
 **白话.** 项目详情页上有四个按钮 —— 封存/还原、状态下拉、「+ Total Sales」、
 「+ Quick Log」—— 在电脑版对**每一个能打开项目的人**都显示。手机版一直是分权限的，
