@@ -249,6 +249,30 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   always move together. Unreachable commitments surface as
   `unmatchedCommitments` (0 is the healthy reading).
 
+### The supplier each row offers — one reader, chunked and paged
+
+The MRP row's supplier list and its `mainByCode` pick come from
+`supplier_material_bindings`, read through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) in `computeMrp`
+(`backend/src/scm/routes/mrp.ts`). It is not a plain `.in()`: the code list is
+chunked by URL bytes, the result is paged past PostgREST's 1,000-row response
+cap, and the order is total (`is_main_supplier DESC, item_code, id`).
+
+Two ceilings were being crossed here before 2026-08-16 and only one of them was
+loud. The IN-list was the whole demand code list in one URL, and the response
+was 2,660 rows in production against the 1,000-row cap — so roughly two thirds
+of the bindings never arrived and the SKUs they belonged to rendered
+**"— none —"**, which is the difference between a row staff can convert to a
+purchase order and a row they cannot. The fix was applied at this call site
+alone; since 2026-08-19 the rule lives in the shared reader, so the five other
+places that ask the same question inherit it instead of re-deriving it.
+
+`suppliers` is deliberately NOT on `ModelGroup` in
+`frontend/src/pages/scm-v2/Mrp.tsx`: a Model or a Sales Order does not have
+suppliers, each VARIANT does. All three groupers used to copy it off whichever
+child happened to be first, nothing read it, and the next renderer to want a
+supplier on a parent row would have shown one module's binding against all three.
+
 ## 4. Buckets and allocation
 
 - Bucket key = `(warehouse | item_code | variant_key)` (`composite()`;

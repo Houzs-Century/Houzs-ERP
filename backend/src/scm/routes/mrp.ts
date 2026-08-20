@@ -83,6 +83,7 @@ import {
 } from '../lib/ship-commitment';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
@@ -926,27 +927,26 @@ export async function computeMrp(
   const codes = [...new Set(demand.map((d) => d.item_code))];
   const mainByCode = new Map<string, { code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
-  /* CHUNKED + PAGED. Two separate ceilings were being crossed here: the IN-list
-     was the FULL demand code list in one URL (unbounded now that demand is
-     paged), and the result was 2,660 rows in prod on 2026-08-16 against a
+  /* CHUNKED + PAGED, and since 2026-08-19 through the SHARED reader
+     (lib/supplier-bindings.ts) rather than a copy of the rule that lived only
+     here. Two separate ceilings were being crossed at this call site: the
+     IN-list was the FULL demand code list in one URL (unbounded now that demand
+     is paged), and the result was 2,660 rows in prod on 2026-08-16 against a
      1000-row response cap — so ~⅔ of the bindings never arrived and the SKUs
      they belonged to showed no supplier at all, which is the difference between
      a row you can convert to a PO and a row you cannot.
-     ORDER: is_main_supplier DESC stays FIRST because `mainByCode` takes the
-     first binding it sees per code as the main one. item_code + supplier_id
-     follow only to make the order total, which is what makes `.range()` pages
-     coherent; they cannot displace a main binding from the front of its code. */
+     The fix was then applied HERE ONLY. Five other places ask the same question
+     the same way, two of them on the path the operator takes next from this
+     page; the reader is where the rule now lives so a sixth caller inherits it
+     instead of re-deriving it. ORDER (is_main_supplier DESC first, then
+     item_code + id to make it total) is stated once, in that file. */
   if (codes.length > 0) {
     type BindRow = { item_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
-    const { data: binds, error: bindErr } = await chunkIn<BindRow>(codes, (batch, from, to) => scoped(sb
-      .from('supplier_material_bindings')
-      .select('item_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)')
-      .eq('material_kind', 'mfg_product')
-      .in('item_code', batch))
-      .order('is_main_supplier', { ascending: false })
-      .order('item_code')
-      .order('id')
-      .range(from, to));
+    const { data: binds, error: bindErr } = await readMfgProductBindings<BindRow>(sb, {
+      codes,
+      companyId,
+      select: 'item_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)',
+    });
     if (bindErr) throw new Error(`mrp_load_failed: ${bindErr.message}`);
     for (const b of binds) {
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;

@@ -679,6 +679,18 @@ product was unwritable and the feature meant to fix that was unreachable.
 it knows its own creditor, and that supplier's binding beats the main one. One
 internal code bound to several suppliers is the normal case, not the edge.
 
+**The read itself is `readMfgProductBindings`** (`backend/src/scm/lib/supplier-bindings.ts`),
+which `bindingsFor` in `backend/src/scm/lib/autocount-outbox.ts` now calls instead of
+issuing its own query. Three properties, and this resolver depends on all three:
+the `item_code` IN-list is CHUNKED by URL bytes, the result is PAGED past
+PostgREST's 1,000-row response cap, and the order is TOTAL —
+`is_main_supplier DESC, item_code, id`. The first two stop a binding from simply
+not arriving (2,660 rows in production on 2026-08-16 against that cap); the
+third is what makes "the first row seen per code is its main supplier" a rule
+rather than a coin toss, because `is_main_supplier DESC` alone leaves every tie
+in planner order. `readOrThrow` still wraps it, so a failed read throws rather
+than resolving to a silently short map.
+
 
 
 The ERP calls a sofa `9028-1S`; the licensed book calls it `AMN-SF9028 SOFA`.
