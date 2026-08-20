@@ -1,3 +1,94 @@
+## A LOADED delivery order may be invoiced — the owner ruled, and the rule now has one home [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**The ruling (owner, 2026-08-20).** Asked directly whether the system should
+REFUSE to invoice a delivery order still marked LOADED, he chose **不要拦 ——
+人自己知道** ("don't block it — the person knows"), on the grounds he gave
+himself:
+
+> 「发票是invoice？等送完货了我们才自己convert to invoice啊」
+> 「我们自己开啊 manually开的不是吗」
+
+The invoice is raised BY HAND, by someone who knows whether the goods arrived.
+So the system does not second-guess them. That is his standing posture for this
+system — loosen as far as possible; a hard wall is the last resort — and it is
+why the first reading of those two sentences, that they were asking the system to
+ENFORCE what his staff already do, was wrong. They describe a practice; they are
+not a request for a wall.
+
+**Why this needed a ruling at all: the rule had two homes and they disagreed.**
+
+- **#2485 (owner, 2026-08-19)** opened the invoice to every confirmed delivery.
+  It admitted LOADED *deliberately* — not, as it was tempting to assume, by
+  writing "every confirmed DO" more broadly than intended. The diff names LOADED
+  four times: it replaced `['signed','delivered']` with
+  `['loaded','dispatched','in_transit','signed','delivered']`, DELETED a guard
+  reading `s === 'loaded'` whose message was *"Mark this delivery order signed
+  first"*, updated the test to `toEqual(['loaded', …])`, and said in its body
+  which gate it was reversing.
+- **#2557 (2026-08-20)** closed it again — not on purpose. Its real subject was a
+  genuine defect: a LOADED DO counted as DELIVERED, so a full delivery was
+  refused its own dispatch for over-delivering against itself. Consolidating that
+  onto `doCountsAsDelivered` swept the Sales-Invoice picker along with it,
+  because the picker was reading the same list.
+
+So the desktop offered the transfer while the server picker declined to supply
+it. Nothing was wrong with the money, and the nesting was the safe way round —
+the picker offered a strict SUBSET of what the create gate accepted — but a rule
+enforced at N-1 of N places with nothing watching is the exact class this repo
+has been closing all week.
+
+**Said plainly, because it is the part a future reader will want:** #2485's
+stated justification does NOT reach LOADED. It argued *"stock was already
+deducted at dispatch"*, which is true of DISPATCHED and IN_TRANSIT and false of
+LOADED, where the inventory OUT has not fired. **The rule holds because the owner
+chose it, not because that argument covered it.** Anyone who re-derives the
+reasoning will conclude the opposite; that is precisely why it is written down
+here and pinned by a test.
+
+**Fix — one home per question, and the two questions kept apart.**
+`do-shipped-states.ts` now declares BOTH:
+
+```
+DO_NOT_DELIVERED_STATES   = DRAFT, LOADED, CANCELLED   "have the goods left?"
+DO_NOT_INVOICEABLE_STATES = DRAFT,         CANCELLED   "may this be billed?"
+```
+
+They agree on six of the eight statuses and differ on exactly LOADED, which makes
+them look like one rule written twice — the shape `check-duplicated-decisions`
+hunts. They are not, and both the declaration and the test say so, because
+"tidying" them together re-breaks one of the two rulings.
+
+`do-line-remaining.ts` — the Pending engine both pickers read — takes a REQUIRED
+`DoPendingBasis` of `'invoiceable' | 'delivered'` rather than defaulting, for the
+same reason its `companyId` argument is required: a basis a caller can omit is
+whichever answer the last editor preferred, and this rule has now flipped twice.
+
+**Which call sites moved, and which deliberately did not.** #2557 consolidated
+nine; only the invoice ones are reverted:
+
+| site | basis | why |
+| --- | --- | --- |
+| `resolveCandidateDoIds` ← sales-invoices | `invoiceable` | **changed** — the picker offers LOADED again |
+| `doLineRemaining` ← sales-invoices (×2) | `invoiceable` | **changed** — a picker that lists a DO whose lines then come back empty is worse than hiding it |
+| `doRemainingByItemId` / `checkSiOverRemaining` | `invoiceable` | **changed** — the write-path cap must measure the pool the gate offers, or the invoice passes the gate and is refused `over_remaining` |
+| `resolveCandidateDoIds` / `doLineRemaining` ← delivery-returns | `delivered` | unchanged — goods still on the lorry never left, so nothing can come back |
+| `unbilled-deliveries` | `delivered` | unchanged — this report is money we are OWED; a LOADED DO may now be invoiced but nobody owes for it yet |
+| `unlinked-line-edit-guard` | `delivered` | unchanged — a shadow guard asking a stock question, stated so it reads as a decision |
+| `so-delivery-sync`, `so-stock-allocation`, `do-unlinked-coverage`, `routes/inventory`, `routes/delivery-orders-mfg`, `check-do-integrity.mjs` | — | untouched. This is #2557's real fix and it stays. |
+
+**Nothing in production changes today.** `check-do-integrity.mjs` R4 (run
+32368212535) found **ZERO** delivery orders in LOADED in either company, and zero
+that the gate would have refused. A rule being settled, not an incident.
+
+**Pinned, because this is the second reversal.**
+`backend/tests/loadedStaysInvoiceable.test.ts` fails by NAME if LOADED is folded
+back into the invoice path, and asserts in the same file that #2557's DELIVERED
+exclusion is still intact — so the next person to "unify" the two sets is told
+which ruling they are undoing. Proven RED first: re-adding LOADED to
+`DO_NOT_INVOICEABLE_STATES` fails four of its eight assertions.
+
 ## Four project-detail buttons rendered for people the server refuses [high]
 
 <!-- area: Projects + PMS + fair report -->
@@ -186,7 +277,13 @@ that screen, so it is the owner's call rather than a provable defect. Flagged
 here rather than changed.
 
 **Ref.** PR #2565, 2026-08-20.
-## May a LOADED delivery order be invoiced? Two merged PRs disagree [OWNER DECISION]
+## May a LOADED delivery order be invoiced? Two merged PRs disagreed — SETTLED 2026-08-20 [OWNER DECISION]
+
+> **ANSWERED: yes, it may.** The owner ruled on 2026-08-20 — 不要拦 —— 人自己知道.
+> The full ruling and what changed is the entry at the top of this file,
+> "A LOADED delivery order may be invoiced". Everything below is the state of
+> the question BEFORE he answered, kept because the evidence in it is what the
+> ruling was made on.
 
 <!-- area: Delivery, DO, returns -->
 

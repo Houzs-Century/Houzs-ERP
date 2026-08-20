@@ -148,6 +148,58 @@ export function doCountsAsDelivered(status: string | null | undefined): boolean 
 export const DO_NOT_DELIVERED_IN_LIST =
   `(${DO_NOT_DELIVERED_STATES.map((s) => `"${s}"`).join(',')})`;
 
+/* ── "MAY THIS BE INVOICED?" — the owner's ruling, 2026-08-20 ────────────────
+
+   A DIFFERENT QUESTION FROM THE ONE ABOVE, and the difference is exactly LOADED.
+   "Has this delivery counted?" is about stock: a LOADED DO is on the lorry, its
+   inventory OUT has not fired, and counting it as delivered is what refused a
+   full delivery its own dispatch (#2557). "May this be invoiced?" is about
+   PAPERWORK, and the owner settled it himself:
+
+     「发票是invoice？等送完货了我们才自己convert to invoice啊」
+     「我们自己开啊 manually开的不是吗」
+
+   Asked directly whether the system should REFUSE a LOADED delivery its invoice,
+   he chose 不要拦 —— 人自己知道 ("don't block it — the person knows"). The
+   invoice is raised by hand, by someone who knows whether the goods arrived, so
+   the system does not second-guess them. That is his standing posture for this
+   system: loosen as far as possible, a hard wall is the last resort.
+
+   READ THIS BEFORE "TIDYING" THE TWO SETS TOGETHER. They agree on six of the
+   eight statuses and differ only on LOADED, which makes them look like one rule
+   written twice — the exact shape check-duplicated-decisions hunts. They are not.
+   Merging them re-breaks one of the two rulings, and this is the SECOND reversal
+   on this one:
+     · #2485 (owner, 2026-08-19) opened the invoice to every confirmed delivery,
+       LOADED included, by deleting a guard that named it.
+     · #2557 (2026-08-20) closed it again as a side effect of the stock fix.
+     · This (owner, 2026-08-20) re-opens it, deliberately and on his word.
+
+   The 2026-08-19 argument for it does NOT cover LOADED, and saying so is the
+   point: #2485 justified itself with "stock was already deducted at dispatch",
+   which is true of DISPATCHED and IN_TRANSIT and FALSE of LOADED. The rule holds
+   because the owner chose it, not because that reasoning reached it.
+
+   NOTHING IN PRODUCTION TURNS ON THIS TODAY: check-do-integrity.mjs R4 (run
+   32368212535, 2026-08-20) found ZERO delivery orders in LOADED in either
+   company. This is a rule being settled, not an incident being cleaned up. */
+
+/** The states whose lines may NOT be invoiced: a DRAFT is not confirmed yet, and
+ *  a CANCELLED delivered nothing. LOADED is deliberately absent — see above. */
+export const DO_NOT_INVOICEABLE_STATES = ['DRAFT', 'CANCELLED'] as const;
+
+/** May this delivery order's lines be invoiced? Case-insensitive and null-safe,
+ *  because the callers read a nullable text column. */
+export function doCountsAsInvoiceable(status: string | null | undefined): boolean {
+  const s = String(status ?? '').toUpperCase();
+  return !(DO_NOT_INVOICEABLE_STATES as readonly string[]).includes(s);
+}
+
+/** The same set as a PostgREST `.not('status', 'in', ...)` literal, BUILT from
+ *  the array for the same reason its delivered twin above is. */
+export const DO_NOT_INVOICEABLE_IN_LIST =
+  `(${DO_NOT_INVOICEABLE_STATES.map((s) => `"${s}"`).join(',')})`;
+
 /* ----------------------------------------------------------------------------
  * WHICH DELIVERIES MAY BE INVOICED — the owner's ruling, 2026-08-18:
  *   "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED — 这些 status 都可以转 SI"
