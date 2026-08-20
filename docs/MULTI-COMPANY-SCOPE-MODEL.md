@@ -223,3 +223,87 @@ feeds an OCR allowed-values pool that must stay byte-identical across `/extract`
 `/warm` and the headless cron, none of which carry a request scope. A HOUZS scan
 could still match a 2990 venue name. **Flagged, not changed** — it needs the
 owner's call.
+
+---
+
+## 6. The forward gate is BUILT — the pilot, and what one file actually costs
+
+*Added 2026-08-20 (PR #2551).* Section 4 recommended "the compile-time argument
+as the forward gate, keep the text checker as the tree-wide backstop, write the
+database route down as the end state without starting it." The first clause has
+shipped as a pilot on one module.
+
+**The mechanism.** `backend/src/scm/lib/scopedDb.ts` — `scmDb(c).from(table,
+scope)`, where the scope is a REQUIRED second argument. Omitting it is
+`TS2554: Expected 2 arguments, but got 1`. Four constructors, each DELEGATING to
+`backend/src/scm/lib/companyScope.ts` rather than re-deriving it:
+`companyScope(c)` to `scopeToCompany`, `companyIdScope(id)` to
+`scopeToCompanyId`, `allowedScope(c)` to `scopeToAllowedCompanies`, and
+`CENTRALISED(why)` for a statement that deliberately carries no predicate — with
+`why` a required non-empty string, so section 2's classification stops being a
+property of this document and becomes a clause in the diff.
+
+**The two context-derived scopes carry the CONTEXT, not a resolved id.** The
+obvious shape cannot represent the sentinel's UNRESOLVED state, because "no
+active company resolved" is not a number, and collapsing that state in either
+direction is a leak or an app-wide blank — the failure `companyScope.ts`'s header
+warns about in capitals. Letting the context travel is what keeps the degrade
+rule in one place; the three states are asserted in
+`backend/src/scm/lib/scopedDb.test.ts` against `fake-postgrest.ts`.
+
+**The trap inside it.** The INSERT arm STAMPS; every other arm PREDICATES. A
+predicate on an insert filters nothing; a stamp on an update re-companies every
+row the statement matched. That is the blind spot `check-company-scope.mjs`
+already paid for — seven cross-company money writes behind
+`insert({ company_id: activeCompanyId(c) })` while it printed `0 WRITE` — so it
+is pinned by test, not by comment.
+
+### What one file costs, measured
+
+Pilot: `backend/src/scm/routes/stock-transfers.ts` — 531 lines, 14 `.from(`
+sites, chosen because it exercises library pass-through, two `sb: any`
+parameters and doc-number minting, and because it is where forgetting already
+happened (the 2026-07-22 audit scoped the sibling flows and missed
+`PATCH /:id/cancel`).
+
+| step | `npm --prefix backend run typecheck` |
+| --- | --- |
+| swap the 5 `c.get('supabase')` for `scmDb(c)`, change nothing else | **17 errors** (12 TS2554 + 5 TS2345) |
+| also retype the file's two `sb: any` parameters | **21 errors** (14 TS2554 + 6 TS2345 + 1 TS2339) |
+
+**12 vs 14 is the number to extrapolate from, not 14.** Two of the file's 14
+`.from(` sites sit inside a helper taking `sb: any`, and `any` absorbs the
+requirement until that parameter is typed. Scaling that shape over the tree is
+the real size of the job — as of 2026-08-20 there are **2,676** `.from(` call
+sites across 214 files in `scm/routes` + `scm/lib`
+(`git grep -c ".from(" -- backend/src/scm/routes backend/src/scm/lib`; section
+4's 2,609 was the same measure taken earlier) and **371** `sb: any` declarations
+across 105 files in `backend/src/scm`.
+
+Behaviour-preserving: no statement gained or lost a predicate, and
+`check-company-scope.mjs` reported the same 12 findings / 0 WRITE over 1,034
+handlers before and after.
+
+### Holding the line, since one line undoes it
+
+A converted file is only bound while nobody writes `const sb =
+c.get('supabase')` in it — that hands back the raw service-role client and
+everything below is unchecked again, with no compile error. So:
+
+- `backend/scripts/company-scope-converted.json` names the converted files;
+- a fourth pass in `check-company-scope.mjs` fails `--strict` (inside the
+  required `backend-typecheck` job) if a listed file contains that call in code,
+  with a startup self-test and a FATAL on a missing or empty list, because a
+  verdict computed over nothing must never read as a pass;
+- the list may only GROW. No script can read git history, so removal is pinned
+  by `backend/tests/companyScopeConverted.test.mjs`, which is in
+  `MUST_GATE_MERGE` so it stops a merge rather than a deploy.
+
+### What it does not do, so a green run is not over-read
+
+It binds converted files only — 1 of the 99 modules in `backend/src/scm/routes`
+on day one. It cannot check the scope is the RIGHT one: `companyIdScope` with
+the wrong id compiles. `any` absorbs it. Raw `env.DB` SQL and `.rpc()` are
+outside it entirely — `unscoped(why)` is how a converted file spells the
+hand-off to a library or an RPC, and it names the limit rather than removing it.
+The database-policy end state in section 4 is unchanged and unstarted.
