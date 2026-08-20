@@ -7,7 +7,10 @@
 //      no product picked (the scan pipeline's placeholder) or a code the
 //      company's catalog does not hold blocks confirm.
 //   2. HC-SO-2607-008 confirmed with salesperson "Unassigned" — a salesperson
-//      (salesperson_id OR the legacy `agent` text) is required to confirm.
+//      is required to confirm. NARROWED 2026-08-19 from "salesperson_id OR any
+//      non-blank `agent` text" to "a salesperson the ACCOUNT BOOK can be given",
+//      because the looser question let that very order's own value through: see
+//      collectSoConfirmProblems below and lib/ac-preflight.ts.
 //   3. "venue is compulsory的" — a venue (venue text OR venue_id) is required
 //      to confirm. No venue-less order class exists in code: the venue
 //      resolver's "empty is honest" rule (venue-binding.ts) governs
@@ -53,6 +56,7 @@
 // site.
 // ----------------------------------------------------------------------------
 import type { SaveProblem } from '../shared/so-save-problems';
+import { acAgentProblem } from './ac-preflight';
 
 /** The gate's own third state: not "confirmable" and not "these things are
  *  wrong", but "we could not check". Rendered by the same SaveProblemsList as
@@ -98,13 +102,23 @@ const blank = (v: unknown): boolean => v == null || String(v).trim() === '';
 export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
   const out: SaveProblem[] = [];
 
-  if (blank(facts.salespersonId) && blank(facts.agent)) {
-    out.push({
-      code: 'salesperson_required',
-      message: 'A salesperson must be assigned before this order can be confirmed.',
-      field: 'Salesperson',
-    });
-  }
+  /* RULE 2 ASKS THE WRITE-BACK'S OWN QUESTION, not one of its own — see
+     lib/ac-preflight.ts. `blank(salespersonId) && blank(agent)` was a THIRD
+     opinion about "does this order name a salesperson", and it was the loosest
+     of the three: `agent` is free text with no writer that keeps it honest, so
+     HC-SO-2607-008's own value "Unassigned" satisfied it, while `resolveAcAgent`
+     — the function that decides what the account book is actually given —
+     returns null for it and the create dies as MissingAgentError five minutes
+     later in a queue the salesperson never opens. Measured on origin/main
+     @839fcaed0: gate says [], composer says null, same order.
+
+     The rule has not moved. It is the owner's 2026-08-08 ruling on that exact
+     order, now enforced against the value that leaves the building. */
+  const agentProblem = acAgentProblem({
+    salespersonId: facts.salespersonId,
+    agent: facts.agent,
+  });
+  if (agentProblem) out.push(agentProblem);
 
   if (blank(facts.venue) && blank(facts.venueId)) {
     out.push({
