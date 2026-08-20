@@ -30,7 +30,9 @@ import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
 import { type SoHit, SoSearchField, useSoSearch } from "./MobileAssrSoField";
 /* Pure row readers + formatters. Extracted so this screen could take the
    category picker and the survey-email field without growing past its recorded
-   size ceiling, and so they became testable on their own. */
+   size ceiling, and so they became testable on their own. `prettyStage` went
+   with them, which is why ASSR_STAGE_LABEL is imported THERE and not here —
+   assr-stage-labels.canonical.test.ts follows that hop deliberately. */
 import {
   type Any,
   cap,
@@ -47,6 +49,13 @@ import {
   stageOf,
   statusOf,
 } from "./assr-case-fields";
+// Shared with the desktop page. The issue-category list keeps its LOCAL NAME so
+// the intake sheet another branch is editing stays untouched.
+import {
+  ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
+  ASSR_NOTE_AUDIENCES,
+  type AssrNoteAudience as NoteAudience,
+} from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
 
 // The core /api/assr route (NOT scm). The list returns
@@ -115,13 +124,6 @@ const PHASE_DEFS: { name: string; keys: string[] }[] = [
 // PATCH /:id accepts these column values; the mobile edit controls write
 // the same field names + values the desktop InlineEdit controls do.
 const PRIORITY_OPTIONS = ["low", "normal", "high", "urgent"] as const;
-const ISSUE_CATEGORY_OPTIONS = [
-  "Product defect",
-  "Incorrect item delivered",
-  "Missing / short item",
-  "Warranty / service request",
-  "Installation / assembly issue",
-] as const;
 const RESOLUTION_OPTIONS = [
   "replace_unit",
   "supplier_repair",
@@ -142,16 +144,6 @@ const QC_RESULT_OPTIONS = [
   { value: "fail", label: "Fail" },
   { value: "na", label: "N/A" },
 ] as const;
-// Timeline note audience buckets (mig 0108) — the /:id/notes endpoint
-// accepts these four; "system" is reserved for auto events and rejected
-// server-side. Only "customer" is visible outside the team (portal).
-const NOTE_AUDIENCE_OPTIONS = [
-  { value: "service", label: "Service" },
-  { value: "customer", label: "Customer" },
-  { value: "supplier", label: "Supplier" },
-  { value: "sales", label: "Sales" },
-] as const;
-type NoteAudience = (typeof NOTE_AUDIENCE_OPTIONS)[number]["value"];
 // Print copy variants — desktop opens /api/assr-print/:id?variant=…
 const PRINT_VARIANTS = [
   { value: "customer", label: "Customer copy" },
@@ -1663,14 +1655,16 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     })}
                   </div>
                 )}
-                {/* audience picker — service / customer / supplier / sales (mig 0108) */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                  {NOTE_AUDIENCE_OPTIONS.map((o) => (
+                {/* audience picker (mig 0108). WRAPS 2x2: the labels now say what
+                    HAPPENS ("Customer-visible") not just which bucket ("Customer"),
+                    and .sochip is nowrap — four across a 375px phone overflowed. */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {ASSR_NOTE_AUDIENCES.map((o) => (
                     <button
                       key={o.value}
                       onClick={() => setNoteAudience(o.value)}
                       className={`sochip${noteAudience === o.value ? " on" : ""}`}
-                      style={{ flex: 1 }}
+                      style={{ flex: "1 1 45%" }}
                     >
                       {o.label}
                     </button>
@@ -1872,13 +1866,14 @@ function NoteSheet({ onClose, onSave, saving }: {
   const [audience, setAudience] = useState<NoteAudience>("service");
   return (
     <SheetShell title="Add note" onClose={onClose}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        {NOTE_AUDIENCE_OPTIONS.map((o) => (
+      {/* Wraps 2x2 for the same reason as the Timeline tab's picker above. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {ASSR_NOTE_AUDIENCES.map((o) => (
           <button
             key={o.value}
             onClick={() => setAudience(o.value)}
             className={`sochip${audience === o.value ? " on" : ""}`}
-            style={{ flex: 1 }}
+            style={{ flex: "1 1 45%" }}
           >
             {o.label}
           </button>

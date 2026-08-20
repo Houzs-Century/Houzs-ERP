@@ -59,6 +59,24 @@ interface Ctx {
      decide whether anything needs their attention. */
   loadFailed: boolean;
   reload: () => void;
+  /**
+   * Mark every project carrying unread activity as read, then refresh.
+   *
+   * WHY IT LIVES HERE rather than on a screen. This action existed only on the
+   * phone: `MobileInbox` looped the endpoint itself, and the desktop
+   * Notifications page — the one the bell's "view all" lands on — had no write
+   * at all. Both surfaces already consume this provider, so putting the loop on
+   * the desktop page too would have made two copies of one rule. One
+   * implementation, one error contract, two callers.
+   *
+   * It RETURNS COUNTS, and that is the part that is not a tidy-up. The mobile
+   * version ended each request with `.catch(() => {})`, so a bulk mark-read
+   * that failed for every project was indistinguishable from one that worked —
+   * the spinner stopped, the feed reloaded, the badge stayed up, and nothing
+   * was said. A failure that reaches nobody is worse than a crash. Callers get
+   * `{ ok, failed }` and are expected to render `failed > 0`.
+   */
+  markAllRead: () => Promise<{ ok: number; failed: number }>;
   // Houzs Points — present once the first poll lands.
   pointsBalance: number;
   giftingBalance: number;
@@ -71,6 +89,7 @@ const NotificationsContext = createContext<Ctx>({
   totalUnread: 0,
   loadFailed: false,
   reload: () => {},
+  markAllRead: async () => ({ ok: 0, failed: 0 }),
   pointsBalance: 0,
   giftingBalance: 0,
   currentStreak: 0,
@@ -214,6 +233,34 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
      above it does. Together with the unchanged-payload skip above, a consumer
      now re-renders only when its notifications genuinely moved.
      `fetchOnce` is already a useCallback keyed on user?.id, so it is stable. */
+  /* One request per project that ACTUALLY has unread items. Projects sitting at
+     zero are skipped — posting for them is a round-trip that changes nothing,
+     and on a busy roster that is most of the list.
+
+     `allSettled`, not `all`: one project refusing (a permission the caller lost
+     since the feed was fetched) must not abandon the rest half-done. The
+     rejected count is returned rather than swallowed — see the Ctx doc. */
+  const markAllRead = useCallback(async (): Promise<{ ok: number; failed: number }> => {
+    const ids = Object.entries(unreadByProject)
+      /* No `?? 0` — `unreadByProject` is Record<number, number>, so the guard
+         was unreachable and the linter is right. A null slipping through from a
+         malformed payload compares false here either way. */
+      .filter(([, n]) => n > 0)
+      .map(([id]) => Number(id));
+    if (!ids.length) return { ok: 0, failed: 0 };
+    const results = await Promise.allSettled(
+      ids.map((id) => api.post(`/api/projects/${id}/read`, {})),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    /* Refresh even on a partial failure — the ones that DID succeed are read
+       now, and leaving the badge stale would misreport them as unread.
+       `void`: the refresh is fire-and-forget on purpose. Its own failure path
+       is `loadFailed`, which the feed already renders; making the caller wait
+       on it would tie the mark-read result to an unrelated poll. */
+    void fetchOnce();
+    return { ok: results.length - failed, failed };
+  }, [unreadByProject, fetchOnce]);
+
   const value = useMemo<Ctx>(
     () => ({
       feed,
@@ -221,11 +268,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       totalUnread,
       loadFailed,
       reload: fetchOnce,
+      markAllRead,
       pointsBalance,
       giftingBalance,
       currentStreak,
     }),
-    [feed, unreadByProject, totalUnread, loadFailed, fetchOnce, pointsBalance, giftingBalance, currentStreak],
+    [feed, unreadByProject, totalUnread, loadFailed, fetchOnce, markAllRead, pointsBalance, giftingBalance, currentStreak],
   );
 
   return (
