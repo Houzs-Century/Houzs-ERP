@@ -99,7 +99,7 @@ import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '..
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
-  scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  scopeToCompany, activeCompanyId, activeCompanySql, stampCompany, companyDocPrefix,
   isMirroredDocNo, mintsIntoMirroredNamespace, houzsOwns2990,
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -2490,9 +2490,12 @@ mfgSalesOrders.get('/active-venue', async (c) => {
        that gets stamped is the text either way. */
     let venueId: string | null = null;
     try {
+      /* Company-scoped (mig 0093): venue NAMES are not unique across the two
+         masters, so an unscoped match hands this company the OTHER company's
+         venue id — and that id is what the SO stores. See projects-pms.md. */
       const row = await c.env.DB.prepare(
         `SELECT id FROM project_venues
-          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1 LIMIT 1`,
+          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1${activeCompanySql(c)} LIMIT 1`,
       )
         .bind(binding.venueName)
         .first<{ id?: number | null }>();
