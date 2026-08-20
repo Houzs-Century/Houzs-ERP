@@ -86,6 +86,26 @@ async function main() {
      GROUP BY 1 HAVING count(DISTINCT company_id) > 1 ORDER BY 1`;
   notice(`showroom venue_names held by MORE THAN ONE company: ${shClash.length}`);
   for (const r of shClash) notice(`    "${r.nm}" in ${r.companies} companies`);
+
+  // The autofill's actual path: a caller's resolved venue TEXT (from their own
+  // PMS project or their own parked showroom) is matched against project_venues
+  // BY NAME. If the only row bearing that name belongs to the OTHER company,
+  // the unscoped lookup hands this company that foreign master id. A name held
+  // by nobody is fine (venueId stays null, the text stands); a name held ONLY
+  // by a foreign company is the live bleed.
+  notice("--- autofill name -> project_venues owner, for every showroom venue ---");
+  for (const r of before) {
+    const owners = await sql`
+      SELECT DISTINCT company_id FROM public.project_venues
+       WHERE active = 1 AND lower(btrim(name)) = lower(btrim(${r.venue_name}))`;
+    const ids = owners.map((o) => Number(o.company_id));
+    const verdict = ids.length === 0
+      ? "unmastered (venueId stays null)"
+      : ids.includes(Number(r.company_id))
+        ? "own company holds it"
+        : `FOREIGN ONLY (held by ${ids.join(",")}, showroom is company ${r.company_id})`;
+    notice(`  showroom co=${r.company_id} "${r.venue_name}" -> project_venues owners [${ids.join(",") || "none"}] : ${verdict}`);
+  }
 }
 
 main()
