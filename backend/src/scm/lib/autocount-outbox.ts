@@ -98,6 +98,7 @@ import { soEditHeader } from './so-edit-header';
    reason mastersOf was: this file is at the 2,000-line cap. */
 import {
   AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
+  readWarehouseCode,
 } from './autocount-read';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
@@ -362,11 +363,9 @@ const SO_ITEM_COLS =
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
-/* purchase_location_id is the PO's OWN ship-to warehouse (PR #77), and /submit
-   refuses a purchase order that has neither it nor a warehouse on every line
-   (mfg-purchase-orders.ts:4019). AutoCount has the same field on its purchase
-   header — `PurchaseLocation`, AcSyncService.cs:935 and :2457 — and until this
-   column was selected the ERP had never sent one, so the book defaulted it. */
+/* purchase_location_id is the PO's OWN ship-to warehouse (PR #77); AutoCount has
+   the same header field and the ERP had never sent one, so the book defaulted it
+   on every purchase order it has written. Guide §7c3b-ii. */
 const PO_HEADER_COLS =
   'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
@@ -435,33 +434,6 @@ async function withLocations(
     const code = typeof id === 'string' ? byId.get(id) ?? null : null;
     return code ? { ...l, location: code } : l;
   });
-}
-
-/**
- * One warehouse id -> the `dbo.Location` code AutoCount keys its stock by.
- *
- * The single-row twin of `withLocations`, for a document's HEADER warehouse
- * (`scm.purchase_orders.purchase_location_id`). Split out rather than folded
- * into `withLocations` because the two answer different questions: that one
- * resolves a SET of line warehouses and tolerates a line with none, this one
- * resolves the order's own default.
- *
- * A FAILED READ THROWS, the same rule `readSalespersonName` states one function
- * down: null here means "this purchase order has no ship-to warehouse", which
- * `composeCreatePo` turns into a refusal naming a remedy, and an unreadable
- * `scm.warehouses` must not be able to look like that.
- */
-async function readWarehouseCode(sb: Sb, warehouseId: unknown): Promise<string | null> {
-  const id = typeof warehouseId === 'string' ? warehouseId.trim() : '';
-  if (!id) return null;
-  const row = await readOrThrow('warehouses',
-    sb.from('warehouses').select('id, code, name').eq('id', id).maybeSingle());
-  const w = row as { code?: string | null; name?: string | null } | null;
-  /* `code` first, `name` as the fallback — exactly what `withLocations` does, so
-     a warehouse row with a blank code resolves the same way on a header as it
-     does on a line. */
-  const code = ((w?.code ?? w?.name ?? '') as string).trim();
-  return code || null;
 }
 
 /**
@@ -622,13 +594,9 @@ async function noteReadFailure(
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
     || e instanceof MissingCreditorError
-    /* THE LIST IS THE WHOLE MECHANISM, and an error missing from it is not
-       "handled elsewhere" — it is SWALLOWED. The early return below drops
-       anything that is neither a refusal nor a read failure, so the enqueue
-       answers false with no outbox row, no console line and nothing for an
-       operator to read. That was true of AcSoToPoAlignmentError for the first
-       six commits of the change that introduced it, while its own class comment
-       promised "a readable outbox row instead". */
+    /* THE LIST IS THE WHOLE MECHANISM: an error missing from it is SWALLOWED by
+       the early return below — no row, no log line, nothing to read. Pinned
+       against acNotSentProblems' twin chain in ac-preflight.test.ts. */
     || e instanceof AcSoToPoAlignmentError;
   if (!refused && !(e instanceof AcReadError)) return [];
   const message = (e as Error).message;
@@ -755,9 +723,7 @@ async function readPoHeader(sb: Sb, poId: string) {
       sb.from('suppliers').select('code, name').eq('id', String(h.supplier_id)).maybeSingle())
     : null;
   const s = supplier as { code?: string | null; name?: string | null } | null;
-  /* The SAME id -> code hop `withLocations` does for the lines, one row instead
-     of a set. AutoCount's `dbo.Location` is keyed by the short code (KL, PG,
-     HQ...) and the ERP column is a `scm.warehouses` uuid. */
+  /* The same id -> code hop withLocations does for the lines, one row not a set. */
   const purchaseLocation = await readWarehouseCode(sb, h.purchase_location_id);
   return {
     id: String(h.id ?? poId),
@@ -814,26 +780,14 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* ONE MASTER, TWO SHAPES. FromDocNo resolves at DRAIN; everything else a
-           transfer sends is `body` — the very object `composeCreatePo` built two
-           lines up — because `composeSoToPo` now takes it and spreads it.
-
-           THAT IS THE FIX, and the reason it is not a third field being added.
-           This branch used to build its own master, and twice a field the create
-           had was missing from it, each found on a live document:
-
-             CreditorCode  host 2026-08-17 09:15, `CreditorCode required for
-                           /so-to-po` — reported by AutoCount as
-                           FK_PO_DisplayTerm, the PAYMENT TERM's key, because the
-                           term is defaulted from the supplier there was none of.
-             DocNo         host 2026-08-17 10:15, the first successful transfer
-                           landed as `PO-009968` and not `HC-PO-2608-001`
-                           (divergence D5, closed).
-
-           Both were patched one at a time and FIVE were still missing after —
-           DocDate, Agent, Ref, Description, UDF — which is what the owner hit on
-           2026-08-19: 「为什么 Sales Order to PO ... 没有把 Sales Order 的那些资料
-           带过去呢？」. Spreading the master is what stops there being a sixth.
+        /* ONE MASTER, TWO SHAPES. FromDocNo resolves at DRAIN; everything else
+           a transfer sends is `body`, the object composeCreatePo built two lines
+           up, because composeSoToPo takes it and spreads it. That is the fix and
+           the reason it is not a third field: this branch used to build its own
+           master, and twice a field the create had was missing from it — the
+           creditor (host 2026-08-17 09:15, reported as FK_PO_DisplayTerm) and
+           the number (10:15, `PO-009968` for `HC-PO-2608-001`, divergence D5).
+           Both were patched one at a time and FIVE were still missing after.
            Guide §7c3a, §7c3b, §7c3b-i. */
         body: (shape.kind === 'transfer'
           ? composeSoToPo(body, shape.dtlKeys, details)
