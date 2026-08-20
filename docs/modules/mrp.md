@@ -215,9 +215,17 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   deliberately: aligning either moves the Inventory page's
   committed / available / surplus figures and needs the owner's decision.
 - Effective qty per line = `qty - (delivered net of returns)` via
-  `soDeliverableRemaining` (delivery-orders-mfg.ts) — DRAFT and CANCELLED DOs
-  never count as delivered. `so-stock-allocation.ts` step 3 follows the same
-  rule (aligned 2026-08-01, audit D5).
+  `soDeliverableRemaining` (delivery-orders-mfg.ts) — a DO in
+  `DO_NOT_DELIVERED_STATES` never counts as delivered.
+  `so-stock-allocation.ts` step 3 follows the same rule (aligned 2026-08-01,
+  audit D5).
+  **That set gained LOADED on 2026-08-20**, and until then this line read "DRAFT
+  and CANCELLED". LOADED is a PRE-SHIP state — the inventory OUT fires only on
+  ENTRY to a shipped state — so a delivery still on the lorry was shrinking MRP
+  demand and the allocation job's remaining. It is one predicate now,
+  `doCountsAsDelivered` in `shared/do-shipped-states.ts`; the full trace, and
+  the dispatch it was blocking, are in `docs/modules/delivery-order.md` under
+  *"Has this delivery counted?" is ONE predicate now*.
 - **"Delivered" is read TWO ways, and has to be** (2026-08-17). The delivered
   sum lives in `lib/do-unlinked-coverage.ts::netDeliveredBySoItem` and counts
   (a) DO lines linked by `so_item_id`, plus (b) DO lines whose link is NULL but
