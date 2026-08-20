@@ -18,6 +18,17 @@
 // nothing.
 import { describe, expect, test } from "vitest";
 
+/** The one place source text enters this file — so line endings are normalised
+ *  ONCE, here, rather than at each anchor.
+ *
+ *  This repo is developed on Windows with `core.autocrlf=true`, so the checkout
+ *  carries CRLF while every anchor below is written with `\n`. An anchor that
+ *  spans a line then never matched on a developer machine and always matched on
+ *  the Linux runner: `anchor not found in source: FROM project_venues` on every
+ *  branch, green in CI. A test that is red for a reason that has nothing to do
+ *  with the code is how people learn to ignore red. The test has to be correct
+ *  whichever way the tree was checked out, so it normalises rather than relying
+ *  on anyone's git config. */
 function onlySource(glob: Record<string, string>, what: string): string {
   const paths = Object.keys(glob);
   if (paths.length !== 1) {
@@ -25,7 +36,7 @@ function onlySource(glob: Record<string, string>, what: string): string {
       `expected exactly one ${what} source, found ${paths.length}: ${paths.join(", ") || "(none)"}`,
     );
   }
-  return glob[paths[0]];
+  return glob[paths[0]].replace(/\r\n/g, "\n");
 }
 
 const projectsSrc = onlySource(

@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sameIgnoringEol } from "./lib/eol.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(here, "data", "autocount-so-writeback-mappings.json");
@@ -89,7 +90,8 @@ ${body}
 
 if (process.argv.includes("--check")) {
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-  if (current !== text) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (!sameIgnoringEol(current, text)) {
     console.error(
       `${path.relative(process.cwd(), OUT)} is STALE.\n` +
         "Run: node scripts/gen-autocount-master-maps.mjs",
