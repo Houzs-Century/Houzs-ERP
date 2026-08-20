@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-141 route modules (42 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1054 endpoint registrations.
+141 route modules (42 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1055 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -65,7 +65,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 632 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 3 | 719 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1182 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2325 |
@@ -170,13 +170,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 312 | `0314_scm_so_delivery_rebuild_refuses_a_stale_derivation.sql` (0314) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 313 | `0315_ac_outbox_claim.sql` (0315) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1572 files, 601209 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1575 files, 602529 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -376,7 +376,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1071 |
 | `frontend/src/mobile/MobileApp.tsx` | 1056 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 665 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 687 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1192 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |

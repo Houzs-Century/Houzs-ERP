@@ -115,11 +115,14 @@
 // document in a live licensed account book.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Env } from '../env';
 import type { AcDocType, AcOp } from '../../services/autocount-writeback';
 import {
-  enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
-  type AcDocRef, type AcOutboxPayload,
+  dispatchOne, enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
+  MAX_ATTEMPTS,
+  type AcDocRef, type AcOutboxPayload, type AcOutboxRow,
 } from './autocount-outbox';
+import { claimOutboxRow } from './autocount-claim';
 import { AC_TRANSFER_OPS, REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 
@@ -188,6 +191,28 @@ export type RequeueOutcome =
   | 'already-sent'
   /** THIS row is `pending`: the drain is already going to send it. */
   | 'row-pending'
+  /* ── SEND NOW ────────────────────────────────────────────────────────────
+     The owner asked for a manual push on a row that is still WAITING
+     (「自动的 可是我要可以manual push」). It is a different act from a re-queue
+     and its outcomes are its own: a re-queue INSERTS a fresh row for the next
+     sweep, while a send-now dispatches THE ROW IN FRONT OF YOU, right now, and
+     therefore has AutoCount's own answer to report rather than a promise about
+     a sweep five minutes away. Sharing `requeued`'s codes would have made
+     "queued" and "the account book has taken it" the same word. */
+  /** SEND NOW: AutoCount took the document, there and then. */
+  | 'sent-now'
+  /** SEND NOW: it went, and AutoCount refused it. `detail` is the book's words. */
+  | 'send-now-refused'
+  /** SEND NOW: the host could not be reached. Still queued, still retrying. */
+  | 'send-now-retrying'
+  /** SEND NOW: it is waiting on a parent document that is not in the book yet. */
+  | 'send-now-waiting'
+  /** SEND NOW asked of a row that is not waiting, so there is nothing to push. */
+  | 'not-waiting'
+  /** SEND NOW lost the race: a sweep, or another operator, is sending it. */
+  | 'already-in-flight'
+  /** SEND NOW on a row that has spent every attempt and no sweep will take. */
+  | 'attempts-spent'
   /** No outbox row with that id in the caller's company. */
   | 'row-not-found'
   /** The queue itself could not be read, so no verdict was reached. */
@@ -230,6 +255,29 @@ export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
     'AutoCount already accepted this one. Sending it again would put a SECOND copy of the document in the account book, and an accepted document cannot simply be deleted there.',
   'row-pending':
     'This is already waiting in the queue. The next five-minute sweep will send it.',
+  'sent-now':
+    'Sent, and AutoCount took it. It is in the account book now — you did not have to wait for the five-minute sweep.',
+  'send-now-refused':
+    'It went to AutoCount just now and AutoCount would not take it. What the account book said is shown below.',
+  /* IT MUST NOT SAY "could not be reached", and it said exactly that until a
+     test caught it. `callAcService` treats a 500 as RETRYABLE, and
+     AcSyncService turns EVERY exception into a 500 — so this outcome covers two
+     different events that the return value cannot tell apart: the host being
+     unreachable, and the host being reached and AutoCount throwing. Production
+     is in the second one right now (`Primary Key Error`, retrying), and telling
+     that operator the account book could not be reached would send him to check
+     a tunnel that is working. So the sentence says only what is true of both,
+     and the account book's own words are shown underneath. */
+  'send-now-retrying':
+    'It went out just now and did not get through. Nothing reached the account book, the document is still queued, and the five-minute sweep will keep trying. What came back is shown below.',
+  'send-now-waiting':
+    'Nothing was sent: this document is built from an earlier one that is not in AutoCount yet. It goes across on its own once that one has.',
+  'not-waiting':
+    'This one is not waiting to go out, so there is nothing to push. Only a document still queued can be sent early.',
+  'already-in-flight':
+    'It is going out right now — either the five-minute sweep picked it up, or somebody else pressed this a moment ago. Nothing was sent twice.',
+  'attempts-spent':
+    'This one has used all its tries and no sweep will pick it up again. Fix what AutoCount objected to, then use Send again rather than this.',
   'row-not-found':
     'That line is not in this company\'s queue. Refresh the page and try again.',
   'document-gone':
@@ -250,7 +298,20 @@ export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
  * these: reading it as accepted would tell an operator a document had been
  * queued when nothing was written.
  */
-export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = ['requeued', 'requeued-as-recorded'];
+export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = [
+  'requeued', 'requeued-as-recorded',
+  /* SENT NOW IS STRONGER THAN QUEUED, not weaker: the other two mean the sweep
+     will take it, this one means the account book already has it. It belongs
+     here because every reader of this list is asking "is the document on its
+     way", and "it has arrived" is a yes.
+
+     The other send-now outcomes are deliberately NOT here. `send-now-refused`
+     and `send-now-retrying` both leave a document that is in the ERP and not in
+     the book, which is the divergence the whole mechanism exists to report;
+     counting a refusal as acceptance is how the page would tell an operator
+     everything was fine while a document sat outside the accounts. */
+  'sent-now',
+];
 
 /** Did this outcome put the document on its way? */
 export function acRequeueAccepted(outcome: RequeueOutcome): boolean {
@@ -973,6 +1034,180 @@ export async function requeueOutboxRow(sb: Sb, opts: RequeueRowOptions): Promise
   /* skipped or failed. `failed` means this row IS the attempt being re-sent, so
      the live-row probe must not veto on itself. */
   return requeueOneRow(sb, raw, { apply: true, resendingThisRow: status === 'failed' });
+}
+
+/**
+ * SEND ONE WAITING ROW NOW, instead of waiting for the five-minute sweep.
+ *
+ * THE OWNER'S REQUEST, and why it is not just a wider `can_requeue`. He asked
+ * for the automatic sync to keep working and for a manual push beside it
+ * (「自动的 可是我要可以manual push」). Today a WAITING row has no button at
+ * all: `acRowIsRequeueable` refuses `pending` structurally and
+ * `requeueOutboxRow` answers `row-pending`, both correctly — a RE-QUEUE inserts
+ * a second row for the same document, and for a row that is already going out
+ * that is either a no-op or a duplicate create. None of that reasoning applies
+ * to dispatching the row that is already there, which is what this does.
+ *
+ * IT IS THE SAME MECHANISM, NOT A SECOND ONE. It calls `dispatchOne` — the same
+ * function the cron calls, with the same payload, the same master handling, the
+ * same write-back and the same attempt accounting. Nothing here composes a
+ * payload, opens a socket to the host, or writes a row the drain would not have
+ * written. What is manual is the TIMING and nothing else.
+ *
+ * IT COSTS AN ATTEMPT, AND IT MUST. `dispatchOne` increments `attempts` and
+ * this path does not put it back. An attempt is a real call into a licensed
+ * account book, and `attempts` is read by the page, by the health check and by
+ * the dead-lettering rule as "how many times we asked AutoCount"; a manual call
+ * that did not count would make every one of those readings false, on a table
+ * whose own COMMENT calls it the audit trail of what the ERP told AutoCount.
+ * The cost is not hidden either — the row already prints "Tried 3 times, will
+ * keep trying up to 6" (acRowStatusLine) before the button is pressed, so the
+ * budget is on screen next to the thing that spends it.
+ *
+ * WHAT STOPS IT SENDING TWICE. `claimOutboxRow`, and it is the reason migration
+ * 0315 exists. Before this button the sweep was the ONLY dispatcher and could
+ * not race itself; nothing in the table ever marked a row in-flight. Two
+ * operators pressing, or one pressing inside a sweep, would otherwise put the
+ * same document into the account book twice. The claim is a single conditional
+ * UPDATE, so the loser of the race sees it and stops — and it fails CLOSED:
+ * every "I could not take it" answer means do not send.
+ *
+ * NEVER THROWS, for the same reason `requeueOutboxRow` does not: the caller is
+ * a route answering a person, and an exception string is not an answer.
+ */
+export async function sendOutboxRowNow(
+  env: Env,
+  sb: Sb,
+  opts: RequeueRowOptions,
+  /** Injected by the tests, exactly as `dispatchOne` and the drain take it. */
+  fetchImpl: typeof fetch = fetch,
+): Promise<RequeueResult> {
+  const missing = (outcome: RequeueOutcome, detail: string): RequeueResult => ({
+    rowId: opts.rowId,
+    companyId: opts.companyId,
+    op: '',
+    docType: '',
+    docNo: '',
+    docId: null,
+    outcome,
+    detail,
+    originalReason: '',
+    newRowId: null,
+  });
+
+  let raw: AcOutboxRow & { last_error?: string | null };
+  try {
+    const { data, error } = await sb.from('autocount_outbox')
+      /* The DRAIN's columns, not the ladder's: `dispatchOne` needs the payload,
+         and REQUEUE_ROW_COLS deliberately omits it. */
+      .select('id, company_id, op, doc_type, doc_no, doc_id, payload, status, attempts, dedupe_key, last_error')
+      /* Both predicates on one statement, exactly as requeueOutboxRow does —
+         the service-role client bypasses RLS and this is the tenant boundary. */
+      .eq('id', opts.rowId)
+      .eq('company_id', opts.companyId)
+      .maybeSingle();
+    if (error) return missing('read-failed', `the outbox row could not be read: ${error.message}`);
+    if (!data) return missing('row-not-found', 'no outbox row with that id in this company.');
+    raw = data as unknown as AcOutboxRow & { last_error?: string | null };
+  } catch (e) {
+    return missing('read-failed', e instanceof Error ? e.message : String(e));
+  }
+
+  const base = {
+    rowId: String(raw.id),
+    companyId: Number(raw.company_id),
+    op: String(raw.op),
+    docType: String(raw.doc_type),
+    docNo: String(raw.doc_no),
+    docId: raw.doc_id == null ? null : String(raw.doc_id),
+    originalReason: raw.last_error ?? '',
+    newRowId: null as string | null,
+  };
+  const status = String(raw.status ?? '');
+  const attempts = Number(raw.attempts ?? 0);
+
+  /* ONLY A WAITING ROW. `sent` is in the book, `failed` has given up and wants
+     Send again (which re-composes and starts a fresh attempt budget), `skipped`
+     never left the building. Each of those already has a correct answer on the
+     re-queue path and this button must not become a second, weaker door to it. */
+  if (status !== 'pending') {
+    return {
+      ...base,
+      outcome: 'not-waiting',
+      detail: `this row is ${status}, and only a pending row is waiting to go out. `
+        + 'Send again is the action for a refused or held-back document; it re-composes '
+        + 'the document and starts a fresh set of attempts, which this deliberately does not.',
+    };
+  }
+
+  /* A PENDING ROW WITH NO BUDGET LEFT IS STRANDED, and pushing it would spend an
+     attempt on a row that the sweep itself will never select (the drain filters
+     `attempts < MAX_ATTEMPTS`). Naming that state is more useful than a send
+     that cannot help. */
+  if (attempts >= MAX_ATTEMPTS) {
+    return {
+      ...base,
+      outcome: 'attempts-spent',
+      detail: `this row has used all ${MAX_ATTEMPTS} attempts and is not selected by the sweep any more.`,
+    };
+  }
+
+  /* THE SWITCH, before anything is claimed. Sending while the write-back is off
+     would be the one caller in the system that ignores it. */
+  if (!(await isWritebackEnabled(sb, base.companyId))) {
+    return { ...base, outcome: 'switch-off', detail: 'scm.autocount_writeback is off for this company.' };
+  }
+
+  /* THE CLAIM. Everything above is a read and could be stale by now; this is the
+     first and only step that makes the decision exclusive. */
+  if (!(await claimOutboxRow(sb, base.rowId))) {
+    return {
+      ...base,
+      outcome: 'already-in-flight',
+      detail: 'the row is claimed by another dispatcher — the five-minute sweep, or another '
+        + 'operator pressing this at the same moment. Nothing was sent from here, which is the '
+        + 'point: two dispatches of one row are two documents in the account book.',
+    };
+  }
+
+  let outcome: Awaited<ReturnType<typeof dispatchOne>>;
+  try {
+    outcome = await dispatchOne(env, sb, raw as AcOutboxRow, fetchImpl);
+  } catch (e) {
+    /* dispatchOne marks the row on every outcome it RETURNS, so the claim is
+       released there; a throw skips that and the lease (AC_CLAIM_LEASE_MS) is
+       what frees the row. Reported as a refusal rather than a 500 because
+       something may well have reached the host, and "nothing happened" would be
+       a claim this code cannot make. */
+    return {
+      ...base,
+      outcome: 'send-now-retrying',
+      detail: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  /* THE ROW'S OWN WORDS, read back AFTER the dispatch. dispatchOne returns a
+     verdict and writes the reason; the reason is what the operator needs, and
+     re-reading one row is cheaper than threading it out of every branch. */
+  let said = '';
+  try {
+    const { data, error } = await sb.from('autocount_outbox')
+      .select('last_error').eq('id', base.rowId).eq('company_id', base.companyId).maybeSingle();
+    /* BIND THE ERROR AND SAY SO. supabase-js does not throw, so an unbound
+       `error` here would make a failed read indistinguishable from a row whose
+       reason is genuinely blank — and this string IS the diagnosis the operator
+       gets back. Silently empty would land him on a refusal that explains
+       nothing, which is the failure class this repo names by name. */
+    if (error) said = `the row was updated but its reason could not be read back: ${error.message}`;
+    else said = String((data as { last_error?: string | null } | null)?.last_error ?? '');
+  } catch (e) {
+    said = `the row was updated but its reason could not be read back: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
+  if (outcome === 'sent') return { ...base, outcome: 'sent-now', detail: '' };
+  if (outcome === 'waiting') return { ...base, outcome: 'send-now-waiting', detail: said };
+  if (outcome === 'failed') return { ...base, outcome: 'send-now-refused', detail: said };
+  return { ...base, outcome: 'send-now-retrying', detail: said };
 }
 
 /** The pending row the re-queue just created, for the audit note. */

@@ -415,6 +415,7 @@ POST,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_C
 GET,/api/scm/ar/reconciliation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.outstanding"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-reconciliation.ts
 GET,/api/scm/autocount-outbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 POST,/api/scm/autocount-outbox/:id/requeue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
+POST,/api/scm/autocount-outbox/:id/send-now,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 GET,/api/scm/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
 POST,/api/scm/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
 DELETE,/api/scm/categories/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
