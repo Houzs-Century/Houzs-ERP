@@ -49,7 +49,7 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
-import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
+import { useFabricTrackingsLite } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
   computeMfgPoUnitCost,
@@ -164,7 +164,7 @@ export const PurchaseConsignmentOrderDetail = () => {
     enabled: !poSupplierId || !supplierMaintQ.data?.data,
   });
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  const fabrics = useFabricTrackings().data ?? [];
+  const fabrics = useFabricTrackingsLite().data ?? [];
 
   const categoryForCode = (code: string): string | undefined =>
     allSkus.find((p) => p.code === code)?.category.toLowerCase();
