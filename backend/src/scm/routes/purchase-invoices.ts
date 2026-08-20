@@ -1,6 +1,7 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
 import { Hono } from 'hono';
+import type { SaveProblem } from '../shared/so-save-problems';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -1688,8 +1689,9 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
        own document, and a bucket billing several GRNs names every one of them.
        The bucket is already grouped by supplier, so all its sources share one
        creditor — which is what makes the merged transfer well-formed. */
+    let bucketAcNotSent: SaveProblem[] = [];
     if (bucket.grnIds.length) {
-      await enqueueConvert(sb, {
+      ({ problems: bucketAcNotSent } = await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'gr_to_pi',
         from: bucket.grnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id', key: id })),
@@ -1698,7 +1700,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
         docNo: h.invoice_number,
         docId: h.id,
         createdBy: c.get('houzsUser')?.id ?? null,
-      });
+      }));
     }
     // Consume the GRN lines: recount invoiced_qty from live PI lines.
     await recomputeGrnInvoiced(sb, bucket.lines.map(({ row }) => row.id));
@@ -1713,6 +1715,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     created.push({
       id: h.id, invoiceNumber: h.invoice_number,
       supplierId: bucket.supplierId, grnCount: bucket.grnIds.length, lineCount: bucket.lines.length,
+      ...(bucketAcNotSent.length ? { acNotSent: bucketAcNotSent } : {}),
     });
   }
 
@@ -1889,7 +1892,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      receipt carried over from AutoCount never reaches this line — it is refused
      at the top of the handler, because the invoice AutoCount raised from it
      already exists in the live account book. */
-  await enqueueConvert(sb, {
+  const { problems: acNotSent } = await enqueueConvert(sb, {
     companyId: activeCompanyId(c),
     op: 'gr_to_pi',
     from: { table: 'grns', keyCol: 'id', key: g.id },
@@ -1900,7 +1903,9 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
+  /* The supplier's own invoice number is the field most likely to be missing
+     here, and it is the one accounts will ask about. */
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 };
 purchaseInvoices.post('/from-grn', createPurchaseInvoiceFromGrnHandler);
 

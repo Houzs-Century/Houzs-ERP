@@ -228,7 +228,7 @@ describe('the six flows each queue their operation', () => {
     ['6. GRN -> Purchase Invoice', 'gr_to_pi', 'PI', 'grns', 'purchase_invoices'],
   ])('%s', async (_name, op, docType, fromTable, toTable) => {
     const sb = withFlag('1');
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: op as never,
       from: { table: fromTable as never, keyCol: 'id', key: 'src-1' },
@@ -236,7 +236,7 @@ describe('the six flows each queue their operation', () => {
       docType: docType as never,
       docNo: 'DOC-1',
       docId: 'dst-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe(op);
     expect(row.doc_type).toBe(docType);
@@ -853,7 +853,7 @@ describe('every document the ERP creates carries the ERP number', () => {
       mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000021' }],
       delivery_order_items: [],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
@@ -861,7 +861,7 @@ describe('every document the ERP creates carries the ERP number', () => {
       docType: 'DO',
       docNo: 'DO-2608-004',
       docId: 'do-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.DocNo).toBe('DO-2608-004');
     /* The PARENT travels separately and is resolved at drain — confusing the
@@ -1676,11 +1676,11 @@ describe("a conversion says nothing rather than blanking the target's reference"
 
   test('no ref and no date means neither key is present at all', async () => {
     const sb = seeded();
-    expect(await enqueueConvert(client(sb), {
+    expect((await enqueueConvert(client(sb), {
       companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
       to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
-    })).toBe(true);
+    })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(Object.prototype.hasOwnProperty.call(body, 'Ref')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(body, 'DocDate')).toBe(false);
@@ -1770,11 +1770,11 @@ describe("a conversion says nothing rather than blanking the target's reference"
          cannot be read back. */
       delivery_orders: [],
     });
-    expect(await enqueueConvert(client(sb), {
+    expect((await enqueueConvert(client(sb), {
       companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
       to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
-    })).toBe(true);
+    })).queued).toBe(true);
     const row = outbox(sb)[0];
     expect(row.status).toBe('pending');
     expect(row.payload.body.DocNo).toBe('HC-DO-1');

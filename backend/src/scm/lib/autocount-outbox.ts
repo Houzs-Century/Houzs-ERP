@@ -122,7 +122,7 @@ import {
 /* The operator's half of a refusal. The skipped row this file writes is the
    engineer's half and has not changed — see lib/ac-preflight.ts for why there
    are two and why only ONE module is allowed to write either sentence. */
-import { acNotSentProblems, type AcDocKind } from './ac-preflight';
+import { acNotSentProblems, acNotCarriedProblems, type AcDocKind } from './ac-preflight';
 import type { SaveProblem } from '../shared/so-save-problems';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -853,13 +853,21 @@ export async function enqueueConvert(
     ref?: string | null;
     createdBy?: number | null;
   },
-): Promise<boolean> {
+  /* RETURNS THE OPERATOR'S SENTENCES, the shape `enqueueSoCreate` /
+     `enqueuePoCreate` already return (#2499). A conversion's problems are a
+     different verdict from a create's — the document IS in the accounts, and
+     some of its fields are not — so they carry `AC_SENT_INCOMPLETE` and never
+     block. The route spreads them into its 201 as `acNotSent`, which is the key
+     the frontend's `acNotSentProblemsOf` already reads. */
+): Promise<AcEnqueueOutcome> {
   /* WHICH SOURCE LINES THIS CONVERSION ACTUALLY TOOK.
      Resolved BEFORE the enqueue so a refusal is recorded instead of a wrong
      transfer being queued. */
   const source = await readConvertSourceKeys(sb, opts.op, opts.docId ?? null);
   if (source.refuse) {
-    return recordConvertSkipped(sb, {
+    /* No problems: a skip is already written down where the operator looks, and
+       the refusal has its own sentence there (classifyAcSkip). */
+    await recordConvertSkipped(sb, {
       companyId: opts.companyId,
       op: opts.op,
       docType: opts.docType,
@@ -868,6 +876,7 @@ export async function enqueueConvert(
       reason: source.refuse,
       createdBy: opts.createdBy ?? null,
     });
+    return AC_ENQUEUE_SILENT;
   }
   /* THE SUPPLIER, for the two conversions whose target is a purchase document.
      Resolved here rather than inline below so a null is one branch and not a
@@ -877,7 +886,7 @@ export async function enqueueConvert(
      it belongs in recordParentlessCreate, not here, and enqueueing a transfer
      with nothing to transfer FROM would fail on the host with a message about
      the payload rather than about the document. */
-  if (!froms.length) return false;
+  if (!froms.length) return AC_ENQUEUE_SILENT;
   const creditor = PURCHASE_CONVERSION.has(opts.op)
     ? await readConvertCreditor(sb, froms[0])
     : null;
@@ -885,7 +894,7 @@ export async function enqueueConvert(
      the source keys are: what goes in the payload is decided once, here, where
      an omission can still be written down. */
   const own = await readConvertHeaderFacts(sb, opts.docType, opts.docId ?? null);
-  return enqueueAcOp(sb, {
+  const queued = await enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
     docType: opts.docType,
@@ -1010,7 +1019,17 @@ export async function enqueueConvert(
     reason: acNotCarriedReason(own.notCarried),
     createdBy: opts.createdBy ?? null,
   });
+  /* NOTHING QUEUED, NOTHING TO SAY. The write-back is off, or the company is
+     unset, or the same intent is already queued — in none of those cases did
+     this save leave a field behind, so warning about one would be a warning
+     about something that did not happen. */
+  return { queued, problems: queued ? acNotCarriedProblems(own.notCarried, AC_DOC_KIND[opts.docType]) : [] };
 }
+
+/** The noun each transferred document is called in a sentence to an operator. */
+const AC_DOC_KIND: Record<'DO' | 'IV' | 'GR' | 'PI', AcDocKind> = {
+  DO: 'delivery order', IV: 'invoice', GR: 'goods receipt', PI: 'purchase invoice',
+};
 
 
 /** The ItemCode column each line table spells its product in. */

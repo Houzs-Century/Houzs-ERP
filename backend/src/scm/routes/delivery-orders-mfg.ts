@@ -11,6 +11,7 @@
 // Mounted at '/delivery-orders-mfg' in apps/api/src/index.ts.
 
 import { Hono } from 'hono';
+import type { SaveProblem } from '../shared/so-save-problems';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
@@ -3572,8 +3573,12 @@ deliveryOrdersMfg.post('/', async (c) => {
   /* ERP -> AutoCount SO->DO. Only an SO-linked DO can be expressed: AutoCount
      builds a DO by transferring lines FROM a source document, so a DO with no
      SO behind it has nothing to convert from. Queued, never pushed inline. */
+  let acNotSent: SaveProblem[] = [];
   if ((body.soDocNo as string | undefined) ?? null) {
-    await enqueueConvert(sb, {
+    /* THE SENTENCES COME BACK, the shape #2499 established for the two create
+       routes. A conversion's are a different verdict — the delivery order IS in
+       the accounts and a field on it is not — so they warn and never block. */
+    ({ problems: acNotSent } = await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: String(body.soDocNo) },
@@ -3582,7 +3587,7 @@ deliveryOrdersMfg.post('/', async (c) => {
       docNo: h.do_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
+    }));
   } else {
     /* THE ELSE BRANCH IS THE POINT. A source-less DO used to fall out of this
        `if` writing nothing at all — no outbox row, no reason, nothing to find it
@@ -3667,6 +3672,10 @@ deliveryOrdersMfg.post('/', async (c) => {
     emailNotice: emailNotice ?? undefined,
     so_amend_mirrored: soAmendMirrored,
     so_mirror_error: soAmendMirrorError,
+    /* `acNotSent` is the key #2499 chose and the frontend's
+       `acNotSentProblemsOf` already reads off any response, so this needs no
+       second reader. Omitted entirely when there is nothing to say. */
+    ...(acNotSent.length ? { acNotSent } : {}),
   }, 201);
 });
 
@@ -4212,8 +4221,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   /* companyId picks the AutoCount BOOK the transfer is written into, and gates
      it on that company's writeback flag. A 2990 DO belongs in 2990's book
      whoever converted it, so this is the document's company, not the active one. */
+  let mergeAcNotSent: SaveProblem[] = [];
   if (docNos.length) {
-    await enqueueConvert(sb, {
+    ({ problems: mergeAcNotSent } = await enqueueConvert(sb, {
       companyId: doCompanyId,
       op: 'so_to_do',
       from: docNos.map((n) => ({ table: 'mfg_sales_orders' as const, keyCol: 'doc_no', key: n })),
@@ -4222,7 +4232,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       docNo: dh.do_number,
       docId: dh.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
+    }));
   }
 
   let movementErrors: string[] = [];
@@ -4246,6 +4256,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     doNumber: dh.do_number,
     movementErrors: movementErrors.length ? movementErrors : undefined,
     emailNotice: emailNotice ?? undefined,
+    ...(mergeAcNotSent.length ? { acNotSent: mergeAcNotSent } : {}),
   }, 201);
 };
 deliveryOrdersMfg.post('/from-sos', createDoFromSoLinesHandler);

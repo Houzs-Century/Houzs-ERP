@@ -76,15 +76,25 @@ AutoCount takes one, it is sent, resolved uuid → `dbo.Location` code.
 `PurchaseHeader` leaves whatever the transfer copied off the GRN, which is the
 right answer. The purchase ORDER's header location is PR #2523's.
 
-**The omission is reported now, not silent.** A value the ERP has none of is
-omitted rather than blanked (a blank is a foreign key error on a master field),
-and `enqueueConvert` writes `acNotCarriedReason(…)` into the row's `last_error`
-while the status stays `pending` — `acNeedsAttention` branches on status, so it
-is visible at save time on the page the operator already reads without being
-counted as stuck. The sentences separate "the ERP document has none" from "this
-transfer has no field for it", because only the first is fixable by the person
-holding the document. `payload.notCarried` keeps the durable copy, since the
-drain clears `last_error` on success.
+**The omission is reported now, not silent, and through the channel #2499 built
+rather than a second one.** A value the ERP has none of is omitted rather than
+blanked (a blank is a foreign key error on a master field). `enqueueConvert` now
+returns `AcEnqueueOutcome` — the shape the two create routes already return —
+the four routes spread the problems into their 201 as `acNotSent`, and
+`DeliveryOrderNewV2` / `GrnNew` / `PurchaseInvoiceNew` / `SalesInvoiceNew` call
+`notifyAcNotSent` before navigating. The verdict is the OTHER one, so it carries
+its own code `AC_SENT_INCOMPLETE` and its own title — "saved and sent, but not
+every field on it reached the accounts". The not-sent wording would be false
+here, and telling someone their goods receipt is ERP-only sends them to raise it
+again into a book that already holds it. Never blocks; tone stays `info`.
+The row keeps its own copy: `acNotCarriedReason(…)` in `last_error` on a
+`pending` row (`acNeedsAttention` branches on status, so it does not read as
+stuck), and `payload.notCarried` as the durable half, because the drain clears
+`last_error` on success while the blank in the book stays true. The sentences
+separate "the ERP document has none" from "this transfer has no field for it",
+because only the first is fixable by the person holding the document.
+`si-autocount-source.ts:178` is the one call site not wired to a dialog — it
+returns a string enum, not a response body — and it still records on the row.
 
 **Still open.** D17: the sales arms have no `SalesLocation` slot in
 `SalesHeader` at all, and `scm.delivery_orders` / `scm.sales_invoices` carry TWO

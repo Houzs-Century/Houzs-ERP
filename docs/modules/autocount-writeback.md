@@ -1408,18 +1408,45 @@ records that the ERP had never sent one. Per document:
   ours to overwrite.
 - **Purchase Order** — the header location is PR #2523's, not this one's.
 
-#### And the omission is said out loud
+#### And the omission is said out loud, at save time
 
 A value the ERP does not have is omitted, never blanked — a blank is a foreign
 key error on a master field and a destroyed value on a text one. On its own that
-is a quieter version of the same bug, so the omission is **reported on the row
-the operator already reads, at save time**: `enqueueConvert` writes
-`acNotCarriedReason(…)` into the row's `last_error` while the status stays
-`pending`, and `acNeedsAttention` branches on status, so it is visible without
-being counted as something stuck. The sentences distinguish *"the ERP document
-has none"* from *"this transfer has no field for it"*, because only the first is
-something the person holding the document can fix. The drain clears `last_error`
-on success, so the durable copy lives on `payload.notCarried`.
+is a quieter version of the same bug, so the omission is **reported through the
+channel #2499 built**, not through a second one:
+
+- `enqueueConvert` returns `AcEnqueueOutcome` — the shape `enqueueSoCreate` and
+  `enqueuePoCreate` already return — with `problems` composed by
+  `acNotCarriedProblems` from `downstreamNotCarried`.
+- The four routes spread them into their 201 as **`acNotSent`**, the key the
+  frontend's `acNotSentProblemsOf` already reads off any response.
+- `DeliveryOrderNewV2`, `GrnNew`, `PurchaseInvoiceNew` and `SalesInvoiceNew`
+  call `notifyAcNotSent` before they navigate, so the operator sees it on the
+  save rather than five minutes later in a queue behind a permission key they
+  do not hold.
+
+**The verdict is the OTHER one, and it gets its own sentence.** These problems
+carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and `acTitleFor` picks the title
+off the problems: *"… saved and sent — but not every field on it reached the
+accounts"*. The not-sent wording would be false here, and telling someone their
+goods receipt is ERP-only sends them to raise it a second time into a book that
+already holds it. Never blocks — the problems are composed after the conversion
+is queued, so there is no save left to refuse. Tone stays `info`.
+
+The sentences distinguish *"the ERP document has none"* from *"this transfer has
+no field for it"*, because only the first is something the person holding the
+document can fix.
+
+The row keeps its own copy too: `acNotCarriedReason(…)` goes into `last_error`
+while the status stays `pending` (`acNeedsAttention` branches on status, so it
+is visible without being counted as stuck), and `payload.notCarried` is the
+durable half, because the drain clears `last_error` on success while the blank
+in the book stays true.
+
+**One call site is not wired**: `si-autocount-source.ts:178` returns a string
+enum to its callers rather than a response body, so an invoice raised through
+that path records its omissions on the outbox row and does not raise a dialog.
+Named here rather than left to be discovered.
 
 #### What is still open — D17
 

@@ -1322,7 +1322,7 @@ describe('the four conversions', () => {
     const sb = seeded();
     // The parent must already have an AutoCount counterpart, or the row waits.
     sb.tables[from.table][0].linked_ac_docno = 'AC-PARENT-1';
-    expect(await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo })).toBe(true);
+    expect((await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo })).queued).toBe(true);
     return wireBody(sb);
   };
 
@@ -1386,10 +1386,10 @@ describe('the four conversions', () => {
     async (kase) => {
       const sb = seeded();
       sb.tables[kase.from.table][0].linked_ac_docno = 'AC-PARENT-1';
-      expect(await enqueueConvert(sb as never, {
+      expect((await enqueueConvert(sb as never, {
         companyId: 1, op: kase.op, from: kase.from as never, to: kase.to as never,
         docType: kase.docType, docNo: kase.docNo, docId: kase.to.key,
-      })).toBe(true);
+      })).queued).toBe(true);
       const body = await wireBody(sb);
 
       const h = sb.tables[kase.table][0] as Record<string, unknown>;

@@ -7,7 +7,9 @@
 import { describe, expect, test } from 'vitest';
 import {
   acAgentProblem, acAgentIsSendable, acNotSentProblems, AC_NOT_SENT,
+  acNotCarriedProblems, AC_SENT_INCOMPLETE,
 } from './ac-preflight';
+import { downstreamNotCarried } from './autocount-convert-lines';
 import { collectSoConfirmProblems } from './so-confirm-gate';
 import {
   resolveAcAgent, composeDetails, composeCreatePo, MissingCreditorError,
@@ -244,5 +246,60 @@ describe('what this module refuses to say', () => {
 
   test('a document that composed cleanly says nothing at all', () => {
     expect(acNotSentProblems(null, 'purchase order')).toEqual([]);
+  });
+});
+
+/* ── THE OTHER VERDICT: it ARRIVED, and part of it did not ───────────────────
+   Everything above is about a document the accounts will not take. A
+   TRANSFERRED document is the opposite case and needs the opposite sentence:
+   the book holds it, and the transfer route — a strictly narrower set of header
+   fields than /edit applies — left some of it behind.
+
+   THE CONTROL THAT MATTERS MOST is that this never claims the document is
+   missing. An operator told their goods receipt is ERP-only goes and raises it
+   again, into a book that already has it. */
+describe('it IS in the accounts, and part of it is not', () => {
+  test('its own code, because the other one would be a false sentence', () => {
+    expect(AC_SENT_INCOMPLETE).toBe('ac_sent_incomplete');
+    expect(AC_SENT_INCOMPLETE).not.toBe(AC_NOT_SENT);
+    const [p] = acNotCarriedProblems(['Ref: the ERP document has none'], 'goods receipt');
+    expect(p.code).toBe(AC_SENT_INCOMPLETE);
+    expect(p.message).toContain('IS in the accounts');
+    expect(p.message).toContain('goods receipt');
+    expect(p.message).not.toContain('NOT reached');
+  });
+
+  /* ONE PER FIELD, for ItemCodeError's reason: a person who fixes the first of
+     three and re-saves into the second is how a divergence outlives everyone
+     who remembers it. */
+  test('one problem per field, never one listing them all', () => {
+    const ps = acNotCarriedProblems(['A: x', 'B: y', 'C: z'], 'delivery order');
+    expect(ps).toHaveLength(3);
+    expect(codes(ps)).toEqual([AC_SENT_INCOMPLETE, AC_SENT_INCOMPLETE, AC_SENT_INCOMPLETE]);
+    expect(messages(ps)).toContain('A: x');
+    expect(messages(ps)).toContain('C: z');
+  });
+
+  test('CONTROL — a document carrying everything says nothing at all', () => {
+    expect(acNotCarriedProblems([], 'delivery order')).toEqual([]);
+    expect(acNotCarriedProblems([])).toEqual([]);
+  });
+
+  /* THE SENTENCES ARE THE COMPOSER'S, not this module's second opinion — the
+     same rule the not-sent half runs under. Fed straight from
+     `downstreamNotCarried`, so a fact added to a spec reaches the operator with
+     no edit here. */
+  test('the wording comes from the composer, and both silences reach the operator', () => {
+    const bare = { id: 'x', grn_number: 'GR-1', received_at: '2026-08-18' };
+    const ps = acNotCarriedProblems(downstreamNotCarried('GR', bare), 'goods receipt');
+    expect(ps.length).toBeGreaterThan(0);
+    /* "the ERP has none of this" — fixable by the person holding the document. */
+    expect(messages(ps)).toContain('SupplierDONo: the ERP document has none');
+    /* and the other silence, on a route that has no field for the fact at all. */
+    const sales = acNotCarriedProblems(
+      downstreamNotCarried('DO', { id: 'x', do_number: 'DO-1', do_date: '2026-08-19' }),
+      'delivery order',
+    );
+    expect(messages(sales)).toContain('the ERP document has none');
   });
 });

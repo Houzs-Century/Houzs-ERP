@@ -105,8 +105,13 @@ import { ItemCodeError } from '../../services/autocount-item-code';
 import { AcReadError } from './autocount-read';
 
 /** Which document the refusal is about — only used to pick the noun in a
- *  sentence, never to decide anything. */
-export type AcDocKind = 'sales order' | 'purchase order' | 'document';
+ *  sentence, never to decide anything. The four downstream kinds joined on
+ *  2026-08-20 with `acNotCarriedProblems`, which speaks about a transferred
+ *  delivery order or receipt rather than about an order being created. */
+export type AcDocKind =
+  | 'sales order' | 'purchase order'
+  | 'delivery order' | 'goods receipt' | 'invoice' | 'purchase invoice'
+  | 'document';
 
 /**
  * The one code every "saved, but the accounts will not see it" problem carries.
@@ -117,6 +122,52 @@ export type AcDocKind = 'sales order' | 'purchase order' | 'document';
  * sentence for five causes — and that is fixed by the message, not the code.
  */
 export const AC_NOT_SENT = 'ac_not_sent';
+
+/**
+ * The code for "it DID reach the accounts, and part of it did not come with it".
+ *
+ * A SECOND CODE, and the module header's "one code, not one per cause" rule is
+ * why rather than an exception to it. That rule is about causes WITHIN one
+ * verdict: a consumer branching on `AC_NOT_SENT` is asking "is this document in
+ * the accounts", and the reason it is not belongs in the message. This is the
+ * opposite verdict. Filing it under `AC_NOT_SENT` would tell an operator their
+ * goods receipt is ERP-only when it is in the book — a sentence that is simply
+ * false, and the fastest way to teach someone to stop reading these.
+ *
+ * ALWAYS A WARN, never a block, and the shape of the input is what guarantees
+ * it: these are composed AFTER the conversion has been queued, from what the
+ * payload was and was not able to carry. There is no save left to refuse.
+ */
+export const AC_SENT_INCOMPLETE = 'ac_sent_incomplete';
+
+/**
+ * "It is in the accounts, and these fields on it are not" — one problem per
+ * field, in the operator's words.
+ *
+ * TAKES THE SENTENCES IT IS GIVEN. `downstreamNotCarried` already knows which
+ * facts this route could not carry and which the document simply has none of,
+ * because it holds the master and the projection; re-deciding that here is the
+ * drift this module's header warns about at length. What this adds is the same
+ * two things it adds to a refusal: the operator's framing, and the fact that
+ * the document itself is fine.
+ *
+ * ONE PROBLEM PER FIELD, not one listing them all, for `ItemCodeError`'s
+ * reason: a person who fixes the first of three and re-saves into the second is
+ * how a divergence outlives everyone who remembers it.
+ *
+ * Empty in, empty out — a document carrying everything says nothing at all.
+ */
+export function acNotCarriedProblems(
+  notCarried: readonly string[],
+  docKind: AcDocKind = 'document',
+): SaveProblem[] {
+  return notCarried.map((what) => ({
+    code: AC_SENT_INCOMPLETE,
+    message:
+      `Saved, and this ${docKind} IS in the accounts — but not all of it: ${what}. `
+      + 'The document transferred; this is a field on it that did not.',
+  }));
+}
 
 /** The code the confirm gate raises when no AutoCount sales agent can be named.
  *  Kept as `salesperson_required` — the SAME code the gate has always used, so
