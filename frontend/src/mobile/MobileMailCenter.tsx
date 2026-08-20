@@ -7,6 +7,14 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
+import { useAuth } from "../auth/AuthContext";
+import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
+import {
+  fetchOutbox,
+  fetchOutboxDetail,
+  type OutboxRow,
+  type OutboxDetail,
+} from "../pages/MailCenter/mail-actions";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
@@ -31,12 +39,13 @@ import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/form
 // unchanged from the live wiring.
 //
 // Folder -> backend query (mirrors the desktop MailCenter/Inbox mapping):
-//   Inbox   -> status=open
-//   Starred -> starred=1
-//   Sent    -> status=all, narrowed client-side by hasOutbound
-//   Drafts  -> local-only on desktop (no backend draft table); shown as empty
-//   Archive -> status=closed
-//   Trash   -> status=trashed
+//   Inbox    -> status=open
+//   Starred  -> starred=1
+//   Sent     -> status=all, narrowed client-side by hasOutbound
+//   Auto-sent-> GET /api/mail-center/outbox (read-only system log, no threads)
+//   Drafts   -> local-only on desktop (no backend draft table); shown as empty
+//   Archive  -> status=closed
+//   Trash    -> status=trashed
 
 type Thread = {
   id: string;
@@ -102,17 +111,29 @@ type MailAddress = {
   address: string;
   label: string;
   active: boolean;
+  // Served by GET /api/mail-center/addresses — the user this mailbox is assigned
+  // to. Used to default the From to the logged-in user's own mailbox.
+  assignedUserId?: string | number | null;
 };
 
-type Folder = "inbox" | "starred" | "sent" | "drafts" | "archive" | "trash";
+type Folder =
+  | "inbox"
+  | "starred"
+  | "sent"
+  | "autosent"
+  | "drafts"
+  | "archive"
+  | "trash";
 type ComposeMode = "new" | "reply" | "replyall" | "forward";
 
 // Folder order mirrors the prototype (Inbox · Starred · Sent · Drafts ·
-// Archive); Trash is an extra live-only folder kept at the end.
+// Archive); Trash is an extra live-only folder kept at the end. "Auto-sent"
+// sits after Sent, the same slot the desktop sidebar gives it.
 const FOLDERS: [Folder, string][] = [
   ["inbox", "Inbox"],
   ["starred", "Starred"],
   ["sent", "Sent"],
+  ["autosent", "Auto-sent"],
   ["drafts", "Drafts"],
   ["archive", "Archive"],
   ["trash", "Trash"],
@@ -183,6 +204,7 @@ const fmtBytes = (n: number): string => {
 
 /** Mail Center — folders, mailbox switcher, search, thread reader + compose. */
 export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
+  const { user } = useAuth();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
   const [q, setQ] = useState("");
@@ -192,7 +214,42 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   // Mailbox switcher options (scope-bound by the backend) + the label catalogue
   // (name -> colour) so chips render in their managed colours.
   const { data: addresses } = useQuery<MailAddress[]>("/api/mail-center/addresses", () => api.get("/api/mail-center/addresses"), []);
-  const activeAddresses = useMemo(() => (addresses ?? []).filter((a) => a.active), [addresses]);
+
+  // The signed-in member's OWN outward alias (users.email_alias). Under the
+  // free-alias model this is their personal sending identity and it may not
+  // appear in /addresses at all (that lists shared/dept mailboxes), so it is
+  // spliced in here — same as desktop Compose.tsx. Without it a member whose
+  // only identity is an alias has an EMPTY From list and cannot send at all.
+  const ownAlias = (user?.email_alias ?? "").trim().toLowerCase();
+
+  const activeAddresses = useMemo(() => {
+    const list = (addresses ?? []).filter((a) => a.active);
+    if (
+      ownAlias &&
+      !list.some((a) => (a.address || "").toLowerCase() === ownAlias)
+    ) {
+      return [
+        {
+          id: `own-alias:${ownAlias}`,
+          address: ownAlias,
+          label: "My email",
+          active: true,
+          assignedUserId: user?.id ?? null,
+        } as MailAddress,
+        ...list,
+      ];
+    }
+    return list;
+  }, [addresses, ownAlias, user?.id]);
+
+  // The mailbox that belongs to the logged-in user. /addresses is ORDER BY
+  // address ASC, so "the first one" is alphabetical, not personal — someone
+  // holding finance@, hr@ and their own zoe@ used to compose from finance@.
+  // pickDefaultFromAddress is the shared, unit-tested rule desktop already uses.
+  const userDefaultFrom = useMemo(
+    () => ownAlias || pickDefaultFromAddress(activeAddresses, user),
+    [activeAddresses, user, ownAlias],
+  );
   const { data: labelCatalog } = useQuery<MailLabel[]>("/api/mail-center/labels", () => api.get("/api/mail-center/labels"), []);
   const colorMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -205,6 +262,9 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   // filtered locally, so mail #301 could never be found from this screen.
   const LIST_PAGE_SIZE = 50;
   const debouncedQ = useDebouncedValue(q, 300);
+  // Drafts are local-only and Auto-sent reads the outbox log, so neither folder
+  // uses the thread list. Same split desktop makes (Inbox.tsx usesThreadList).
+  const usesThreadList = folder !== "drafts" && folder !== "autosent";
   const listQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (folder === "inbox") params.set("status", "open");
@@ -238,7 +298,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     loadMoreAbortRef.current = null;
     setLoadingMore(false);
     setLoadMoreError(null);
-    if (folder === "drafts") {
+    if (!usesThreadList) {
       setThreads([]);
       setListTotal(0);
       setHasMore(false);
@@ -286,7 +346,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   }, [folder, listQuery, reloadKey]);
 
   const loadMore = async () => {
-    if (loadingMore || loadMoreAbortRef.current || !hasMore || folder === "drafts") return;
+    if (loadingMore || loadMoreAbortRef.current || !hasMore || !usesThreadList) return;
     const generation = listGenerationRef.current;
     const ctrl = new AbortController();
     loadMoreAbortRef.current = ctrl;
@@ -321,10 +381,10 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   };
 
   const searching =
-    folder !== "drafts" && q.trim().length > 0 &&
+    usesThreadList && q.trim().length > 0 &&
     (q.trim() !== debouncedQ.trim() || loading);
   const listBusy =
-    folder !== "drafts" && (loading || searching || threadsQuery !== listQuery);
+    usesThreadList && (loading || searching || threadsQuery !== listQuery);
 
   if (openId) {
     return (
@@ -344,6 +404,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           reload();
         }}
         addresses={activeAddresses}
+        defaultFrom={userDefaultFrom}
       />
     );
   }
@@ -353,6 +414,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
       <MailCompose
         mode={compose.mode}
         addresses={activeAddresses}
+        defaultFrom={userDefaultFrom}
         onClose={() => setCompose(null)}
         onSent={() => {
           setCompose(null);
@@ -420,14 +482,18 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
             </span>
           )}
         </div>
-        <SearchScopeHint
-          scope="server"
-          searching={searching}
-          countPending={loading || Boolean(error) || threadsQuery !== listQuery}
-          resultCount={listTotal}
-          term={q}
-          className="-mt-1 mb-2 px-1"
-        />
+        {/* resultCount is the THREAD total — on Auto-sent it would report a
+            count for a list that is not on screen, so the hint is hidden there. */}
+        {folder !== "autosent" && (
+          <SearchScopeHint
+            scope="server"
+            searching={searching}
+            countPending={loading || Boolean(error) || threadsQuery !== listQuery}
+            resultCount={listTotal}
+            term={q}
+            className="-mt-1 mb-2 px-1"
+          />
+        )}
 
         <div className="chips" style={{ display: "flex", gap: 7, overflowX: "auto" }}>
           {FOLDERS.map(([f, label]) => (
@@ -447,13 +513,14 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
             <div className="empty-s">Drafts are kept on the desktop app only.</div>
           </div>
         )}
-        {!listBusy && !error && folder !== "drafts" && threads.length === 0 && (
+        {folder === "autosent" && <OutboxList q={debouncedQ.trim()} />}
+        {!listBusy && !error && usesThreadList && threads.length === 0 && (
           <div className="empty">
             <div className="empty-t">No messages</div>
             <div className="empty-s">{folder === "trash" ? "Trash is empty." : `Nothing in ${folder}.`}</div>
           </div>
         )}
-        {!listBusy && !error && folder !== "drafts" && threads.length > 0 && (
+        {!listBusy && !error && usesThreadList && threads.length > 0 && (
           <>
             <MobileVirtualList
               items={threads}
@@ -548,6 +615,7 @@ function MailThread({
   clearCompose,
   onSent,
   addresses,
+  defaultFrom,
 }: {
   threadId: string;
   colorMap: Map<string, string>;
@@ -558,6 +626,7 @@ function MailThread({
   clearCompose: () => void;
   onSent: () => void;
   addresses: MailAddress[];
+  defaultFrom: string;
 }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -577,6 +646,7 @@ function MailThread({
     return (
       <MailReply
         thread={thread}
+        replyAll={composeFor.mode === "replyall"}
         onClose={clearCompose}
         onSent={() => {
           clearCompose();
@@ -592,6 +662,7 @@ function MailThread({
       <MailCompose
         mode="forward"
         addresses={addresses}
+        defaultFrom={defaultFrom}
         seed={buildForwardSeed(thread, messages)}
         onClose={clearCompose}
         onSent={() => {
@@ -1000,14 +1071,22 @@ function AttachmentChip({ a }: { a: Attachment }) {
 
 /** Reply / reply-all — POST /api/mail-center/threads/:id/reply. The backend
  *  addresses the counterparty and prefixes Re: itself; the From defaults to the
- *  thread's mailbox but can be overridden with a mailbox in scope. */
+ *  thread's mailbox but can be overridden with a mailbox in scope.
+ *
+ *  `replyAll` is REQUIRED, not optional: it is the whole difference between the
+ *  two buttons in the thread footer, and an omitted flag silently answers ONE
+ *  person on a mail that Cc'd several — the exact bug the owner reported on
+ *  2026-08-03 and that was fixed on desktop only. The backend rebuilds Cc from
+ *  the newest inbound message's To + Cc when, and only when, it sees this key. */
 function MailReply({
   thread,
+  replyAll,
   onClose,
   onSent,
   addresses,
 }: {
   thread: Thread | undefined;
+  replyAll: boolean;
   onClose: () => void;
   onSent: () => void;
   addresses: MailAddress[];
@@ -1028,9 +1107,10 @@ function MailReply({
     try {
       await api.post(`/api/mail-center/threads/${thread.id}/reply`, {
         text: text.trim(),
+        ...(replyAll ? { replyAll: true } : {}),
         fromAddress: from || undefined,
       });
-      toast.success("Reply sent.");
+      toast.success(replyAll ? "Reply sent to everyone." : "Reply sent.");
       onSent();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send reply.");
@@ -1040,7 +1120,7 @@ function MailReply({
   };
 
   return (
-    <ComposeShell title="Reply" onClose={onClose} onSend={send} sending={sending}>
+    <ComposeShell title={replyAll ? "Reply all" : "Reply"} onClose={onClose} onSend={send} sending={sending}>
       <label className="fld">
         <span className="fld-l">To</span>
         <input className="fld-i" value={thread?.counterpartyName || thread?.counterpartyEmail || "—"} disabled readOnly />
@@ -1059,23 +1139,41 @@ function MailReply({
 }
 
 /** New / Forward — POST /api/mail-center/compose. Requires fromAddress, to,
- *  subject and body. Forward seeds subject + quoted body but leaves To blank. */
+ *  subject and body. Forward seeds subject + quoted body but leaves To blank.
+ *
+ *  `defaultFrom` is REQUIRED: it carries the shared pickDefaultFromAddress rule
+ *  from the container. Making it optional would let a caller silently fall back
+ *  to `addresses[0]`, which is the ALPHABETICALLY first mailbox — the defect
+ *  this parameter exists to remove. */
 function MailCompose({
   mode,
   addresses,
+  defaultFrom,
   seed,
   onClose,
   onSent,
 }: {
   mode: ComposeMode;
   addresses: MailAddress[];
+  defaultFrom: string;
   seed?: { subject: string; body: string };
   onClose: () => void;
   onSent: () => void;
 }) {
   const toast = useToast();
   const [to, setTo] = useState("");
-  const [from, setFrom] = useState(addresses[0]?.address ?? "");
+  // Derived, not state: the address list arrives from a query, so a value
+  // captured at mount would freeze whatever was loaded at that instant.
+  // Precedence mirrors desktop Compose.tsx — an explicit pick, then the user's
+  // own mailbox, then the first available one as a last resort.
+  const [fromOverride, setFromOverride] = useState("");
+  const from =
+    (fromOverride &&
+      addresses.some((a) => a.address === fromOverride) &&
+      fromOverride) ||
+    defaultFrom ||
+    addresses[0]?.address ||
+    "";
   const [subject, setSubject] = useState(seed?.subject ?? "");
   const [text, setText] = useState(seed?.body ?? "");
   const [sending, setSending] = useState(false);
@@ -1116,7 +1214,7 @@ function MailCompose({
 
   return (
     <ComposeShell title={mode === "forward" ? "Forward" : "New email"} onClose={onClose} onSend={send} sending={sending}>
-      <FromPicker addresses={addresses} value={from} onChange={setFrom} />
+      <FromPicker addresses={addresses} value={from} onChange={setFromOverride} />
       <label className="fld">
         <span className="fld-l">To</span>
         <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
@@ -1183,6 +1281,234 @@ function ComposeShell({
           {sending ? "Sending…" : "Send"}
         </button>
       </footer>
+    </div>
+  );
+}
+
+// ── Auto-sent (outbox) ──────────────────────────────────────────────────────
+// The system's own customer notices — Delivery Order dispatched, Invoice,
+// document report — go out from a no-reply sender, so there is no human "Sent"
+// copy anywhere in the thread list. When one FAILS, nothing on the phone said
+// so: a salesperson on the road saw no error and assumed the customer had the
+// invoice. This is the same read-only log the desktop "Auto-sent" folder shows,
+// over the same shared fetchers (mail-actions.ts) and the same endpoint.
+const OUTBOX_PAGE = 60;
+
+function outboxTone(status: string): [string, string] {
+  switch (status.toUpperCase()) {
+    case "SENT":
+      return ["#e2f0e9", "#15803D"];
+    case "FAILED":
+      return ["#f8eaea", "#B91C1C"];
+    default:
+      return ["#f6efd9", "#B45309"]; // PENDING
+  }
+}
+
+function outboxLabel(status: string): string {
+  switch (status.toUpperCase()) {
+    case "SENT":
+      return "Sent";
+    case "FAILED":
+      return "Failed";
+    default:
+      return "Pending";
+  }
+}
+
+function OutboxList({ q }: { q: string }) {
+  const [items, setItems] = useState<OutboxRow[]>([]);
+  const [counts, setCounts] = useState({ sent: 0, failed: 0, pending: 0 });
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    void fetchOutbox({ q: q || undefined, limit: OUTBOX_PAGE, offset: 0 })
+      .then((data) => {
+        if (!live) return;
+        setItems(Array.isArray(data.rows) ? data.rows : []);
+        setCounts({
+          sent: Number(data.counts.sent) || 0,
+          failed: Number(data.counts.failed) || 0,
+          pending: Number(data.counts.pending) || 0,
+        });
+        setHasMore(!!data.hasMore);
+      })
+      .catch((reason) => {
+        if (!live) return;
+        setItems([]);
+        setHasMore(false);
+        setError(reason instanceof Error ? reason.message : "Couldn't load the auto-sent log.");
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [q]);
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await fetchOutbox({ q: q || undefined, limit: OUTBOX_PAGE, offset: items.length });
+      setItems((previous) => [...previous, ...(Array.isArray(data.rows) ? data.rows : [])]);
+      setHasMore(!!data.hasMore);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Couldn't load more.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  if (loading && items.length === 0) return <Muted>Loading&#8230;</Muted>;
+  if (error) return <Muted tone="error">Couldn't load the auto-sent log. {error}</Muted>;
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: "#767b6e", padding: "0 2px 9px" }}>
+        {counts.sent} sent &middot;{" "}
+        <span style={{ color: counts.failed > 0 ? "#B91C1C" : "#767b6e", fontWeight: counts.failed > 0 ? 800 : 400 }}>
+          {counts.failed} failed
+        </span>{" "}
+        &middot; {counts.pending} pending
+      </div>
+      {items.length === 0 ? (
+        <div className="empty">
+          <div className="empty-t">No auto-sent emails</div>
+          <div className="empty-s">{q ? "Nothing matches this search." : "The system has not sent anything yet."}</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {items.map((it) => {
+            const [bg, fg] = outboxTone(it.status);
+            return (
+              <div
+                key={it.id}
+                onClick={() => setOpenId(it.id)}
+                style={{ background: "#fff", border: `1px solid ${it.status === "FAILED" ? "#e3c4c1" : "#e3e6e0"}`, borderRadius: 13, padding: "11px 12px", cursor: "pointer" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {it.toAddress || "(no recipient)"}
+                  </span>
+                  <span className="money" style={{ fontSize: 10, color: "#9aa093", flex: "none", whiteSpace: "nowrap" }}>
+                    {fmtTime(it.sentAt || it.createdAt)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12.5, fontWeight: 500, color: "#11140f", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {it.subject}
+                </div>
+                {it.snippet && (
+                  <div style={{ fontSize: 11.5, color: "#767b6e", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {it.snippet}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 5, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="rbadge" style={{ background: bg, color: fg }}>{outboxLabel(it.status)}</span>
+                  {it.attempts > 0 && (
+                    <span style={{ fontSize: 10.5, color: "#9aa093" }}>
+                      {it.attempts} attempt{it.attempts === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+                {it.status === "FAILED" && it.lastError && (
+                  <div style={{ fontSize: 11, color: "var(--red)", marginTop: 5, wordBreak: "break-word" }}>
+                    {it.lastError}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {hasMore && items.length > 0 && (
+        <div style={{ padding: "14px 0 4px", textAlign: "center" }}>
+          <button type="button" className="tinybtn" onClick={loadMore} disabled={loadingMore} aria-label="Load more auto-sent emails">
+            {loadingMore ? "Loading…" : "Load more"}
+          </button>
+        </div>
+      )}
+      {openId && <OutboxSheet id={openId} onClose={() => setOpenId(null)} />}
+    </>
+  );
+}
+
+// Read-only reader for one auto-sent email. Bottom sheet, matching the phone's
+// existing sheet idiom (LabelPicker) rather than the desktop modal.
+function OutboxSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const [data, setData] = useState<OutboxDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    void fetchOutboxDetail(id)
+      .then((detail) => {
+        if (live) setData(detail);
+      })
+      .catch((reason) => {
+        if (live) setError(reason instanceof Error ? reason.message : "Couldn't open this email.");
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  const [bg, fg] = outboxTone(data?.status ?? "PENDING");
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.32)", display: "flex", alignItems: "flex-end" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="hz-m so-card"
+        style={{ width: "100%", borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, padding: "16px 16px calc(env(safe-area-inset-bottom) + 18px)", maxHeight: "80vh", overflowY: "auto", marginBottom: 0 }}
+      >
+        <div className="eyebrow" style={{ marginBottom: 3 }}>Auto-sent</div>
+        {loading && <Muted>Loading&#8230;</Muted>}
+        {!loading && error && <Muted tone="error">Couldn't open this email. {error}</Muted>}
+        {!loading && !error && data && (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)", marginBottom: 6, lineHeight: 1.25 }}>{data.subject}</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+              <span className="rbadge" style={{ background: bg, color: fg }}>{outboxLabel(data.status)}</span>
+              <span style={{ fontSize: 11, color: "#767b6e" }}>To {data.toAddress || "(no recipient)"}</span>
+              <span style={{ fontSize: 11, color: "#9aa093" }}>
+                {data.sentAt ? `Sent ${fmtDateTime(new Date(data.sentAt))}` : `Queued ${data.createdAt ? fmtDateTime(new Date(data.createdAt)) : "—"}`}
+              </span>
+              {data.attachmentNames.length > 0 && (
+                <span style={{ fontSize: 11, color: "#9aa093" }}>&middot; {data.attachmentNames.join(", ")}</span>
+              )}
+            </div>
+            {data.status === "FAILED" && data.lastError && (
+              <div style={{ background: "#fbf1f0", border: "1px solid #e3c4c1", borderRadius: 11, padding: "9px 11px", fontSize: 11.5, color: "#b23a3a", marginBottom: 10, wordBreak: "break-word" }}>
+                Error: {data.lastError}
+              </div>
+            )}
+            {data.bodyHtml ? (
+              <HtmlBody html={data.bodyHtml} attachments={[]} />
+            ) : (
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#414539", background: "#f4f6f3", borderRadius: 11, padding: "11px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {data.bodyText || "(no content)"}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
