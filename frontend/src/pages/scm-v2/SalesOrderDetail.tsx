@@ -60,6 +60,7 @@ import {
   amendmentEligible as soAmendmentEligible,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import {
   buildAmendmentHeaderChanges,
@@ -1046,9 +1047,6 @@ export const SalesOrderDetail = () => {
      amendment then flows through the supplier-confirm / approve gates before it
      re-derives the SO — direct line writes on a PO'd SO would break the supplier
      copy, which is exactly what this workflow prevents. */
-  /* A 0 typed here is a price, not an unresolved one — the wire cannot tell them
-     apart, so say which (see erpLineTrust). Both the PATCH and a staged ADD. */
-  const zeroPriceClaim = (sen: number) => (sen === 0 ? { zeroPriceIntended: true } : {});
 
   const buildAmendmentLines = (): CreateAmendmentLine[] => {
     const out: CreateAmendmentLine[] = [];
@@ -1502,7 +1500,9 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      ...zeroPriceClaim(d.unitPriceSen),
+      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
+         it must not silently re-price it (a qty-only edit sends the price too). */
+      ...zeroPriceClaim(d.unitPriceSen, true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
@@ -1527,7 +1527,10 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      ...zeroPriceClaim(d.unitPriceSen),
+      /* UNCHANGED behaviour: this staged ADD has claimed every 0 since #2425.
+         BUG-HISTORY 2026-08-20 records the open question about an unpriced SKU
+         reaching this path; deliberately not touched here. */
+      ...zeroPriceClaim(d.unitPriceSen, true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,

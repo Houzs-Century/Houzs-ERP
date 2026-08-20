@@ -121,6 +121,16 @@ key off the older `is_showroom` flag and will migrate to `type` incrementally:
   `is_showroom = true`.
 - **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
   rows into the balances read so consignment/showroom stock stays visible.
+- **FIFO lot feeds carry the consignment verdict on the ROW** (2026-08-20).
+  `GET /inventory/lots/:itemCode` now stamps `is_consignment` on every lot, the
+  way `GET /inventory/reservations` already did, from the one classifier
+  `isConsignmentLotSource` (`scm/lib/inventory-movements.ts`) over the lot's
+  `source_doc_type` / `source_doc_no`. It was the only lot feed that did not say,
+  and its consumer — the desktop Stock Card — therefore valued the supplier's
+  goods as ours while the per-warehouse table beneath it, fed by
+  `/breakdown/:itemCode`, excluded them. Both clients now split the same feed
+  through the shared `buildStockBreakdown`, so a new lot surface adds no third
+  filter.
 
 Rule of thumb when adding a new consumer: if you want "sales point", filter
 `type='showroom'`; if you want "stock location", filter `type='warehouse'`; if
@@ -142,6 +152,15 @@ you want "everything selectable", filter `is_active=true` and skip type.
   default warehouse.
 - **CONSIGN-OUT is 2990-only and inactive.** It's a historical consignment-out
   placeholder; do not copy it to HOUZS on any future unification pass.
+- **Consignment is QUANTITY, never VALUE — and the verdict is by SOURCE.** Stock
+  fed by a Purchase Consignment Receive belongs to the supplier until it sells,
+  so it counts on hand and must stay out of every value total. Classify with
+  `isConsignmentLotSource(source_doc_type, source_doc_no)`, never with the
+  warehouse's own `is_consignment` flag: a PCR mis-posted into a normal
+  warehouse defeats the flag and leaks into owned value (BUG-HISTORY
+  2026-07-25). On the client, never write a fourth filter — `buildStockBreakdown`
+  (`frontend/src/vendor/scm/lib/inventory-queries.ts`) is the one split, and it
+  returns `ownedValueSen` beside `consignmentQty` so a surface can show both.
 - **Do not delete a warehouse with movement history.** FK from
   `inventory_movements` will refuse (409 `in_use`). Deactivate (`is_active=false`)
   instead — the master row stays, historical rows keep pointing at it.

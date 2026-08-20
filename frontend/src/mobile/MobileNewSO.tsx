@@ -47,6 +47,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -121,6 +122,11 @@ type LineItem = {
   name: string;
   qty: string;
   price: string; // RM, as typed — display/default only; server recomputes
+  /* TRUE once the operator has typed into this line's price box. It is how a
+     deliberate RM 0 (a free line) is told apart from a SKU that simply has no
+     sell price, which the server must still price. Client-only, like
+     overriddenKeys; sent as `zeroPriceIntended`, never persisted. */
+  priceAuthored: boolean;
   ddate: string; // per-line delivery date (ISO yyyy-mm-dd)
   remark: string;
   cat: LineCat;
@@ -306,7 +312,7 @@ const FABRIC_SYNC_KEYS: string[] = [
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
-    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "",
+    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "", priceAuthored: false,
     variants: {}, overriddenKeys: [], photoKeys: [], photoFiles: [],
   };
 }
@@ -373,6 +379,11 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* A 0 the operator TYPED is a free line and must survive the server's
+       honest-pricing recompute; a 0 nobody touched is an unpriced SKU the
+       server still has to price. This body feeds BOTH the create items[] and
+       POST /:docNo/items, and neither said which until now. */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -488,6 +499,10 @@ function lineFromItem(it: SoItem): LineItem {
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
     price: fromSen(it.unit_price_sen),
+    /* This price came off the persisted row, so a 0 here IS the line's price —
+       not an unresolved one. Matters on the edit-DRAFT road, which re-creates
+       the order and would otherwise hand a free line back to the catalogue. */
+    priceAuthored: true,
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -1543,6 +1558,10 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* This line ALREADY EXISTS and its price was seeded from the persisted
+       row, so a 0 here IS the line's price. Desktop's PATCH has claimed it
+       since #2425; mobile did not, so editing a free line re-priced it. */
+    ...zeroPriceClaim(toSen(l.price), true),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -3055,7 +3074,7 @@ function LineCard({
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value })}
+              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
