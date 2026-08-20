@@ -162,7 +162,7 @@ const patchJson = (app: Hono, url: string, body?: Row) =>
    can be read, and used to WAVE THROUGH when it could not. */
 const tables = (): Record<string, Row[]> => ({
   delivery_orders: [{
-    id: 'do-1', company_id: CO, do_number: 'HC-DO-2608-001', status: 'SHIPPED',
+    id: 'do-1', company_id: CO, do_number: 'HC-DO-2608-001', status: 'DISPATCHED',
     debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR', migrated_no_stock: false,
   }],
   delivery_order_items: [{

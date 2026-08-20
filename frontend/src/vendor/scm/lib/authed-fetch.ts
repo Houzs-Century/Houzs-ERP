@@ -494,6 +494,31 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     "This action couldn't be submitted safely. Refresh the page and try again.",
   idempotency_payload_too_large:
     'This upload is too large for safe retry. Upload the file separately.',
+  /* A DOCUMENT CARRIED OVER FROM AUTOCOUNT is invoiced by the migrated-invoice
+     converter, never by hand (backend/src/scm/lib/migrated-chain.ts). The server
+     writes a careful sentence saying exactly that and attaches the document
+     numbers — and until 2026-08-18 the operator never saw one word of it.
+
+     THE SENTENCE WAS 205 CHARACTERS AND THE FALLBACK ARM BELOW KEEPS ONLY
+     `r.length < 200`. With no entry here and no `field`/`value`/`allowed` shape
+     for describeRefusal to read, all three doors were shut and the 409 fell to
+     the status catch-all: "That clashes with something already in the system.
+     Please refresh and check." Refreshing changes nothing — the document is
+     migrated and will be refused every time — so the advice was not merely
+     unhelpful, it was a loop.
+
+     WHY IT LANDS ON ONE ORGANISATION ONLY. The refusal is company-neutral in
+     source. It can only FIRE where migrated documents exist, and those are the
+     AutoCount carry-overs, which belong to one company; the other has none and
+     never meets this code. So a rule that reads as universal is, in practice,
+     an experience only one organisation has — which is why it is fixed here
+     rather than left to the picker.
+
+     The house rule that was missed: companyScope.ts states that an `error` code
+     must be curated to the same sentence in this map, "a code with no entry
+     there would surface to the operator raw". */
+  migrated_source_document:
+    'This delivery or receipt was carried over from AutoCount, so its invoice has to mirror the AutoCount one exactly — run the migrated-invoice converter instead of building it by hand.',
   duplicate_code:   'That code is already in use. Please choose a different one.',
   phone_required:   'A phone number is required.',
   not_found:        'That item could no longer be found. Please refresh.',

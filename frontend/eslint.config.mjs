@@ -71,4 +71,19 @@ export default tseslint.config(
       'react-hooks/exhaustive-deps': 'off',
     },
   },
+  {
+    /* `vendor/shared/do-shipped-states.ts` IS the declaration the do-status
+       selector points at — the byte-identical twin of
+       backend/src/scm/shared/do-shipped-states.ts, which the backend config
+       exempts by path for exactly this reason. It is allowed to spell the lists
+       out; that is its job, and it is the whole point of the file existing.
+
+       EXEMPTED BY PATH, NOT BY AN INLINE DISABLE, and that is load-bearing:
+       check-shared-mirrors.mjs --strict reports this pair as IDENTICAL only
+       while the two files match byte for byte. An `eslint-disable-next-line`
+       comment in the frontend copy would silence the rule and simultaneously
+       break the property the copy exists to have. */
+    files: ['src/vendor/shared/do-shipped-states.ts'],
+    rules: { 'no-restricted-syntax': 'off' },
+  },
 );
