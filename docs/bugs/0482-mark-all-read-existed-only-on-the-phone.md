@@ -1,6 +1,6 @@
 ## Mark all read existed only on the phone [low]
 
-<!-- area: Projects PMS -->
+<!-- area: Projects + PMS + fair report -->
 
 **Symptom.** The same activity feed could be cleared from a handset and not from
 a desk. `MobileInbox` had a "Mark all read" pill; `pages/Notifications.tsx` — the
