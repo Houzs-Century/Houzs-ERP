@@ -55,7 +55,7 @@ async function confirm(id: string) {
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
     c.set('companyId', 1);
-    c.set('supabase', sb);
+    c.set('supabase', sb as never);
     await next();
   });
   app.route('/', mfgPurchaseOrders);

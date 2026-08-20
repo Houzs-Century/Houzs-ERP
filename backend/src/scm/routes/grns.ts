@@ -3213,6 +3213,45 @@ grns.patch('/:id/items/:itemId', async (c) => {
   });
   if (repoint) return refuseWithoutWriting(c, repoint, 409);
 
+  /* Inherited-field lock (owner 2026-08-20: "PO 开成 GR 就不可以在 GR 里改 variant
+     — 要 cancel GR 再去 PO 改"). A GRN line LINKED to a PO line inherits its
+     identity + spec from that PO: the item, its category and its VARIANT are
+     what the supplier was told to make. They are READ-ONLY on the receipt. Only
+     this line's own receipt data (qty / cost / batch / delivery) is editable
+     here. To change an inherited field, cancel this GRN (which reverses the
+     stock) and edit the PO, then receive again. Manual (unlinked) GRN lines are
+     ad-hoc and keep editing their own spec — the guard is skipped for them.
+
+     Variant equality is compared on the rendered SUMMARY, not raw JSON, so a
+     re-serialised-but-unchanged payload (key order, a recomputed totalHeight)
+     from the editor never false-trips this; only a real spec change refuses. */
+  {
+    const linkedPoItem = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
+    if (linkedPoItem) {
+      const storedCode = String((prev as { item_code: string | null }).item_code ?? '').trim().toUpperCase();
+      const storedGroup = (prev as { item_group?: string | null }).item_group ?? null;
+      const storedVariants = (prev as { variants?: Record<string, unknown> | null }).variants ?? null;
+      const nextGroup = it.itemGroup !== undefined ? (it.itemGroup as string | null) : storedGroup;
+      const nextVariants = it.variants !== undefined ? (it.variants as Record<string, unknown> | null) : storedVariants;
+
+      const changed: string[] = [];
+      if (it.itemCode !== undefined && String(it.itemCode ?? '').trim().toUpperCase() !== storedCode) changed.push('product');
+      if (String(nextGroup ?? '') !== String(storedGroup ?? '')) changed.push('category');
+      if (buildVariantSummary(String(nextGroup ?? ''), nextVariants) !== buildVariantSummary(String(storedGroup ?? ''), storedVariants)) {
+        changed.push('product options (variant)');
+      }
+      if (changed.length > 0) {
+        return refuseWithoutWriting(c, {
+          error: 'grn_inherited_field_locked',
+          message:
+            `The ${[...new Set(changed)].join(', ')} on this line comes from its Purchase Order, so it `
+            + 'cannot be changed on the goods receipt. To change it, cancel this GRN (that reverses the '
+            + 'received stock) and edit the PO, then receive it again.',
+        }, 409);
+      }
+    }
+  }
+
   const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : ((prev as { discount_sen: number }).discount_sen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
