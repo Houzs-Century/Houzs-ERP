@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { useProfilePicUrl } from "../lib/profilePicture";
 import { cn } from "../lib/utils";
 
 interface Props {
@@ -37,35 +36,12 @@ export function Avatar({
   shape = "circle",
 }: Props) {
   const shapeCls = shape === "square" ? "rounded-md" : "rounded-full";
-  const enabled = !!userId && !!hasImage;
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      setSrc(null);
-      return;
-    }
-    let url: string | null = null;
-    let cancelled = false;
-    // R2 keys include a Date.now() prefix, so a new upload yields a new
-    // key — append it as a cache-buster so the blob URL refreshes too.
-    const cacheKey = typeof hasImage === "string" ? `?k=${encodeURIComponent(hasImage)}` : "";
-    api
-      .fetchBlobUrl(`/api/users/${userId}/profile-pic${cacheKey}`)
-      .then((u) => {
-        if (cancelled) {
-          URL.revokeObjectURL(u);
-        } else {
-          url = u;
-          setSrc(u);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [userId, enabled, hasImage]);
+  /* The fetch + object-URL lifetime moved to `lib/profilePicture` so the mobile
+     identity card reads the same photo through the same path. It also BINDS the
+     failure reason, which this used to end with a bare `.catch(() => {})` — one
+     of the sites `audit:swallowed-reads` counts. The render is unchanged: no
+     photo still means initials. */
+  const { src } = useProfilePicUrl(userId, hasImage);
 
   const dim = { width: size, height: size, fontSize: Math.round(size * 0.4) };
   const ringCls = ring ? "ring-2 ring-accent/40 ring-offset-2 ring-offset-bg" : "";

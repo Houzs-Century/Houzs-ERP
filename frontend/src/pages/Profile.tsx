@@ -7,7 +7,8 @@ import { Avatar } from "../components/Avatar";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../hooks/useToast";
 import { api } from "../api/client";
-import { prepareImageForUpload } from "../lib/imagePipeline";
+import { useProfilePicture } from "../lib/profilePicture";
+import { useTotpEnrollment } from "../lib/totpEnrollment";
 import { formatDate, relativeTime, cn } from "../lib/utils";
 import {
   requestBrowserNotificationPermission,
@@ -35,55 +36,28 @@ export function Profile() {
 
   const [name, setName] = useState(user?.name || "");
   const [savingName, setSavingName] = useState(false);
-  const [picBusy, setPicBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /* The compress-weigh-PUT path, the 1000px cap and the 5 MB refusal moved to
+     `lib/profilePicture` so the phone shares them instead of re-typing them. */
+  const pic = useProfilePicture(reload);
+  const picBusy = pic.busy;
 
   useEffect(() => {
     setName(user?.name || "");
   }, [user?.name]);
 
   async function uploadPic(rawFile: File) {
-    if (!rawFile.type.startsWith("image/")) {
-      toast.error("Pick an image file");
-      return;
-    }
-    setPicBusy(true);
-    try {
-      // WO-7 — avatars render small; 1000px is generous. Compression also
-      // absorbs what used to be a hard "under 5 MB" rejection for phone shots.
-      const { file } = await prepareImageForUpload(rawFile, { maxDimension: 1000, wantThumb: false });
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("Image must be under 5 MB");
-        setPicBusy(false);
-        return;
-      }
-      await api.putBinary(
-        `/api/users/me/profile-pic?name=${encodeURIComponent(file.name)}`,
-        file,
-        file.type,
-      );
-      await reload();
-      toast.success("Profile picture updated");
-    } catch (e: any) {
-      toast.error(e?.message || "Upload failed");
-    } finally {
-      setPicBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
+    const err = await pic.upload(rawFile);
+    if (err) toast.error(err);
+    else toast.success("Profile picture updated");
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function removePic() {
     if (!user?.profile_pic_r2_key) return;
-    setPicBusy(true);
-    try {
-      await api.del("/api/users/me/profile-pic");
-      await reload();
-      toast.success("Profile picture removed");
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setPicBusy(false);
-    }
+    const err = await pic.remove();
+    if (err) toast.error(err);
+    else toast.success("Profile picture removed");
   }
 
   async function saveName() {
@@ -490,96 +464,45 @@ function PasswordSection() {
 
 // ── Two-factor authentication (TOTP) ──────────────────────────
 // Self-service enroll / disable. Three states: off (Enable button), enrolling
-// (QR + code + show backup codes), on (Disable). The secret/otpauth_uri come
-// from /api/totp/setup; we render the otpauth URI as a QR via an inline SVG-free
-// fallback (the secret is also shown for manual entry).
+// (setup key + code + show backup codes), on (Disable).
+//
+// The STATE MACHINE IS NOT HERE. It is `lib/totpEnrollment.ts`, shared with
+// `mobile/MobileTwoFactorCard.tsx`. A phone-only member could answer the login
+// challenge but could not enrol and — the part that is a lockout rather than an
+// inconvenience — could not DISABLE 2FA after losing the authenticator. The fix
+// for that must not be a second copy of an auth flow, so this component is now
+// the desktop's markup over that hook and nothing else.
 function TwoFactorSection() {
   const toast = useToast();
-  const [status, setStatus] = useState<{
-    enabled: boolean;
-    backup_codes_remaining: number;
-  } | null>(null);
-  const [phase, setPhase] = useState<"idle" | "enrolling">("idle");
-  const [setup, setSetup] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const totp = useTotpEnrollment();
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
 
-  async function load() {
-    try {
-      const s = await api.get<{ enabled: boolean; backup_codes_remaining: number }>(
-        "/api/totp/status",
-      );
-      setStatus(s);
-    } catch {
-      setStatus({ enabled: false, backup_codes_remaining: 0 });
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-
-  async function beginSetup() {
-    setError(null);
-    setBusy(true);
-    try {
-      const s = await api.post<{ secret: string; otpauth_uri: string }>("/api/totp/setup", {});
-      setSetup(s);
-      setPhase("enrolling");
-    } catch (e: any) {
-      setError(e?.message || "We couldn't start the two-factor setup. Please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const status = totp.status;
+  const setup = totp.setup;
+  const backupCodes = totp.backupCodes;
+  const busy = totp.busy;
+  const error = totp.error;
 
   async function confirmEnable(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await api.post<{ backup_codes: string[] }>("/api/totp/enable", {
-        code: code.trim(),
-      });
-      setBackupCodes(res.backup_codes);
-      setPhase("idle");
-      setSetup(null);
+    if (await totp.enable(code)) {
       setCode("");
-      await load();
       toast.success("Two-factor authentication enabled");
-    } catch (e: any) {
-      /* `includes("400")` was a relic of the old "<status>: <body>" message
-         shape — the humanized message no longer embeds status codes, so the
-         branch was dead. Match on the status FLAG (same fix as the login
-         screens); the server's own sentence ("That code didn't match…") is
-         already the right wording, so prefer it. */
-      setError(
-        e?.status === 400
-          ? e?.message || "That code didn't match — try again."
-          : e?.message || "We couldn't turn on two-factor. Please try again.",
-      );
-    } finally {
-      setBusy(false);
     }
   }
 
+  /* THE DISABLE GATE, unchanged: a current 6-digit code or a backup code, which
+     the server verifies. The phone asks for exactly the same thing through an
+     inline field rather than a prompt — window.prompt is unusable inside an
+     installed PWA and suppressed in several webviews, which would have left the
+     disable path as unreachable on a phone as it was before. */
   async function disable() {
     const entered = window.prompt(
       "Enter a current 6-digit code (or a backup code) to turn off two-factor:",
     );
     if (!entered) return;
-    setError(null);
-    setBusy(true);
-    try {
-      await api.post("/api/totp/disable", { code: entered.trim() });
-      setBackupCodes(null);
-      await load();
+    if (await totp.disable(entered)) {
       toast.success("Two-factor authentication disabled");
-    } catch (e: any) {
-      setError(e?.message || "Failed to disable — check the code.");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -619,7 +542,7 @@ function TwoFactorSection() {
           </div>
           <button
             type="button"
-            onClick={() => setBackupCodes(null)}
+            onClick={totp.dismissCodes}
             className="mt-3 text-[11px] font-semibold text-accent underline-offset-2 hover:underline"
           >
             I've saved them
@@ -642,7 +565,7 @@ function TwoFactorSection() {
             {busy ? "Working…" : "Disable"}
           </Button>
         </div>
-      ) : phase === "enrolling" && setup ? (
+      ) : totp.phase === "enrolling" && setup ? (
         <form onSubmit={confirmEnable} className="space-y-3">
           <div className="text-[12px] text-ink-secondary">
             In your authenticator app choose "Add account" → "Enter a setup key"
@@ -691,10 +614,8 @@ function TwoFactorSection() {
               type="button"
               variant="secondary"
               onClick={() => {
-                setPhase("idle");
-                setSetup(null);
+                totp.cancel();
                 setCode("");
-                setError(null);
               }}
             >
               Cancel
@@ -704,10 +625,17 @@ function TwoFactorSection() {
       ) : (
         <div className="flex items-center justify-between gap-3">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-muted/10 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">
-            Not enabled
+            {totp.statusError ? "Status unavailable" : "Not enabled"}
           </span>
+          {/* A failed STATUS read must not read as "off" — that would offer to
+             enrol an account whose 2FA is already ON. `useTotpEnrollment` binds
+             the reason instead of swallowing it into a false `enabled: false`;
+             this renders it. */}
+          {totp.statusError && (
+            <span className="text-[12px] text-err">{totp.statusError}</span>
+          )}
           {error && <span className="text-[12px] text-err">{error}</span>}
-          <Button variant="primary" onClick={beginSetup} disabled={busy}>
+          <Button variant="primary" onClick={totp.begin} disabled={busy || !status}>
             {busy ? "Working…" : "Enable 2FA"}
           </Button>
         </div>
