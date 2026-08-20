@@ -142,6 +142,11 @@ type MemberRow = {
   position_name?: string | null;
   phone?: string | null;
   email_alias?: string | null;
+  /* GET /api/users already SELECTS this (routes/users.ts) — the mobile roster
+     simply threw it away and drew initials for everybody. That is the trap
+     docs/modules/document-conversion.md 6a names for picker rows, in its other
+     half: the data was on the row, the component was not. */
+  profile_pic_r2_key?: string | null;
   // Staff code is not part of the shipped /api/users contract; these keys are
   // read opportunistically (FLAGGED missing — see header comment). All optional.
   staff_code?: string | null;
@@ -153,13 +158,9 @@ type MemberRow = {
 };
 
 // ── Shared formatters / helpers ──
-const initials = (name: string | null | undefined, email?: string): string => {
-  const src = (name || "").trim() || (email || "").split("@")[0] || "";
-  const parts = src.split(/[\s._-]+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
+/* The local `initials` helper is gone: both call sites now render through
+   `MobileAvatar`, which falls back to `avatarInitials` — one rule for a
+   person's initials instead of this file's copy and the desktop Avatar's. */
 
 // A stable colour per person for the initial avatar (matches the design's
 // teal-family palette).
@@ -962,9 +963,17 @@ function PersonCard({ person, caption }: { person: MemberRow; caption?: string }
   const seed = String(person.id) + (person.email || "");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: "11px 13px" }}>
-      <span style={{ width: 40, height: 40, flex: "none", borderRadius: "50%", background: avatarColor(seed), color: "#fff", fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {initials(person.name, person.email)}
-      </span>
+      {/* The teammate's photo when they have one, their initials on the stable
+          per-person colour when they do not. Same shared read as the identity
+          card and the desktop Avatar. */}
+      <MobileAvatar
+        userId={person.id}
+        hasImage={person.profile_pic_r2_key}
+        name={person.name}
+        email={person.email}
+        size={40}
+        style={{ background: avatarColor(seed), color: "#fff" }}
+      />
       <div style={{ minWidth: 0, flex: 1 }}>
         {caption && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>{caption}</div>}
         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>

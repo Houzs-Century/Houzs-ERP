@@ -123,6 +123,36 @@ describe("MobileProfile — profile photo", () => {
     expect(apiFetchBlobUrl.mock.calls.some((c) => String(c[0]).includes("/api/users/7/profile-pic"))).toBe(true);
   });
 
+  it("shows a TEAMMATE's photo in My Team — the roster threw the key away", async () => {
+    /* The second half of the display gap, and the one the audit pointed at
+       (`MobileProfile.tsx:944`, PersonCard). `GET /api/users` already SELECTS
+       `profile_pic_r2_key`; the roster simply drew initials for everybody. */
+    (authUser.current as Record<string, unknown>).role_name = "Sales Executive";
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/totp/status")) return { enabled: false, backup_codes_remaining: 0 };
+      if (path.startsWith("/api/users")) {
+        return {
+          users: [
+            { id: 7, email: "wei@example.com", name: "Wei Siang", role_name: "Sales Executive" },
+            { id: 9, email: "amy@example.com", name: "Amy Tan", role_name: "Sales Executive",
+              manager_id: 7, profile_pic_r2_key: "1723459200-amy.jpg" },
+          ],
+        };
+      }
+      if (path.startsWith("/api/scm/mfg-sales-orders/my-mtd")) return { mtd_orders: 0, mtd_sales_sen: 0 };
+      if (path.startsWith("/api/assr/my-cases")) return { cases: [] };
+      return {};
+    });
+
+    const user = userEvent.setup();
+    wrap();
+    await user.click(await screen.findByText("My Team"));
+
+    const img = (await screen.findByAltText(/amy tan/i)) as HTMLImageElement;
+    expect(img.tagName).toBe("IMG");
+    expect(apiFetchBlobUrl.mock.calls.some((c) => String(c[0]).includes("/api/users/9/profile-pic"))).toBe(true);
+  });
+
   it("UPLOADS a photo through the shared desktop path, limits included", async () => {
     const user = userEvent.setup();
     wrap();
