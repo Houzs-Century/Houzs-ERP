@@ -1230,8 +1230,10 @@ one source key per ERP row.
 
 **And the refusal is WIRED, which is its own trap.** `noteReadFailure`'s
 instanceof list IS the mechanism: an error missing from it is not handled
-somewhere else, it is DROPPED — the enqueue answers false, no outbox row, no
-console line, nothing to read. `AcSoToPoAlignmentError` was missing from that
+somewhere else, it is DROPPED — the enqueue answers "not queued", no outbox row,
+no console line, nothing to read. Its twin is `acNotSentProblems`, which returns
+`[]` for the same absence, so the buyer is told nothing either; the two chains
+are pinned against each other in `backend/src/scm/lib/ac-preflight.test.ts`. `AcSoToPoAlignmentError` was missing from that
 list for six commits of this change while its own class comment promised "a
 readable outbox row instead".
 
