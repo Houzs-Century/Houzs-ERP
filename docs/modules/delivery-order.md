@@ -367,6 +367,21 @@ shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
 `lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
 stay uncapped, exactly as at create.
 
+> **Known blind spot at this same chokepoint — unlinked lines.**
+> `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with NONE
+> contributes nothing and is invisible here, even though it still ships stock.
+> That is the `2990-DO-2607-005` shape: six lines, all `so_item_id = null`, none
+> counted against `2990-SO-2606-019`, so the order's own goods went out twice
+> (`docs/unlinked-line-duplicate-coe.md`). The **create** and **add-line** paths
+> refuse this (`findUnlinkedSoLines`), but this **CONFIRM** path does not.
+> `lib/do-over-delivery.ts` now carries the quantity-aware guard for it —
+> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)`, which
+> flags an unlinked line only when the named SO ordered that item AND has no open
+> qty left (a partial / multi-DO split still ships). **It is not yet wired into
+> the Status PATCH** — that wiring touches `delivery-orders-mfg.ts` and is
+> sequenced after `fix/cross-tenant-leaks-round2` (#2406) to avoid a collision.
+> Until then the confirm-path over-delivery cap remains linked-only.
+
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 (`:832-839`), and a partial UNIQUE index as the hard backstop against a race. It
