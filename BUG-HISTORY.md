@@ -56,7 +56,7 @@ each proven failing against the unfixed tree first: reply-all posted
 held only a blank "No mailbox available" option, and "Auto-sent" was not a
 button on the screen.
 
-**Ref.** PR (2026-08-20), branch `fix/mobile-mail-parity`.
+**Ref.** PR #2556 (2026-08-20), branch `fix/mobile-mail-parity`.
 
 ## The announcements banner read the WHOLE table on every page, every minute [medium]
 
