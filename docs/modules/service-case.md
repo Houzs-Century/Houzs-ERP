@@ -326,8 +326,8 @@ Two independent clocks.
 
 **Case-level** — the source of truth is **`assr_priorities.sla_hours`**, the
 "SLA hrs" cell managers edit in Service Maintenance -> Priorities.
-`slaHoursForPriority(env, slug)` in `services/assr.ts` reads it; both SLA
-computations call that. Blank means "use the module default", which is
+`slaHoursForPriority(env, slug)` in `services/assrSla.ts` reads it; both SLA
+computations in `services/assr.ts` call that. Blank means "use the module default", which is
 `slaHoursFor()` over the hardcoded `SLA_HOURS_BY_PRIORITY` — the LAST-RESORT
 fallback, not the answer:
 

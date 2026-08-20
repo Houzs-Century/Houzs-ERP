@@ -29,7 +29,10 @@ one. Migration `065_assr_lookups.sql:42` calls the column "optional override of
 slaHoursFor()" and `:66-68` says editing it makes new cases pick up the change;
 both sentences were false from the day they were written.
 
-**Fix.** New `slaHoursForPriority(env, slug)` reads `assr_priorities.sla_hours`
+**Fix.** New `backend/src/services/assrSla.ts` holds the case-level SLA clock —
+the read beside the write validation, so they cannot drift apart again, and
+because both former homes were at their file-size ceiling. Its
+`slaHoursForPriority(env, slug)` reads `assr_priorities.sla_hours`
 for the slug and falls back to `slaHoursFor()` when the cell is blank, the row
 is missing, the value is junk, or the read throws — the same try/catch posture
 `lookupStageTargetDays()` already uses, so a config read can never fail a case
