@@ -105,6 +105,12 @@ export type SoLineDraft = {
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
+  /* Client-only, like overriddenKeys: TRUE once the operator has typed into
+     this line's price box. It is how a deliberate RM 0 is told apart from a
+     SKU that simply has no sell price (a sofa the server prices from its
+     Model's modules at save). Parents send it as `zeroPriceIntended` via
+     vendor/scm/lib/zeroPriceClaim; it is never persisted. */
+  priceAuthored?: boolean;
   /* PR-E — Per-item delivery date + cascade override flag. */
   lineDeliveryDate?:           string | null;
   lineDeliveryDateOverridden?: boolean;
@@ -910,7 +916,7 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0 });
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
           }}
           onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />

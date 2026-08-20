@@ -27,7 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
@@ -971,7 +971,12 @@ inventory.get('/movements', async (c) => {
 });
 
 /* ── FIFO lots drilldown for one product ─────────────────────────────── */
-inventory.get('/lots/:itemCode', async (c) => {
+// Exported for the route test, same reason as listInventoryHandler above: the
+// supabaseAuth bridge cannot run in the harness, so the test drives the handler
+// on a bare Hono app with a fake supabase.
+export const inventoryLotsHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
   const sb = c.get('supabase');
   const itemCode = c.req.param('itemCode');
   const warehouseId = c.req.query('warehouseId');
@@ -985,9 +990,22 @@ inventory.get('/lots/:itemCode', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   /* Lot drilldown: qty, batch, received date and warehouse are operational and
      stay; unit_cost_sen is not. */
-  const lots = (data ?? []) as Array<Record<string, unknown>>;
+  /* Every lot says whether it is CONSIGNMENT — stock in our warehouse that the
+     supplier still owns. Classified by SOURCE, never by the warehouse flag (a PC
+     Receive mis-posted into a normal warehouse is still not ours), by the same
+     one classifier `/breakdown/:itemCode` skips on and `/reservations` stamps.
+     It was the only lot feed that did not say, so its one consumer — the desktop
+     Stock Card — valued the supplier's goods as ours while the per-warehouse
+     table directly underneath, fed by /breakdown, excluded them. */
+  const lots = (data ?? []).map((l: Record<string, unknown>) => ({
+    ...l,
+    is_consignment: isConsignmentLotSource(
+      l.source_doc_type as string | null, l.source_doc_no as string | null,
+    ),
+  })) as Array<Record<string, unknown>>;
   return c.json({ lots: canViewScmFinance(c) ? lots : stripInventoryFinance(lots) });
-});
+};
+inventory.get('/lots/:itemCode', inventoryLotsHandler);
 
 /* ── Batch availability (Stage 2 — Commander 2026-05-31) ──────────────────
    Sofa is colour-matched and produced as a SET on ONE PO (one dye lot). Stage 1

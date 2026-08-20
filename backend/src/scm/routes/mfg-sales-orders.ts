@@ -4023,11 +4023,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Audit 2026-06-11 C2 — module COST rows, memoized per base_model (the
   // per-line seat size + fabric tier resolution happens inside the recompute).
   const sofaModuleCostRowsMemo = new Map<string, Promise<SofaModuleCostRowLite[] | null>>();
-  /* Owner ruling — a non-POS (web/mobile office/sales) author prices freely, so
-     their hand-entered selling price is persisted as-is (see the trust boundary
-     below + recomputeFromSnapshot). POS tablet callers stay authoritative +
-     drift-rejected. */
-  const trustOperatorSelling = !(await isPosTabletCaller(c));
+  /* Owner ruling — a non-POS author prices freely, so their hand-entered selling
+     price is persisted as-is. Trust is decided PER LINE by the same `erpLineTrust`
+     the two line writes use: this was one boolean for the whole request, which
+     cannot express "THIS line is deliberately free", so `zeroPriceIntended` was
+     never read on create and a line marked RM 0 on a NEW order silently took the
+     catalogue price. The POS lookup does I/O and cannot vary per line — resolved
+     once here. POS callers stay authoritative + drift-rejected. */
+  const createPosTablet = await isPosTabletCaller(c);
   const recomputes: Array<RecomputedLine | null> = await Promise.all(items.map(async (it, idx) => {
     const itemCode = String(it.itemCode ?? '');
     if (!itemCode) return null;
@@ -4073,7 +4076,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, trustOperatorSelling);
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended));
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,

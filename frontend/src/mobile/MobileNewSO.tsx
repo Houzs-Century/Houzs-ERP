@@ -48,6 +48,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -122,6 +123,9 @@ type LineItem = {
   name: string;
   qty: string;
   price: string; // RM, as typed — display/default only; server recomputes
+  /* Typed into the price box? Tells a deliberate RM 0 from an unpriced SKU.
+     Client-only like overriddenKeys; sent as `zeroPriceIntended`, not stored. */
+  priceAuthored: boolean;
   ddate: string; // per-line delivery date (ISO yyyy-mm-dd)
   remark: string;
   cat: LineCat;
@@ -307,7 +311,7 @@ const FABRIC_SYNC_KEYS: string[] = [
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
-    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "",
+    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "", priceAuthored: false,
     variants: {}, overriddenKeys: [], photoKeys: [], photoFiles: [],
   };
 }
@@ -374,6 +378,8 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -496,6 +502,7 @@ function lineFromItem(it: SoItem): LineItem {
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
     price: fromSen(it.unit_price_sen),
+    priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -1555,6 +1562,8 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
+    ...zeroPriceClaim(toSen(l.price), true),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -3073,7 +3082,7 @@ function LineCard({
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value })}
+              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>

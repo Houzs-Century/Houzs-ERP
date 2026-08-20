@@ -46,6 +46,7 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
 import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
@@ -338,6 +339,7 @@ export const SalesOrderNew = () => {
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
         unitPriceSen: it.unit_price_sen ?? 0,
+        priceAuthored: true, // copied off the SOURCE order's persisted row: a 0 IS its price
         discountSen:  it.discount_sen ?? 0,
         unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
@@ -1643,6 +1645,8 @@ export const SalesOrderNew = () => {
           uom:            l.uom,
           qty:            l.qty,
           unitPriceSen: l.unitPriceSen,
+          /* A TYPED 0 is a free line; an untouched 0 is an unpriced SKU the server must still price. */
+          ...zeroPriceClaim(l.unitPriceSen, l.priceAuthored === true),
           discountSen:  l.discountSen,
           unitCostSen:  l.unitCostSen,
           variants:       l.variants,
