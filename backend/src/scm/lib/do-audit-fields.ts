@@ -53,6 +53,22 @@ export const DO_AUDIT_FIELDS: AuditFieldMap = [
 export const DO_AUDIT_SELECT =
   `id, do_number, status, company_id, ${DO_AUDIT_FIELDS.map(([, snake]) => snake).join(', ')}`;
 
+/* Header field-level lock (owner 2026-08-20, §8 GAP-1). A Sales Invoice / Delivery
+   Return snapshots WHO the goods go to and the money basis, so once a live child
+   exists these freeze; the DO's own delivery dates, dispatch/POD, addresses and
+   notes stay editable. Kept deliberately MINIMAL (owner "越松越好"): the customer
+   identity, the currency, the ship-from location and the brand the SI prints —
+   NOT the salesperson (reassignable, owner 2026-08-17) nor correctable customer
+   details. Keyed by DB column; paired with changedLockedCols in the route. */
+export const DO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
+  'debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding',
+]);
+
+export const DO_IDENTITY_LABELS: Record<string, string> = {
+  debtor_code: 'customer code', debtor_name: 'customer', currency: 'currency',
+  sales_location: 'sales location', branding: 'branding',
+};
+
 /* The auditable LINE fields. The camel names are deliberate: unitCostSen,
    lineCostSen and lineMarginSen are the exact keys AUDIT_FINANCE_FIELDS
    (lib/finance-keys) strips from field_changes, so recording a line's cost here
