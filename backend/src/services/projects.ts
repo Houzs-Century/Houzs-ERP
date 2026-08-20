@@ -2868,6 +2868,22 @@ export async function createStockTransfer(
   input: CreateStockTransferInput,
   userId: number
 ) {
+  // A transfer with no date DEFAULTS to today; it is never refused. Both the
+  // mirror task's due_date and its title come from this one field, so a blank
+  // one used to produce a `due_date NULL` row titled bare "Stock OUT" —
+  // invisible to the tasklist's date column, the Gantt and every due-date
+  // rollup, and permanently so, because redateChecklistFromOffsets skips
+  // `notes LIKE 'auto:%'` rows on purpose (their date follows the transfer,
+  // not the project schedule).
+  //
+  // Default-never-refuse is the owner's standing rule for this system — the
+  // same shape the PO expected-date and the journal entry-date already use.
+  // todayMyt() and NOT toISOString(): Workers run in UTC, so before 08:00 MYT
+  // a raw UTC slice files the transfer under YESTERDAY, every morning shift.
+  //
+  // DATE-ONLY on purpose. We know the day; we do not know the time, and a
+  // silently invented 00:00 is a worse answer than an honest date.
+  const transferredAt = input.transferred_at?.trim() || todayMyt();
   const r = await env.DB.prepare(
     `INSERT INTO project_stock_transfers
        (project_id, direction, transferred_at, record_r2_key, file_name, mime_type, notes, created_by)
@@ -2876,7 +2892,7 @@ export async function createStockTransfer(
     .bind(
       input.project_id,
       input.direction,
-      input.transferred_at ?? null,
+      transferredAt,
       input.record_r2_key ?? null,
       input.file_name ?? null,
       input.mime_type ?? null,
@@ -2892,7 +2908,7 @@ export async function createStockTransfer(
     transferId,
     projectId: input.project_id,
     direction: input.direction,
-    transferredAt: input.transferred_at ?? null,
+    transferredAt,
     confirmedAt: null,
     userId,
   });

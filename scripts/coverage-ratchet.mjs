@@ -225,6 +225,30 @@ function main() {
   const onDisk = {};
   for (const area of areas) onDisk[area.id] = listAreaFiles(area);
 
+  /* A MISSING BASELINE IS FATAL IN --check, never an empty one.
+     This used to fall back to `{ areas: {}, knownAbsent: [] }`, which is a gate
+     with no floors: every area is compared against nothing. It was not a
+     hypothetical fallback either — REPO_ROOT was built from a file URL's
+     `pathname` and came out as `C:\C:\Users\...` on Windows, so the committed
+     baseline sat two directories the process could not see and this branch was
+     the ONE that ran, on every local run, for as long as the path bug lived.
+     See coverage-areas.mjs.
+
+     `--update` is allowed to bootstrap one, because writing it is that mode's
+     whole job — but it says so on stdout rather than doing it quietly. */
+  if (!fs.existsSync(args.baseline)) {
+    if (args.mode === 'check') {
+      console.error(
+        `coverage-ratchet: FATAL (${FATAL.NO_BASELINE}) — no baseline at ${args.baseline}\n` +
+          `  REPO_ROOT resolved to: ${REPO_ROOT}\n` +
+          `  Every area would be measured against no floor at all, and this gate would\n` +
+          `  report a pass having enforced nothing. A check that did not execute is not\n` +
+          `  a check. Create one with: node scripts/coverage-ratchet.mjs --update ...`,
+      );
+      process.exit(1);
+    }
+    console.log(`no baseline at ${args.baseline} — --update will CREATE one; every floor below is new.`);
+  }
   const baseline = fs.existsSync(args.baseline)
     ? readJson(args.baseline)
     : { areas: {}, knownAbsent: [] };

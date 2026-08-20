@@ -437,7 +437,7 @@ Related routes elsewhere:
   permission still needs a bell). Scoped by COMPANY only
   (`allowedCompanyIds`); the former `getProjectScope` PIC/brand filter was
   removed 2026-08-19 (Axis 2).
-- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+- `backend/src/routes/events.ts` [gone] — **deleted on main** (`45d73689`: no frontend,
   ungrantable permissions, PMS covers it). It was the manual setup/dismantle
   calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
   calendar. Kept here because the absence is the fact worth knowing.
@@ -558,6 +558,35 @@ renders — the chip falls back). Service / Exchange keeps the older single
 dropdown). Because the picked helper names land in the crew JSON, a Grab-assigned
 helper still matches the `assigned_to_me` / calendar `setup_crew` name arm.
 
+### Stock transfers and their tasklist mirror
+
+`POST /:id/stock-transfers` (`services/projects.ts` `createStockTransfer`)
+writes `project_stock_transfers` **and** mirrors the row into the tasklist:
+`syncStockTransferTask` creates one `project_checklist` row linked by the notes
+marker `auto:stock_transfer=<id>`, so a transfer is visible next to the rest of
+the project's work. Confirm / unconfirm / delete re-sync or drop that row.
+
+**The mirror row's title AND its `due_date` both come from one field,
+`transferred_at`.** A blank one therefore used to produce a `due_date NULL` row
+titled bare `"Stock OUT"` — invisible to the tasklist's date column, the Gantt
+and every due-date rollup — and PERMANENTLY so, because
+`redateChecklistFromOffsets` deliberately skips `notes LIKE 'auto:%'` rows (their
+date follows the transfer, not the project schedule).
+
+Since 2026-08-21 a missing `transferred_at` **defaults to today** (`todayMyt()`,
+date-only) rather than being refused — default-never-refuse, the owner's standing
+rule for this system. `todayMyt()` and not a raw UTC slice: Workers run in UTC,
+so before 08:00 MYT a plain `toISOString()` files the transfer under yesterday.
+The default is applied at CREATION only; `syncStockTransferTask` still renders a
+legacy NULL row honestly rather than inventing a date for history.
+
+**Mobile does not reach this endpoint at all.** `MobilePMS.tsx` files stock-out
+records as CHECKLIST-TASK attachments (`uploadStockOut` →
+`PUT /checklist/:taskId/attachments` + auto-submit for review), which is why the
+project-level transfers list reads empty on the phone. A `uploadTransfer` helper
+that did POST here lost its only call site on 2026-07-17 (`034e9a335`) and was
+deleted as dead on 2026-08-21.
+
 ### The calendar handler
 
 Since the PIC/brand ACL removal (2026-08-19) the rule is simply:
@@ -640,7 +669,7 @@ in this change — exported `getProjectScope` / `canSeeProject` /
 Sales rep to projects where they (or their manager) were the PIC AND whose brand
 sat in their `user_brands` list.
 
-That whole file (`backend/src/services/projectAcl.ts`) and every predicate that
+That whole file (`backend/src/services/projectAcl.ts` [gone]) and every predicate that
 keyed off it were **deleted / removed**. Within a company, **any user with the
 projects page permission now sees EVERY one of that company's projects**,
 regardless of PIC or brand. Row visibility is governed only by:
@@ -1024,6 +1053,7 @@ is a strict subset: it excludes the granular `projects.finance.view` holders
 |---|---|---|
 | Project list, cards, filters | `pages/Projects.tsx:949` `ProjectsListView` | `mobile/MobilePMS.tsx` |
 | Project detail, checklist, crew, photos, defects | `pages/Projects.tsx:4756` / `:5919` | `mobile/MobilePMS.tsx` (same file) |
+| Defect-file action timeline (Done / Replace + remark) | `pages/Projects.tsx` `TaskAttachmentRow` `saveAction` | `mobile/MobilePmsDefectActions.tsx` — extracted from `MobilePMS.tsx` 2026-08-21 so the save path is renderable in a test; both surfaces must SURFACE a refusal |
 | Calendar | `pages/Projects.tsx:3034` | `mobile/MobileCalendar.tsx` |
 | Finances profitability analytics (group tables, rental column, drill-down) | `pages/Projects.tsx` `ProjectsAnalyticsView` / `BreakdownCard` | **no mobile counterpart** (mobile PMS is single-project detail only) |
 | Gantt | `components/ProjectGantt.tsx` | `mobile/MobileGantt.tsx` (rendered from `MobilePMS.tsx:1603`) |

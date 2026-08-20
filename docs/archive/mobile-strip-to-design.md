@@ -4,7 +4,7 @@
 
 Owner decision: mobile scope = the phone prototype (docs/mobile-prototype.html), NOT desktop.
 DELETE features built beyond the design; keep only what's in the design.
-Audit evidence: docs/mobile-depth-gaps.md is SCRAPPED; the authoritative verdicts are below.
+Audit evidence: docs/mobile-depth-gaps.md [gone] is SCRAPPED; the authoritative verdicts are below.
 The prototype's only rich editable screens are SO, PMS Project, Service Case. Every other
 module is a generic read-only list+detail with non-functional Edit/Print buttons.
 

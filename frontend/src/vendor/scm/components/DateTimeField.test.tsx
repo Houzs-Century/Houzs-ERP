@@ -216,3 +216,56 @@ describe('DateTimeField disabled', () => {
     expect(timeBox().disabled).toBe(true);
   });
 });
+
+/* A HALF-FILLED control emits '' — that contract is native parity, is asserted
+ * above, and does NOT change here. What changes is that the field now SAYS so.
+ *
+ * The gap it closes, found on the PMS stock-transfer form 2026-08-21: an
+ * operator picks a date, leaves the time blank, and the date they picked STAYS
+ * ON SCREEN while '' is what the form sends. The screen and the payload
+ * disagree and nothing marks the difference — so the transfer saved with no
+ * date at all, and its auto-created schedule task with no due date.
+ *
+ * Flagging the EMPTY half (never the filled one) is what makes the disagreement
+ * visible without inventing a value the operator did not choose. */
+describe('DateTimeField half-filled disclosure', () => {
+  test('a date with no time flags the TIME half, because nothing is being saved', () => {
+    render(<Harness initial="" />);
+    fireEvent.change(dateBox(), { target: { value: '31/05/2026' } });
+    // The contract is unchanged: still nothing emitted.
+    expect(emitted()).toBe('');
+    // ...but the field no longer stays silent about it.
+    expect(timeBox().getAttribute('aria-invalid')).toBe('true');
+    expect(dateBox().getAttribute('aria-invalid')).not.toBe('true');
+  });
+
+  test('a time with no date flags the DATE half', () => {
+    render(<Harness initial="" />);
+    fireEvent.change(timeBox(), { target: { value: '09:15' } });
+    expect(emitted()).toBe('');
+    expect(dateBox().getAttribute('aria-invalid')).toBe('true');
+    expect(timeBox().getAttribute('aria-invalid')).not.toBe('true');
+  });
+
+  test('CLEARING THE TIME on a saved value flags it — the exact stock-transfer case', () => {
+    render(<Harness initial="2026-05-31T14:30" />);
+    fireEvent.change(timeBox(), { target: { value: '' } });
+    expect(emitted()).toBe('');
+    // The date is still on screen, so the flag is the only thing telling the
+    // operator that what they can see is not what will be saved.
+    expect(dateBox().value).toBe('31/05/2026');
+    expect(timeBox().getAttribute('aria-invalid')).toBe('true');
+  });
+
+  test('a COMPLETE field is not flagged', () => {
+    render(<Harness initial="2026-05-31T14:30" />);
+    expect(dateBox().getAttribute('aria-invalid')).not.toBe('true');
+    expect(timeBox().getAttribute('aria-invalid')).not.toBe('true');
+  });
+
+  test('a FULLY EMPTY field is not flagged — empty is a legitimate saved state', () => {
+    render(<Harness initial="" />);
+    expect(dateBox().getAttribute('aria-invalid')).not.toBe('true');
+    expect(timeBox().getAttribute('aria-invalid')).not.toBe('true');
+  });
+});

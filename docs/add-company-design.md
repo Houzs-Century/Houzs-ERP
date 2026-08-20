@@ -254,7 +254,7 @@ baseline, import nothing.** The import script is the precedent for *stamping
 ## E. FRONTEND
 
 ### E.1 New: Settings → Companies management page
-`frontend/src/pages/Companies.tsx` (new), mirroring Hookka's
+`frontend/src/pages/Companies.tsx` [planned] (new), mirroring Hookka's
 `src/pages/settings/organisations.tsx`:
 
 - **List** existing companies (from `GET /api/companies`, extended to return the

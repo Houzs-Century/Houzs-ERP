@@ -54,10 +54,12 @@ $env:PERF_LOCAL_ACK = "I_UNDERSTAND_THIS_IS_A_DISPOSABLE_LOCAL_DATABASE"
 npm run perf:scale -- --engine=pg --orders=1000 --lines=1000 --skus=500 --users=500 --runs=5
 ```
 
-Run the schema/query contract and route-drift checks before measuring:
+Run the schema/query contract and route-drift checks before measuring. They used
+to be `npm run test:scale-contract` [gone]; since 2026-08-20 those seventeen files
+are ordinary vitest tests in the light project, so the command is:
 
 ```powershell
-npm run test:scale-contract
+npm --prefix backend run test:light
 ```
 
 CI executes the full 100k fixture against an ephemeral PostgreSQL service
@@ -83,13 +85,16 @@ move, this job was 37 success / 0 failure / 3 cancelled, having never once
 failed. If it starts failing on `main`, move it back into `ci.yml`; the decision
 is recorded in `docs/ci-capacity-coe.md`.
 
-`npm run test:scale-contract` is wired as `pretest`, not chained inside `test`.
-`npm test -- --shard=i/n` appends its arguments to the LAST command in the
-script, so `"test": "vitest run && npm run test:scale-contract"` would hand
-`--shard` to the contract runner (which ignores it) and leave vitest unsharded —
-silently making all four CI shards run the whole 112-file suite. `pretest` runs
-first with no arguments and leaves `test` a single command, so the shard flag
-still reaches vitest.
+**The `pretest` hook this section used to describe is gone, with the script it
+ran.** It is recorded because the reasoning still binds anything wired the same
+way: `npm run test:scale-contract` [gone] was a `pretest`, not a link in a `&&`
+chain, because `npm test -- --shard=i/n` appends its arguments to the LAST
+command in the script — so
+`"test": "vitest run && npm run test:scale-contract"` [gone] would have handed `--shard` to the contract runner (which ignores it) and
+left vitest unsharded, silently making all four CI shards run the whole suite.
+Today those tests are vitest files in the light project and `test` is
+`vitest run --config vitest.light.config.mts && vitest run`, so a `--shard` flag
+reaches the LAST vitest invocation by the same rule. Nothing appends to it.
 
 Then run the required scale and retain its report as a CI/local artifact:
 

@@ -20,9 +20,11 @@ import { fileURLToPath } from "node:url";
 import {
   BUG_DIR,
   ENTRY_FILE_RX,
+  SIGNPOST_PATH,
   parseEntry,
   readEntries,
   renderLedger,
+  signpostViolations,
   slugify,
 } from "../scripts/lib/bug-ledger.mjs";
 import { BUG_ENTRY_DIR, BUG_ENTRY_FILE_RX } from "../../scripts/lib/working-agreement.mjs";
@@ -151,4 +153,71 @@ test("parseEntry refuses what is not an entry", () => {
   assert.equal(ok.title, "A title");
   assert.equal(ok.severity, "critical");
   assert.equal(parseEntry("## A title\n").severity, "unspecified");
+});
+
+/* ── The OLD path ──────────────────────────────────────────────────────────
+   Everything above pins that docs/bugs/ still renders into one ledger. These
+   pin the other half, which had no guard at all until 2026-08-21: that the
+   ledger does not come BACK to BUG-HISTORY.md. It did, on `main`, and every
+   check stayed green — see the header of scripts/lib/bug-ledger.mjs for how a
+   merge does that while exiting 0.
+
+   The CLI (scripts/check-bug-ledger-signpost.mjs) self-tests this same matcher
+   before it reads anything, so a dead matcher exits 2 there rather than
+   reporting a pass. These are the copy that fails on a normal test run. */
+
+const TITLES = ["## A bare corner was filtered as noise [high]", "## The confirm gate accepted a cancelled PO [high]"];
+const LEAD = "# moved\n\nsee `docs/bugs/`\n";
+
+test("the real signpost passes its own gate", () => {
+  const text = fs.readFileSync(path.join(ROOT, SIGNPOST_PATH), "utf8");
+  const titles = readEntries(ROOT).entries.map((e) => e.text.split("\n")[0]);
+  assert.ok(titles.length > 400, `only ${titles.length} entry titles read — the probe is empty, not the file clean.`);
+  assert.deepEqual(
+    signpostViolations(text, titles),
+    [],
+    `${SIGNPOST_PATH} holds ledger content. The ledger is ${BUG_DIR}/, and that path is a signpost.`,
+  );
+});
+
+test("a resurrected ledger is refused, at the line it starts on", () => {
+  const v = signpostViolations(`${LEAD}\n## The confirm gate accepted a cancelled PO [high]\n\nbody\n`, TITLES);
+  assert.deepEqual(v.map((x) => x.kind), ["entry-heading"]);
+  assert.equal(v[0].line, 5);
+});
+
+test("a resurrection whose heading level got mangled is still refused", () => {
+  /* `## ` alone would miss these, which is why the second rule exists: the line
+     IS one of the ledger's titles, at any heading level or none. */
+  for (const line of [
+    "# A bare corner was filtered as noise [high]",
+    "#### A bare corner was filtered as noise [high]",
+    "A bare corner was filtered as noise [high]",
+  ]) {
+    assert.deepEqual(
+      signpostViolations(`${LEAD}${line}\n`, TITLES).map((x) => x.kind),
+      ["known-entry-title"],
+      `not caught: ${line}`,
+    );
+  }
+});
+
+test("the signpost cannot be emptied or gutted to pass", () => {
+  /* Without this the cheapest way past the two rules above is to delete the
+     prose, and an empty file breaks the ~60 comments that cite this path by
+     name — which is the entire reason #2567 kept it. */
+  for (const text of ["", "# BUG-HISTORY.md moved\n\nnothing here\n"]) {
+    assert.deepEqual(signpostViolations(text, TITLES).map((v) => v.kind), ["not-a-signpost"]);
+  }
+});
+
+test("prose that merely QUOTES a `## ` heading mid-line is not a violation", () => {
+  /* The real signpost does exactly this — it quotes `## 2026-07-20` inside
+     backticks while explaining what became of the old date sections. A matcher
+     that looked anywhere but the start of a line would fail this repo on its own
+     correct content, and the first fix anyone reaches for then is to loosen it. */
+  assert.deepEqual(
+    signpostViolations(`${LEAD}The date sections — \`## 2026-07-20\`, \`## Earlier\` — went.\n`, TITLES),
+    [],
+  );
 });

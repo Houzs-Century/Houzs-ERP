@@ -63,7 +63,7 @@ sentence and for the block-or-warn decision, re-deriving nothing: the verdict is
   `{ queued, problems }` instead of a bare boolean, and the create routes return
   `acNotSent` on the response. Never a 422 — the document is committed by then,
   and every remaining remedy is master data the operator does not own.
-- `frontend/src/vendor/scm/lib/ac-not-sent.ts` reads the key and owns the title;
+- `frontend/src/vendor/scm/lib/ac-not-sent.tsx` reads the key and owns the title;
   the sentences travel verbatim. Wired on desktop SO create and all three PO
   anchors.
 

@@ -46,7 +46,7 @@ them, whose diffs nobody could read either.
 there resolves zero inputs and would have proved nothing).
 
 **The check** — `backend/tests/noNulBytesInSource.test.mjs`, in
-`npm run test:scale-contract`. It walks `git ls-files`, refuses to pass if the
+`npm run test:scale-contract` [gone]. It walks `git ls-files`, refuses to pass if the
 listing returns implausibly few files, and fails on any tracked source file
 carrying a NUL.
 
