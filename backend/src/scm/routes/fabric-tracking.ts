@@ -433,6 +433,51 @@ fabricTracking.get('/', async (c) => {
   return c.json({ fabrics: data ?? [] });
 });
 
+/* GET /fabric-tracking/lite — the DISPLAY/PICK read.
+ *
+ * WHY THIS EXISTS (bug 2026-08-20). The full GET above returns procurement COST
+ * and STOCK (price_sen, soh_sen, *_usage_sen, shortage_sen, reorder_point_sen,
+ * supplier cost), so its guard correctly requires scm.procurement.products. But
+ * SoLineCard (the fabric dropdown on EVERY sales-order line) and the PC-Order
+ * detail need only the fabric NAME + PRICE TIERS to pick a fabric and price the
+ * line — and their pages are gated on scm.sales.* / scm.consignment.*, NOT
+ * products. So a salesperson/consignment user fired the full read and got a 403
+ * (surfaced by the client-error telemetry: [rbac 403] GET /fabric-tracking),
+ * leaving the fabric dropdown empty.
+ *
+ * This lite read returns ONLY the non-sensitive display + tier fields, so it is
+ * safe to expose via openReadPaths on the guard (see scm/index.ts). Cost/stock
+ * NEVER appear here, so opening it leaks nothing; the full read stays gated.
+ * Still company-scoped, exactly like the full read. */
+fabricTracking.get('/lite', async (c) => {
+  const category = c.req.query('category');
+  const search = c.req.query('search');
+  const supabase = c.get('supabase');
+
+  let q = scopeToCompany(
+    supabase
+      .from('fabric_trackings')
+      .select(
+        'id, fabric_code, fabric_description, supplier_code, fabric_category, ' +
+          'price_tier, sofa_price_tier, bedframe_price_tier, series, is_active',
+      ),
+    c,
+  )
+    .order('fabric_code', { ascending: true });
+
+  if (category && VALID_CATEGORIES.has(category)) {
+    q = q.eq('fabric_category', category);
+  }
+  if (search) {
+    const s = escapeForOr(search);
+    if (s) q = q.or(`fabric_code.ilike.%${s}%,fabric_description.ilike.%${s}%`);
+  }
+
+  const { data, error } = await q;
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ fabrics: data ?? [] });
+});
+
 /* Migration 0167 — ACTIVE toggle from the Fabric Converter table (owner spec
    2026-06-12). Inactive fabrics are hidden from NEW-entry fabric pickers
    (SO/CO variant selects, scan-SO catalog injection); existing documents keep

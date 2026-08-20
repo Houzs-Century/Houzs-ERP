@@ -481,10 +481,6 @@
       "reads": 0,
       "catches": 1
     },
-    "frontend/src/components/Avatar.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
     "frontend/src/components/Layout.tsx": {
       "reads": 0,
       "catches": 1
@@ -514,10 +510,6 @@
       "catches": 2
     },
     "frontend/src/lib/tableLayouts.ts": {
-      "reads": 0,
-      "catches": 1
-    },
-    "frontend/src/mobile/MobileAnnouncements.tsx": {
       "reads": 0,
       "catches": 1
     },

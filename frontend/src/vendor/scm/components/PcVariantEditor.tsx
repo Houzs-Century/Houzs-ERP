@@ -20,14 +20,14 @@
 import { useMemo } from 'react';
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from '@2990s/shared';
 import { useSpecialAddons, useModelAllowedOptionsByCode, type MaintenanceConfig, type SpecialAddonRow } from '../lib/mfg-products-queries';
-import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries';
+import { fabricOptionLabel, type FabricLite } from '../lib/fabric-queries';
 import { sortByNumeric, byText } from '../lib/sort-options';
 import { SpecialOrders } from './SpecialOrders';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 
 /* ACTIVE fabrics only (owner spec 2026-06-12, fabric_trackings.is_active) —
  * a line whose saved fabric was later deactivated still shows it. */
-const pickableFabrics = (fabrics: FabricTrackingRow[], current: string): FabricTrackingRow[] =>
+const pickableFabrics = (fabrics: FabricLite[], current: string): FabricLite[] =>
   fabrics.filter((f) => f.is_active !== false || f.fabric_code === current);
 
 export const PcVariantEditor = ({
@@ -37,7 +37,7 @@ export const PcVariantEditor = ({
   category: string;
   variants: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
-  fabrics: FabricTrackingRow[];
+  fabrics: FabricLite[];
   maint: MaintenanceConfig;
   /* SKU code for this line — resolves the Model's allowed_options so the
      variant dropdowns offer ONLY what the Model permits (owner 2026-07-15,

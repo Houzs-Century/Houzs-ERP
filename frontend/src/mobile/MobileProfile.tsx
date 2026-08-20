@@ -36,6 +36,8 @@ import {
   useBrowserNotificationPreference,
 } from "../lib/browserNotificationPreference";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { MobileAvatar, MobileAvatarEditor } from "./MobileAvatar";
+import { MobileTwoFactorCard } from "./MobileTwoFactorCard";
 import { fmtSen } from "../lib/scm";
 import {
   LANG_LABELS,
@@ -140,6 +142,11 @@ type MemberRow = {
   position_name?: string | null;
   phone?: string | null;
   email_alias?: string | null;
+  /* GET /api/users already SELECTS this (routes/users.ts) — the mobile roster
+     simply threw it away and drew initials for everybody. That is the trap
+     docs/modules/document-conversion.md 6a names for picker rows, in its other
+     half: the data was on the row, the component was not. */
+  profile_pic_r2_key?: string | null;
   // Staff code is not part of the shipped /api/users contract; these keys are
   // read opportunistically (FLAGGED missing — see header comment). All optional.
   staff_code?: string | null;
@@ -151,13 +158,9 @@ type MemberRow = {
 };
 
 // ── Shared formatters / helpers ──
-const initials = (name: string | null | undefined, email?: string): string => {
-  const src = (name || "").trim() || (email || "").split("@")[0] || "";
-  const parts = src.split(/[\s._-]+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
+/* The local `initials` helper is gone: both call sites now render through
+   `MobileAvatar`, which falls back to `avatarInitials` — one rule for a
+   person's initials instead of this file's copy and the desktop Avatar's. */
 
 // A stable colour per person for the initial avatar (matches the design's
 // teal-family palette).
@@ -190,7 +193,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   onOpenOrg?: (to: string, label: string) => void;
 }) {
   const [screen, setScreen] = useState<Screen>("home");
-  const { user } = useAuth();
+  const { user, reload } = useAuth();
   const confirm = useConfirm();
   const browserNotificationsEnabled = useBrowserNotificationPreference();
   const browserNotificationPermission = useBrowserNotificationPermission();
@@ -335,7 +338,21 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
         <div style={{ position: "relative", overflow: "hidden", borderRadius: 18, background: "#15161a", padding: "20px 18px", boxShadow: "0 12px 32px -16px rgba(17,24,16,.45)" }}>
           <div style={{ position: "absolute", right: -50, top: -60, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle,rgba(22,105,95,.55),transparent 70%)", pointerEvents: "none" }} />
           <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14 }}>
-            <span style={{ width: 58, height: 58, flex: "none", borderRadius: "50%", background: "#16695f", border: "2px solid rgba(216,168,90,.5)", color: "#d8a85a", fontSize: 20, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{initials(name, user?.email)}</span>
+            {/* The photo, or initials when there isn't one. The circle is the
+                prototype's token either way; only the fill changes. The camera
+                badge sits on it — this is the device with a camera, and until
+                now it was the only one that could not use it. */}
+            <div style={{ position: "relative", flex: "none" }}>
+              <MobileAvatar
+                userId={user?.id}
+                hasImage={user?.profile_pic_r2_key}
+                name={name}
+                email={user?.email}
+                size={58}
+                style={{ background: "#16695f", border: "2px solid rgba(216,168,90,.5)", color: "#d8a85a" }}
+              />
+              <MobileAvatarEditor hasImage={user?.profile_pic_r2_key} onChanged={reload} />
+            </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.15 }}>{name}</div>
               <div style={{ fontSize: 12.5, color: "rgba(231,234,228,.82)", marginTop: 3 }}>{roleLine}</div>
@@ -356,7 +373,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
         <div className="ey" style={{ color: "#767b6e", margin: "18px 2px 9px" }}>Account</div>
         <div className="card" style={{ overflow: "hidden" }}>
           <Item icon="users" label="Personal details" onClick={() => setScreen("personal")} first />
-          <Item icon="lock" label="Password" onClick={() => setScreen("security")} />
+          <Item icon="lock" label="Password & security" onClick={() => setScreen("security")} />
           <Item
             icon="mega"
             label="Notifications"
@@ -645,7 +662,7 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
   const canSubmit = !!current && !!next && !!confirm && !submitting;
 
   return (
-    <SubScreen title="Password" sub="Change your password" onBack={onBack}>
+    <SubScreen title="Password & security" sub="Password, two-factor, unlock" onBack={onBack}>
       <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: 14 }}>
         <div style={kvLabel}>Current password</div>
         <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" style={pwInput} />
@@ -666,6 +683,11 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
       <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
         Requires your current password. You'll stay signed in here; other devices will be signed out.
       </div>
+      {/* Two-factor: enrol, backup-code count, and DISABLE. The last one is why
+          this is here — without it a member who loses the authenticator and has
+          no PC is locked out of the account for good. Shared state machine, so
+          the phone and the desktop cannot drift. */}
+      <MobileTwoFactorCard />
       {bioSupported && (
         <>
           <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", marginTop: 14 }}>
@@ -941,9 +963,17 @@ function PersonCard({ person, caption }: { person: MemberRow; caption?: string }
   const seed = String(person.id) + (person.email || "");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: "11px 13px" }}>
-      <span style={{ width: 40, height: 40, flex: "none", borderRadius: "50%", background: avatarColor(seed), color: "#fff", fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {initials(person.name, person.email)}
-      </span>
+      {/* The teammate's photo when they have one, their initials on the stable
+          per-person colour when they do not. Same shared read as the identity
+          card and the desktop Avatar. */}
+      <MobileAvatar
+        userId={person.id}
+        hasImage={person.profile_pic_r2_key}
+        name={person.name}
+        email={person.email}
+        size={40}
+        style={{ background: avatarColor(seed), color: "#fff" }}
+      />
       <div style={{ minWidth: 0, flex: 1 }}>
         {caption && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>{caption}</div>}
         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>

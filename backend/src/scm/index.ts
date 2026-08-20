@@ -242,7 +242,11 @@ scm.route("/sofa-combos", sofaCombos);
 // stay double-gated (area `edit` + scm.config.write in-route).
 scm.use("/sofa-quick-picks/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
 scm.route("/sofa-quick-picks", sofaQuickPicks);
-scm.use("/fabric-tracking/*", scmAreaGuard("scm.procurement.products"));
+// The full read exposes cost/stock, so it stays gated. `/fabric-tracking/lite`
+// (names + price tiers only, no cost) is opened as a REFERENCE read so the SO
+// fabric dropdown + PC-Order detail work for sales/consignment users who lack
+// products access — they were hitting 403 (see the /lite handler comment).
+scm.use("/fabric-tracking/*", scmAreaGuard("scm.procurement.products", { openReadPaths: ["/fabric-tracking/lite"] }));
 scm.route("/fabric-tracking", fabricTracking);
 // Ported 2026-07-11 — three SO/pricing admin-config CRUD surfaces (backing
 // tables seeded via mig 0022; shared parsers already consumed by pricing).
