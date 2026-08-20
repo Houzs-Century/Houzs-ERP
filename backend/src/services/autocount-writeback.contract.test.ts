@@ -166,8 +166,14 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
   });
 
   test('/create-po', () => {
+    /* PurchaseLocation joined this list on 2026-08-20. It is AutoCount's own
+       header ship-to warehouse and the ERP had never sent one, so the book
+       defaulted it on every purchase order the ERP has written. Assigned HERE
+       as well as in PurchaseHeader because /create-po does not go through that
+       function — it sets its own master. */
     expect(headerKeys(CS_CREATE_PO)).toEqual(
-      ['Agent', 'CreditorCode', 'CreditorName', 'Description', 'Details', 'DocDate', 'DocNo', 'Ref'].sort(),
+      ['Agent', 'CreditorCode', 'CreditorName', 'Description', 'Details', 'DocDate', 'DocNo',
+        'PurchaseLocation', 'Ref'].sort(),
     );
     expect(detailKeys(CS_CREATE_PO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
@@ -247,11 +253,30 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        (FK_SO_SalesLocation); the purchase one has never been sent at all, and
        an empty master is a candidate for the "there is no row at position -1"
        that has failed every /po-to-gr since 2026-08-12. */
-    expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
+    /* DebtorName / Attention / Phone1 / Note joined SalesHeader on 2026-08-20.
+       They are in /edit's allow-list and were in NO slot on the transfer route,
+       so the delivery orders and sales invoices this ERP transferred carried
+       the placeholder account's own name — while writeback.ts:43-44 states the
+       design as "Fixed AutoCount debtor account; the customer's real name is
+       written over it". On this route it never was. Guarded, so the ERP's
+       silence still leaves the book alone. */
+    expect(headerKeys(CS_SALES_HEADER)).toEqual(
+      ['Attention', 'DebtorName', 'Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Note',
+        'Phone1', 'Ref'].sort(),
+    );
+    /* Agent joined this list on 2026-08-20 (#2523). `PurchaseHeader` is the
+       header function BOTH /so-to-po and the four conversions apply, and only
+       /create-po ever assigned the purchase agent — so a transfer could be sent
+       a perfectly good Agent and still save without one, into
+       FK_PO_PurchaseAgent. Guarded there (ContainsKey + non-empty) because the
+       conversions send no Agent and Str() of an absent key is "".
+       BOTH HALVES ARE THE SAME LESSON, arrived at on two branches the same day:
+       carrying a field is not landing one. */
     expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(
-      ['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'PurchaseLocation', 'Ref'].sort(),
+      ['Agent', 'Description', 'DisplayTerm', 'DocDate', 'DocNo', 'PurchaseLocation', 'Ref'].sort(),
     );
   });
+
 
   /* ── the purchase arms' transfer call, asserted on the C# SOURCE ───────────
      Layer 1 normally reads KEYS. This reads CALLS, because on 2026-08-17 the two
@@ -444,12 +469,15 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
     tables[table] ??= [];
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
+    let window: [number, number] | null = null;
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
     let columnError: { code: string; message: string } | null = null;
     const rows = () => {
-      const rs = tables[table].filter((r) => filters.every((f) => f(r)));
-      return limitN == null ? rs : rs.slice(0, limitN);
+      let rs = tables[table].filter((r) => filters.every((f) => f(r)));
+      if (limitN != null) rs = rs.slice(0, limitN);
+      if (window) rs = rs.slice(window[0], window[1] + 1);
+      return rs;
     };
     const settle = () => {
       if (columnError) return { data: null, error: columnError };
@@ -485,6 +513,9 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
       order() { return builder; },
       limit(n: number) { limitN = n; return builder; },
+      /* PostgREST's `Range` window — the binding read pages, so a no-op here
+         would hand a paged caller the whole set and never exercise the loop. */
+      range(from: number, to: number) { window = [from, to]; return builder; },
       maybeSingle: async () => (columnError ? { data: null, error: columnError } : { data: rows()[0] ?? null, error: null }),
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
     };
@@ -558,6 +589,12 @@ const SO_ITEMS = [
 const PO_HEADER = {
   id: 'po-uuid-1', po_number: 'PO-2608-004', po_date: '2026-08-11',
   supplier_id: 'supplier-uuid-1', notes: 'Trial purchase order',
+  /* The PO's OWN ship-to warehouse (PR #77). /submit refuses a purchase order
+     that has neither this nor a warehouse on every line
+     (mfg-purchase-orders.ts:4019), so a fixture without one is a purchase order
+     the ERP would not have let go live. Resolved to the `KL` code through the
+     `warehouses` row the two arm fixtures seed. */
+  purchase_location_id: 'wh-kl',
   company_id: 1, linked_ac_docno: null,
 };
 
@@ -669,11 +706,35 @@ export const DIVERGENCES: Divergence[] = [
      BLANKS the line instead of leaving AutoCount to fill in the document date.
      The blank is the book's own shape: 11,886 of the 60,939 lines in
      `ac-fidelity-so-lines.json.gz` carry a NULL DeliveryDate. */
+  /* D4 STRUCK 2026-08-20 — Ref / Description / SupplierDONo / SupplierInvoiceNo
+     on the four conversions, plus the DocDate and PurchaseLocation it never
+     mentioned. It leaves the register because there was no decision left in it:
+     the ERP holds every one of these values, the service applies every one of
+     them on this route, and the payload simply did not carry them.
+
+     ITS OWN EVIDENCE HAD ROTTED, which is the part worth remembering. The entry
+     cited `autocount-outbox.ts:254` for a function that had moved four hundred
+     lines, and said the ERP "sends only { DocDate, Ref }" — written before
+     DocNo, DebtorCode/CreditorCode and DtlKeys were added around it. Worse, all
+     four of the payload tests that would have caught the drift were `test.skip`
+     and each asserted the BUG as its expectation, so nothing went red while the
+     shape changed four times underneath them.
+
+     WHAT REPLACES IT IS NOT A LONGER ENTRY. `AcDownstreamSpec.facts` is now the
+     one description of a downstream document and both routes are projections of
+     it, so the payload is asserted against the document rather than against a
+     list of field names — `$op carries every header fact this route can apply`
+     below, and the structural guard in layer 1. A fact added to a spec is
+     checked on the transfer the day it is added.
+
+     NOT EVERYTHING D4 TOUCHED IS CLOSED, and the open half is registered as D17
+     rather than left in prose: the sales arms have no slot for a stock location
+     and the ERP's DO carries two note columns, only one of which is mapped. */
   {
-    id: 'D4', flow: 'the four conversions', field: 'Ref / Description / SupplierDONo / SupplierInvoiceNo',
-    service: 'assigns all four unconditionally on a conversion (AcSyncService.cs:255,265,283-284,291-292); an ABSENT key is "" through Str(), so the transferred document\'s Ref and Description are blanked and a GRN/PI never carries the supplier\'s own document number.',
-    erp: 'sends only { DocDate, Ref } and both are null at every call site (autocount-outbox.ts:254; no caller passes docDate or ref).',
-    severity: 'high',
+    id: 'D17', flow: 'so_to_do + do_to_iv', field: 'SalesLocation / Description',
+    service: '`SalesHeader` (AcSyncService.cs:2422) has no SalesLocation slot at all — only /edit\'s reflection loop does (:2990-2995) — while the sales CREATE route treats the header location as mandatory (FK_SO_SalesLocation, MissingSalesLocationError). And it assigns Description unconditionally, so an absent key writes "".',
+    erp: 'sends neither. `scm.delivery_orders` and `scm.sales_invoices` carry no warehouse column, so there is no header location to send and inventing one would be a foreign key error rather than an empty field. Description is worse than absent: those two tables carry TWO note columns — `note`, mapped to AutoCount\'s Note since /edit was written, and `notes`, mapped nowhere — and picking one as the book\'s Description is a guess about the owner\'s intent, not a code change. Costs nothing today (the sales arms build with transferMaster:false, AcSyncService.cs:1096, so the "" overwrites nothing), which is exactly why it needs a decision and not a patch.',
+    severity: 'low',
   },
   /* D5 STRUCK 2026-08-17 — DocNo, on every flow that creates a document.
      `enqueueConvert` closed it for the four conversions; `/so-to-po` was the one
@@ -779,7 +840,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
        one column, is what has to stay fixed. Any failed read must end the
        compose. */
     const sb = seeded({ mfg_sales_order_items: ['linked_ac_dtlkey'] });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(false);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).queued).toBe(false);
 
     const rows = sb.tables.autocount_outbox;
     expect(rows).toHaveLength(1);
@@ -792,7 +853,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
 
   test.skip('every field, against the shape CreateSo parses', async () => {
     const sb = seeded();
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).queued).toBe(true);
 
     expect(await wireBody(sb)).toEqual({
       DocNo: 'SO-2608-011',
@@ -902,7 +963,7 @@ describe('/create-po — the creditor comes from scm.suppliers', () => {
 
   test.skip('a PO create queues, and the body carries the supplier CODE', async () => {
     const sb = seeded();
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(true);
     expect(sb.tables.autocount_outbox).toHaveLength(1);
 
     const body = await wireBody(sb);
@@ -968,7 +1029,7 @@ describe('/create-po — the creditor comes from scm.suppliers', () => {
 
   test('a PO whose supplier read fails composes NOTHING — the D13 mechanism, on the PO side', async () => {
     const sb = seeded({ suppliers: ['code'] });
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(false);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(false);
     const rows = sb.tables.autocount_outbox;
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('skipped');
@@ -1013,7 +1074,7 @@ describe('/so-to-po names the supplier', () => {
        quietly fell back to `create_po` would pass them while testing the wrong
        code path entirely. */
     const sb = soToPoSb();
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).queued).toBe(true);
     expect(sb.tables.autocount_outbox[0].op).toBe('so_to_po');
   });
 
@@ -1149,65 +1210,250 @@ describe('/so-to-po carries the ERP document number', () => {
   });
 });
 
+/* ── /so-to-po: THE WHOLE MASTER, not one field per outage ──────────────────
+   THE POINT OF THIS BLOCK IS THAT IT IS NOT ABOUT ANY ONE FIELD.
+
+   Two fields have reached the live account book wrong on this route, each found
+   only when a real document failed, and each patched on its own:
+
+     CreditorCode  2026-08-17 09:15  `CreditorCode required for /so-to-po`
+     DocNo         2026-08-17 10:15  the first transfer landed as `PO-009968`
+
+   Both are the SAME defect — `composeCreatePo` builds a nine-field master and
+   the transfer arm threw the whole object away — and after two one-field
+   patches five were still missing (DocDate, Agent, Ref, Description, UDF), one
+   of which is `Description`, the field the owner reported wrong on 2026-08-19:
+   「为什么 Sales Order to PO，它的 Description2 不对的呢？」
+
+   So the assertion is structural: whatever `composeCreatePo` sends, the
+   transfer sends too, minus a NAMED list of deliberate exclusions. A field
+   added to the create next month cannot silently fail to reach a transfer,
+   because this test names it the day it is added. */
+describe('/so-to-po carries the whole master', () => {
+  /* eslint-disable-next-line no-restricted-syntax -- the fake PostgREST is not a SupabaseClient and enqueuePoCreate takes one; the file's existing bridge, named once */
+  const enqueue = (sb: ReturnType<typeof seeded>) => enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+  const storedBody = (sb: ReturnType<typeof seeded>): Record<string, unknown> =>
+    (sb.tables.autocount_outbox[0].payload as { body: Record<string, unknown> }).body;
+
+  /* The CREATE arm of the same purchase order. `seeded()`'s PO line has no
+     `so_item_id`, which is what makes `poTransferShape` answer `create`; the
+     warehouse is seeded for the same reason `soToPoSb` seeds it. */
+  const createPoSb = () => {
+    const sb = seeded();
+    sb.tables.warehouses = [{ id: 'wh-kl', code: 'KL', name: 'KL Warehouse' }];
+    return sb;
+  };
+
+  /**
+   * The ONLY keys a transfer is allowed not to share with a create, and why.
+   *
+   * `Details` is REPLACED rather than dropped: a create's detail names the item
+   * being bought (ItemCode/Description/Desc2/Qty/UnitPrice), while a transfer's
+   * names an existing AutoCount line by `DtlKey` and overrides what the ERP
+   * agreed with the supplier — AutoCount's own `AddSOToPOTransferDetail` brought
+   * the line across already (AcSyncService.cs:2358), and phase two edits it
+   * (:2391-2411). The two shapes are checked separately below.
+   *
+   * Anything NOT in this set must reach the transfer. If a field genuinely
+   * cannot, it belongs here with its reason, not missing from the payload.
+   */
+  const TRANSFER_REPLACES = new Set(['Details']);
+
+  test('the fixtures really take the two DIFFERENT arms — otherwise this block proves nothing', async () => {
+    const c = createPoSb();
+    await enqueue(c);
+    expect(c.tables.autocount_outbox[0].op, 'the create control').toBe('create_po');
+
+    const t = soToPoSb();
+    await enqueue(t);
+    expect(t.tables.autocount_outbox[0].op, 'the transfer under test').toBe('so_to_po');
+  });
+
+  test('every header field the CREATE sends, the TRANSFER sends', async () => {
+    const c = createPoSb();
+    await enqueue(c);
+    const created = storedBody(c);
+
+    const t = soToPoSb();
+    await enqueue(t);
+    const transferred = storedBody(t);
+
+    const missing = Object.keys(created)
+      .filter((k) => !TRANSFER_REPLACES.has(k))
+      .filter((k) => !(k in transferred));
+    expect(
+      missing,
+      `the SO->PO transfer drops ${missing.length} field(s) the create carries: ${missing.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  test('and their VALUES are the same document, not just the same key names', async () => {
+    const c = createPoSb();
+    await enqueue(c);
+    const created = storedBody(c);
+
+    const t = soToPoSb();
+    await enqueue(t);
+    const transferred = storedBody(t);
+
+    /* A key present with a different value is the same failure wearing a
+       disguise — `Description: null` on a purchase order the ERP describes is
+       exactly what the owner saw.
+
+       `Ref` IS ABSENT FROM THIS LIST ON PURPOSE, and it is the only one:
+       `readPoEnqueueShape` (autocount-read.ts:201-203) puts the source sales
+       order numbers in a CREATE's Ref because AutoCount has no DocTransfer
+       link to carry them, and leaves a transfer's null because it does. The
+       KEY must still be carried — the parity test above enforces that — but
+       the two documents legitimately hold different values there. */
+    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description', 'UDF']) {
+      expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
+    }
+  });
+
+  test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {
+    /* THE ERP'S COUNTERPART is `scm.purchase_orders.purchase_location_id`, the
+       per-PO ship-to warehouse that /submit REFUSES a purchase order without
+       (mfg-purchase-orders.ts:1125). AutoCount's is `PurchaseLocation`, and
+       `PurchaseHeader`'s own comment says it "has never been sent" — which is
+       why the book was defaulting it. Owner 2026-08-19: 「它的 Purchase
+       Location 也不对」.
+
+       BOTH ROUTES ARE ASSERTED, because the purchase side does NOT share one
+       header function: `CreatePo` sets its own master and `PurchaseHeader` is
+       what /so-to-po and the four conversions apply. Reading only
+       PurchaseHeader would have passed while /create-po silently ignored the
+       key — the same "carrying is not landing" trap as Agent below, and the
+       first draft of this fix walked into it. */
+    expect(headerKeys(CS_CREATE_PO), 'the create route reads it').toContain('PurchaseLocation');
+    expect(headerKeys(CS_PURCHASE_HEADER), 'the transfer route reads it').toContain('PurchaseLocation');
+
+    const c = createPoSb();
+    await enqueue(c);
+    expect(storedBody(c).PurchaseLocation, 'the create arm').toBe('KL');
+
+    const t = soToPoSb();
+    await enqueue(t);
+    expect(storedBody(t).PurchaseLocation, 'the transfer arm').toBe('KL');
+  });
+
+  test('the transfer\'s Details are the DtlKey override shape, and every key is one phase two applies', async () => {
+    const t = soToPoSb();
+    await enqueue(t);
+    const details = storedBody(t).Details as Array<Record<string, unknown>>;
+    expect(details).toHaveLength(1);
+    expect(details[0].DtlKey, 'the AutoCount sales line this purchase line buys').toBe(4242);
+
+    /* Phase two of SoToPo is the ONLY thing that reads these, and it reads four
+       (AcSyncService.cs:2407-2410). A key outside that set would be composed,
+       stored, POSTed and silently dropped by the host — which is the whole
+       failure mode this block exists to stop, so it must not be reintroduced on
+       the line side while being fixed on the header side. */
+    const applied = new Set(detailKeys(CS_SO_TO_PO));
+    expect(Object.keys(details[0]).filter((k) => !applied.has(k))).toEqual([]);
+  });
+
+  test('and NO key is sent that the /so-to-po route does not read', async () => {
+    /* THE OTHER HALF OF "carrying is not landing", and the reason this block is
+       not just a key-parity test. Spreading the master could as easily have put
+       keys on the wire that the host drops on the floor — which is what the
+       whole payload did before `SoToPo` learned to read the creditor.
+
+       The route's readable surface is its OWN keys plus PurchaseHeader's, since
+       that is the header function it applies (AcSyncService.cs:2359). `UDF` is
+       excluded for the same reason the /create-po twin excludes it: it goes
+       through ApplyUdf, not through Str(p, "UDF"). `FromDocNo` is resolved at
+       drain and is in SoToPo's own key list already. */
+    const t = soToPoSb();
+    await enqueue(t);
+    const read = new Set([...headerKeys(CS_SO_TO_PO), ...headerKeys(CS_PURCHASE_HEADER)]);
+    const unread = Object.keys(storedBody(t)).filter((k) => !read.has(k) && k !== 'UDF');
+    expect(unread, `keys the host would silently drop: ${unread.join(', ')}`).toEqual([]);
+  });
+
+  test('a misaligned transfer REFUSES with a row an operator can read, not silently', async () => {
+    /* THE REFUSAL IS ONLY WORTH HAVING IF IT SURFACES. `noteReadFailure`'s list
+       IS the mechanism: an error missing from it is not handled elsewhere, it
+       is DROPPED — the enqueue answers false with no outbox row, no console
+       line and nothing for an operator to read. `AcSoToPoAlignmentError` was
+       missing from that list when it was written, which is the same shape of
+       defect as the one this whole block is about.
+
+       THE MISALIGNMENT IS BUILT THE ONE WAY IT ARISES, and it is the case
+       `collapseSofaLines` itself calls "the dangerous one": a sofa build whose
+       compartments carry MIXED DtlKeys. All-null passes them through and
+       all-distinct leaves them separate — either way the counts match — but
+       mixed means the account book holds the build FOLDED while the ERP's
+       record of that is incomplete, so the compartments fold to one line while
+       `poTransferShape` still names one source key per ERP row. */
+    const t = soToPoSb();
+    t.tables.mfg_sales_order_items[1].id = 'so-item-2';
+    t.tables.mfg_sales_order_items[1].linked_ac_dtlkey = 4343;
+    t.tables.mfg_sales_order_items[2].id = 'so-item-3';
+    t.tables.mfg_sales_order_items[2].linked_ac_dtlkey = 4344;
+    t.tables.purchase_order_items = [
+      {
+        id: 'po-item-2', purchase_order_id: 'po-uuid-1', so_item_id: 'so-item-2',
+        item_code: 'ANNSA-1B(LHF)', item_group: 'sofa', description: 'SOFA ANNSA',
+        description2: 'FABRIC HR805-30', qty: 1, unit_price_sen: 90_000,
+        variants: { buildKey: 'build-1', cellIndex: 0 }, warehouse_id: 'wh-kl',
+        delivery_date: null, linked_ac_dtlkey: 555,
+      },
+      {
+        id: 'po-item-3', purchase_order_id: 'po-uuid-1', so_item_id: 'so-item-3',
+        item_code: 'ANNSA-CNR', item_group: 'sofa', description: 'SOFA ANNSA',
+        description2: 'FABRIC HR805-30', qty: 1, unit_price_sen: 90_000,
+        variants: { buildKey: 'build-1', cellIndex: 1 }, warehouse_id: 'wh-kl',
+        delivery_date: null, linked_ac_dtlkey: null,
+      },
+    ];
+    /* The folded build resolves to the model's own AutoCount code, so the item
+       resolver has something to answer with — without it the compose refuses
+       one step earlier with ItemCodeError and this test would pass for the
+       wrong reason. */
+    t.tables.supplier_material_bindings = [{
+      item_code: 'ANNSA-1S', supplier_id: 'supplier-uuid-1', supplier_sku: 'AC-ANNSA',
+      is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
+    }];
+
+    const outcome = await enqueue(t);
+    expect(outcome.queued, 'nothing is queued for AutoCount').toBe(false);
+    /* AND THE PERSON HOLDING THE DOCUMENT IS TOLD, which is the second half of
+       "surfaced". The skipped row below is what an ENGINEER reads; this is the
+       same refusal addressed to the operator, and an error with no sentence
+       here comes back as an empty `problems` — saved, not sent, nobody told. */
+    expect(outcome.problems, 'the operator gets a sentence, not silence').toHaveLength(1);
+    expect(outcome.problems[0].message).toContain('has NOT reached the accounts');
+    expect(outcome.problems[0].message, 'and it ends in a next step').toContain('re-raise the');
+    const rows = t.tables.autocount_outbox;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status, 'a refusal, not a retry').toBe('skipped');
+    expect(String(rows[0].last_error), 'the class name, so the remedy is findable')
+      .toContain('AcSoToPoAlignmentError');
+    expect(String(rows[0].last_error), 'and the two counts').toContain('2 source line(s)');
+    expect(rows[0].payload, 'nothing that could be POSTed').toEqual({ body: {} });
+  });
+
+  test('the AGENT the transfer now sends is one PurchaseHeader actually assigns', () => {
+    /* CARRYING A FIELD IS NOT LANDING IT. `PurchaseHeader` is what /so-to-po
+       calls for its header, and it did not read `Agent` at all — only
+       `CreatePo` did (:927) — so an Agent added to the transfer payload would
+       have satisfied the key-parity test above and still left
+       `FK_PO_PurchaseAgent` unsatisfied on the document. Adjacent evidence is
+       not evidence: assert the READ, on the C# source. */
+    expect(headerKeys(CS_PURCHASE_HEADER)).toContain('Agent');
+  });
+});
+
 describe('the four conversions', () => {
   const convert = async (op: any, docType: any, from: any, to: any, docNo: string) => {
     const sb = seeded();
     // The parent must already have an AutoCount counterpart, or the row waits.
     sb.tables[from.table][0].linked_ac_docno = 'AC-PARENT-1';
-    expect(await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo })).toBe(true);
+    expect((await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo })).queued).toBe(true);
     return wireBody(sb);
   };
 
-  test.skip('SO -> DO sends the parent document number and nothing else that matters', async () => {
-    const body = await convert(
-      'so_to_do', 'DO',
-      { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'SO-2608-011' },
-      { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' },
-      'DO-2608-009',
-    );
-    expect(body).toEqual({
-      FromDocNo: 'AC-PARENT-1',
-      DocDate: null,   // D4
-      Ref: null,       // D4
-      // D5: no DocNo, so AutoCount numbers the delivery order itself.
-      // No DtlKeys on purpose — AcSyncService.cs:300-329 asks the BOOK which
-      // lines are still outstanding, which is the only authority on that.
-    });
-  });
-
-  test.skip('PO -> GRN carries no SupplierDONo, though the route reads one', async () => {
-    const body = await convert(
-      'po_to_gr', 'GR',
-      { table: 'purchase_orders', keyCol: 'id', key: 'po-uuid-1' },
-      { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
-      'GRN-2608-003',
-    );
-    expect(body).toEqual({ FromDocNo: 'AC-PARENT-1', DocDate: null, Ref: null });
-    expect(headerKeys(CS_CONVERT)).toContain('SupplierDONo');
-    expect(Object.keys(body)).not.toContain('SupplierDONo');
-  });
-
-  test.skip('DO -> Invoice', async () => {
-    const body = await convert(
-      'do_to_iv', 'IV',
-      { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' },
-      { table: 'sales_invoices', keyCol: 'id', key: 'si-uuid-1' },
-      'SI-2608-002',
-    );
-    expect(body).toEqual({ FromDocNo: 'AC-PARENT-1', DocDate: null, Ref: null });
-  });
-
-  test.skip('GRN -> Purchase Invoice carries no SupplierInvoiceNo either', async () => {
-    const body = await convert(
-      'gr_to_pi', 'PI',
-      { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
-      { table: 'purchase_invoices', keyCol: 'id', key: 'pi-uuid-1' },
-      'PI-2608-002',
-    );
-    expect(body).toEqual({ FromDocNo: 'AC-PARENT-1', DocDate: null, Ref: null });
-    expect(headerKeys(CS_CONVERT)).toContain('SupplierInvoiceNo');
-    expect(Object.keys(body)).not.toContain('SupplierInvoiceNo');
-  });
 
   /* THE ACCOUNT ON THE WIRE. Not a whole-body assertion — the four above are
      that, and all four are skipped and stale — but a live check of the one key
@@ -1485,12 +1731,25 @@ describe('the divergence register', () => {
        decision left in it: the account book takes the ERP's number wherever it
        is sent, and `/so-to-po` was the only route still not sending one. It goes
        for the same reason D3 did — a plain bug on the ERP side — and, like D3,
-       its absence is now held by tests rather than by prose. */
+       its absence is now held by tests rather than by prose.
+
+       D4 was STRUCK on 2026-08-20 and D17 ADDED the same day, and the count is
+       unchanged because of it. D4 was the four conversions dropping their own
+       Ref, Description, supplier document number, date and purchase location;
+       it had no decision left in it and the payload now derives from the
+       document's own master, so it goes the way D3 and D5 went. D17 is the
+       REMAINDER — the part of the same area that IS a decision: the sales arms
+       have no location slot in the service at all, and the ERP's delivery order
+       carries two note columns with only one of them mapped, so which one is
+       the account book's Description is the owner's call and not a test
+       author's. Splitting it out is the point: striking D4 whole would have
+       filed an open question as fixed. */
     expect(DIVERGENCES).toHaveLength(11);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D3');
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D4');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D5');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D11');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D13');
@@ -1701,13 +1960,20 @@ describe('/health reports the build that is answering', () => {
 });
 
 describe('the skipped assertions stay bounded', () => {
-  test('exactly eleven assertions are skipped, and no more', () => {
+  /* ELEVEN -> SEVEN, 2026-08-20. The four that left were the four conversion
+     payload assertions, and they were the reason D4 could sit open for a week
+     while the very payload they described was edited four times around them:
+     each asserted `{ FromDocNo, DocDate: null, Ref: null }` — the BUG, written
+     down, checked in, switched off. They are replaced by live parity tests that
+     hold the payload against the document's own master rather than against a
+     list of field names, so there is nothing left to keep in step by hand. */
+  test('exactly seven assertions are skipped, and no more', () => {
     const skips = selfSource.match(/\btest\.skip\(/g) ?? [];
     expect(
       skips.length,
       'A skip was added or removed without updating this fence. Adding one hides a ' +
         'contract drift instead of reporting it; removing one is progress and belongs ' +
         'in the same commit as this number.',
-    ).toBe(11);
+    ).toBe(7);
   });
 });

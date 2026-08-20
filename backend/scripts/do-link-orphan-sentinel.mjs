@@ -48,6 +48,29 @@ import postgres from "postgres";
    this sentinel exists to report. */
 const BASELINE_ORPHANS = 1;
 
+/* BASELINE = goods lines that carry NO warehouse and therefore can never be
+   allocated stock (allocation buckets by warehouse+item+variant). Ten on
+   2026-08-18, every one on a 2990 order whose header has no state, no
+   sales_location and no city — nothing can derive a warehouse for them, so
+   they wait for a human to assign one. The other eight found that day were
+   repaired from their orders' own sibling warehouse.
+   Same rule as above: this is the count we have an ANSWER for, not a
+   tolerance. A new one means a write path is still dropping the field.
+   Related: lib/null-warehouse-signal.ts logs the path as it happens. */
+const BASELINE_NULL_WAREHOUSE = 10;
+
+/* BASELINE = from_mrp PO lines whose so_item_id is NULL and cannot be rebound
+   by force (their source SO's lines are already claimed by a different PO).
+   Two on 2026-08-19, both on 2990-PO-2606-016 — a human question, not a
+   matching one. 39 such lines existed that day (35% of every from_mrp line in
+   use) and NOTHING reported them; 37+3 were rebound 1:1 from each PO's own
+   'From SOs:' note. Same ON DELETE SET NULL family as the DO side above — but
+   the DO side at least announces itself through MRP re-ordering; the PO side
+   has no tell: bound-mode readiness cannot tie received stock to its order,
+   so the SO sits at PENDING while the goods sit on the shelf. Same rule as
+   every baseline here: the count we have an ANSWER for, never a tolerance. */
+const BASELINE_PO_UNBOUND = 2;
+
 const url = process.env.SENTINEL_HOUZS_DB_URL || process.env.DATABASE_URL;
 if (!url) {
   console.error("FAIL: no DATABASE_URL (or SENTINEL_HOUZS_DB_URL). This sentinel does not report health it did not measure.");
@@ -110,6 +133,32 @@ try {
         operation — but printed WITH the orphan count so the two can be
         correlated by eye in one place. If orphans rise and this stayed empty,
         the FK path is falsified and that theory can be retired. */
+  /* 3. Goods lines with no warehouse. A NULL-warehouse line matches no
+        allocation bucket, so it never leaves PENDING and never shows an
+        incoming PO — even when its goods have been received into the right
+        bucket in the right warehouse. Reported 2026-08-18 as "the system did
+        not capture the data"; three separate write paths had produced 18 of
+        them since June, and none of the three said anything at the time. */
+  const [{ nullWarehouse }] = await pg`
+    SELECT COUNT(*)::int AS "nullWarehouse"
+      FROM scm.mfg_sales_order_items s
+      JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
+     WHERE s.cancelled = false
+       AND s.warehouse_id IS NULL
+       AND s.item_group <> 'service'
+       AND h.status::text NOT IN ('CANCELLED','DRAFT')`;
+
+  /* 3b. PO->SO links lost on the purchase side. from_mrp marks lines raised
+        FROM a Sales Order (both converters stamp it), so every one of these
+        is a line that HAD a link and lost it. */
+  const [{ poUnbound }] = await pg`
+    SELECT COUNT(*)::int AS "poUnbound"
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+     WHERE p.status::text NOT IN ('CANCELLED','DRAFT')
+       AND i.from_mrp = true
+       AND i.so_item_id IS NULL`;
+
   const recentDeletes = await pg`
     SELECT to_char(deleted_at, 'YYYY-MM-DD HH24:MI') AS at, doc_no, item_code,
            COALESCE(jwt_claims->>'email', jwt_claims->>'sub', db_user) AS who,
@@ -128,6 +177,8 @@ try {
   }
   console.log(`unattributable lines (no link, no so_doc_no, stock moved): ${invisible}`);
   console.log(`SO-line deletes in the last 25h: ${recentDeletes.length}`);
+  console.log(`goods lines with no warehouse: ${nullWarehouse} [baseline ${BASELINE_NULL_WAREHOUSE}]`);
+  console.log(`from_mrp PO lines with no SO link: ${poUnbound} [baseline ${BASELINE_PO_UNBOUND}]`);
   for (const d of recentDeletes) {
     console.log(`  ${d.at}  ${d.doc_no ?? "-"}  ${d.item_code ?? "-"}  by ${d.who ?? "?"}  (${d.application_name ?? "-"})`);
   }
@@ -137,6 +188,22 @@ try {
       `${orphans - BASELINE_ORPHANS} NEW orphaned delivery line(s) since the 2026-08-17 repair ` +
       `(${orphans} total vs baseline ${BASELINE_ORPHANS}). The mechanism that blanks so_item_id is live. ` +
       `Cross-check the SO-line deletes printed above: if none match, the ON DELETE SET NULL FK is NOT the cause.`,
+    );
+  }
+  if (poUnbound > BASELINE_PO_UNBOUND) {
+    alarms.push(
+      `${poUnbound - BASELINE_PO_UNBOUND} NEW unbound from_mrp PO line(s) (${poUnbound} total vs baseline ${BASELINE_PO_UNBOUND}). ` +
+      `Each was raised FROM a Sales Order and lost its so_item_id — bound-mode readiness cannot tie its received ` +
+      `stock to the order, so the SO sits at PENDING while the goods sit on the shelf. ` +
+      `Repair: the repair-do-so-item-links.mjs pattern, source SO from the PO's own note.`,
+    );
+  }
+  if (nullWarehouse > BASELINE_NULL_WAREHOUSE) {
+    alarms.push(
+      `${nullWarehouse - BASELINE_NULL_WAREHOUSE} NEW goods line(s) written with no warehouse ` +
+      `(${nullWarehouse} total vs baseline ${BASELINE_NULL_WAREHOUSE}). They can never be allocated stock: ` +
+      `they will sit at PENDING with no incoming PO while their goods sit in the warehouse. ` +
+      `Grep the Worker log for [null-warehouse] — it names the write path, the document and the item.`,
     );
   }
   if (invisible > 0) {

@@ -923,6 +923,16 @@ class AcSyncService {
     po.DocDate = Date(p, "DocDate") ?? DateTime.Today;
     po.CreditorCode = Str(p, "CreditorCode");
     po.CreditorName = Str(p, "CreditorName");
+    /* THE SHIP-TO WAREHOUSE ON THE HEADER. This route does NOT go through
+       PurchaseHeader - it sets its own master, which is exactly why the field
+       had to be added in two places and not one. Same guard as PurchaseHeader's
+       copy and for the same reason: ContainsKey AND non-empty, because "" is
+       not a row in dbo.Location and a blank here is a foreign key error rather
+       than an empty field. The ERP sends it from
+       scm.purchase_orders.purchase_location_id and omits the key when it has
+       none, so the guard is the ERP's contract read back. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => po.PurchaseLocation = Str(p, "PurchaseLocation"));
     Set(() => po.Agent = Str(p, "Agent"));
     Set(() => po.Ref = Str(p, "Ref"));
     Set(() => po.Description = Str(p, "Description"));
@@ -2421,6 +2431,34 @@ class AcSyncService {
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     AllowZeroValue(doc);
+    /* ── THE CUSTOMER, ON THE DOCUMENT ITSELF ────────────────────────────────
+       Added 2026-08-20, and the reason is that CARRYING a field is not LANDING
+       one. These four are in Edit()'s allow-list and were in NO slot on the
+       transfer route, so a delivery order or sales invoice reaching the book by
+       conversion carried whatever AutoCount defaulted off the fixed debtor
+       account 300-C002 - while this system's own design note says the opposite:
+       "Fixed AutoCount debtor account; the customer's real name is written over
+       it" (autocount-writeback.ts:43-44). On /create-so it is. On the two sales
+       conversions it never was, because SalesHeader is all they get.
+
+       The property names are CreateSo's own - so.DebtorName, so.Attention,
+       so.Phone1 (the payload key there is "Phone", the PROPERTY is Phone1) -
+       and Edit() reaches the same four on a DO and an invoice through
+       reflection, so they exist on those classes too.
+
+       GUARDED, every one. Str() of an absent key is "", and an unguarded
+       assignment here would blank the book's own value for any caller that
+       sends nothing - which is exactly the D4 failure being fixed, reintroduced
+       from the other side. Set() on top of that, because a class that does not
+       expose one of them must cost the field and never the document. */
+    if (p.ContainsKey("DebtorName") && !string.IsNullOrEmpty(Str(p, "DebtorName")))
+      Set(() => doc.DebtorName = Str(p, "DebtorName"));
+    if (p.ContainsKey("Attention") && !string.IsNullOrEmpty(Str(p, "Attention")))
+      Set(() => doc.Attention = Str(p, "Attention"));
+    if (p.ContainsKey("Phone1") && !string.IsNullOrEmpty(Str(p, "Phone1")))
+      Set(() => doc.Phone1 = Str(p, "Phone1"));
+    if (p.ContainsKey("Note") && !string.IsNullOrEmpty(Str(p, "Note")))
+      Set(() => doc.Note = Str(p, "Note"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -2445,6 +2483,23 @@ class AcSyncService {
        one; a blank would be its own foreign key error. */
     if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
       Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
+    /* THE PURCHASE AGENT, and it is the reason CARRYING a field is not LANDING
+       one. /create-po assigns po.Agent itself (CreatePo above); this function
+       did not read the key at all, so /so-to-po could be handed a perfectly
+       good Agent and still save a purchase order without one. The ERP's value
+       is the constant AC_PURCHASE_AGENT, which exists because a blank is
+       FK_PO_PurchaseAgent on the save - dbo.PurchaseAgent, NOT the sales
+       agent's dbo.SalesAgent, and this route's source document is a SALES
+       order, so nothing the transfer brings across can fill it in.
+
+       GUARDED, unlike CreatePo's: this same function is what the four
+       conversions apply their header with, and enqueueConvert composes no Agent
+       at all. Str() of an absent key is "", so an unguarded assignment would
+       blank whatever the GRN or purchase invoice inherited from its source and
+       re-create the foreign key failure on documents that do not have this
+       problem today. */
+    if (p.ContainsKey("Agent") && !string.IsNullOrEmpty(Str(p, "Agent")))
+      Set(() => doc.Agent = Str(p, "Agent"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));

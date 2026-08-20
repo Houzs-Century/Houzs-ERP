@@ -21,12 +21,35 @@ name: Completeness claim
 # re-run FOUR test shards, Playwright and two Postgres services on every typo
 # in a PR description. This job costs one checkout and one node process, so it
 # can afford the triggers that make it usable.
+# MERGE_GROUP IS LISTED SO THE CHECK CAN REPORT THERE, NOT SO IT CAN RE-RUN.
+# This became a REQUIRED check on 2026-08-20 and the merge queue jammed the same
+# hour: a required context must report on the merge group, this workflow only
+# listened for `pull_request`, so the first PR to enqueue after the rule change
+# sat at AWAITING_CHECKS at position 1 with all sixteen of its checks green, and
+# every PR behind it would have done the same.
+#
+# It cannot honestly RUN here. Its inputs are the PR title, body and labels (see
+# the header above) and a merge group has no pull request attached — there is no
+# claim to reproduce. What it can do is report the verdict already reached: the
+# merge group is this PR's head merged into main, and the claim was executed
+# against that head minutes earlier, on the run that let the PR be enqueued at
+# all. So the job answers immediately on merge_group and does no work.
+#
+# If you ever need the claim RE-checked at merge time, this is the wrong shape:
+# fetch the PR body through the API from the merge group's PR number instead.
+# Nobody has needed that, and it would re-introduce the false-failure the
+# checkout comment below is careful to avoid.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+  merge_group:
 
+# The PR number is empty on a merge_group event, so keying on it alone would put
+# EVERY merge group in one concurrency group named `completeness-` and
+# cancel-in-progress would kill the previous group's run. A cancelled check is
+# not a passed check, so that would jam the queue in a second, subtler way.
 concurrency:
-  group: completeness-${{ github.event.pull_request.number }}
+  group: completeness-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # The check EXECUTES a command written in the PR body. It is handed no write
@@ -36,15 +59,28 @@ permissions:
   contents: read
 
 jobs:
+  # The job NAME is the required status context. Renaming it silently un-requires
+  # the gate, because the ruleset matches on this string.
   completeness-claim:
     runs-on: ubuntu-latest
     steps:
+      - name: Merge group — the claim was reproduced on the PR head
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "No pull request is attached to a merge_group event, so there is"
+          echo "no completeness claim to reproduce here. This job reports the"
+          echo "verdict already reached against the same content on the PR run."
+
       # The PR HEAD, not the merge commit. The author enumerated their own tree
       # and that is what they can control; measuring the merge would fail an
       # honest PR whenever main happened to add a member of the population —
       # the same false-failure shape that took out the bundle gate for four
       # PRs in eight days (see ci.yml, "Measure the merge base").
+      # Every step below is PR-only: `pull_request.head.sha` is empty on a merge
+      # group, so an unguarded checkout would resolve to the default branch and
+      # the gate would silently measure the wrong tree instead of failing.
       - uses: actions/checkout@v7
+        if: github.event_name != 'merge_group'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           # git grep only sees the working tree, and depth 1 is the whole tree.
@@ -52,6 +88,7 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@v6
+        if: github.event_name != 'merge_group'
         with:
           node-version: 22
 
@@ -60,7 +97,9 @@ jobs:
       # own logic is checked on every PR that touches it — a checker nobody
       # runs is not a checker.
       - name: Test the checker itself
+        if: github.event_name != 'merge_group'
         run: node --test scripts/check-completeness-claim.test.mjs
 
       - name: Reproduce every completeness claim in this PR
+        if: github.event_name != 'merge_group'
         run: node scripts/check-completeness-claim.mjs

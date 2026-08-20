@@ -680,6 +680,40 @@ live.
 
 Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
+## 7c. Line DELETE runs in a TRANSACTION — the first GRN route that does
+
+`DELETE /:id/items/:itemId` is wrapped in `runScmPgCommand`, so everything it
+writes — the line delete, the reversing stock OUT, the entity audit, the
+AutoCount outbox row and the SO-allocation recompute request — **commits
+together or not at all**.
+
+**What that fixes.** The recompute used to be a best-effort call after the
+write: `recomputeSoStockAllocation(sb)` in a try/catch. A Worker that died
+between the stock reversal and that call left stock moved and SO lines still
+marked READY, with **no queue row and no retry** — wrong, silently, until an
+unrelated mutation happened to sweep. Now the queue row is written by
+`scheduleStockAllocationAfterCommand` inside the same transaction, so that state
+is unreachable.
+
+**What it costs.** `runScmPgCommand` answers **503 `scm_pg_command_required`**
+where `DATABASE_URL` is absent. Deliberate: refusing is the honest failure when
+the alternative is half-writing a stock reversal.
+
+**Where the body lives.** In `deleteGrnLineCommandHandler`, above the route,
+which is now one line. Two tests anchor on that function name rather than on the
+route — `autocountWritebackCells.test.ts` for the outbox row and the retired-key
+read.
+
+**Proof.** `backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` drives real
+Postgres: commit leaves the line gone AND the request queued; a throw after the
+enqueue leaves **neither**; a throw before it leaves the line intact; and the
+queue stays a singleton across two deletes.
+
+**The other five GRN routes are unchanged** and still best-effort — header
+PATCH, line add, line edit, and the two create paths, with `postGrnHandler`
+deliberately last because it is the largest handler in the file. One PR each.
+`docs/ALLOCATION-DURABILITY-PLAN.md`.
+
 ## 8. Desktop and mobile files that must change together
 
 | Concern | Desktop | Mobile |
@@ -762,3 +796,26 @@ inventory: `docs/generated/`.
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

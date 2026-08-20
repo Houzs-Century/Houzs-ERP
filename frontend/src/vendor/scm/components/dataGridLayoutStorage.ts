@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 export type DataGridLayout = {
   order: string[];
   hidden: string[];
@@ -198,4 +199,34 @@ export function materializeDataGridLayout(
     hidden: columns.filter((c) => c.defaultHidden).map((c) => c.key),
     order: columns.map((c) => c.key),
   };
+}
+
+/* ── Company-scoped seeding ──────────────────────────────────────────────────
+   THE KEY MOVES AFTER MOUNT, which is why this is a hook and not a `useState`
+   initialiser at the call site. A grid's storage key is
+   `dg-<key>::c<company>`, and the active company is resolved AFTER first
+   paint: `adoptActiveCompanyForUser` runs when /auth/me returns and, on a tab
+   with no `?company=` seed, flips it from null to the user's durable pick and
+   emits. A one-shot initialiser therefore READ the unscoped key — usually
+   empty, i.e. default columns — while every later WRITE went to the scoped
+   one. Nothing was lost; the arrangement sat under a key nothing read back,
+   which reads as "the layout resets itself every time I open the page"
+   (owner, 2026-08-19, on Delivery Planning).
+
+   Re-reads ONLY when the key genuinely changes, so an edit made under the
+   current key is never clobbered by a re-render. Tested in
+   DataGridLayoutCompanyKey.test.tsx, including that guard. */
+export function useCompanyScopedDataGridLayout(
+  scopedStorageKey: string,
+  legacyStorageKey: string | undefined,
+): [DataGridLayout, React.Dispatch<React.SetStateAction<DataGridLayout>>] {
+  const [layout, setLayout] = useState<DataGridLayout>(
+    () => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+  const readFor = useRef(scopedStorageKey);
+  useEffect(() => {
+    if (readFor.current === scopedStorageKey) return;
+    readFor.current = scopedStorageKey;
+    setLayout(readDataGridLayout(scopedStorageKey, legacyStorageKey));
+  }, [scopedStorageKey, legacyStorageKey]);
+  return [layout, setLayout];
 }

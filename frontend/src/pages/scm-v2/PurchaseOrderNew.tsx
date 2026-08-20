@@ -51,6 +51,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -675,7 +676,16 @@ export const PurchaseOrderNew = () => {
       create.mutate(
         confirmOverConvert ? { ...basePayload, confirmOverConvert } : basePayload,
         {
-          onSuccess: (res) => navigate(`/scm/purchase-orders/${res.id}`),
+          onSuccess: async (res) => {
+            /* THE ACCOUNTS MAY HAVE REFUSED IT, and nothing said so before
+               2026-08-19: the reason went into a queue behind a permission key
+               buyers do not hold. BEFORE the navigation, so the page change
+               cannot swallow it. Never blocks — the order exists and the remedy
+               (a creditor code, a duplicate item to retire) is master data this
+               buyer does not own. */
+            await notifyAcNotSent(notify, res, 'Purchase order');
+            navigate(`/scm/purchase-orders/${res.id}`);
+          },
           onError: async (err) => {
             const e = err as { status?: number; body?: string } | null;
             if (

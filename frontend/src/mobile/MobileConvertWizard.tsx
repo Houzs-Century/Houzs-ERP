@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateConvertShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fmtSen } from "../lib/scm";
@@ -97,6 +98,16 @@ const pick = (row: any, ...keys: string[]) => {
   return undefined;
 };
 const str = (v: unknown): string => (v == null ? "" : String(v));
+/** The line's live variant summary — the SAME shared buildVariantSummary the
+ *  desktop pickers render through VariantDescription, so a sofa module reads
+ *  identically on the phone and on the desk ("BF-01 / SEAT 24 / LEG 6\"").
+ *  Dual-reads itemGroup/item_group and variants/… through `pick` like every
+ *  other field here. Returns '' when the line carries no variants. */
+const variantLineOf = (row: unknown): string =>
+  buildVariantSummary(
+    str(pick(row, "itemGroup", "item_group")) || null,
+    (pick(row, "variants") as Record<string, unknown> | undefined) ?? null,
+  );
 /** Clamp a typed qty to 1..max integer (guards NaN / out-of-range). */
 const clampQty = (raw: string, max: number): number => {
   const n = Math.floor(Number(String(raw).replace(/[^\d.]/g, "")));
@@ -120,12 +131,21 @@ type PoListRow = {
 };
 
 // ── Convertible-line shapes (from the remaining GETs) ────────────────────────
+/* itemGroup + variants ride on ALL FOUR of these reads already — they are not a
+   new request. Verified against the handlers, not against a payload type:
+     · deliverable-so-lines  → soDeliverableRemaining, routes/delivery-orders-mfg.ts:2258 (itemGroup) / :2266 (variants)
+     · invoiceable-do-lines  → doLineRemaining,        lib/do-line-remaining.ts:292 (itemGroup) / :303 (variants)
+     · outstanding-so-items  → routes/mfg-purchase-orders.ts:694 (itemGroup) / :699 (variants)
+     · outstanding-po-items  → lib/outstanding-po-lines.ts:418 (variants)
+   The mobile wizard simply threw them away at the map. */
 type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
+  itemGroup: string | null; variants: unknown;
   qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
+  itemGroup: string | null; variants: unknown;
   remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 // SO→PO — the OUTSTANDING axis (qty − po_qty_picked + sofa MRP rollup), from
@@ -135,6 +155,7 @@ type DoInvoiceableLine = {
 // picked SO's doc_no client-side.
 type OutstandingSoLine = {
   soItemId: string; soDocNo: string; itemCode: string; description: string | null;
+  itemGroup: string | null; variants: unknown;
   qty: number; poQtyPicked: number; remainingQty: number; unitPriceSen: number;
 };
 // GRN — outstanding PO lines (qty − received_qty > 0) from
@@ -169,6 +190,15 @@ type GrnPickLine = {
 type PickLine = {
   lineId: string;        // soItemId | doItemId
   label: string;         // item code / description
+  /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+     A sofa model decomposes into modules that share a name, so `label` alone
+     renders three identical-looking rows and the operator cannot tell which one
+     he is converting. This is the SAME live buildVariantSummary string the
+     desktop pickers render through VariantDescription — computed at map time so
+     the row render stays pure. Empty ('') on a line with no variants, and the
+     row then omits the line entirely (mobile convention, see
+     MobileModuleDetail.tsx:491 — no "Standard" filler on a phone). */
+  variantLine: string;
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
   unitPriceSen: number;
@@ -321,6 +351,7 @@ export function MobileConvertWizard({
           .map<PickLine>((l) => ({
             lineId: l.soItemId,
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+            variantLine: variantLineOf(l),
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
             unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -335,6 +366,7 @@ export function MobileConvertWizard({
         return (res.lines ?? []).map<PickLine>((l) => ({
           lineId: l.soItemId,
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+          variantLine: variantLineOf(l),
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
           unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -351,6 +383,7 @@ export function MobileConvertWizard({
       return (res.lines ?? []).map<PickLine>((l) => ({
         lineId: l.doItemId,
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+        variantLine: variantLineOf(l),
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
         unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -862,6 +895,13 @@ function LinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
+                  {/* Owner rule 2026-08-19 — the variant summary, so three sofa
+                      modules under one model name are three DIFFERENT rows on
+                      the phone too. Wraps (no ellipsis): a truncated
+                      "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
+                  {l.variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{l.variantLine}</span>
+                  )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
                     Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
@@ -961,6 +1001,7 @@ function GrnLinesStep({
           const ofQty = l.origQty > 0 ? l.origQty : l.remaining;
           const dec = () => onSetLine(l.poItemId, { qty: String(Math.max(1, qtyNum - 1)) });
           const inc = () => onSetLine(l.poItemId, { qty: String(clampQty(String(qtyNum + 1), l.remaining)) });
+          const variantLine = variantLineOf(l);
           return (
             <div key={l.poItemId} className="card" style={{ padding: "11px 12px", borderColor: l.checked ? "var(--teal)" : undefined }}>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
@@ -972,6 +1013,14 @@ function GrnLinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
+                  {/* Owner rule 2026-08-19 — RECEIVING is where getting the
+                      module wrong costs the most: the stock lands under a code
+                      whose variants nobody checked. GrnPickLine already carried
+                      itemGroup + variants (they are needed to CREATE the GRN
+                      line); only the render was missing them. */}
+                  {variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{variantLine}</span>
+                  )}
                   {l.supplierSku && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       Supplier SKU: {l.supplierSku}

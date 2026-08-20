@@ -37,6 +37,7 @@ import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po
 import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
+import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -637,17 +638,17 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
      grid can show it (and the user sees which lines are even convertible — an
      unbound SKU can't be PO'd). One batched query over the distinct codes;
      prefer is_main_supplier, else first binding. */
-  const skuCodes = [...new Set(((items ?? []) as unknown as Row[]).map((r) => r.item_code).filter(Boolean))];
+  const skuCodes = [...new Set(((items ?? []) as unknown as Row[]).map((r) => r.item_code).filter(Boolean))] as string[];
   const mainSupplierByCode = new Map<string, { code: string; name: string }>();
   if (skuCodes.length > 0) {
-    const { data: binds } = await supabase
-      .from('supplier_material_bindings')
-      .select('item_code, is_main_supplier, supplier:suppliers(code, name)')
-      .eq('material_kind', 'mfg_product')
-      .in('item_code', skuCodes)
-      .eq('company_id', activeCompanyId(c))
-      .order('is_main_supplier', { ascending: false });
-    for (const b of (binds ?? []) as Array<{ item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
+    /* CHUNKED + PAGED — lib/supplier-bindings.ts. Un-chunked over every code in the
+       picker, a binding past the 1,000-row cap showed "— none —" for a bound SKU. */
+    type PickerBind = { item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
+    const { data: binds } = await readMfgProductBindings<PickerBind>(supabase, {
+      codes: skuCodes, companyId: activeCompanyId(c),
+      select: 'item_code, is_main_supplier, supplier:suppliers(code, name)',
+    });
+    for (const b of binds) {
       if (mainSupplierByCode.has(b.item_code)) continue;
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (s) mainSupplierByCode.set(b.item_code, { code: s.code, name: s.name });
@@ -1410,15 +1411,16 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      flag is off, which is how it ships. NOT for a DRAFT PO — it is
      reference-only until confirmed (the same reason recomputeSoPicked skips
      it above); PATCH /:id/confirm queues it. */
-  if (!asDraft) {
-    await enqueuePoCreate(supabase, {
-      companyId: activeCompanyId(c),
-      poId: header.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  /* AND IT SAYS SO WHEN THE ACCOUNTS WILL NOT TAKE IT. The compose runs HERE,
+     in this request; it used to end in a skipped row and a bare 201. Never a
+     422 — lib/ac-preflight.ts holds the block-or-warn ruling and its reason. */
+  const acNotSent = asDraft ? [] : (await enqueuePoCreate(supabase, {
+    companyId: activeCompanyId(c),
+    poId: header.id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  })).problems;
 
-  return c.json({ id: header.id, poNumber: header.po_number }, 201);
+  return c.json({ id: header.id, poNumber: header.po_number, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 };
 mfgPurchaseOrders.post('/', createMfgPurchaseOrderHandler);
 
@@ -1829,14 +1831,17 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // Phase 3 (2026-05-29) — also load price_matrix so the PO line cost can
   // auto-price from the supplier's own per-category price table.
   const codes = [...new Set(soItems.map((it) => it.itemCode))];
-  const { data: bindings } = await supabase
-    .from('supplier_material_bindings')
-    .select('item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix')
-    .in('item_code', codes)
-    .eq('material_kind', 'mfg_product')
-    .eq('company_id', activeCompanyId(c))
-    .order('is_main_supplier', { ascending: false });
-
+  type MainBindingRow = {
+    item_code: string; supplier_id: string; supplier_sku: string;
+    unit_price_sen: number; currency: string; price_matrix: Record<string, unknown> | null;
+  };
+  /* CHUNKED + PAGED — lib/supplier-bindings.ts. `is_main_supplier DESC` kept the
+     MAINS in page one, so an un-paged read lost the ALTERNATES — what the MRP
+     dropdown sends — and the PO went to the main supplier, at its price, silently. */
+  const { data: bindings } = await readMfgProductBindings<MainBindingRow>(supabase, {
+    codes, companyId: activeCompanyId(c),
+    select: 'item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix, is_main_supplier',
+  });
   /* Commander 2026-05-29 — drop ORPHANED bindings (supplier was deleted but the
      binding row survived, e.g. after a supplier reset). An orphan would slip a
      dead supplier_id into the PO insert → FK violation → silent 0-PO "success".
@@ -1884,11 +1889,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
      BY). Orphaned bindings (deleted supplier) are skipped.
      Phase 3 (2026-05-29) — the binding also carries price_matrix so the PO line
      cost can auto-price from the supplier's own per-category price table. */
-  type MainBinding = {
-    item_code: string; supplier_id: string; supplier_sku: string;
-    unit_price_sen: number; currency: string;
-    price_matrix: Record<string, unknown> | null;
-  };
+
   /* Commander 2026-05-31 — per-pick supplier support. A single SKU can now be
      split across suppliers within one convert (MRP per-line supplierId), so a
      single "main binding per code" is no longer enough to cost / group a line.
@@ -1898,9 +1899,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        • bindingByCodeSupplier (`code|supplierId`) — every live binding, so a
          line bound to a specific effective supplier can resolve ITS binding
          (sku, price_matrix, currency) for costing + grouping. */
-  const mainByCode = new Map<string, MainBinding>();
-  const bindingByCodeSupplier = new Map<string, MainBinding>();
-  for (const b of (bindings ?? []) as MainBinding[]) {
+  const mainByCode = new Map<string, MainBindingRow>();
+  const bindingByCodeSupplier = new Map<string, MainBindingRow>();
+  for (const b of bindings) {
     if (!liveSupplierIds.has(b.supplier_id)) continue; // orphaned binding — skip
     bindingByCodeSupplier.set(`${b.item_code}|${b.supplier_id}`, b);
     const override = supplierByCode[b.item_code];
@@ -1922,7 +1923,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
      missing_bindings). If a per-pick/override supplier is named but has no live
      binding for this SKU, fall back to main so the convert still produces a PO
      against a valid supplier rather than silently dropping the line. */
-  const effectiveBindingFor = (it: { itemCode: string; pickSupplierId: string | null }): MainBinding | null => {
+  const effectiveBindingFor = (it: { itemCode: string; pickSupplierId: string | null }): MainBindingRow | null => {
     const chosen = it.pickSupplierId ?? supplierByCode[it.itemCode] ?? null;
     if (chosen) {
       const exact = bindingByCodeSupplier.get(`${it.itemCode}|${chosen}`);
@@ -2459,18 +2460,17 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        to become a draft that `asDraft` does not describe: a bucket whose SO line
        resolved no warehouse is forced to DRAFT above (owner 2026-08-02).
        Re-deriving the condition would have queued exactly those. */
-    if (headerPayload.status !== 'DRAFT') {
-      await enqueuePoCreate(supabase, {
-        companyId: activeCompanyId(c),
-        poId: header.id,
-        /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
-           SCM bridge gives every caller, and created_by here is a bigint staff
-           id. Undefined on the headless MRP-agent path, which degrades to an
-           unattributed row exactly as recordPoCreate does. */
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
-    created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length });
+    const acNotSent = headerPayload.status === 'DRAFT' ? [] : (await enqueuePoCreate(supabase, {
+      companyId: activeCompanyId(c),
+      poId: header.id,
+      /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
+         SCM bridge gives every caller, and created_by here is a bigint staff
+         id. Undefined on the headless MRP-agent path, which degrades to an
+         unattributed row exactly as recordPoCreate does. */
+      createdBy: c.get('houzsUser')?.id ?? null,
+    })).problems;
+    /* PER PO: this route raises several, and WHICH one is refused is the point. */
+    created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length, ...(acNotSent.length ? { acNotSent } : {}) });
   }
 
   // Recount po_qty_picked from the live PO lines for every SO line we picked,
@@ -3878,13 +3878,13 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   };
   const bindByCode = new Map<string, BindLite>();
   if (codesToPrice.length > 0) {
-    const { data: binds } = await sb
-      .from('supplier_material_bindings')
-      .select('item_code, supplier_sku, unit_price_sen, price_matrix')
-      .eq('supplier_id', po.supplier_id)
-      .eq('material_kind', 'mfg_product')
-      .in('item_code', codesToPrice);
-    for (const b of (binds ?? []) as BindLite[]) {
+    const { data: binds } = await readMfgProductBindings<BindLite>(sb, {   // same reader
+      codes: codesToPrice as string[],
+      companyId: activeCompanyId(c),
+      select: 'item_code, supplier_sku, unit_price_sen, price_matrix, is_main_supplier',
+      supplierId: po.supplier_id as string,
+    });
+    for (const b of binds) {
       if (!bindByCode.has(b.item_code)) bindByCode.set(b.item_code, b);
     }
   }
@@ -4118,13 +4118,13 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
   /* The draft just became a real order — this is the moment it belongs in
      AutoCount. enqueuePoCreate refuses a PO that already has an AutoCount
      counterpart, so a re-entered confirm cannot duplicate it. */
-  await enqueuePoCreate(supabase, {
+  const { problems: acNotSent } = await enqueuePoCreate(supabase, {
     companyId: co.companyId,
     poId: id,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
+  return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' }, ...(acNotSent.length ? { acNotSent } : {}) });
 };
 mfgPurchaseOrders.patch('/:id/confirm', confirmMfgPurchaseOrderHandler);
 
