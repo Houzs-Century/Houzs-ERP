@@ -437,7 +437,7 @@ Related routes elsewhere:
   permission still needs a bell). Scoped by COMPANY only
   (`allowedCompanyIds`); the former `getProjectScope` PIC/brand filter was
   removed 2026-08-19 (Axis 2).
-- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+- `backend/src/routes/events.ts` [gone] — **deleted on main** (`45d73689`: no frontend,
   ungrantable permissions, PMS covers it). It was the manual setup/dismantle
   calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
   calendar. Kept here because the absence is the fact worth knowing.
@@ -640,7 +640,7 @@ in this change — exported `getProjectScope` / `canSeeProject` /
 Sales rep to projects where they (or their manager) were the PIC AND whose brand
 sat in their `user_brands` list.
 
-That whole file (`backend/src/services/projectAcl.ts`) and every predicate that
+That whole file (`backend/src/services/projectAcl.ts` [gone]) and every predicate that
 keyed off it were **deleted / removed**. Within a company, **any user with the
 projects page permission now sees EVERY one of that company's projects**,
 regardless of PIC or brand. Row visibility is governed only by:

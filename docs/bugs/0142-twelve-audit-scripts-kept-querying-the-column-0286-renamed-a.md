@@ -48,7 +48,7 @@ current spellings **and** legacy; the probe counts only columns the catalog
 proved are there and names which one it counted.
 
 **Why the new test walks the directory.** `tests/soProcessingDateOneName.test.mjs`
-is `node:test`, run by `npm run test:scale-contract`, and it reads
+is `node:test`, run by `npm run test:scale-contract` [gone], and it reads
 `backend/scripts` off disk — so a script written tomorrow is covered by code
 that already exists. Comments are stripped before matching: the rename is a
 story worth telling, and `unify-processing-date.mjs` quotes the owner naming the

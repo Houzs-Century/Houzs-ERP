@@ -135,7 +135,7 @@ triggers — Hookka had to move crons to GitHub Actions).
 - Hookka audit (file-level): see session notes 2026-06-13; key files:
   src/lib/cached-fetch.ts, src/components/ui/data-grid.tsx,
   src/components/layout/global-search.tsx, src/api/lib/observability.ts,
-  scripts/apply-postgres-migrations-incremental.mjs,
+  scripts/apply-postgres-migrations-incremental.mjs [external],
   scripts/check-bundle-size.mjs, migrations-postgres/0150.
 - TanStack Query practices: tanstack.com/query, tanstackship.com
 - Postgres search: supabase.com/blog/postgres-full-text-search-vs-the-rest,

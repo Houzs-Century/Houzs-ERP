@@ -75,6 +75,6 @@ states what it wants and the response states what it got.
 unchanged), `frontend/src/vendor/scm/lib/mrp-queries.ts` (always send the flag),
 `frontend/src/pages/scm-v2/Mrp.tsx` (two-state banner, `DeliveryCell` No-date
 tag), `backend/src/scm/routes/mrp.test.ts`,
-`frontend/src/pages/scm-v2/mrpUndatedBanner.test.tsx`, `docs/modules/mrp.md`,
+`frontend/src/pages/scm-v2/mrpUndatedBanner.test.tsx` [gone], `docs/modules/mrp.md`,
 and four probe/audit scripts whose printed notices still described the old
 default.
