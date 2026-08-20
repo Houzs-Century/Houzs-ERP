@@ -114,30 +114,30 @@ const completenessProblem = (
  *  IT ASKS meetsDepositGate ITSELF, and that is the load-bearing line. A free
  *  order (total <= 0) is vacuously met there, so this returns null and no
  *  deposit sentence can reach the operator — the 2026-08-17 failure was a
- *  zero-total order being told about a deposit it did not owe. A `totalCenti > 0`
+ *  zero-total order being told about a deposit it did not owe. A `totalSen > 0`
  *  guard here would read the same today and drift the moment the threshold rule
  *  grows a branch; delegating cannot drift.
  *
- *  Both amounts are CENTI (the server ledger's unit): unlike the ratio-only
+ *  Both amounts are SEN (the server ledger's unit): unlike the ratio-only
  *  `paid`/`total` on ProceedGateInput, these are printed, so the unit is fixed. */
 const depositProblem = (
-  paidCenti: number,
-  totalCenti: number,
+  paidSen: number,
+  totalSen: number,
   companyCode: string | null | undefined,
   act: GateAct,
 ): SaveProblem | null => {
-  if (meetsDepositGate(paidCenti, totalCenti, companyCode)) return null;
+  if (meetsDepositGate(paidSen, totalSen, companyCode)) return null;
   /* Per company (owner 2026-07-31: Houzs 30%, 2990 50%). The threshold is read
      ONCE and used for the percentage in the message and the amount in the
      message — a 2990 operator refused at 50% must not be told "30%", which is
      what a hard-coded constant here would print. */
   const threshold = processingDateThresholdFor(companyCode);
   const pct = Math.round(threshold * 100);
-  const neededCenti = Math.ceil(totalCenti * threshold);
+  const neededSen = Math.ceil(totalSen * threshold);
   return {
     code: 'processing_date_unpaid',
     // fmtRM takes whole-MYR — the ledger is centi, so divide by 100.
-    message: `Deposit ${fmtRM(Math.round(paidCenti / 100))} of ${fmtRM(Math.round(neededCenti / 100))} needed (${pct}%) ${ACT_CLAUSE[act]}`,
+    message: `Deposit ${fmtRM(Math.round(paidSen / 100))} of ${fmtRM(Math.round(neededSen / 100))} needed (${pct}%) ${ACT_CLAUSE[act]}`,
     field: 'Deposit',
   };
 };
@@ -170,7 +170,7 @@ export type ProcessingGateFacts = {
    *  server). Omit / null when the gate doesn't apply on this path (the
    *  consignment mirror has no deposit gate). The shortfall is reported only
    *  when a processing date is actually being set. */
-  deposit?: { paidCenti: number; totalCenti: number } | null;
+  deposit?: { paidSen: number; totalSen: number } | null;
   /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
    *  falls back to the looser 30%; see processingDateThresholdFor. */
   companyCode?: string | null;
@@ -260,8 +260,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   //    (meetsDepositGate) — one deposit rule, since setting the date IS
   //    proceeding. Only fires when a date is actually being set.
   if (facts.deposit && facts.procDate) {
-    const { paidCenti, totalCenti } = facts.deposit;
-    const shortfall = depositProblem(paidCenti, totalCenti, facts.companyCode, 'processing_date');
+    const { paidSen, totalSen } = facts.deposit;
+    const shortfall = depositProblem(paidSen, totalSen, facts.companyCode, 'processing_date');
     if (shortfall) out.push(shortfall);
   }
 
@@ -377,10 +377,10 @@ export type ProceedGateFacts = {
   hasPostcode: boolean;
   hasDeliveryDate: boolean;
   /** Deposit collected so far, in centi. */
-  paidCenti: number;
+  paidSen: number;
   /** Order total, in centi. <= 0 (a free order) means nothing to collect, and
    *  no deposit problem is ever emitted for it. */
-  totalCenti: number;
+  totalSen: number;
   /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
    *  falls back to the looser 30%; see processingDateThresholdFor. */
   companyCode?: string | null;
@@ -399,8 +399,8 @@ export function collectProceedGateProblems(f: ProceedGateFacts): SaveProblem[] {
     hasAddress: f.hasAddress,
     hasPostcode: f.hasPostcode,
     hasDeliveryDate: f.hasDeliveryDate,
-    paid: f.paidCenti,
-    total: f.totalCenti,
+    paid: f.paidSen,
+    total: f.totalSen,
     companyCode: f.companyCode,
   });
   for (const cond of failures) {
@@ -412,7 +412,7 @@ export function collectProceedGateProblems(f: ProceedGateFacts): SaveProblem[] {
        meetsDepositGate the same question with the same arguments. The guard
        keeps the type honest without inventing a sentence — a null here would
        mean the two disagreed, and silence beats a made-up amount. */
-    const shortfall = depositProblem(f.paidCenti, f.totalCenti, f.companyCode, 'proceed');
+    const shortfall = depositProblem(f.paidSen, f.totalSen, f.companyCode, 'proceed');
     if (shortfall) out.push(shortfall);
   }
   return out;

@@ -62,6 +62,7 @@ import {
 import {
   useSalesInvoiceDetail,
   useUpdateSalesInvoiceStatus,
+  useUpdateSalesInvoiceHeader,
   useSalesInvoicePayments,
   useAddSalesInvoicePayment,
   useDeleteSalesInvoicePayment,
@@ -69,6 +70,7 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { useSiRelationshipMap } from "./sales-doc-relationship-map";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import {
@@ -85,7 +87,7 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
@@ -137,25 +139,25 @@ type SiHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
-  total_centi: number;
-  paid_centi: number;
+  local_total_sen: number;
+  total_sen: number;
+  paid_sen: number;
   line_count: number;
   currency: string;
   // Finance-gated cost / margin fields (served on the detail payload; shown only
   // to a project_finance_viewer — same rule as the SI list columns, #574).
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number | null;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number | null;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -166,10 +168,10 @@ type SiItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
-  unit_cost_centi?: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
+  unit_cost_sen?: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -180,7 +182,7 @@ type SiItem = {
 /* ONE shared centi formatter (vendor/shared/format.ts) — the page-local copy
    this replaces had no finite guard, so an absent / non-numeric cost rendered
    the literal "MYR NaN"; the shared helper renders "—" instead. */
-const fmtMoney = fmtMoneyCenti;
+const fmtMoney = fmtMoneySen;
 
 // Days between today and an ISO date; positive when the date is in the past.
 // Only used for the due-date overdue check, so time-of-day noise is fine.
@@ -214,10 +216,10 @@ const brandOf = (h: SiHeader): string => h.branding || "—";
 // exist for display. If for any reason the header total is 0 while the lines
 // aren't, fall back to the line sum so the drawer never lies.
 const totalOf = (h: SiHeader, items: SiItem[]): number =>
-  h.total_centi || h.local_total_centi || items.reduce((s, l) => s + (l.line_total_centi ?? 0), 0);
+  h.total_sen || h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
 const outstandingOf = (h: SiHeader, items: SiItem[]): number =>
-  Math.max(0, totalOf(h, items) - (h.paid_centi ?? 0));
+  Math.max(0, totalOf(h, items) - (h.paid_sen ?? 0));
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
@@ -225,7 +227,7 @@ const effectiveOf = (h: SiHeader, items: SiItem[]): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
   if (s === "PAID" || outstandingOf(h, items) === 0) return "paid";
-  if (s === "PARTIALLY_PAID" || (h.paid_centi ?? 0) > 0) return "partial";
+  if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
   if (s === "OVERDUE") return "overdue";
   if (s === "DRAFT") return "draft";
   // Sent + anything else with no payment yet.
@@ -446,7 +448,7 @@ function OutstandingHeroCard({
   const eff = effectiveOf(header, items);
   const t = EFFECTIVE_TONE[eff];
   const total = totalOf(header, items);
-  const paid = header.paid_centi ?? 0;
+  const paid = header.paid_sen ?? 0;
   const outstanding = outstandingOf(header, items);
   const isPaid = outstanding === 0;
   return (
@@ -568,6 +570,21 @@ export function SalesInvoiceDetailV2() {
   const [savingPayments, setSavingPayments] = useState(false);
   const paymentsSectionRef = useRef<HTMLDivElement | null>(null);
 
+  // ── Header-only edit (owner 2026-08-20) ──────────────────────────────────
+  // An SI's LINES are read-only — they are what the Delivery Order actually
+  // shipped (industry standard: an invoice's lines are locked to the delivery).
+  // The "Edit" button used to navigate to a dead ?edit=1 that nothing consumed.
+  // It now opens an inline HEADER editor: invoice date (only while DRAFT — the
+  // backend freezes it once issued, SI_ISSUED_FROZEN_FIELDS), due date and notes.
+  // Payments are edited in their own inline editor below; nothing here touches a
+  // line or a variant.
+  const updateHeader = useUpdateSalesInvoiceHeader();
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [hdrInvoiceDate, setHdrInvoiceDate] = useState("");
+  const [hdrDueDate, setHdrDueDate] = useState("");
+  const [hdrNotes, setHdrNotes] = useState("");
+  const headerSectionRef = useRef<HTMLDivElement | null>(null);
+
   const salesInvoice =
     (detail.data as { salesInvoice?: SiHeader } | undefined)?.salesInvoice ??
     null;
@@ -599,7 +616,7 @@ export function SalesInvoiceDetailV2() {
         merchantProvider: p.merchant_provider ?? "",
         installmentMonthsLabel: installmentLabel,
         onlineType: p.online_type ?? "",
-        amountCenti: p.amount_centi,
+        amountSen: p.amount_sen,
         accountSheet: p.account_sheet ?? "",
         approvalCode: p.approval_code ?? "",
         collectedBy: p.collected_by ?? "",
@@ -657,7 +674,7 @@ export function SalesInvoiceDetailV2() {
 
   const total = salesInvoice ? totalOf(salesInvoice, items) : 0;
   const outstanding = salesInvoice ? outstandingOf(salesInvoice, items) : 0;
-  const paid = salesInvoice?.paid_centi ?? 0;
+  const paid = salesInvoice?.paid_sen ?? 0;
 
   const overdueDays = salesInvoice ? daysPast(salesInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
@@ -667,7 +684,40 @@ export function SalesInvoiceDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/sales-invoices"));
-  const goEdit = () => id && navigate(`/scm/sales-invoices/${id}?edit=1`);
+  // Header-only edit — seed the drafts from the invoice and reveal the inline
+  // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
+  // while DRAFT; the backend rejects it once issued.
+  const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
+  const startEditHeader = () => {
+    if (!salesInvoice) return;
+    setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));
+    setHdrDueDate((salesInvoice.due_date ?? "").slice(0, 10));
+    setHdrNotes(salesInvoice.note ?? salesInvoice.notes ?? "");
+    setEditingHeader(true);
+    setTimeout(() => headerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  };
+  const cancelEditHeader = () => setEditingHeader(false);
+  const saveEditHeader = () => {
+    if (!id || !salesInvoice) return;
+    const body: Record<string, unknown> = {
+      dueDate: hdrDueDate || null,
+      notes: hdrNotes,
+    };
+    // Only send invoice date when it may change (DRAFT) — the backend freezes it
+    // once issued and rejects the whole PATCH if a frozen field is present.
+    if (siIsDraft) body.invoiceDate = hdrInvoiceDate || null;
+    updateHeader.mutate(
+      { id, ...body },
+      {
+        onSuccess: () => {
+          setEditingHeader(false);
+          void notify({ title: "Invoice updated", tone: "info" });
+        },
+        onError: (err) =>
+          notify({ title: "Update failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }),
+      },
+    );
+  };
   // Status transitions post to the same server endpoint the ledger page uses.
   // The endpoint keys off UPPERCASE status values (SENT / CANCELLED / PAID) — a
   // lowercase value silently misroutes (e.g. cancel would write "cancelled" and
@@ -815,13 +865,13 @@ export function SalesInvoiceDetailV2() {
       await deletePayment.mutateAsync({ id: salesInvoice.id, paymentId });
     }
     for (const d of plan.draftsToPost) {
-      if (d.amountCenti <= 0) continue;
+      if (d.amountSen <= 0) continue;
       const { method } = labelToApi(d.methodLabel);
       const body: { id: string } & Record<string, unknown> = {
         id: salesInvoice.id,
         paidAt: d.paidAt,
         method,
-        amountCenti: d.amountCenti,
+        amountSen: d.amountSen,
         accountSheet: d.accountSheet || null,
         approvalCode: d.approvalCode || null,
         collectedBy: d.collectedBy || null,
@@ -927,10 +977,10 @@ export function SalesInvoiceDetailV2() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, salesInvoice?.currency)}
+          {fmtMoney(l.unit_price_sen, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -939,10 +989,10 @@ export function SalesInvoiceDetailV2() {
       label: "Disc",
       width: "88px",
       align: "right",
-      getValue: (l) => l.discount_centi,
+      getValue: (l) => l.discount_sen,
       render: (l) => {
         const isFoc =
-          l.unit_price_centi === 0 && (l.line_total_centi ?? 0) === 0;
+          l.unit_price_sen === 0 && (l.line_total_sen ?? 0) === 0;
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">
@@ -950,10 +1000,10 @@ export function SalesInvoiceDetailV2() {
             </Badge>
           );
         }
-        if (l.discount_centi > 0) {
+        if (l.discount_sen > 0) {
           return (
             <span className="font-money text-[13px] text-ink-secondary">
-              {fmtMoney(l.discount_centi, salesInvoice?.currency)}
+              {fmtMoney(l.discount_sen, salesInvoice?.currency)}
             </span>
           );
         }
@@ -965,10 +1015,10 @@ export function SalesInvoiceDetailV2() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_centi ?? 0, salesInvoice?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -1203,7 +1253,7 @@ export function SalesInvoiceDetailV2() {
               <Button
                 variant="primary"
                 icon={<Edit3 size={14} />}
-                onClick={goEdit}
+                onClick={startEditHeader}
               >
                 Edit
               </Button>
@@ -1214,6 +1264,50 @@ export function SalesInvoiceDetailV2() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
+        {/* Header-only edit panel (owner 2026-08-20). Lines stay read-only — an
+            invoice's lines are what the DO shipped. Only invoice date (DRAFT
+            only), due date and notes are editable here. */}
+        {editingHeader && (
+          <div ref={headerSectionRef} className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-stone">
+            <div className="mb-3 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+              Edit invoice header
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">
+                  Invoice date{!siIsDraft && <span className="italic"> (locked once issued)</span>}
+                </span>
+                <DateField
+                  fullWidth
+                  value={hdrInvoiceDate}
+                  disabled={!siIsDraft}
+                  onChange={(iso) => setHdrInvoiceDate(iso)}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">Due date</span>
+                <DateField fullWidth value={hdrDueDate} onChange={(iso) => setHdrDueDate(iso)} />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-3">
+                <span className="text-[12px] text-ink-muted">Notes</span>
+                <textarea
+                  value={hdrNotes}
+                  rows={2}
+                  onChange={(e) => setHdrNotes(e.target.value)}
+                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px]"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Button variant="primary" icon={<Save size={14} />} onClick={saveEditHeader} disabled={updateHeader.isPending}>
+                {updateHeader.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="ghost" onClick={cancelEditHeader} disabled={updateHeader.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Mobile-only Outstanding hero — sits at the top of the scroll body.
             On md+ the dark aside hero replaces this. */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
@@ -1508,7 +1602,7 @@ export function SalesInvoiceDetailV2() {
                     docNo={null}
                     payments={editingPayments ? paymentDrafts : persistedDrafts}
                     onChange={setPaymentDrafts}
-                    grandTotalCenti={total}
+                    grandTotalSen={total}
                     currency={salesInvoice.currency}
                     locked={!editingPayments || isCancelled}
                   />
@@ -1637,7 +1731,7 @@ export function SalesInvoiceDetailV2() {
             ) : (
               <button
                 type="button"
-                onClick={goEdit}
+                onClick={startEditHeader}
                 className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
               >
                 <Edit3 size={16} /> Edit

@@ -35,7 +35,7 @@ export type PostSiResult =
 export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<PostSiResult> {
   const { data: si, error } = await sb
     .from('sales_invoices')
-    .select('invoice_number, invoice_date, debtor_code, debtor_name, total_centi, company_id, migrated_no_stock')
+    .select('invoice_number, invoice_date, debtor_code, debtor_name, total_sen, company_id, migrated_no_stock')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !si) return { ok: false, status: 'invoice_not_found' };
@@ -52,7 +52,7 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
   // Multi-company (mig 0061): the JE + lines belong to the SI's company.
   const companyId = (si as { company_id?: number | null }).company_id ?? null;
 
-  const totalSen = Number(si.total_centi);
+  const totalSen = Number(si.total_sen);
   if (totalSen <= 0) return { ok: false, status: 'zero_total' };
 
   const roles = await resolveRoles(sb, companyId);
@@ -159,11 +159,11 @@ export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<R
      gone and voiding its JE is the existing, intended behaviour. */
   const { data: si, error: siErr } = await sb
     .from('sales_invoices')
-    .select('total_centi, status')
+    .select('total_sen, status')
     .eq('invoice_number', invoiceNumber)
     .maybeSingle();
   if (siErr) return { ok: false, status: 'resync_read_failed', reason: `si: ${siErr.message}` };
-  const newTotal = Number((si as { total_centi?: number } | null)?.total_centi ?? 0);
+  const newTotal = Number((si as { total_sen?: number } | null)?.total_sen ?? 0);
 
   /* A CANCELLED or DRAFT invoice must never (re)post revenue. CANCELLED: its JE
      was already reversed on cancel. DRAFT: it has not committed any revenue yet

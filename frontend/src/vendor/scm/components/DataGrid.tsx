@@ -35,7 +35,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { Search, Columns3, RotateCcw, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { isoForExport } from '../../shared/format'; // a date cell exports as ISO, never as displayed
 import { useDebouncedValue } from '../lib/hooks';
@@ -43,11 +43,12 @@ import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
 import {
   DEFAULT_DATA_GRID_LAYOUT,
-  type DataGridLayout,
+  type DataGridLayout, isSharedDataGridStorageKey,
   materializeDataGridLayout,
-  readDataGridLayout,
+  useCompanyScopedDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
+import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
@@ -67,7 +68,8 @@ import {
 import { shortCompanyName } from '../../../lib/branding';
 import { inferColumnGroup } from '../../../lib/columnGroups';
 import { withSingleActive, type LayoutPresetOption } from '../../../components/LayoutSection';
-import { ColumnsDrawer, type DrawerColumn } from '../../../components/ColumnsDrawer';
+import { ColumnsDrawer, ColumnsButton, type DrawerColumn } from '../../../components/ColumnsDrawer';
+import { ResetFiltersButton } from '../../../components/ResetFiltersButton';
 import styles from './DataGrid.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -389,11 +391,11 @@ function DataGridInner<T>({
     getActiveCompanySnapshot,
     getActiveCompanySnapshot,
   );
-  const scopedStorageKey = activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
-  // Pre-scoping (unscoped) key — read-only fallback so existing columns carry
-  // over on first load; scoped key owns writes, ending the cross-company bleed.
-  const legacyStorageKey = activeCompany != null ? storageKey : undefined;
-  const [storedLayout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+  // EXCEPTION: shared cross-company queue boards stay UNscoped — per-company slots forked ONE board's layout (owner 2026-08-19 "keeps resetting"; doctrine on SHARED_DATA_GRID_STORAGE_KEYS). Their read-only seed is the CURRENT company's slot (reverse migration); a scoped grid's is the pre-scoping key. Primary owns writes.
+  const sharedAcrossCompanies = isSharedDataGridStorageKey(storageKey);
+  const scopedStorageKey = !sharedAcrossCompanies && activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
+  const legacyStorageKey = activeCompany != null ? (sharedAcrossCompanies ? `${storageKey}::c${activeCompany}` : storageKey) : undefined;
+  const [storedLayout, setLayoutRaw] = useCompanyScopedDataGridLayout(scopedStorageKey, legacyStorageKey);
 
   /* ── Account-level layouts (lib/tableLayouts.ts) ──────────────────────────
      The same store the DataTable lists use, so this grid gets the same two
@@ -494,7 +496,7 @@ function DataGridInner<T>({
   /* The Columns popover is fixed-positioned (not absolute) so it escapes the
      grid card's `overflow: hidden`, which otherwise clips the dropdown when the
      card is short (few rows). Anchor it to the toolbar button's live rect. */
-  const columnsBtnRef = useRef<HTMLButtonElement>(null);
+  const columnsBtnRef = useRef<HTMLDivElement>(null);
   /* Ref on the drawer panel (kept for element queries; the old scroll-to-close
      guard is gone — the drawer is non-modal, see the close effect below). */
   const columnsMenuRef = useRef<HTMLDivElement>(null);
@@ -503,17 +505,16 @@ function DataGridInner<T>({
      writes, so the drawer and the header are two views of one order. */
   const [columnsMenuDragKey, setColumnsMenuDragKey] = useState<string | null>(null);
   const [columnsMenuOverKey, setColumnsMenuOverKey] = useState<string | null>(null);
-  /* Per-column value filter (Commander 2026-05-29 — "没有 drop-down 菜单让我
-     去做选择"). filters[colKey] = the set of allowed values; absent / empty =
-     no filter on that column. filterMenu anchors the open dropdown. */
-  const [filters, setFilters] = useState<Record<string, string[]>>({});
-  // Date-preset filters for `filterType: 'date'` columns (colKey → preset).
-  const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>({});
-  // Number range filters (`filterType: 'number'`): colKey → {min?, max?}.
-  const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>({});
-  // Custom date range (`filterType: 'date'`): colKey → {from?, to?} ISO. Sits
-  // alongside the preset (if both set, they AND together).
-  const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>({});
+  /* Per-column filters (Commander 2026-05-29): value sets, date presets,
+     number ranges, custom date ranges; filterMenu anchors the open dropdown.
+     PERSISTED per grid since 2026-08-19 (dataGridFilterStorage, keyed like the
+     layout blob) — DataTable's funnels have been a saved view since 2026-07-29,
+     while these cleared whenever opening a record replaced the workspace tab. */
+  const [filters, setFilters] = useState<Record<string, string[]>>(() => readDataGridFilters(scopedStorageKey).values);
+  const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>(() => readDataGridFilters(scopedStorageKey).dates as Record<string, DatePreset>);
+  const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>(() => readDataGridFilters(scopedStorageKey).numbers);
+  const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>(() => readDataGridFilters(scopedStorageKey).dateRanges);
+  useEffect(() => { writeDataGridFilters(scopedStorageKey, { values: filters, dates: dateFilters, numbers: numberFilters, dateRanges: dateRangeFilters }); }, [scopedStorageKey, filters, dateFilters, numberFilters, dateRangeFilters]);
   const [filterMenu, setFilterMenu] = useState<{ colKey: string; x: number; y: number } | null>(null);
   // Type-to-find text for `filterType: 'numbering'` (filters the value list).
   const [filterSearch, setFilterSearch] = useState('');
@@ -1362,7 +1363,8 @@ function DataGridInner<T>({
     const w = Math.max(60, Math.min(420, Math.round(max * 7.5 + 20)));
     setLayout((l) => ({ ...l, widths: { ...l.widths, [key]: w } }));
   };
-  const resetLayout = () => setLayout(() => ({ ...DEFAULT_DATA_GRID_LAYOUT }));
+  /* (The one-click whole-layout reset left with the footer button, 2026-08-19 —
+     column-layout resets live in the Columns drawer's Reset, like the SO list.) */
 
   /* ── Export to Excel (system-wide via DataGrid) ───────────────────────
      Exports exactly what the operator sees: the post-filter + post-search +
@@ -1664,11 +1666,25 @@ function DataGridInner<T>({
             </div>
           </div>
         )}
-        {/* SO-sample row/column caption beside the search (owner 2026-07-25:
-            Consignment Orders 要和 sales order 一样): "N rows · X of Y cols",
-            numbers in ink, labels muted — same composition as the DataTable
-            toolbar's. Data columns only (synthetic __expand__/__select__ are
-            not user-facing columns). */}
+        {/* "Reset layout" — the EXACT button the Sales Orders list carries in
+            this slot (owner 2026-08-19: "我要和Sales order一样的button和位置和
+            design"): the shared ResetFiltersButton, which clears the grid's
+            filters + search and hides itself while nothing is active. It
+            replaced both this grid's right-side "Clear filters" pill and the
+            old footer column-layout reset (column layout resets live in the
+            Columns drawer, same as the SO list). */}
+        {!embedded && (
+          <ResetFiltersButton
+            active={activeFilterChips.length > 0 || search.trim() !== ''}
+            onReset={() => { clearAllFilters(); setSearch(''); }}
+            label="Reset layout"
+          />
+        )}
+        {/* SO-sample row/column caption AFTER the reset button (owner
+            2026-08-19 position parity): "N rows · X of Y cols", numbers in
+            ink, labels muted — same composition as the DataTable toolbar's.
+            Data columns only (synthetic __expand__/__select__ are not
+            user-facing columns). */}
         {!embedded && (
           <span className={styles.rowColCaption}>
             <span className={styles.rowColNum}>{filteredRows.length.toLocaleString()}</span>
@@ -1681,26 +1697,6 @@ function DataGridInner<T>({
         )}
         {toolbar}
         <div className={styles.toolbarSpacer} />
-        {/* Clear-all-filters — appears only when ≥1 column filter is active.
-            Per-column funnels already highlight orange; this is the one-click
-            reset for the whole grid. Wei Siang 2026-06-04. */}
-        {activeFilterChips.length > 0 && (
-          <button
-            type="button"
-            className={styles.toolbarPill}
-            onClick={clearAllFilters}
-            title="Clear all column filters"
-          >
-            <Filter size={14} strokeWidth={1.75} aria-hidden style={{ color: 'var(--c-orange)' }} />
-            <span>Clear filters</span>
-            {/* Count every active filter kind, matching the chip row below —
-                the old value-filters-only count read "0" when a date or number
-                filter was the only one active. */}
-            <span className={styles.toolbarPillBadge}>
-              {activeFilterChips.length}
-            </span>
-          </button>
-        )}
         {/* Export Excel — exports the currently visible rows (post search +
             filter + sort) across the visible data columns. System-wide: every
             list rendered through DataGrid gets it for free. Wei Siang 2026-06-19. */}
@@ -1711,27 +1707,19 @@ function DataGridInner<T>({
           disabled={sortedRows.length === 0}
           title={sortedRows.length === 0 ? 'No rows to export' : 'Export the visible rows to Excel'}
         >
-          <Download size={14} strokeWidth={1.75} aria-hidden />
-          <span>Export Excel</span>
+          <Download size={13} strokeWidth={1.75} aria-hidden />
+          {/* "Export", not "Export Excel" — the SO list's label (2026-08-19). */}
+          <span>Export</span>
         </button>
-        <div className={styles.columnsAnchor}>
-          <button
-            ref={columnsBtnRef}
-            type="button"
-            className={`${styles.toolbarPill} ${columnsMenuOpen ? styles.toolbarPillOn : ''}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setColumnsMenuOpen((v) => {
-                return !v;
-              });
-            }}
-          >
-            <Columns3 size={14} strokeWidth={1.75} aria-hidden />
-            <span>Columns</span>
-            <span className={styles.toolbarPillBadge}>
-              {visibleColumns.length - (expandable ? 1 : 0)}/{columns.length}
-            </span>
-          </button>
+        <div className={styles.columnsAnchor} ref={columnsBtnRef}>
+          {/* The SAME ColumnsButton the DataTable toolbar renders (owner
+              2026-08-19 button parity) — "Columns · N", not a N/M badge pill. */}
+          <ColumnsButton
+            visibleCount={visibleColumns.filter((c) => !c.key.startsWith('__')).length}
+            totalCount={columns.length}
+            active={columnsMenuOpen}
+            onClick={() => setColumnsMenuOpen((v) => !v)}
+          />
           {columnsMenuOpen && (
             /* ONE columns panel for the whole app (owner 2026-08-02: 需要应用到
                全系统 column panel). This grid used to carry its own drawer —
@@ -1772,7 +1760,7 @@ function DataGridInner<T>({
           actually stacks one. */}
       {activeFilterChips.length > 0 && (
         <div className={styles.filterBar} data-filter-bar>
-          <span>Filtered by:</span>
+          <span className={styles.filterBarLabel}>Filtered by</span>
           {activeFilterChips.map((chip) => (
             <span key={chip.id} className={styles.groupChip} title={`${chip.label}: ${chip.summary}`}>
               <span className={styles.filterChipCol}>{chip.label}</span>
@@ -1932,10 +1920,9 @@ function DataGridInner<T>({
           "N of M rows / Reset layout" line reads as heavy chrome. */}
       {!embedded && (
         <div className={styles.statusLine}>
+          {/* Reset layout moved to the toolbar (2026-08-19) — the footer keeps
+              only the row count, like the SO list's pagination line. */}
           <span>{isLoading ? 'Loading…' : `${filteredRows.length} of ${rows.length} rows`}</span>
-          <span>
-            <button className={styles.tbarBtn} onClick={resetLayout} title="Reset column layout">Reset layout</button>
-          </span>
         </div>
       )}
 

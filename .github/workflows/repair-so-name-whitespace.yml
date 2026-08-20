@@ -1,0 +1,49 @@
+name: Repair SO name whitespace
+
+# Trims stray leading/trailing spaces off sales-order `agent` (salesperson
+# display name) and `debtor_code`. Defaults to PLAN — it reports and changes
+# nothing unless you set mode=apply AND confirm=trim-so-whitespace.
+#
+# Manual trigger only. The owner is not a DB console: this runs here with
+# secrets.DATABASE_URL so nobody handles the credential (CLAUDE.md rule).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "On apply, type: trim-so-whitespace"
+        required: false
+        default: ""
+        type: string
+
+# Own group — a repair must never queue behind or displace a release.
+concurrency:
+  group: repair-so-name-whitespace
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-so-name-whitespace.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -4,14 +4,14 @@
 // SINCE 2026-08-16 11:16Z the production deploy has failed on every push with
 //
 //   FAILED 0301_so_balance_live_signed.sql: 0301: rewrite reported success
-//          but balance_centi_live is still floored.
+//          but balance_sen_live is still floored.
 //
 // and because pg-migrate stops at the first failure, NOTHING has shipped since
 // 11:12:53Z. 0301 rewrites `scm.mfg_sales_orders_with_payment_totals` by string
 // substitution on `pg_get_viewdef(..., true)`, swapping
 //
-//   GREATEST(so.local_total_centi - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_centi_live
-//   -> (so.local_total_centi - COALESCE(p.paid_total, 0::bigint)) AS balance_centi_live
+//   GREATEST(so.local_total_sen - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_sen_live
+//   -> (so.local_total_sen - COALESCE(p.paid_total, 0::bigint)) AS balance_sen_live
 //
 // then re-reads the catalogue and demands the SECOND literal appear verbatim.
 //
@@ -44,9 +44,9 @@ if (!DSN) { console.error('DATABASE_URL missing'); process.exit(1); }
 
 const VIEW = 'scm.mfg_sales_orders_with_payment_totals';
 const CLAMPED =
-  'GREATEST(so.local_total_centi - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_centi_live';
+  'GREATEST(so.local_total_sen - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_sen_live';
 const UNCLAMPED =
-  '(so.local_total_centi - COALESCE(p.paid_total, 0::bigint)) AS balance_centi_live';
+  '(so.local_total_sen - COALESCE(p.paid_total, 0::bigint)) AS balance_sen_live';
 
 const sql = postgres(DSN, { ssl: 'require', max: 1, idle_timeout: 20, connect_timeout: 60 });
 const notice = (m) => console.log(`::notice::${m}`);
@@ -77,7 +77,7 @@ async function main() {
   notice('B — what 0301 would send to CREATE OR REPLACE (not executed here)');
   if (def.includes(CLAMPED)) {
     const next = def.replace(CLAMPED, UNCLAMPED);
-    const line = next.split('\n').find((l) => l.includes('balance_centi_live'));
+    const line = next.split('\n').find((l) => l.includes('balance_sen_live'));
     notice(`  the rewritten select-list item: ${line ? line.trim() : '(not found)'}`);
     notice('  the post-condition then demands this exact substring back from pg_get_viewdef:');
     notice(`    ${UNCLAMPED}`);

@@ -21,7 +21,7 @@
 //      with deliverable_remaining > 0. ORDER BY sales-order created_at ASC
 //      so older orders claim stock first (FIFO allocation).
 //   2. Pull live inventory_balances summed across ALL warehouses per
-//      (product_code, variant_key) bucket. B2C: operator chooses warehouse
+//      (item_code, variant_key) bucket. B2C: operator chooses warehouse
 //      at DO time; we just need to know "is it somewhere".
 //   3. Walk lines in FIFO order. For each line, deduct its deliverable
 //      remaining from the bucket's remaining qty:
@@ -562,23 +562,23 @@ async function runSoStockAllocation(
     /* 6. Pull live on-hand, keyed strictly per-warehouse to match the per-line
           buckets above. No cross-warehouse aggregate — a line draws only its
           own warehouse's stock. */
-    const productCodes = [...new Set(needs.map((n) => {
+    const itemCodes = [...new Set(needs.map((n) => {
       const parts = n.bucket.split('::');
       return parts[1] ?? '';
     }).filter(Boolean))];
-    // chunkIn — productCodes can exceed 1000 and balances can exceed the 1000-row
+    // chunkIn — itemCodes can exceed 1000 and balances can exceed the 1000-row
     // cap; batch + page so on-hand isn't understated → lines wrongly PENDING.
-    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>(productCodes, (batch, from, to) => sb
+    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>(itemCodes, (batch, from, to) => sb
       .from('inventory_balances')
-      .select('warehouse_id, product_code, variant_key, qty')
-      .in('product_code', batch)
+      .select('warehouse_id, item_code, variant_key, qty')
+      .in('item_code', batch)
       .range(from, to));
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();
-    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>) {
+    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const v = r.variant_key ?? '';
       const qty = Number(r.qty ?? 0);
-      const whKey = `${r.warehouse_id}::${r.product_code}::${v}`;
+      const whKey = `${r.warehouse_id}::${r.item_code}::${v}`;
       onHandByBucket.set(whKey, (onHandByBucket.get(whKey) ?? 0) + qty);
     }
 

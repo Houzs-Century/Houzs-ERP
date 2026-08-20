@@ -76,7 +76,7 @@ export const StockTransferDetail = () => {
     setNotes(t.notes ?? '');
     setLines(detail.data.lines.map((l) => ({
       _key:        newKey(),
-      productCode: l.product_code,
+      itemCode: l.item_code,
       productName: l.product_name ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
@@ -215,7 +215,7 @@ export const StockTransferDetail = () => {
               )}
               {lines.map((ln) => (
                 <tr key={ln._key}>
-                  <td><span className={styles.codeCell}>{ln.productCode}</span></td>
+                  <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
                   <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
                   {/* "Description 2": variant/spec summary in its own column.
                       Prefers a stored description2, falls back to the computed

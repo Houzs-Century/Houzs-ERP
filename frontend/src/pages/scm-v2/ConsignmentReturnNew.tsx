@@ -47,7 +47,7 @@ import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -59,7 +59,7 @@ const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const ConsignmentReturnNew = () => {
   const navigate = useNavigate();
@@ -162,9 +162,9 @@ export const ConsignmentReturnNew = () => {
         description: str(it.description),
         uom: str(it.uom) || 'UNIT',
         qty: Number(it.qty ?? 1),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        discountCenti: Number(it.discount_centi ?? 0),
-        unitCostCenti: Number(it.unit_cost_centi ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: Number(it.discount_sen ?? 0),
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         condition: 'NEW',
       })));
@@ -185,7 +185,7 @@ export const ConsignmentReturnNew = () => {
       debtorCode: string | null; debtorName: string | null;
       itemCode: string; itemGroup: string | null; description: string | null;
       uom: string | null; qty: number; condition: string;
-      unitPriceCenti: number; discountCenti: number; unitCostCenti: number; variants: unknown;
+      unitPriceSen: number; discountSen: number; unitCostSen: number; variants: unknown;
     };
     const stash = readScmHandoff<Stash[]>('crFromNotePicks');
     if (!stash || stash.length === 0) return;
@@ -203,9 +203,9 @@ export const ConsignmentReturnNew = () => {
       description: s.description ?? '',
       uom: s.uom ?? 'UNIT',
       qty: Number(s.qty ?? 1),
-      unitPriceCenti: Number(s.unitPriceCenti ?? 0),
-      discountCenti: Number(s.discountCenti ?? 0),
-      unitCostCenti: Number(s.unitCostCenti ?? 0),
+      unitPriceSen: Number(s.unitPriceSen ?? 0),
+      discountSen: Number(s.discountSen ?? 0),
+      unitCostSen: Number(s.unitCostSen ?? 0),
       variants: (s.variants as Record<string, unknown>) ?? {},
       condition: s.condition || 'NEW',
       doItemId: s.noteItemId,
@@ -234,8 +234,8 @@ export const ConsignmentReturnNew = () => {
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti), 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen), 0),
     [lines],
   );
 
@@ -283,9 +283,9 @@ export const ConsignmentReturnNew = () => {
           uom: l.uom,
           qtyReturned: l.qty,
           condition: l.condition || 'NEW',
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti: l.discountCenti,
-          unitCostCenti: l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen: l.discountSen,
+          unitCostSen: l.unitCostSen,
           variants: l.variants,
           consignmentDoItemId: l.doItemId,
         })),
@@ -543,7 +543,7 @@ export const ConsignmentReturnNew = () => {
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',
             fontWeight: 800, color: 'var(--c-burnt)',
           }}>
-            Returned Value: {fmtRm(subtotalCenti)}
+            Returned Value: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>

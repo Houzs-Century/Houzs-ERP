@@ -51,7 +51,7 @@ const doLine = (over: Record<string, unknown>) => ({
   debtorCode: "C1", debtorName: "Ada", itemCode: "MAT-1", itemGroup: "mattress",
   description: "Mattress", description2: null, uom: "UNIT",
   delivered: 5, invoiced: 0, returned: 0, remaining: 5,
-  unitPriceCenti: 10000, unitCostCenti: 5000, discountCenti: 0, variants: null,
+  unitPriceSen: 10000, unitCostSen: 5000, discountSen: 0, variants: null,
   ...over,
 });
 
@@ -99,7 +99,7 @@ describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from
 const soLine = (over: Record<string, unknown>) => ({
   soItemId: "x", docNo: "HC-SO-0001", debtorCode: "C1", debtorName: "Ada",
   itemCode: "MAT-1", itemGroup: "mattress", description: "Mattress", description2: null,
-  uom: "UNIT", qty: 5, unitPriceCenti: 10000, unitCostCenti: 5000, discountCenti: 0,
+  uom: "UNIT", qty: 5, unitPriceSen: 10000, unitCostSen: 5000, discountSen: 0,
   variants: null, delivered: 0, returned: 0, remaining: 5,
   ...over,
 });
@@ -144,7 +144,7 @@ const grnLine = (over: Record<string, unknown>) => ({
   supplierId: "sup-1", supplierName: "Acme", supplierCode: "ACME", poDocNo: null,
   receivedAt: "2026-08-01", currency: "MYR", exchangeRate: 1,
   itemCode: "MAT-1", itemGroup: "mattress", description: "Mattress",
-  variants: null, remaining: 5, unitPriceCenti: 10000,
+  variants: null, remaining: 5, unitPriceSen: 10000,
   ...over,
 });
 

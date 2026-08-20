@@ -17,15 +17,15 @@ type SiRow = DetailListingRow & {
   invoice_date?: string | null;
   due_date?: string | null;
   currency?: string;
-  total_centi_header?: number;  // header.total_centi after flatten
-  paid_centi?: number;
+  total_sen_header?: number;  // header.total_sen after flatten
+  paid_sen?: number;
   uom?: string;
   item_group?: string | null;
   description2?: string | null;
-  discount_centi?: number;
-  tax_centi?: number;
-  header_total_centi?: number;
-  header_paid_centi?: number;
+  discount_sen?: number;
+  tax_sen?: number;
+  header_total_sen?: number;
+  header_paid_sen?: number;
 };
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -67,7 +67,7 @@ export const SalesInvoiceDetailListing = () => {
       searchValue: (r) => r.so_doc_no ?? '',
     },
     {
-      key: 'debtor_code', label: 'Debtor Code', width: 110, sortable: true, groupable: true,
+      key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
       accessor: (r) => r.debtor_code ?? '—',
       searchValue: (r) => r.debtor_code ?? '',
     },
@@ -104,39 +104,39 @@ export const SalesInvoiceDetailListing = () => {
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_centi, r.currency),
-      searchValue: (r) => fmtRm(r.unit_price_centi, r.currency),
-      sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+      accessor: (r) => fmtRm(r.unit_price_sen, r.currency),
+      searchValue: (r) => fmtRm(r.unit_price_sen, r.currency),
+      sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'discount', label: 'Discount', width: 100, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.discount_centi, r.currency),
-      searchValue: (r) => fmtRm(r.discount_centi, r.currency),
-      sortFn: (a, b) => Number(a.discount_centi ?? 0) - Number(b.discount_centi ?? 0),
+      accessor: (r) => fmtRm(r.discount_sen, r.currency),
+      searchValue: (r) => fmtRm(r.discount_sen, r.currency),
+      sortFn: (a, b) => Number(a.discount_sen ?? 0) - Number(b.discount_sen ?? 0),
     },
     {
       key: 'line_total', label: 'Line Total', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.total_centi, r.currency),
-      searchValue: (r) => fmtRm(r.total_centi, r.currency),
-      sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+      accessor: (r) => fmtRm(r.total_sen, r.currency),
+      searchValue: (r) => fmtRm(r.total_sen, r.currency),
+      sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
     },
     {
       key: 'header_total', label: 'Invoice Total', width: 130, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.header_total_centi, r.currency),
-      searchValue: (r) => fmtRm(r.header_total_centi, r.currency),
-      sortFn: (a, b) => Number(a.header_total_centi ?? 0) - Number(b.header_total_centi ?? 0),
+      accessor: (r) => fmtRm(r.header_total_sen, r.currency),
+      searchValue: (r) => fmtRm(r.header_total_sen, r.currency),
+      sortFn: (a, b) => Number(a.header_total_sen ?? 0) - Number(b.header_total_sen ?? 0),
     },
     {
       key: 'header_paid', label: 'Paid', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.header_paid_centi, r.currency),
-      searchValue: (r) => fmtRm(r.header_paid_centi, r.currency),
-      sortFn: (a, b) => Number(a.header_paid_centi ?? 0) - Number(b.header_paid_centi ?? 0),
+      accessor: (r) => fmtRm(r.header_paid_sen, r.currency),
+      searchValue: (r) => fmtRm(r.header_paid_sen, r.currency),
+      sortFn: (a, b) => Number(a.header_paid_sen ?? 0) - Number(b.header_paid_sen ?? 0),
     },
     {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_centi, r.currency),
-      searchValue: (r) => fmtRm(r.balance_centi, r.currency),
-      sortFn: (a, b) => Number(a.balance_centi ?? 0) - Number(b.balance_centi ?? 0),
+      accessor: (r) => fmtRm(r.balance_sen, r.currency),
+      searchValue: (r) => fmtRm(r.balance_sen, r.currency),
+      sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,

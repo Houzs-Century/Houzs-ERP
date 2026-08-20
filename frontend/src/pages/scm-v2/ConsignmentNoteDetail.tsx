@@ -29,7 +29,7 @@ import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, Ban, RotateCcw, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, orderLineIdentity } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import {
@@ -66,7 +66,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const STATUS_FLOW = ['LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'] as const;
 type CnStatus = typeof STATUS_FLOW[number];
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 type CnHeader = {
   id: string;
@@ -101,7 +101,7 @@ type CnHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
   currency: string;
 };
@@ -115,19 +115,19 @@ type CnItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
   /* FINANCE-gated (CN_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
      payload for a non-finance caller (canViewScmFinance), hence optional. This
      page renders no cost/margin, so there is nothing to cut here. NOTE:
-     draftFromItem below collapses a missing unit_cost_centi to 0 and the save
+     draftFromItem below collapses a missing unit_cost_sen to 0 and the save
      echoes it back — the route's line PATCH therefore IGNORES a client cost
      from a non-finance caller and keeps the stored one, which is what stops the
      strip from wiping the line's cost basis (#632; see consignment-notes.ts). */
-  unit_cost_centi?: number;
-  line_cost_centi?: number;
-  line_margin_centi?: number;
+  unit_cost_sen?: number;
+  line_cost_sen?: number;
+  line_margin_sen?: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
 };
@@ -138,9 +138,9 @@ const draftFromItem = (it: CnItem): SoLineDraft => ({
   description: it.description ?? '',
   uom: it.uom ?? 'UNIT',
   qty: it.qty ?? 1,
-  unitPriceCenti: it.unit_price_centi ?? 0,
-  discountCenti: it.discount_centi ?? 0,
-  unitCostCenti: it.unit_cost_centi ?? 0,
+  unitPriceSen: it.unit_price_sen ?? 0,
+  discountSen: it.discount_sen ?? 0,
+  unitCostSen: it.unit_cost_sen ?? 0,
   variants: (it.variants as Record<string, unknown>) ?? {},
   remark: it.remark ?? '',
 });
@@ -255,16 +255,16 @@ export const ConsignmentNoteDetail = () => {
     updateItem.mutateAsync({
       id: header!.id, itemId: lineId,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qty: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, remark: d.remark,
+      uom: d.uom, qty: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, remark: d.remark,
     });
 
   const commitAddLine = (d: SoLineDraft) =>
     addItem.mutateAsync({
       id: header!.id,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qty: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, remark: d.remark,
+      uom: d.uom, qty: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, remark: d.remark,
     });
 
   const saveEdit = () => {
@@ -367,7 +367,7 @@ export const ConsignmentNoteDetail = () => {
           <div className={styles.actions}>
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Total</span>
-            <span className={styles.totalRailValue}>{fmtRm(header.local_total_centi, header.currency)}</span>
+            <span className={styles.totalRailValue}>{fmtRm(header.local_total_sen, header.currency)}</span>
           </div>
           <StatusPill docType="do" status={header.status} />
           <RelationshipMapButton type="cdo" id={id} />
@@ -383,7 +383,7 @@ export const ConsignmentNoteDetail = () => {
               { label: 'Consignee', value: header.debtor_name || '—' },
               { label: 'Note date', value: fmtDateOrDash(header.do_date) },
               { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
-              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+              { label: 'Goods value', value: fmtRm(header.local_total_sen, header.currency) },
             ]}
             {...print.handlers}
           />
@@ -528,9 +528,9 @@ export const ConsignmentNoteDetail = () => {
                     })()}
                   </td>
                   <td className={styles.tableRight}>{it.qty}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, header.currency)}</td>
-                  <td className={styles.tableRight}>{it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi, header.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, header.currency)}</td>
+                  <td className={styles.tableRight}>{it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen, header.currency)}</td>
                 </tr>
               ))}
             </tbody>

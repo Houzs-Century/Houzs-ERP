@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
  * that exists in no file in this repo:
  *
  *   CREATE UNIQUE INDEX uq_inv_mov_do_source ON scm.inventory_movements
- *     USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+ *     USING btree (source_doc_type, source_doc_id, item_code, variant_key)
  *     WHERE (source_doc_type = 'DO'::text)
  *
  * movement_type is not in that key, so one (DO, product, variant) bucket holds
@@ -50,7 +50,7 @@ async function correctionSeqMigrationSql(): Promise<string> {
       `expected exactly one *_scm_inv_mov_correction_seq.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 const WH = '11111111-1111-1111-1111-111111111111';
@@ -82,7 +82,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       movement_type text,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text DEFAULT '' NOT NULL,
       product_name text,
       qty integer,
@@ -99,16 +99,16 @@ async function resetFixture(sql: Sql): Promise<void> {
     );
 
     CREATE UNIQUE INDEX uq_inv_mov_do_source ON scm.inventory_movements
-      USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+      USING btree (source_doc_type, source_doc_id, item_code, variant_key)
       WHERE (source_doc_type = 'DO'::text);
     CREATE UNIQUE INDEX uq_inv_mov_dr_source ON scm.inventory_movements
-      USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+      USING btree (source_doc_type, source_doc_id, item_code, variant_key)
       WHERE (source_doc_type = 'DR'::text);
     CREATE UNIQUE INDEX uq_inv_mov_cs_do_source ON scm.inventory_movements
-      USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+      USING btree (source_doc_type, source_doc_id, item_code, variant_key)
       WHERE (source_doc_type = 'CS_DO'::text);
     CREATE UNIQUE INDEX uq_inv_mov_cs_dr_source ON scm.inventory_movements
-      USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+      USING btree (source_doc_type, source_doc_id, item_code, variant_key)
       WHERE (source_doc_type = 'CS_DR'::text);
   `);
 }
@@ -117,7 +117,7 @@ async function resetFixture(sql: Sql): Promise<void> {
 async function firstShip(sql: Sql, qty = 5): Promise<void> {
   await sql`
     INSERT INTO scm.inventory_movements
-      (movement_type, warehouse_id, product_code, variant_key, qty,
+      (movement_type, warehouse_id, item_code, variant_key, qty,
        source_doc_type, source_doc_id, source_doc_no, notes)
     VALUES ('OUT', ${WH}, ${CODE}, ${VKEY}, ${qty},
             'DO', ${DO_ID}, 'DO-TEST-001', 'First ship')`;
@@ -127,7 +127,7 @@ async function firstShip(sql: Sql, qty = 5): Promise<void> {
 function correction(sql: Sql, movementType: 'IN' | 'OUT', qty: number, seq: number | null) {
   return sql`
     INSERT INTO scm.inventory_movements
-      (movement_type, warehouse_id, product_code, variant_key, qty,
+      (movement_type, warehouse_id, item_code, variant_key, qty,
        source_doc_type, source_doc_id, source_doc_no, correction_seq, notes)
     VALUES (${movementType}, ${WH}, ${CODE}, ${VKEY}, ${qty},
             'DO', ${DO_ID}, 'DO-TEST-001', ${seq},
@@ -145,7 +145,7 @@ describePg('editing a shipped DO reaches the stock ledger (migration 0279)', () 
        is a duplicate key. This is what production has been doing silently. */
     await expect(admin`
       INSERT INTO scm.inventory_movements
-        (movement_type, warehouse_id, product_code, variant_key, qty,
+        (movement_type, warehouse_id, item_code, variant_key, qty,
          source_doc_type, source_doc_id, source_doc_no, notes)
       VALUES ('IN', ${WH}, ${CODE}, ${VKEY}, 2,
               'DO', ${DO_ID}, 'DO-TEST-001', 'Resync: line qty reduced.')`,
@@ -160,7 +160,7 @@ describePg('editing a shipped DO reaches the stock ledger (migration 0279)', () 
     await firstShip(admin);
     await admin`
       INSERT INTO scm.inventory_movements
-        (movement_type, warehouse_id, product_code, variant_key, qty, source_doc_type, source_doc_id)
+        (movement_type, warehouse_id, item_code, variant_key, qty, source_doc_type, source_doc_id)
       VALUES ('OUT', ${WH}, 'OTHER-SKU', '', 1, 'DO', ${DO_ID})`;
     await expect(admin.unsafe(await correctionSeqMigrationSql())).resolves.toBeDefined();
 
@@ -229,11 +229,11 @@ describePg('editing a shipped DO reaches the stock ledger (migration 0279)', () 
       // A DR bucket still allows exactly one row, correction_seq or not.
       await admin`
         INSERT INTO scm.inventory_movements
-          (movement_type, warehouse_id, product_code, variant_key, qty, source_doc_type, source_doc_id)
+          (movement_type, warehouse_id, item_code, variant_key, qty, source_doc_type, source_doc_id)
         VALUES ('IN', ${WH}, ${CODE}, ${VKEY}, 1, 'DR', ${DO_ID})`;
       await expect(admin`
         INSERT INTO scm.inventory_movements
-          (movement_type, warehouse_id, product_code, variant_key, qty, source_doc_type, source_doc_id, correction_seq)
+          (movement_type, warehouse_id, item_code, variant_key, qty, source_doc_type, source_doc_id, correction_seq)
         VALUES ('OUT', ${WH}, ${CODE}, ${VKEY}, 1, 'DR', ${DO_ID}, 1)`,
       ).rejects.toThrow(/uq_inv_mov_dr_source|duplicate key/i);
     });

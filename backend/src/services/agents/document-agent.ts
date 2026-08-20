@@ -23,7 +23,7 @@
 //   GRN_NO_PI         posted GRN with no non-cancelled Purchase Invoice
 //                     after N days
 //   PAYMENT_MISMATCH  SO payments-ledger total exceeding the SO total, or an
-//                     SI stamped PAID whose paid_centi is short of its total
+//                     SI stamped PAID whose paid_sen is short of its total
 //
 // RED LINES (enforced structurally):
 //   * READ-ONLY over business documents — this module never inserts, updates
@@ -32,7 +32,7 @@
 //   * Deterministic — no LLM calls. The scheduler hands ctx.llmKey to the
 //     registered run; the AI narrative layer is wired by the console lead
 //     later and sits ON TOP of this engine's JSON, never inside it.
-//   * Money is integer sen end-to-end (scm columns are *_centi = sen; the
+//   * Money is integer sen end-to-end (scm columns are *_sen = sen; the
 //     engine's payloads/brief expose them as *Sen).
 //   * Every finding carries a one-sentence plain-English summary.
 //
@@ -332,7 +332,7 @@ async function detectStuckSo(
   const res = await db
     .prepare(
       `SELECT s.doc_no, s.status, s.debtor_name, s.so_date, s.created_at,
-              s.local_total_centi
+              s.local_total_sen
          FROM scm.mfg_sales_orders s
         WHERE s.status IN ('CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP')
           AND s.created_at < ?
@@ -356,7 +356,7 @@ async function detectStuckSo(
     const docNo = str(col(r, "docNo", "doc_no"));
     const age = daysSince(col(r, "createdAt", "created_at"), nowMs);
     const debtor = str(col(r, "debtorName", "debtor_name"));
-    const totalSen = num(col(r, "localTotalCenti", "local_total_centi"));
+    const totalSen = num(col(r, "localTotalSen", "local_total_sen"));
     return {
       kind: "STUCK_SO",
       severity: age >= STUCK_SO_CRIT_DAYS ? "CRIT" : "WARN",
@@ -478,7 +478,7 @@ async function detectStaleDrafts(
  *  the collection buckets. sales_invoice_status: DRAFT SENT PARTIALLY_PAID
  *  PAID OVERDUE CANCELLED — DRAFT excluded (no AR posted yet; same leak-guard
  *  outstanding.ts applies), PAID/CANCELLED have nothing to collect.
- *  Outstanding = total_centi - paid_centi (paid_centi is the header stamp the
+ *  Outstanding = total_sen - paid_sen (paid_sen is the header stamp the
  *  SI payment routes maintain). One finding per SI; the bucket/severity
  *  refresh in place as the invoice ages. */
 async function detectUnpaidSi(
@@ -488,10 +488,10 @@ async function detectUnpaidSi(
   const res = await db
     .prepare(
       `SELECT si.id, si.invoice_number, si.status, si.debtor_name,
-              si.invoice_date, si.due_date, si.total_centi, si.paid_centi
+              si.invoice_date, si.due_date, si.total_sen, si.paid_sen
          FROM scm.sales_invoices si
         WHERE si.status IN ('SENT', 'PARTIALLY_PAID', 'OVERDUE')
-          AND (si.total_centi - si.paid_centi) > 0
+          AND (si.total_sen - si.paid_sen) > 0
         ORDER BY si.invoice_date ASC
         LIMIT ?`,
     )
@@ -505,8 +505,8 @@ async function detectUnpaidSi(
       age <= 30 ? "0-30" : age <= 60 ? "31-60" : age <= 90 ? "61-90" : "90+";
     const severity: DocumentFindingSeverity =
       age > 90 ? "CRIT" : age > 30 ? "WARN" : "INFO";
-    const totalSen = num(col(r, "totalCenti", "total_centi"));
-    const paidSen = num(col(r, "paidCenti", "paid_centi"));
+    const totalSen = num(col(r, "totalSen", "total_sen"));
+    const paidSen = num(col(r, "paidSen", "paid_sen"));
     const outstandingSen = totalSen - paidSen;
     const docNo = str(col(r, "invoiceNumber", "invoice_number")) || null;
     const debtor = str(col(r, "debtorName", "debtor_name"));
@@ -544,7 +544,7 @@ async function detectGrnNoPi(
   const days = await dayWindow(db, "grnNoPiDays", GRN_NO_PI_DAYS);
   const res = await db
     .prepare(
-      `SELECT g.id, g.grn_number, g.status, g.received_at, g.total_centi
+      `SELECT g.id, g.grn_number, g.status, g.received_at, g.total_sen
          FROM scm.grns g
         WHERE g.status NOT IN ('CANCELLED', 'DRAFT')
           AND g.received_at < ?
@@ -567,7 +567,7 @@ async function detectGrnNoPi(
   const rows = raw.slice(0, MAX_FINDINGS_PER_KIND).map((r): DesiredFinding => {
     const age = daysSince(col(r, "receivedAt", "received_at"), nowMs);
     const docNo = str(col(r, "grnNumber", "grn_number")) || null;
-    const totalSen = num(col(r, "totalCenti", "total_centi"));
+    const totalSen = num(col(r, "totalSen", "total_sen"));
     return {
       kind: "GRN_NO_PI",
       severity: age >= GRN_NO_PI_CRIT_DAYS ? "CRIT" : "WARN",
@@ -587,13 +587,13 @@ async function detectGrnNoPi(
 }
 
 /** PAYMENT_MISMATCH — two cheap header-level integrity checks:
- *   (a) SO overpaid: SUM(mfg_sales_order_payments.amount_centi) exceeds the
- *       SO's local_total_centi (the exact total/paid pair the SO routes'
+ *   (a) SO overpaid: SUM(mfg_sales_order_payments.amount_sen) exceeds the
+ *       SO's local_total_sen (the exact total/paid pair the SO routes'
  *       processing-date payment gate compares). DRAFT/CANCELLED SOs excluded
  *       (drafts are still being priced — comparing them is noise).
- *   (b) SI stamped PAID whose paid_centi is short of total_centi.
- *  SKIPPED (deliberately, schema verified): reconciling si.paid_centi against
- *  SUM(scm.sales_invoice_payments.amount_centi) — customer credits (2990 mig
+ *   (b) SI stamped PAID whose paid_sen is short of total_sen.
+ *  SKIPPED (deliberately, schema verified): reconciling si.paid_sen against
+ *  SUM(scm.sales_invoice_payments.amount_sen) — customer credits (2990 mig
  *  0110 customer_credits) apply against invoices OUTSIDE that ledger, so the
  *  sums legitimately diverge and the check would cry wolf. */
 async function detectPaymentMismatch(
@@ -605,15 +605,15 @@ async function detectPaymentMismatch(
 
   const soRes = await db
     .prepare(
-      `SELECT s.doc_no, s.debtor_name, s.status, s.local_total_centi,
-              p.paid AS paid_centi
+      `SELECT s.doc_no, s.debtor_name, s.status, s.local_total_sen,
+              p.paid AS paid_sen
          FROM scm.mfg_sales_orders s
-         JOIN (SELECT so_doc_no, SUM(amount_centi) AS paid
+         JOIN (SELECT so_doc_no, SUM(amount_sen) AS paid
                  FROM scm.mfg_sales_order_payments
                 GROUP BY so_doc_no) p ON p.so_doc_no = s.doc_no
         WHERE s.status NOT IN ('CANCELLED', 'DRAFT')
-          AND p.paid > s.local_total_centi
-        ORDER BY p.paid - s.local_total_centi DESC
+          AND p.paid > s.local_total_sen
+        ORDER BY p.paid - s.local_total_sen DESC
         LIMIT ?`,
     )
     .bind(MAX_FINDINGS_PER_KIND + 1)
@@ -622,8 +622,8 @@ async function detectPaymentMismatch(
   capped = capped || soRaw.length > MAX_FINDINGS_PER_KIND;
   for (const r of soRaw.slice(0, MAX_FINDINGS_PER_KIND)) {
     const docNo = str(col(r, "docNo", "doc_no"));
-    const totalSen = num(col(r, "localTotalCenti", "local_total_centi"));
-    const paidSen = num(col(r, "paidCenti", "paid_centi"));
+    const totalSen = num(col(r, "localTotalSen", "local_total_sen"));
+    const paidSen = num(col(r, "paidSen", "paid_sen"));
     const diffSen = paidSen - totalSen;
     const debtor = str(col(r, "debtorName", "debtor_name"));
     rows.push({
@@ -646,10 +646,10 @@ async function detectPaymentMismatch(
 
   const siRes = await db
     .prepare(
-      `SELECT si.id, si.invoice_number, si.debtor_name, si.total_centi, si.paid_centi
+      `SELECT si.id, si.invoice_number, si.debtor_name, si.total_sen, si.paid_sen
          FROM scm.sales_invoices si
-        WHERE si.status = 'PAID' AND si.paid_centi < si.total_centi
-        ORDER BY si.total_centi - si.paid_centi DESC
+        WHERE si.status = 'PAID' AND si.paid_sen < si.total_sen
+        ORDER BY si.total_sen - si.paid_sen DESC
         LIMIT ?`,
     )
     .bind(MAX_FINDINGS_PER_KIND + 1)
@@ -658,8 +658,8 @@ async function detectPaymentMismatch(
   capped = capped || siRaw.length > MAX_FINDINGS_PER_KIND;
   for (const r of siRaw.slice(0, MAX_FINDINGS_PER_KIND)) {
     const docNo = str(col(r, "invoiceNumber", "invoice_number")) || null;
-    const totalSen = num(col(r, "totalCenti", "total_centi"));
-    const paidSen = num(col(r, "paidCenti", "paid_centi"));
+    const totalSen = num(col(r, "totalSen", "total_sen"));
+    const paidSen = num(col(r, "paidSen", "paid_sen"));
     const debtor = str(col(r, "debtorName", "debtor_name"));
     rows.push({
       kind: "PAYMENT_MISMATCH",
@@ -898,18 +898,18 @@ export async function collectDocumentBrief(env: Env): Promise<DocumentBrief> {
     const aging = await db
       .prepare(
         `SELECT COUNT(*) AS invoices,
-                COALESCE(SUM(si.total_centi - si.paid_centi), 0) AS total_out,
+                COALESCE(SUM(si.total_sen - si.paid_sen), 0) AS total_out,
                 SUM(CASE WHEN now()::date - si.invoice_date <= 30 THEN 1 ELSE 0 END) AS c1,
-                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date <= 30 THEN si.total_centi - si.paid_centi ELSE 0 END), 0) AS s1,
+                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date <= 30 THEN si.total_sen - si.paid_sen ELSE 0 END), 0) AS s1,
                 SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS c2,
-                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 31 AND 60 THEN si.total_centi - si.paid_centi ELSE 0 END), 0) AS s2,
+                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 31 AND 60 THEN si.total_sen - si.paid_sen ELSE 0 END), 0) AS s2,
                 SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS c3,
-                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 61 AND 90 THEN si.total_centi - si.paid_centi ELSE 0 END), 0) AS s3,
+                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date BETWEEN 61 AND 90 THEN si.total_sen - si.paid_sen ELSE 0 END), 0) AS s3,
                 SUM(CASE WHEN now()::date - si.invoice_date > 90 THEN 1 ELSE 0 END) AS c4,
-                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date > 90 THEN si.total_centi - si.paid_centi ELSE 0 END), 0) AS s4
+                COALESCE(SUM(CASE WHEN now()::date - si.invoice_date > 90 THEN si.total_sen - si.paid_sen ELSE 0 END), 0) AS s4
            FROM scm.sales_invoices si
           WHERE si.status IN ('SENT', 'PARTIALLY_PAID', 'OVERDUE')
-            AND (si.total_centi - si.paid_centi) > 0`,
+            AND (si.total_sen - si.paid_sen) > 0`,
       )
       .first<Row>();
     if (aging) {

@@ -47,12 +47,12 @@ export const useConsignmentOrders = (status?: string) => useQuery({
    above (no page) still returns the historical unpaginated array. `q` searches
    doc_no + debtor_name (the columns the CO list already searches + that are in
    the header select). `sort` is 'col:dir' over
-   { so_date, doc_no, debtor_name, status, local_total_centi } (default
+   { so_date, doc_no, debtor_name, status, local_total_sen } (default
    so_date:desc). placeholderData keepPrevious so paging doesn't flash empty. */
 /* Full-set money KPIs returned by the paginated CO list (mirrors the SO list
    `aggregates` contract) — summed over the SAME filters as the page, so the KPI
    tiles stay full-set instead of page-scoped. */
-export type ConsignmentOrderAggregates = { revenueCenti: number; outstandingCenti: number; paidCenti: number };
+export type ConsignmentOrderAggregates = { revenueSen: number; outstandingSen: number; paidSen: number };
 export const useConsignmentOrdersPaged = (params: {
   page: number;
   pageSize: number;
@@ -286,7 +286,7 @@ export type ConsignmentPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;

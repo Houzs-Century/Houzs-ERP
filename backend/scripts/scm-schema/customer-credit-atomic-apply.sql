@@ -42,10 +42,10 @@ CREATE OR REPLACE FUNCTION apply_customer_credit_to_si(
   p_debtor_code         text,
   p_si_id               uuid,
   p_si_number           text,
-  p_remaining_due_centi integer,
+  p_remaining_due_sen integer,
   p_debtor_name         text DEFAULT NULL,
   p_created_by          uuid DEFAULT NULL
-) RETURNS TABLE(applied_centi integer, reason text)
+) RETURNS TABLE(applied_sen integer, reason text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = scm, pg_temp
@@ -59,7 +59,7 @@ BEGIN
   IF p_debtor_code IS NULL OR btrim(p_debtor_code) = '' THEN
     RETURN QUERY SELECT 0, 'no_debtor'::text; RETURN;
   END IF;
-  IF p_remaining_due_centi IS NULL OR p_remaining_due_centi <= 0 THEN
+  IF p_remaining_due_sen IS NULL OR p_remaining_due_sen <= 0 THEN
     RETURN QUERY SELECT 0, 'no_due'::text; RETURN;
   END IF;
 
@@ -95,14 +95,14 @@ BEGIN
   -- match nothing, so the call returns 'no_balance' and writes nothing, instead
   -- of reaching the payment insert's FK failure. Both outcomes write nothing;
   -- this one is reached earlier and says why.
-  SELECT COALESCE(SUM(amount_centi), 0) INTO v_balance
+  SELECT COALESCE(SUM(amount_sen), 0) INTO v_balance
   FROM customer_credits
   WHERE debtor_code = p_debtor_code AND company_id = v_company_id;
   IF v_balance <= 0 THEN
     RETURN QUERY SELECT 0, 'no_balance'::text; RETURN;
   END IF;
 
-  v_apply := LEAST(v_balance, p_remaining_due_centi::bigint)::integer;
+  v_apply := LEAST(v_balance, p_remaining_due_sen::bigint)::integer;
   IF v_apply <= 0 THEN
     RETURN QUERY SELECT 0, 'no_due'::text; RETURN;
   END IF;
@@ -110,13 +110,13 @@ BEGIN
   -- The two writes that must move together. One transaction: both land or
   -- neither does.
   INSERT INTO sales_invoice_payments
-    (company_id, sales_invoice_id, method, amount_centi, note, created_by)
+    (company_id, sales_invoice_id, method, amount_sen, note, created_by)
   VALUES
     (v_company_id, p_si_id, 'credit', v_apply,
      'Applied customer credit balance toward ' || p_si_number, p_created_by);
 
   INSERT INTO customer_credits
-    (company_id, debtor_code, debtor_name, amount_centi,
+    (company_id, debtor_code, debtor_name, amount_sen,
      source_type, source_doc_no, source_doc_id, notes, created_by)
   VALUES
     (v_company_id, p_debtor_code, p_debtor_name, -v_apply,

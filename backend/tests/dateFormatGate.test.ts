@@ -23,7 +23,7 @@
         goes in a temp directory OUTSIDE the source tree
         (DATE_FORMAT_EXTRA_ROOT), so proving the gate never requires writing a
         second date format into frontend/src.
-     3. IT DOES NOT FIRE ON MONEY. `fmtCenti` is `toLocaleString('en-MY', …)`
+     3. IT DOES NOT FIRE ON MONEY. `fmtSen` is `toLocaleString('en-MY', …)`
         and this repo has ~40 `count.toLocaleString()` calls. A gate that cries
         wolf is a gate somebody switches off — which is how the previous
         generation of checks here died.

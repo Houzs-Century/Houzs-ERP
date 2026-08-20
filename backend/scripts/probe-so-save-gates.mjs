@@ -72,7 +72,7 @@ async function main() {
              customer_delivery_date::text AS customer_delivery_date,
              salesperson_id::text AS salesperson_id,
              version, updated_at::text AS updated_at,
-             local_total_centi, deposit_centi
+             local_total_sen, deposit_sen
         FROM scm.mfg_sales_orders WHERE doc_no = ${doc}`;
     if (!heads.length) {
       heads = await sql`
@@ -82,7 +82,7 @@ async function main() {
                customer_delivery_date::text AS customer_delivery_date,
                salesperson_id::text AS salesperson_id,
                version, updated_at::text AS updated_at,
-               local_total_centi, deposit_centi
+               local_total_sen, deposit_sen
           FROM scm.mfg_sales_orders WHERE doc_no LIKE ${'%' + doc + '%'}
          ORDER BY doc_no LIMIT 10`;
       if (heads.length) note(`  (no exact doc_no; matched ${heads.length} by substring)`);
@@ -95,12 +95,12 @@ async function main() {
       note(`    proceeded_at     ${h.proceeded_at ?? '(null)'}`);
       note(`    delivery_date    ${h.customer_delivery_date ?? '(null)'}`);
       note(`    salesperson_id   ${h.salesperson_id ?? '(null)'}`);
-      note(`    total            ${rm(h.local_total_centi)}   deposit ${rm(h.deposit_centi)}`);
+      note(`    total            ${rm(h.local_total_sen)}   deposit ${rm(h.deposit_sen)}`);
       note(`    version          ${h.version ?? '(null)'}   updated_at ${(h.updated_at ?? '').slice(0, 19)}`);
 
       const lines = await sql`
         SELECT id::text AS id, line_no, item_code, item_group, qty, cancelled,
-               unit_price_centi, discount_centi, total_centi, stock_status,
+               unit_price_sen, discount_sen, total_sen, stock_status,
                variants::text AS variants
           FROM scm.mfg_sales_order_items
          WHERE doc_no = ${h.doc_no} AND company_id = ${h.company_id}
@@ -108,7 +108,7 @@ async function main() {
       note(`\n    --- lines (${lines.length}) ---`);
       for (const l of lines) {
         note(`    ${String(l.line_no).padStart(2)}  ${String(l.item_code ?? '(none)').padEnd(34)} [${l.item_group ?? '-'}]`
-           + ` qty=${l.qty} unit=${rm(l.unit_price_centi)} disc=${rm(l.discount_centi)} total=${rm(l.total_centi)}`
+           + ` qty=${l.qty} unit=${rm(l.unit_price_sen)} disc=${rm(l.discount_sen)} total=${rm(l.total_sen)}`
            + `${l.cancelled ? '  CANCELLED' : ''}`);
         note(`        variants ${(l.variants ?? '').slice(0, 160)}`);
       }

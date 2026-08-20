@@ -177,7 +177,7 @@ resync is the first thing to try, not the last.
 | Table | Role |
 |---|---|
 | `scm.delivery_returns` | Header — `return_number`, `status`, `delivery_order_id`, `warehouse_id`, `company_id` |
-| `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_centi` |
+| `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_sen` |
 
 Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already

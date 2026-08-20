@@ -77,7 +77,7 @@ try {
   await sql.begin(async (tx) => {
     const now = new Date().toISOString();
     const audit = (code, field, oldV, newV) => APPLY
-      ? tx`INSERT INTO scm.master_price_history (product_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
+      ? tx`INSERT INTO scm.master_price_history (item_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
            VALUES (${code}, ${field}, ${oldV ?? null}, ${newV ?? null}, ${REASON}, ${now}, ${cid})`
       : Promise.resolve();
 
@@ -114,7 +114,7 @@ try {
       const supCode = list[0].sup;
       const [b] = await tx`SELECT b.id, b.price_matrix FROM scm.supplier_material_bindings b
         JOIN scm.suppliers s ON s.id = b.supplier_id
-        WHERE b.company_id = ${cid} AND b.material_kind = 'mfg_product' AND b.material_code = ${sku} AND s.code = ${supCode}`;
+        WHERE b.company_id = ${cid} AND b.material_kind = 'mfg_product' AND b.item_code = ${sku} AND s.code = ${supCode}`;
       if (b && b.price_matrix && typeof b.price_matrix === "object") {
         const m = JSON.parse(JSON.stringify(b.price_matrix));
         let mt = false;

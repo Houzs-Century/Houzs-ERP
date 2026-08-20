@@ -10,28 +10,28 @@
 import { describe, it, expect } from 'vitest';
 import { allocateLandedCharges, normalizeAllocationMethod, type AllocLine } from './landed-allocation';
 
-const goods = (id: string, qty: number, unitPriceCenti: number, unitM3Milli = 0): AllocLine => ({
+const goods = (id: string, qty: number, unitPriceSen: number, unitM3Milli = 0): AllocLine => ({
   id,
   itemGroup: 'stock',
-  materialCode: `MAT-${id}`,
+  itemCode: `MAT-${id}`,
   qty,
-  amountCenti: qty * unitPriceCenti,
-  unitPriceCenti,
+  amountSen: qty * unitPriceSen,
+  unitPriceSen,
   unitM3Milli,
 });
 
-const freight = (amountCenti: number): AllocLine => ({
+const freight = (amountSen: number): AllocLine => ({
   id: 'svc',
   itemGroup: 'service',
-  materialCode: 'TRANSPORTATION',
+  itemCode: 'TRANSPORTATION',
   qty: 1,
-  amountCenti,
-  unitPriceCenti: amountCenti,
+  amountSen,
+  unitPriceSen: amountSen,
   unitM3Milli: 0,
 });
 
-const sumAllocated = (r: { goods: Array<{ allocatedChargeCenti: number }> }) =>
-  r.goods.reduce((s, g) => s + g.allocatedChargeCenti, 0);
+const sumAllocated = (r: { goods: Array<{ allocatedChargeSen: number }> }) =>
+  r.goods.reduce((s, g) => s + g.allocatedChargeSen, 0);
 
 describe('normalizeAllocationMethod', () => {
   it('defaults to QTY for anything it does not recognise', () => {
@@ -47,7 +47,7 @@ describe('allocateLandedCharges', () => {
     // ordinary receipt would recost itself for no reason.
     const r = allocateLandedCharges([goods('a', 3, 1000), goods('b', 2, 2000)], 'QTY', 1);
     expect(r.chargePoolMyr).toBe(0);
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([0, 0]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([0, 0]);
     expect(r.goods.map((g) => g.landedUnitCostMyr)).toEqual([1000, 2000]);
   });
 
@@ -57,14 +57,14 @@ describe('allocateLandedCharges', () => {
     // positive line absorbs the remainder so the column reconciles exactly.
     const r = allocateLandedCharges([goods('a', 1, 500), goods('b', 1, 500), goods('c', 1, 500), freight(1000)], 'QTY', 1);
     expect(r.chargePoolMyr).toBe(1000);
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([333, 333, 334]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([333, 333, 334]);
     expect(sumAllocated(r)).toBe(1000);
   });
 
   it('QTY weights by quantity, and folds the charge into the per-unit cost', () => {
     const r = allocateLandedCharges([goods('a', 1, 1000), goods('b', 3, 1000), freight(800)], 'QTY', 1);
     expect(r.effectiveMethod).toBe('QTY');
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([200, 600]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([200, 600]);
     expect(r.goods.map((g) => g.landedUnitCostMyr)).toEqual([1200, 1200]);
     expect(sumAllocated(r)).toBe(800);
   });
@@ -73,14 +73,14 @@ describe('allocateLandedCharges', () => {
     // Same quantities, different prices: under QTY these would split 50/50.
     const r = allocateLandedCharges([goods('a', 2, 1000), goods('b', 2, 3000), freight(800)], 'VALUE', 1);
     expect(r.effectiveMethod).toBe('VALUE');
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([200, 600]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([200, 600]);
     expect(sumAllocated(r)).toBe(800);
   });
 
   it('CBM weights by volume', () => {
     const r = allocateLandedCharges([goods('a', 1, 1000, 1000), goods('b', 1, 1000, 3000), freight(800)], 'CBM', 1);
     expect(r.effectiveMethod).toBe('CBM');
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([200, 600]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([200, 600]);
   });
 
   it('falls back to QTY when the chosen basis sums to zero, instead of dividing by it', () => {
@@ -89,7 +89,7 @@ describe('allocateLandedCharges', () => {
     // freight lands nowhere and the stock is carried below its true cost.
     const r = allocateLandedCharges([goods('a', 1, 1000, 0), goods('b', 3, 1000, 0), freight(800)], 'CBM', 1);
     expect(r.effectiveMethod).toBe('QTY');
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([200, 600]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([200, 600]);
     expect(sumAllocated(r)).toBe(800);
   });
 
@@ -102,7 +102,7 @@ describe('allocateLandedCharges', () => {
       'QTY',
       1,
     );
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([3, 3, 4, 0]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([3, 3, 4, 0]);
     expect(sumAllocated(r)).toBe(10);
   });
 
@@ -120,7 +120,7 @@ describe('allocateLandedCharges', () => {
     // no home. It must not be smeared onto a line that received nothing.
     const r = allocateLandedCharges([goods('a', 0, 1000), freight(800)], 'QTY', 1);
     expect(r.chargePoolMyr).toBe(800);
-    expect(r.goods.map((g) => g.allocatedChargeCenti)).toEqual([0]);
+    expect(r.goods.map((g) => g.allocatedChargeSen)).toEqual([0]);
     expect(r.goods[0]!.landedUnitCostMyr).toBe(1000);
   });
 });

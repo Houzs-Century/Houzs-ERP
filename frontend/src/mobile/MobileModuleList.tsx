@@ -76,7 +76,7 @@ export type ModuleConfig = {
   secondary?: (row: any) => string;
   /** Right-aligned value (money total or status). */
   right?: (row: any) => string;
-  /** When true, `right` returns a *_centi value → rendered as RM x/100. */
+  /** When true, `right` returns a *_sen value → rendered as RM x/100. */
   rightMoney?: boolean;
   /** Haystack for the search box; falls back to primary + secondary. */
   search?: (row: any) => string;
@@ -133,14 +133,14 @@ export type ModuleConfig = {
   note?: (row: any) => string;
   /** Footer-row left meta as [label, value] — value bolded. Hidden when blank. */
   footL?: (row: any) => [string, string] | null;
-  /** Footer-row right value. When `footMoney`, it's a *_centi total → RM x/100. */
+  /** Footer-row right value. When `footMoney`, it's a *_sen total → RM x/100. */
   footR?: (row: any) => string;
   footMoney?: boolean;
   /** KPI cells for the inventory / mrp footers: [label, value] pairs. */
   kpis?: (row: any) => Array<[string, string]>;
   /** Avatar seed for the "person" variant — initials come from this string. */
   avatar?: (row: any) => string;
-  /** Right price (product variant) → *_centi rendered RM x/100 when priceMoney. */
+  /** Right price (product variant) → *_sen rendered RM x/100 when priceMoney. */
   price?: (row: any) => string;
   priceMoney?: boolean;
   /** Unit-of-measure caption under a product price (spec: "/{{uom}}"). */
@@ -160,7 +160,7 @@ const rm = fmtAmt;
 // Numeric DD/MM/YYYY via the shared formatter (house rule — no month names).
 const dm = (d: string | null | undefined) => formatDate(d);
 
-/** Format a *_centi/_sen value as `RM x,xxx.00` for a field cell. Blank input
+/** Format a *_sen/_sen value as `RM x,xxx.00` for a field cell. Blank input
  *  (null / undefined / "") → "—" so an absent amount is not shown as RM 0.00. */
 const rmField = (centi: number | null | undefined) =>
   centi == null || centi === ("" as unknown) ? "—" : `RM ${rm(centi)}`;
@@ -288,9 +288,9 @@ const mrpState = (r: any): string => {
 };
 
 /** Invoice balance = total − paid, floored at 0, in centi. */
-const balanceCenti = (r: any): number => {
-  const total = Number(pick(r, "totalCenti", "total_centi", "localTotalCenti", "local_total_centi") ?? 0);
-  const paid = Number(pick(r, "paidCenti", "paid_centi") ?? 0);
+const balanceSen = (r: any): number => {
+  const total = Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0);
+  const paid = Number(pick(r, "paidSen", "paid_sen") ?? 0);
   return Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(paid) ? paid : 0));
 };
 
@@ -1109,9 +1109,9 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // delivery-orders-mfg.get('/') → { deliveryOrders: [...] }; header cols:
-  // do_number, debtor_name, status, do_date, local_total_centi…
+  // do_number, debtor_name, status, do_date, local_total_sen…
   // Design m-do: Customer/DO No/Date/Driver/Items/Value + status pill. Real cols:
-  // debtor_name, do_number, do_date, driver_name, line_count, local_total_centi,
+  // debtor_name, do_number, do_date, driver_name, line_count, local_total_sen,
   // status. All present → all fields bound.
   "delivery-orders-mfg": {
     title: "Delivery Orders",
@@ -1121,13 +1121,13 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "deliveryOrders",
     primary: (r) => r.debtor_name,
     secondary: (r) => join(r.do_number, r.status, dm(r.do_date)),
-    right: (r) => r.local_total_centi,
+    right: (r) => r.local_total_sen,
     rightMoney: true,
     search: (r) => join(r.debtor_name, r.do_number, r.so_doc_no, r.ref, r.phone),
     statusDocType: "do",
     pill: (r) => scmStatusLabel("do", pick(r, "status")),
     // Spec #do-list: name + status badge, "{{doc_no}} · {{delivery_date}}" sub-
-    // line, footer "Driver {{name}}" + RM {{total_centi}}. items_summary has no
+    // line, footer "Driver {{name}}" + RM {{total_sen}}. items_summary has no
     // list column → line-count shown in the footer left instead.
     variant: "doc",
     subline: (r) => {
@@ -1136,7 +1136,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     },
     brand: (r) => pick(r, "branding") ?? "",
     footL: (r) => ["Driver", pick(r, "driverName", "driver_name") ?? "—"],
-    footR: (r) => pick(r, "localTotalCenti", "local_total_centi"),
+    footR: (r) => pick(r, "localTotalSen", "local_total_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "doNumber", "do_number") ?? "—", "DO No"],
@@ -1148,7 +1148,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       [(r) => dm(pick(r, "customerDeliveryDate", "customer_delivery_date")), "Delivery"],
       [(r) => pick(r, "driverName", "driver_name") ?? "—", "Driver"],
       [(r) => { const n = pick(r, "lineCount", "line_count"); return n == null ? "—" : String(n); }, "Items"],
-      [(r) => rmField(pick(r, "localTotalCenti", "local_total_centi")), "Value"],
+      [(r) => rmField(pick(r, "localTotalSen", "local_total_sen")), "Value"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1163,9 +1163,9 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // sales-invoices.get('/') → { salesInvoices: [...] }; header cols:
-  // invoice_number, debtor_name, invoice_date, total_centi, status…
+  // invoice_number, debtor_name, invoice_date, total_sen, status…
   // Design m-si: Inv No/Date/Due/Amount/Balance + status pill. Real cols:
-  // invoice_number, invoice_date, due_date, total_centi, paid_centi, status.
+  // invoice_number, invoice_date, due_date, total_sen, paid_sen, status.
   // Balance is computed total − paid.
   "sales-invoices": {
     title: "Sales Invoices",
@@ -1175,18 +1175,18 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "salesInvoices",
     primary: (r) => r.debtor_name,
     secondary: (r) => join(r.invoice_number, r.status, dm(r.invoice_date)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.debtor_name, r.invoice_number, r.so_doc_no, r.ref, r.phone),
     statusDocType: "si",
     pill: (r) => scmStatusLabel("si", pick(r, "status")),
     // Spec #si-list: "{{doc_no}} · due {{due_date}}" sub-line, footer
-    // "Balance RM {{balance_centi}}" + RM {{total_centi}} (balance computed).
+    // "Balance RM {{balance_sen}}" + RM {{total_sen}} (balance computed).
     variant: "doc",
     subline: (r) => join(pick(r, "invoiceNumber", "invoice_number"), dm(pick(r, "dueDate", "due_date")) !== "—" ? `due ${dm(pick(r, "dueDate", "due_date"))}` : ""),
     brand: (r) => pick(r, "branding") ?? "",
-    footL: (r) => ["Balance", rmField(balanceCenti(r))],
-    footR: (r) => pick(r, "totalCenti", "total_centi", "localTotalCenti", "local_total_centi"),
+    footL: (r) => ["Balance", rmField(balanceSen(r))],
+    footR: (r) => pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "invoiceNumber", "invoice_number") ?? "—", "Inv No"],
@@ -1197,8 +1197,8 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
          linked SO's date) in every quick view; desktop drawer parity. */
       [(r) => dm(pick(r, "soProcessingDate", "so_processing_date")), "Processing"],
       [(r) => dm(pick(r, "customerDeliveryDate", "customer_delivery_date") ?? pick(r, "soCustomerDeliveryDate", "so_customer_delivery_date")), "Delivery"],
-      [(r) => rmField(pick(r, "totalCenti", "total_centi", "localTotalCenti", "local_total_centi")), "Amount"],
-      [(r) => rmField(balanceCenti(r)), "Balance"],
+      [(r) => rmField(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen")), "Amount"],
+      [(r) => rmField(balanceSen(r)), "Balance"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1209,12 +1209,12 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     sorts: [
       { key: "due", label: "Due date", cmp: (a, b) => byDate(pick(a, "dueDate", "due_date"), pick(b, "dueDate", "due_date")) },
-      { key: "amount", label: "Amount", cmp: (a, b) => byNum(pick(a, "totalCenti", "total_centi"), pick(b, "totalCenti", "total_centi")) },
+      { key: "amount", label: "Amount", cmp: (a, b) => byNum(pick(a, "totalSen", "total_sen"), pick(b, "totalSen", "total_sen")) },
     ],
   },
 
   // grns.get('/') → { grns: [...] }; header cols: grn_number, received_at,
-  // status, total_centi + nested supplier:{code,name}.
+  // status, total_sen + nested supplier:{code,name}.
   // Design m-gr: GR No/PO/Date/Items + status pill. Real cols: grn_number,
   // nested purchase_order.po_number, received_at, status. Items count has NO
   // column on the list row (items are a separate table) → OMITTED.
@@ -1226,7 +1226,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "grns",
     primary: (r) => r.supplier?.name || r.grn_number,
     secondary: (r) => join(r.grn_number, r.status, dm(r.received_at)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.grn_number, r.supplier?.name, r.supplier?.code, r.delivery_note_ref),
     statusDocType: "grn",
@@ -1243,7 +1243,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       [(r) => pick(r, "grnNumber", "grn_number") ?? "—", "GR No"],
       [(r) => r.purchase_order?.po_number ?? r.purchaseOrder?.poNumber ?? "—", "PO"],
       [(r) => dm(pick(r, "receivedAt", "received_at")), "Date"],
-      [(r) => rmField(pick(r, "totalCenti", "total_centi")), "Value"],
+      [(r) => rmField(pick(r, "totalSen", "total_sen")), "Value"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1254,9 +1254,9 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // mfg-purchase-orders.get('/') → { purchaseOrders: [...] }; header cols:
-  // po_number, status, po_date, total_centi + nested supplier:{code,name}.
+  // po_number, status, po_date, total_sen + nested supplier:{code,name}.
   // Design m-po: Supplier/PO No/Date/Expected/Value + status pill. Real cols:
-  // po_number, po_date, expected_at, total_centi, status, nested supplier.name.
+  // po_number, po_date, expected_at, total_sen, status, nested supplier.name.
   "mfg-purchase-orders": {
     title: "Purchase Orders",
     eyebrow: "Procurement",
@@ -1265,23 +1265,23 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "purchaseOrders",
     primary: (r) => r.supplier?.name || r.po_number,
     secondary: (r) => join(r.po_number, r.status, dm(r.po_date)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.po_number, r.supplier?.name, r.supplier?.code),
     statusDocType: "po",
     pill: (r) => scmStatusLabel("po", pick(r, "status")),
     // Spec #po-list: name + status, "{{doc_no}} · exp {{expected_date}}" sub-line,
-    // footer "{{line_count}} lines" + RM {{total_centi}}.
+    // footer "{{line_count}} lines" + RM {{total_sen}}.
     variant: "doc",
     subline: (r) => join(pick(r, "poNumber", "po_number"), dm(pick(r, "expectedAt", "expected_at")) !== "—" ? `exp ${dm(pick(r, "expectedAt", "expected_at"))}` : ""),
     footL: (r) => { const n = pick(r, "lineCount", "line_count"); return ["", n == null ? "" : `${n} lines`]; },
-    footR: (r) => pick(r, "totalCenti", "total_centi"),
+    footR: (r) => pick(r, "totalSen", "total_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "poNumber", "po_number") ?? "—", "PO No"],
       [(r) => dm(pick(r, "poDate", "po_date")), "Date"],
       [(r) => dm(pick(r, "expectedAt", "expected_at")), "Expected"],
-      [(r) => rmField(pick(r, "totalCenti", "total_centi")), "Value"],
+      [(r) => rmField(pick(r, "totalSen", "total_sen")), "Value"],
     ],
     // Mirrors the desktop PO list (PurchaseOrders.tsx): the buyer's 95% view is
     // "Outstanding" = SUBMITTED ∪ PARTIALLY_RECEIVED (still inbound), plus a
@@ -1294,7 +1294,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     sorts: [
       { key: "exp", label: "Expected", cmp: (a, b) => byDate(pick(a, "expectedAt", "expected_at"), pick(b, "expectedAt", "expected_at")) },
-      { key: "total", label: "Value", cmp: (a, b) => byNum(pick(a, "totalCenti", "total_centi"), pick(b, "totalCenti", "total_centi")) },
+      { key: "total", label: "Value", cmp: (a, b) => byNum(pick(a, "totalSen", "total_sen"), pick(b, "totalSen", "total_sen")) },
     ],
   },
 
@@ -1332,10 +1332,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // inventory.get('/')?showAll=true → { balances, warehouses }; balances cols
-  // (v_inventory_all_skus): product_code, product_name, category, qty,
+  // (v_inventory_all_skus): item_code, product_name, category, qty,
   // warehouse_name, value_sen…
   // Design m-inventory: SKU/Warehouse/On hand/Reserved + stock-level pill. Real
-  // v_inventory_all_skus cols: product_code, product_name, warehouse_code/_name,
+  // v_inventory_all_skus cols: item_code, product_name, warehouse_code/_name,
   // qty, category. Reserved has NO column on this view → OMITTED. Level pill
   // (In stock / Low / Zero) is computed client-side from qty.
   inventory: {
@@ -1344,10 +1344,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     placeholder: "Search product · SKU",
     endpoint: "/inventory?showAll=true",
     listKey: "balances",
-    primary: (r) => lineIdentity({ code: r.product_code, description: r.product_name }).primary,
-    secondary: (r) => join(r.product_code, r.category, r.warehouse_code ?? r.warehouse_name),
+    primary: (r) => lineIdentity({ code: r.item_code, description: r.product_name }).primary,
+    secondary: (r) => join(r.item_code, r.category, r.warehouse_code ?? r.warehouse_name),
     right: (r) => (r.qty == null ? "" : `${r.qty}`),
-    search: (r) => join(r.product_name, r.product_code, r.category, r.warehouse_name),
+    search: (r) => join(r.product_name, r.item_code, r.category, r.warehouse_name),
     pill: (r) => stockLevel(pick(r, "qty")),
     // Spec #inventory: name + stock badge, "{{warehouse_name}}" sub-line, 3-KPI
     // footer (On hand / Reserved / Available). v_inventory_all_skus has only qty
@@ -1355,7 +1355,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     // Description ONCE, code NOT displayed — the shared rule
     // (vendor/shared/line-identity.ts): the sub-line's "SKU {{sku}}" repeated the
     // identity `primary` already names. WAREHOUSE is not a duplicate and stays.
-    // The code still BINDS — `search` above still matches on product_code, so a
+    // The code still BINDS — `search` above still matches on item_code, so a
     // rep can still find a row by typing its SKU.
     variant: "inventory",
     subline: (r) => join(pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
@@ -1364,7 +1364,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       return [["On hand", n == null ? "—" : String(n)], ["Reserved", "—"], ["Available", n == null ? "—" : String(n)]];
     },
     fields: [
-      [(r) => pick(r, "productCode", "product_code") ?? "—", "SKU"],
+      [(r) => pick(r, "itemCode", "item_code") ?? "—", "SKU"],
       [(r) => pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name") ?? "—", "Warehouse"],
       [(r) => { const n = pick(r, "qty"); return n == null ? "—" : String(n); }, "On hand"],
     ],
@@ -1571,9 +1571,9 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // delivery-returns.get('/') → { deliveryReturns: [...] }; cols return_number,
-  // do_doc_no, debtor_name, return_date, status, refund_centi.
+  // do_doc_no, debtor_name, return_date, status, refund_sen.
   // Design m-pr (Sales Returns): Return No/Date/Reason/Value + status pill. Real
-  // cols: return_number, return_date, reason, refund_centi, status. All present.
+  // cols: return_number, return_date, reason, refund_sen, status. All present.
   "delivery-returns": {
     title: "Delivery Returns",
     eyebrow: "Finance",
@@ -1582,27 +1582,27 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "deliveryReturns",
     primary: (r) => r.debtor_name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
-    right: (r) => r.refund_centi,
+    right: (r) => r.refund_sen,
     rightMoney: true,
     search: (r) => join(r.debtor_name, r.return_number, r.do_doc_no),
     statusDocType: "dr",
     pill: (r) => scmStatusLabel("dr", pick(r, "status")),
     // Spec #sr-list: name + status, "{{doc_no}} · {{return_date}} · ref
     // {{so_doc_no}}" sub-line, "{{reason}}" note (hidden when blank), right-only
-    // RM {{refund_centi}} footer.
+    // RM {{refund_sen}} footer.
     variant: "doc",
     subline: (r) => {
       const ref = pick(r, "soDocNo", "so_doc_no", "doDocNo", "do_doc_no");
       return join(pick(r, "returnNumber", "return_number"), dm(pick(r, "returnDate", "return_date")), ref ? `ref ${ref}` : "");
     },
     note: (r) => pick(r, "reason") ?? "",
-    footR: (r) => pick(r, "refundCenti", "refund_centi"),
+    footR: (r) => pick(r, "refundSen", "refund_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "returnNumber", "return_number") ?? "—", "Return No"],
       [(r) => dm(pick(r, "returnDate", "return_date")), "Date"],
       [(r) => pick(r, "reason") ?? "—", "Reason"],
-      [(r) => rmField(pick(r, "refundCenti", "refund_centi")), "Value"],
+      [(r) => rmField(pick(r, "refundSen", "refund_sen")), "Value"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1615,9 +1615,9 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // purchase-invoices.get('/') → { purchaseInvoices: [...] }; cols invoice_number,
-  // invoice_date, status, total_centi + nested supplier:{code,name}.
+  // invoice_date, status, total_sen + nested supplier:{code,name}.
   // Design m-pi: PI No/Date/Due/Amount + status pill. Real cols: invoice_number,
-  // invoice_date, due_date, total_centi, status, nested supplier.name.
+  // invoice_date, due_date, total_sen, status, nested supplier.name.
   "purchase-invoices": {
     title: "Purchase Invoices",
     eyebrow: "Procurement",
@@ -1626,13 +1626,13 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "purchaseInvoices",
     primary: (r) => r.supplier?.name || r.invoice_number,
     secondary: (r) => join(r.invoice_number, r.status, dm(r.invoice_date)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.invoice_number, r.supplier?.name, r.supplier_invoice_ref),
     statusDocType: "pi",
     pill: (r) => scmStatusLabel("pi", pick(r, "status")),
     // Spec #pi-list: name + status, "{{doc_no}} · due {{due_date}}" sub-line,
-    // footer "Balance RM {{balance_centi}}" + RM {{total_centi}}.
+    // footer "Balance RM {{balance_sen}}" + RM {{total_sen}}.
     variant: "doc",
     // PI can carry due + a GRN + a PO — showing all three crams the sub-line at
     // phone width, so surface the single most-useful source: the GRN it invoices
@@ -1645,14 +1645,14 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       const src = grn ? `GRN ${grn}` : po ? `PO ${po}` : "";
       return join(pick(r, "invoiceNumber", "invoice_number"), due !== "—" ? `due ${due}` : "", src);
     },
-    footL: (r) => ["Balance", rmField(balanceCenti(r))],
-    footR: (r) => pick(r, "totalCenti", "total_centi"),
+    footL: (r) => ["Balance", rmField(balanceSen(r))],
+    footR: (r) => pick(r, "totalSen", "total_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "invoiceNumber", "invoice_number") ?? "—", "PI No"],
       [(r) => dm(pick(r, "invoiceDate", "invoice_date")), "Date"],
       [(r) => dm(pick(r, "dueDate", "due_date")), "Due"],
-      [(r) => rmField(pick(r, "totalCenti", "total_centi")), "Amount"],
+      [(r) => rmField(pick(r, "totalSen", "total_sen")), "Amount"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1662,14 +1662,14 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     sorts: [
       { key: "due", label: "Due date", cmp: (a, b) => byDate(pick(a, "dueDate", "due_date"), pick(b, "dueDate", "due_date")) },
-      { key: "total", label: "Amount", cmp: (a, b) => byNum(pick(a, "totalCenti", "total_centi"), pick(b, "totalCenti", "total_centi")) },
+      { key: "total", label: "Amount", cmp: (a, b) => byNum(pick(a, "totalSen", "total_sen"), pick(b, "totalSen", "total_sen")) },
     ],
   },
 
   // purchase-returns.get('/') → { purchaseReturns: [...] }; cols return_number,
-  // return_date, status, refund_centi + nested supplier:{code,name}.
+  // return_date, status, refund_sen + nested supplier:{code,name}.
   // Design m-preturn: Return No/Date/Reason/Value + status pill. Real cols:
-  // return_number, return_date, reason, refund_centi, status, nested supplier.
+  // return_number, return_date, reason, refund_sen, status, nested supplier.
   "purchase-returns": {
     title: "Purchase Returns",
     eyebrow: "Procurement",
@@ -1678,27 +1678,27 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "purchaseReturns",
     primary: (r) => r.supplier?.name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
-    right: (r) => r.refund_centi,
+    right: (r) => r.refund_sen,
     rightMoney: true,
     search: (r) => join(r.return_number, r.supplier?.name, r.credit_note_ref),
     statusDocType: "pr",
     pill: (r) => scmStatusLabel("pr", pick(r, "status")),
     // Spec #preturn-list: name + status, "{{doc_no}} · {{return_date}} · PO
     // {{po_doc_no}}" sub-line, "{{reason}}" note (hidden when blank), right-only
-    // RM {{refund_centi}} footer.
+    // RM {{refund_sen}} footer.
     variant: "doc",
     subline: (r) => {
       const po = pick(r, "poDocNo", "po_doc_no", "sourcePoDocNo", "source_po_doc_no");
       return join(pick(r, "returnNumber", "return_number"), dm(pick(r, "returnDate", "return_date")), po ? `PO ${po}` : "");
     },
     note: (r) => pick(r, "reason") ?? "",
-    footR: (r) => pick(r, "refundCenti", "refund_centi"),
+    footR: (r) => pick(r, "refundSen", "refund_sen"),
     footMoney: true,
     fields: [
       [(r) => pick(r, "returnNumber", "return_number") ?? "—", "Return No"],
       [(r) => dm(pick(r, "returnDate", "return_date")), "Date"],
       [(r) => pick(r, "reason") ?? "—", "Reason"],
-      [(r) => rmField(pick(r, "refundCenti", "refund_centi")), "Value"],
+      [(r) => rmField(pick(r, "refundSen", "refund_sen")), "Value"],
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1711,7 +1711,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // purchase-consignment-orders.get('/') → { purchaseOrders: [...] }; cols
-  // pc_number, po_date, status, total_centi + nested supplier:{code,name}.
+  // pc_number, po_date, status, total_sen + nested supplier:{code,name}.
   "purchase-consignment-orders": {
     title: "Purchase Consignment Orders",
     eyebrow: "Consignment",
@@ -1720,20 +1720,20 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "purchaseOrders",
     primary: (r) => r.supplier?.name || r.pc_number,
     secondary: (r) => join(r.pc_number, r.status, dm(r.po_date)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.pc_number, r.supplier?.name),
     statusDocType: "po",
     pill: (r) => scmStatusLabel("po", pick(r, "status")),
     variant: "doc",
     subline: (r) => join(pick(r, "pcNumber", "pc_number"), dm(pick(r, "poDate", "po_date"))),
-    footR: (r) => pick(r, "totalCenti", "total_centi"),
+    footR: (r) => pick(r, "totalSen", "total_sen"),
     footMoney: true,
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "poDate", "po_date"), pick(b, "poDate", "po_date")) }],
   },
 
   // purchase-consignment-receives.get('/') → { grns: [...] }; cols
-  // receive_number, received_at, status, total_centi + nested supplier + pc_order_no.
+  // receive_number, received_at, status, total_sen + nested supplier + pc_order_no.
   "purchase-consignment-receives": {
     title: "Purchase Consignment Receives",
     eyebrow: "Consignment",
@@ -1742,7 +1742,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "grns",
     primary: (r) => r.supplier?.name || r.receive_number,
     secondary: (r) => join(r.receive_number, r.status, dm(r.received_at)),
-    right: (r) => r.total_centi,
+    right: (r) => r.total_sen,
     rightMoney: true,
     search: (r) => join(r.receive_number, r.supplier?.name, r.pc_order_no),
     statusDocType: "grn",
@@ -1752,13 +1752,13 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       const po = pick(r, "pcOrderNo", "pc_order_no");
       return join(pick(r, "receiveNumber", "receive_number"), dm(pick(r, "receivedAt", "received_at")), po ? `PC ${po}` : "");
     },
-    footR: (r) => pick(r, "totalCenti", "total_centi"),
+    footR: (r) => pick(r, "totalSen", "total_sen"),
     footMoney: true,
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "receivedAt", "received_at"), pick(b, "receivedAt", "received_at")) }],
   },
 
   // purchase-consignment-returns.get('/') → { purchaseReturns: [...] }; cols
-  // return_number, return_date, status, refund_centi.
+  // return_number, return_date, status, refund_sen.
   "purchase-consignment-returns": {
     title: "Purchase Consignment Returns",
     eyebrow: "Consignment",
@@ -1767,7 +1767,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "purchaseReturns",
     primary: (r) => r.supplier?.name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
-    right: (r) => r.refund_centi,
+    right: (r) => r.refund_sen,
     rightMoney: true,
     search: (r) => join(r.return_number, r.supplier?.name),
     statusDocType: "pr",
@@ -1775,13 +1775,13 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     variant: "doc",
     subline: (r) => join(pick(r, "returnNumber", "return_number"), dm(pick(r, "returnDate", "return_date"))),
     note: (r) => pick(r, "reason") ?? "",
-    footR: (r) => pick(r, "refundCenti", "refund_centi"),
+    footR: (r) => pick(r, "refundSen", "refund_sen"),
     footMoney: true,
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
 
   // consignment-orders.get('/') → { salesOrders: [...] }; cols doc_no,
-  // debtor_name, so_date, status, local_total_centi.
+  // debtor_name, so_date, status, local_total_sen.
   "consignment-orders": {
     title: "Consignment Orders",
     eyebrow: "Consignment",
@@ -1790,13 +1790,13 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "salesOrders",
     primary: (r) => r.debtor_name || r.doc_no,
     secondary: (r) => join(r.doc_no, r.status, dm(r.so_date)),
-    right: (r) => r.local_total_centi,
+    right: (r) => r.local_total_sen,
     rightMoney: true,
     search: (r) => join(r.debtor_name, r.doc_no, r.ref, r.po_doc_no),
     pill: (r) => humanize(pick(r, "status")),
     variant: "doc",
     subline: (r) => join(pick(r, "docNo", "doc_no"), dm(pick(r, "soDate", "so_date"))),
-    footR: (r) => pick(r, "localTotalCenti", "local_total_centi"),
+    footR: (r) => pick(r, "localTotalSen", "local_total_sen"),
     footMoney: true,
     chips: [
       { key: "all", label: "All", match: () => true },
@@ -1827,7 +1827,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // consignment-returns.get('/') → { deliveryReturns: [...] }; cols
-  // return_number, debtor_name, return_date, status, refund_centi.
+  // return_number, debtor_name, return_date, status, refund_sen.
   "consignment-returns": {
     title: "Consignment Returns",
     eyebrow: "Consignment",
@@ -1836,7 +1836,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     listKey: "deliveryReturns",
     primary: (r) => r.debtor_name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
-    right: (r) => r.refund_centi,
+    right: (r) => r.refund_sen,
     rightMoney: true,
     search: (r) => join(r.debtor_name, r.return_number, r.do_doc_no),
     statusDocType: "dr",
@@ -1844,7 +1844,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     variant: "doc",
     subline: (r) => join(pick(r, "returnNumber", "return_number"), dm(pick(r, "returnDate", "return_date"))),
     note: (r) => pick(r, "reason") ?? "",
-    footR: (r) => pick(r, "refundCenti", "refund_centi"),
+    footR: (r) => pick(r, "refundSen", "refund_sen"),
     footMoney: true,
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
@@ -1869,7 +1869,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.name, pick(r, "code", "sku"), pick(r, "category"), pick(r, "branding"), pick(r, "barcode")),
     pill: (r) => humanize(pick(r, "category")),
     // Spec #products: .ph thumbnail + name + "{{category}}" sub-line + right
-    // "RM {{price_centi}}". base_price_sen is the base selling price (SEN); uom
+    // "RM {{price_sen}}". base_price_sen is the base selling price (SEN); uom
     // has no mfg column → omitted.
     // Description ONCE, code NOT displayed — the shared rule
     // (vendor/shared/line-identity.ts). This is the browse twin of the

@@ -21,7 +21,7 @@
 // The importer puts the whole build's price on the FIRST piece and 0 on every
 // other, and apply-sofa-compartment-corrections.mjs aborts a build outright if
 // the total would move (:149). Both deletions went through, so both deleted
-// rows carried total_centi = 0. Restoring them at 0, CANCELLED, therefore
+// rows carried total_sen = 0. Restoring them at 0, CANCELLED, therefore
 // changes no total in either direction.
 //
 // That is the argument. This script does not rely on it:
@@ -29,7 +29,7 @@
 //   1. It snapshots the ENTIRE sales-order header row as jsonb before the
 //      insert and again after it, inside the same transaction, and compares
 //      every key. Not just a total column someone remembered — every key.
-//   2. It also compares SUM(total_centi) and SUM(balance_centi) over all lines
+//   2. It also compares SUM(total_sen) and SUM(balance_sen) over all lines
 //      and over non-cancelled lines only, so it cannot be fooled by a rollup
 //      that filters cancelled rows.
 //   3. If ANYTHING moved, it ROLLS THE TRANSACTION BACK and reports. The
@@ -93,16 +93,16 @@ async function totals(tx, doc) {
   const [t] = await tx`SELECT
         COUNT(*)::int                                                     AS lines_all,
         COUNT(*) FILTER (WHERE NOT cancelled)::int                        AS lines_live,
-        COALESCE(SUM(total_centi), 0)::bigint                             AS total_all,
-        COALESCE(SUM(total_centi) FILTER (WHERE NOT cancelled), 0)::bigint AS total_live,
-        COALESCE(SUM(balance_centi), 0)::bigint                            AS balance_all,
-        COALESCE(SUM(balance_centi) FILTER (WHERE NOT cancelled), 0)::bigint AS balance_live
+        COALESCE(SUM(total_sen), 0)::bigint                             AS total_all,
+        COALESCE(SUM(total_sen) FILTER (WHERE NOT cancelled), 0)::bigint AS total_live,
+        COALESCE(SUM(balance_sen), 0)::bigint                            AS balance_all,
+        COALESCE(SUM(balance_sen) FILTER (WHERE NOT cancelled), 0)::bigint AS balance_live
       FROM scm.mfg_sales_order_items WHERE doc_no = ${doc} AND company_id = ${CO}`;
   return { header: h?.h ?? null, sums: t };
 }
 
-const sumLine = (s) => `lines ${s.lines_all} (live ${s.lines_live}) · total_centi all ${s.total_all} / live ${s.total_live}` +
-  ` · balance_centi all ${s.balance_all} / live ${s.balance_live}`;
+const sumLine = (s) => `lines ${s.lines_all} (live ${s.lines_live}) · total_sen all ${s.total_all} / live ${s.total_live}` +
+  ` · balance_sen all ${s.balance_all} / live ${s.balance_live}`;
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}`);
@@ -125,13 +125,13 @@ async function main() {
     log("");
     log(`── ${d.doc}  ${d.model}  ${d.before} -> ${d.target}   restoring ${code}`);
 
-    const rows = await sql`SELECT id::text AS id, item_code, line_no, qty, cancelled, total_centi,
+    const rows = await sql`SELECT id::text AS id, item_code, line_no, qty, cancelled, total_sen,
                                   description2, variants, uom, location, photo_urls, item_group
                              FROM scm.mfg_sales_order_items
                             WHERE doc_no = ${d.doc} AND company_id = ${CO} AND item_group = 'sofa'
                             ORDER BY line_no`;
     if (!rows.length) { log("   REFUSED — the document holds no sofa lines at all."); refused++; continue; }
-    for (const r of rows) log(`   now: line ${r.line_no}  ${r.item_code}  qty=${r.qty}  total_centi=${r.total_centi}  cancelled=${r.cancelled}`);
+    for (const r of rows) log(`   now: line ${r.line_no}  ${r.item_code}  qty=${r.qty}  total_sen=${r.total_sen}  cancelled=${r.cancelled}`);
 
     if (rows.some((r) => norm(r.item_code) === norm(code))) {
       log(`   SKIP — a ${code} row is already on this document. Nothing to restore (idempotent).`);
@@ -149,7 +149,7 @@ async function main() {
 
     const before = await totals(sql, d.doc);
     log(`   BEFORE  ${sumLine(before.sums)}`);
-    log(`   plan: INSERT ${code} qty=${sib.qty} unit_price_centi=0 total_centi=0 balance_centi=0 cancelled=TRUE` +
+    log(`   plan: INSERT ${code} qty=${sib.qty} unit_price_sen=0 total_sen=0 balance_sen=0 cancelled=TRUE` +
         ` line_no=MAX+1 description="${desc}"`);
     if (!APPLY) { log("   DRY-RUN — not written."); continue; }
 
@@ -158,7 +158,7 @@ async function main() {
       await sql.begin(async (tx) => {
         const [ins] = await tx`INSERT INTO scm.mfg_sales_order_items
             (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
-             unit_price_centi, total_centi, balance_centi, company_id, variants, remark, photo_urls, cancelled)
+             unit_price_sen, total_sen, balance_sen, company_id, variants, remark, photo_urls, cancelled)
           SELECT i.doc_no,
                  (SELECT COALESCE(MAX(line_no), 0) + 1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no AND company_id = ${CO}),
                  'sofa', ${code}, ${desc}, i.description2, i.uom, i.location, i.qty,
@@ -198,13 +198,13 @@ async function main() {
   log("");
   log("── INDEPENDENT READ-BACK (a fresh SELECT, not the writer's own return value)");
   for (const d of DELETED) {
-    const rows = await sql`SELECT line_no, item_code, qty, unit_price_centi, total_centi, balance_centi, cancelled
+    const rows = await sql`SELECT line_no, item_code, qty, unit_price_sen, total_sen, balance_sen, cancelled
                              FROM scm.mfg_sales_order_items
                             WHERE doc_no = ${d.doc} AND company_id = ${CO} AND item_group = 'sofa'
                             ORDER BY line_no`;
     const t = await totals(sql, d.doc);
     log(`   ${d.doc}: ${rows.length} sofa line(s)`);
-    for (const r of rows) log(`     line ${r.line_no}  ${r.item_code}  qty=${r.qty}  unit=${r.unit_price_centi}  total=${r.total_centi}  balance=${r.balance_centi}  cancelled=${r.cancelled}`);
+    for (const r of rows) log(`     line ${r.line_no}  ${r.item_code}  qty=${r.qty}  unit=${r.unit_price_sen}  total=${r.total_sen}  balance=${r.balance_sen}  cancelled=${r.cancelled}`);
     log(`     ${sumLine(t.sums)}`);
     const live = rows.filter((r) => !r.cancelled).length;
     log(`     live ${live} / cancelled ${rows.length - live} — the live piece set is unchanged if live is still 2.`);

@@ -45,8 +45,8 @@ export interface ReleasePolicy {
 export const DEFAULT_RELEASE_POLICY: ReleasePolicy = { minPaidFractionToRelease: 0 };
 
 export interface ReleaseGateInput {
-  totalCenti: number;
-  paidCenti: number;
+  totalSen: number;
+  paidSen: number;
   policy?: ReleasePolicy;
   /** The freshness/integrity of the figures. RED never RELEASEs — an unreconciled
    *  or missing balance is exactly when the spec says stop and escalate (§10.2). */
@@ -54,14 +54,14 @@ export interface ReleaseGateInput {
 }
 
 export interface ReleaseGate {
-  totalCenti: number;
-  paidCenti: number;
-  remainingCenti: number;
+  totalSen: number;
+  paidSen: number;
+  remainingSen: number;
   /** 0..1, clamped. A free order (total ≤ 0) is treated as fully paid. */
   paidFraction: number;
   decision: ReleaseDecision;
   /** What POD must collect on delivery. 0 unless RELEASE_WITH_COLLECTION. */
-  collectOnDeliveryCenti: number;
+  collectOnDeliverySen: number;
   /** One line naming the decision, for the run summary / driver manifest. */
   reason: string;
   /** True only when the figures could not be trusted — the caller must escalate
@@ -80,10 +80,10 @@ const clampFraction = (n: number): number => (n < 0 ? 0 : n > 1 ? 1 : n);
  * is a RECOMMENDATION at Stage 1, the spec's default for this class.
  */
 export function computeReleaseGate(input: ReleaseGateInput): ReleaseGate {
-  const totalCenti = Math.max(0, Math.round(input.totalCenti || 0));
-  const paidCenti = Math.max(0, Math.round(input.paidCenti || 0));
-  const remainingCenti = Math.max(0, totalCenti - paidCenti);
-  const paidFraction = totalCenti <= 0 ? 1 : clampFraction(paidCenti / totalCenti);
+  const totalSen = Math.max(0, Math.round(input.totalSen || 0));
+  const paidSen = Math.max(0, Math.round(input.paidSen || 0));
+  const remainingSen = Math.max(0, totalSen - paidSen);
+  const paidFraction = totalSen <= 0 ? 1 : clampFraction(paidSen / totalSen);
   const dq = input.dataQuality ?? 'GREEN';
   const floor = input.policy?.minPaidFractionToRelease ?? DEFAULT_RELEASE_POLICY.minPaidFractionToRelease;
 
@@ -92,8 +92,8 @@ export function computeReleaseGate(input: ReleaseGateInput): ReleaseGate {
   // defend" — surfaced here as a hold-for-escalation rather than a dispatch.
   if (dq === 'RED') {
     return {
-      totalCenti, paidCenti, remainingCenti, paidFraction,
-      decision: 'HOLD', collectOnDeliveryCenti: 0, needsEscalation: true,
+      totalSen, paidSen, remainingSen, paidFraction,
+      decision: 'HOLD', collectOnDeliverySen: 0, needsEscalation: true,
       reason: 'payment figures are unreconciled (data-quality RED) — hold and escalate, do not dispatch on an untrusted balance',
     };
   }
@@ -101,25 +101,25 @@ export function computeReleaseGate(input: ReleaseGateInput): ReleaseGate {
   // Below the configured pre-dispatch floor → a human decides. Default floor is
   // 0, so this branch is only ever reached when the owner has turned a hard hold
   // ON. Named with the numbers so the reason is actionable.
-  if (totalCenti > 0 && paidFraction < floor) {
+  if (totalSen > 0 && paidFraction < floor) {
     return {
-      totalCenti, paidCenti, remainingCenti, paidFraction,
-      decision: 'HOLD', collectOnDeliveryCenti: 0, needsEscalation: false,
+      totalSen, paidSen, remainingSen, paidFraction,
+      decision: 'HOLD', collectOnDeliverySen: 0, needsEscalation: false,
       reason: `paid ${(paidFraction * 100).toFixed(0)}% is below the ${(floor * 100).toFixed(0)}% required before dispatch — human approval required`,
     };
   }
 
-  if (remainingCenti <= 0) {
+  if (remainingSen <= 0) {
     return {
-      totalCenti, paidCenti, remainingCenti, paidFraction,
-      decision: 'RELEASE', collectOnDeliveryCenti: 0, needsEscalation: false,
+      totalSen, paidSen, remainingSen, paidFraction,
+      decision: 'RELEASE', collectOnDeliverySen: 0, needsEscalation: false,
       reason: 'fully paid — clear to dispatch',
     };
   }
 
   return {
-    totalCenti, paidCenti, remainingCenti, paidFraction,
-    decision: 'RELEASE_WITH_COLLECTION', collectOnDeliveryCenti: remainingCenti, needsEscalation: false,
-    reason: `clear to dispatch; POD to collect the ${(remainingCenti / 100).toFixed(2)} balance on delivery`,
+    totalSen, paidSen, remainingSen, paidFraction,
+    decision: 'RELEASE_WITH_COLLECTION', collectOnDeliverySen: remainingSen, needsEscalation: false,
+    reason: `clear to dispatch; POD to collect the ${(remainingSen / 100).toFixed(2)} balance on delivery`,
   };
 }

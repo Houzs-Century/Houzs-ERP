@@ -97,7 +97,7 @@ async function main() {
   }
 
   // ---- 4. PO bedframe completeness ----
-  const pob = await sql`SELECT i.id, i.material_code AS item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.po_number AS doc_no
+  const pob = await sql`SELECT i.id, i.item_code AS item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.po_number AS doc_no
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND i.item_group = 'bedframe'`;
   const pobBad = pob.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));

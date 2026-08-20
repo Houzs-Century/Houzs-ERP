@@ -38,13 +38,13 @@ const seed = (over: Row = {}) => fakeSb({
     phone: '012-1111111', emergency_contact_phone: null,
     ref: null, po_doc_no: null, customer_po: null, customer_so_no: null,
     processing_date: null,
-    total_revenue_centi: 500_00, balance_centi: 500_00, deposit_centi: 0,
+    total_revenue_sen: 500_00, balance_sen: 500_00, deposit_sen: 0,
     linked_ac_docno: 'SO-000021',
     ...over,
   }],
   mfg_sales_order_items: [{
     doc_no: 'HC-SO-A', item_code: ERP_ITEM, description: 'Mattress',
-    qty: 1, unit_price_centi: 500_00, line_delivery_date: null, linked_ac_dtlkey: 991,
+    qty: 1, unit_price_sen: 500_00, line_delivery_date: null, linked_ac_dtlkey: 991,
   }],
   mfg_sales_order_payments: [],
 });

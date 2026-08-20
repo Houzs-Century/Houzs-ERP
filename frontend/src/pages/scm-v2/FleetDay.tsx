@@ -46,7 +46,7 @@ import { PageHeader } from '../../components/Layout';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { cn } from '../../lib/utils';
-import { fmtCenti, todayMY } from '../../vendor/shared/format';
+import { fmtSen, todayMY } from '../../vendor/shared/format';
 import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { DeliveryMapPanel, useMapPanelOpen, useMapCompactColumns } from '../../components/scm-v2/DeliveryMapPanel';
@@ -135,7 +135,7 @@ export function FleetDay() {
 
   const colors = useMemo(() => assignRouteColors(trips.map((t) => t.id)), [trips]);
   const totalDrops = trips.reduce((n, t) => n + t.total_drops, 0);
-  const totalRevenue = trips.reduce((n, t) => n + t.total_revenue_centi, 0);
+  const totalRevenue = trips.reduce((n, t) => n + t.total_revenue_sen, 0);
 
   /* ── The day's board — the shared DeliveryPlanningBoard over the SO rows on
      a live trip THIS day (server-stamped trip_date; lib/last-mile.ts). state=ALL
@@ -367,7 +367,7 @@ export function FleetDay() {
     const pick = threePl[o.key] ?? {};
     if (!pick.carrierId) { notify({ title: 'Pick a 3PL carrier', body: 'Choose a carrier for this overflow before assigning.', tone: 'error' }); return; }
     const costRm = Number(pick.costRm);
-    const costCenti = Number.isFinite(costRm) && costRm > 0 ? Math.round(costRm * 100) : null;
+    const costSen = Number.isFinite(costRm) && costRm > 0 ? Math.round(costRm * 100) : null;
     setAssigning3pl(o.key);
     let ok = 0; let failed = 0;
     for (let i = 0; i < o.orders.length; i += 1) {
@@ -377,7 +377,7 @@ export function FleetDay() {
           scheduleDate: o.date, tripDate: o.date,
           lorryId: pick.carrierId,
           stopNo: i + 1,
-          threePlCostCenti: i === 0 ? costCenti : undefined,
+          threePlCostSen: i === 0 ? costSen : undefined,
         });
         ok += 1;
       } catch { failed += 1; }
@@ -483,7 +483,7 @@ export function FleetDay() {
                   <Users size={12} strokeWidth={1.75} /> {driverLine(t)}
                 </span>
                 <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                  {t.warehouse?.name ? `${t.warehouse.name} · ` : ''}{t.total_drops} drops · {fmtCenti(t.total_revenue_centi)}
+                  {t.warehouse?.name ? `${t.warehouse.name} · ` : ''}{t.total_drops} drops · {fmtSen(t.total_revenue_sen)}
                 </span>
                 {suggestions && !suggestions.has(t.id) && crewAssign && (
                   <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>no engine suggestion — assign by hand</span>
@@ -557,7 +557,7 @@ export function FleetDay() {
         </label>
         <span className="flex-1" />
         <span className="text-[11.5px] text-ink-muted">
-          {trips.length} {trips.length === 1 ? 'trip' : 'trips'} · {totalDrops} drops · {fmtCenti(totalRevenue)}
+          {trips.length} {trips.length === 1 ? 'trip' : 'trips'} · {totalDrops} drops · {fmtSen(totalRevenue)}
         </span>
       </div>
 

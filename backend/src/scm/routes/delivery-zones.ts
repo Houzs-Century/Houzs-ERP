@@ -248,7 +248,7 @@ const proposeSchema = z.object({
   depotWarehouseId: z.string().uuid().nullable().optional(),
   startDate: z.string().regex(ISO_DATE).optional(),
   defaultMaxSets: z.number().int().min(1).max(1000).optional(),
-  defaultMaxRevenueCenti: z.number().int().min(1).optional(),
+  defaultMaxRevenueSen: z.number().int().min(1).optional(),
 });
 
 /** Malaysian "today" (UTC+8) as YYYY-MM-DD — the default proposal start date. */
@@ -270,14 +270,14 @@ function normCategory(raw: string): SetLineCategory {
 /** The columns the packer + the A2 sequencer both read off an SO header. The
  *  A1 packer uses postcode + revenue; A2 additionally geocodes (state/country)
  *  and reads the residence rule by building_type. One superset select serves both. */
-const SO_PACK_COLS = 'doc_no, debtor_name, address1, address2, postcode, customer_state, customer_country, building_type, local_total_centi';
+const SO_PACK_COLS = 'doc_no, debtor_name, address1, address2, postcode, customer_state, customer_country, building_type, local_total_sen';
 
 interface PackContext {
   startDate: string;
   usingDefault: boolean;
   lorries: PackLorry[];
   result: ReturnType<typeof packProposals>;
-  enrich: Map<string, { debtorName: string | null; sets: number; revenueCenti: number; zone: string }>;
+  enrich: Map<string, { debtorName: string | null; sets: number; revenueSen: number; zone: string }>;
   unzoned: Array<{ ref: string; debtorName: string | null; reason: string }>;
   soByDoc: Map<string, Record<string, unknown>>;
 }
@@ -287,10 +287,10 @@ interface PackContext {
 async function loadAndPack(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   c: any,
-  params: { soDocNos: string[]; depotWarehouseId: string | null; startDate: string; defaultMaxSets: number; defaultMaxRevenueCenti: number },
+  params: { soDocNos: string[]; depotWarehouseId: string | null; startDate: string; defaultMaxSets: number; defaultMaxRevenueSen: number },
 ): Promise<{ ok: true; ctx: PackContext } | { ok: false; status: 500; error: string; reason: string }> {
   const sb = c.get('supabase');
-  const { soDocNos, depotWarehouseId, startDate, defaultMaxSets, defaultMaxRevenueCenti } = params;
+  const { soDocNos, depotWarehouseId, startDate, defaultMaxSets, defaultMaxRevenueSen } = params;
 
   // 1. Company zone map (falls back to the in-code default when unset).
   const { data: mapRows } = await paginateAll<MapRow>((from, to) =>
@@ -351,7 +351,7 @@ async function loadAndPack(
   // given a home warehouse, matching the owner's model and mirroring the 3PL
   // carrier filter below; a strict .eq would hide every not-yet-configured lorry.
   let lq = sb.from('lorries')
-    .select('id, plate, active, is_internal, warehouse_id, max_sets, max_revenue_centi, capacity_layer')
+    .select('id, plate, active, is_internal, warehouse_id, max_sets, max_revenue_sen, capacity_layer')
     .eq('active', true)
     .eq('is_internal', true)
     .order('plate');
@@ -363,12 +363,12 @@ async function loadAndPack(
     const layerRaw = String((row.capacityLayer ?? row.capacity_layer ?? 'SETS')).toUpperCase();
     const layer: CapacityLayer = (CAP_LAYERS.has(layerRaw) ? layerRaw : 'SETS') as CapacityLayer;
     const ms = row.maxSets ?? row.max_sets;
-    const mr = row.maxRevenueCenti ?? row.max_revenue_centi;
+    const mr = row.maxRevenueSen ?? row.max_revenue_sen;
     return {
       id: String(row.id),
       plate: String(row.plate ?? ''),
       maxSets: ms == null ? null : Number(ms),
-      maxRevenueCenti: mr == null ? null : Number(mr),
+      maxRevenueSen: mr == null ? null : Number(mr),
       layer,
     };
   });
@@ -376,7 +376,7 @@ async function loadAndPack(
   // 5. Build pack orders; unzoned orders (no postcode / unmapped) are reported.
   const orders: PackOrder[] = [];
   const unzoned: Array<{ ref: string; debtorName: string | null; reason: string }> = [];
-  const enrich = new Map<string, { debtorName: string | null; sets: number; revenueCenti: number; zone: string }>();
+  const enrich = new Map<string, { debtorName: string | null; sets: number; revenueSen: number; zone: string }>();
   for (const docNo of soDocNos) {
     const row = soByDoc.get(docNo);
     if (!row) { unzoned.push({ ref: docNo, debtorName: null, reason: 'order not found or not in your company' }); continue; }
@@ -387,22 +387,22 @@ async function loadAndPack(
       address2: ((row.address2 ?? null) as string | null),
     }, zoneMap);
     const sc = deriveSetCount(linesByDoc.get(docNo) ?? []);
-    const revenueCenti = Number((row.localTotalCenti ?? row.local_total_centi) ?? 0) || 0;
+    const revenueSen = Number((row.localTotalSen ?? row.local_total_sen) ?? 0) || 0;
     if (!zr.zone) {
       unzoned.push({ ref: docNo, debtorName, reason: zr.method === 'none' ? 'no postcode on the address' : `postcode ${zr.postcode} maps to no zone` });
       continue;
     }
-    orders.push({ ref: docNo, zone: zr.zone, sets: sc.sets, revenueCenti, hasFurniture: sc.hasFurniture });
-    enrich.set(docNo, { debtorName, sets: sc.sets, revenueCenti, zone: zr.zone });
+    orders.push({ ref: docNo, zone: zr.zone, sets: sc.sets, revenueSen, hasFurniture: sc.hasFurniture });
+    enrich.set(docNo, { debtorName, sets: sc.sets, revenueSen, zone: zr.zone });
   }
 
   // Fuller-first fill: pack the biggest orders first (sets, then revenue).
-  orders.sort((a, b) => (b.sets - a.sets) || (b.revenueCenti - a.revenueCenti) || a.ref.localeCompare(b.ref));
+  orders.sort((a, b) => (b.sets - a.sets) || (b.revenueSen - a.revenueSen) || a.ref.localeCompare(b.ref));
 
   const result = packProposals({
     orders,
     lorries,
-    config: { startDate, klangValleyZones: KLANG_VALLEY_ZONES, defaultMaxSets, defaultMaxRevenueCenti },
+    config: { startDate, klangValleyZones: KLANG_VALLEY_ZONES, defaultMaxSets, defaultMaxRevenueSen },
   });
 
   return { ok: true, ctx: { startDate, usingDefault, lorries, result, enrich, unzoned, soByDoc } };
@@ -416,9 +416,9 @@ deliveryZones.post('/propose', async (c) => {
   const { soDocNos, depotWarehouseId } = parsed.data;
   const startDate = parsed.data.startDate ?? todayMY();
   const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
-  const defaultMaxRevenueCenti = parsed.data.defaultMaxRevenueCenti ?? 3_000_000;
+  const defaultMaxRevenueSen = parsed.data.defaultMaxRevenueSen ?? 3_000_000;
 
-  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueCenti });
+  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueSen });
   if (!packed.ok) return c.json({ error: packed.error, reason: packed.reason }, packed.status);
   const { ctx } = packed;
 
@@ -432,7 +432,7 @@ deliveryZones.post('/propose', async (c) => {
     usingDefaultZoneMap: ctx.usingDefault,
     depotWarehouseId: depotWarehouseId ?? null,
     lorryCount: ctx.lorries.length,
-    capacityDefaults: { maxSets: defaultMaxSets, maxRevenueCenti: defaultMaxRevenueCenti },
+    capacityDefaults: { maxSets: defaultMaxSets, maxRevenueSen: defaultMaxRevenueSen },
     proposals,
     days: ctx.result.days,
     unassigned: [
@@ -466,7 +466,7 @@ const sequenceAssignSchema = z.object({
   startDate: z.string().regex(ISO_DATE).optional(),
   departTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'departTime must be HH:MM').optional(),
   defaultMaxSets: z.number().int().min(1).max(1000).optional(),
-  defaultMaxRevenueCenti: z.number().int().min(1).optional(),
+  defaultMaxRevenueSen: z.number().int().min(1).optional(),
   // A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow.
   maxTripsPerLorryPerDay: z.number().int().min(1).max(20).optional(),
 });
@@ -484,10 +484,10 @@ deliveryZones.post('/sequence-assign', async (c) => {
   const departTime = parsed.data.departTime ?? '09:00';
   const departMin = timeToMinutes(departTime) ?? 9 * 60;
   const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
-  const defaultMaxRevenueCenti = parsed.data.defaultMaxRevenueCenti ?? 3_000_000;
+  const defaultMaxRevenueSen = parsed.data.defaultMaxRevenueSen ?? 3_000_000;
 
   // 1. Pack (A1) — the SAME grouping the review screen shows.
-  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueCenti });
+  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueSen });
   if (!packed.ok) return c.json({ error: packed.error, reason: packed.reason }, packed.status);
   const { ctx } = packed;
 
@@ -501,13 +501,13 @@ deliveryZones.post('/sequence-assign', async (c) => {
         group: day.group,
         orders: l.orders,
         sets: l.sets,
-        revenueCenti: l.revenueCenti,
+        revenueSen: l.revenueSen,
         preferredLorryId: l.lorryId,
       });
     });
   }
   // Biggest-first, so the fuller trips get first pick of the fleet.
-  groups.sort((a, b) => (b.sets - a.sets) || (b.revenueCenti - a.revenueCenti) || a.key.localeCompare(b.key));
+  groups.sort((a, b) => (b.sets - a.sets) || (b.revenueSen - a.revenueSen) || a.key.localeCompare(b.key));
 
   // 3. Available fleet (Module B) + crew rosters.
   const today = todayMY();
@@ -547,12 +547,12 @@ deliveryZones.post('/sequence-assign', async (c) => {
     groups,
     lorries: availLorries.map((l) => ({
       id: l.id, plate: l.plate, dispatchable: l.dispatchable, status: l.statusLabel,
-      maxSets: l.maxSets, maxRevenueCenti: l.maxRevenueCenti, layer: l.layer,
+      maxSets: l.maxSets, maxRevenueSen: l.maxRevenueSen, layer: l.layer,
       driverId: l.driverId, driverName: l.driverName,
     })),
     drivers,
     helpers,
-    config: { defaultMaxSets, defaultMaxRevenueCenti, maxTripsPerLorryPerDay: parsed.data.maxTripsPerLorryPerDay },
+    config: { defaultMaxSets, defaultMaxRevenueSen, maxTripsPerLorryPerDay: parsed.data.maxTripsPerLorryPerDay },
     driverLeave,
     helperLeave,
   });
@@ -669,9 +669,9 @@ deliveryZones.post('/sequence-assign', async (c) => {
       helperId: a.helperId,
       helperName: a.helperName,
       sets: a.sets,
-      revenueCenti: a.revenueCenti,
+      revenueSen: a.revenueSen,
       ceilingSets: a.ceilingSets,
-      ceilingRevenueCenti: a.ceilingRevenueCenti,
+      ceilingRevenueSen: a.ceilingRevenueSen,
       overCeiling: a.overCeiling,
       departTime,
       stops,

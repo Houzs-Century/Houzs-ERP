@@ -142,7 +142,7 @@ async function srcSelectIn(table, cols, col, values) {
 
 // Pick the sen (integer-cents) amount column from a discovered column list.
 const pickAmountCol = (cols) =>
-  cols.find((c) => c === "amount_centi") ||
+  cols.find((c) => c === "amount_sen") ||
   cols.find((c) => /amount.*cent|cent.*amount/i.test(c)) ||
   cols.find((c) => /^amount$|_amount$/i.test(c)) ||
   cols.find((c) => /amount/i.test(c)) ||
@@ -152,10 +152,10 @@ const pickDateCol = (cols) =>
   cols.find((c) => /paid_at|payment_date|paid_on|date/i.test(c)) ||
   null;
 const pickTotalCol = (cols) =>
-  cols.find((c) => c === "grand_total_centi") ||
-  cols.find((c) => c === "net_total_centi") ||
-  cols.find((c) => c === "local_total_centi") ||
-  cols.find((c) => c === "total_centi") ||
+  cols.find((c) => c === "grand_total_sen") ||
+  cols.find((c) => c === "net_total_sen") ||
+  cols.find((c) => c === "local_total_sen") ||
+  cols.find((c) => c === "total_sen") ||
   cols.find((c) => /(grand|net|final|local)?_?total.*cent/i.test(c)) ||
   null;
 
@@ -288,10 +288,10 @@ async function main() {
 
   // Dest Houzs SO payments for those SOs (so_doc_no is stored '2990-'+n, company scoped)
   let destSoPayBySo = new Map();
-  let destSoPayAmt = "amount_centi";
+  let destSoPayAmt = "amount_sen";
   if (soPaySchema && soDocNos.length) {
     const spCols = await destCols(soPaySchema, "mfg_sales_order_payments");
-    destSoPayAmt = pickAmountCol(spCols) ?? "amount_centi";
+    destSoPayAmt = pickAmountCol(spCols) ?? "amount_sen";
     const spDate = pickDateCol(spCols) ?? "paid_at";
     const spHasCid = spCols.includes("company_id");
     ident(destSoPayAmt); ident(spDate);
@@ -306,14 +306,14 @@ async function main() {
     destSoPayBySo = groupBy(rows, (r) => norm(r.so_doc_no));
   }
 
-  let dupCenti = 0, addCenti = 0, unknownCenti = 0, missingDoCenti = 0;
+  let dupSen = 0, addSen = 0, unknownSen = 0, missingDoSen = 0;
   const verdicts = [];
   for (const e of enriched) {
     notice(`---- #${e.i + 1}  DO ${e.doNo}  ->  SO ${e.soNo}   payment ${rm(e.amt)} (${e.method}) on ${e.date} ----`);
     if (!e.soDocNo) {
       notice("     DO has no so_doc_no link — cannot compare to any SO ledger. Treat as UNKNOWN (manual review).");
       verdicts.push({ ...e, verdict: "UNKNOWN (no SO link)" });
-      unknownCenti += e.amt ?? 0;
+      unknownSen += e.amt ?? 0;
       continue;
     }
     const destLedger = destSoPayBySo.get(String(e.soDocNo)) ?? [];
@@ -340,19 +340,19 @@ async function main() {
     if (!e.doPresent) {
       // Parent DO isn't in Houzs — even a backfill has no row to attach to.
       verdict = "ORPHAN (parent DO not migrated)";
-      missingDoCenti += e.amt ?? 0;
+      missingDoSen += e.amt ?? 0;
       notice(`     >>> ${verdict}: parent DO ${e.doNo} is NOT in Houzs company_2, so this payment cannot attach to a DO. Needs the DO first (or fold onto SO).`);
     } else if (exact) {
       verdict = "DUPLICATE (exact amount+date already on Houzs SO ledger)";
-      dupCenti += e.amt ?? 0;
+      dupSen += e.amt ?? 0;
       notice(`     >>> ${verdict} — migrating it would DOUBLE-COUNT. Safe to SKIP.`);
     } else if (amtOnly && srcExact) {
       verdict = "LIKELY DUPLICATE (amount on SO ledger; also on both docs in 2990)";
-      dupCenti += e.amt ?? 0;
+      dupSen += e.amt ?? 0;
       notice(`     >>> ${verdict} — same money booked on SO + DO in 2990. Likely SKIP; eyeball dates.`);
     } else {
       verdict = "ADDITIONAL (not on Houzs SO ledger — money Houzs has no record of)";
-      addCenti += e.amt ?? 0;
+      addSen += e.amt ?? 0;
       notice(`     >>> ${verdict} — SKIPPING understates SO ${e.soNo}'s paid amount by ${rm(e.amt)}.`);
     }
     verdicts.push({ ...e, verdict });
@@ -377,10 +377,10 @@ async function main() {
   notice("================ SECTION 4: totals + recommendation ================");
   const grand = enriched.reduce((a, b) => a + (b.amt ?? 0), 0);
   notice(`  rows: ${enriched.length}   total money at stake: ${rm(grand)} (${grand} sen)`);
-  notice(`  DUPLICATE (skip-safe)                : ${rm(dupCenti)}`);
-  notice(`  ADDITIONAL (skipping understates SO) : ${rm(addCenti)}`);
-  notice(`  ORPHAN (parent DO not in Houzs)      : ${rm(missingDoCenti)}`);
-  notice(`  UNKNOWN (no SO link)                 : ${rm(unknownCenti)}`);
+  notice(`  DUPLICATE (skip-safe)                : ${rm(dupSen)}`);
+  notice(`  ADDITIONAL (skipping understates SO) : ${rm(addSen)}`);
+  notice(`  ORPHAN (parent DO not in Houzs)      : ${rm(missingDoSen)}`);
+  notice(`  UNKNOWN (no SO link)                 : ${rm(unknownSen)}`);
   const parentsPresent = enriched.filter((e) => e.doPresent).length;
   notice(`  parent DOs present in Houzs company_2: ${parentsPresent}/${enriched.length} (backfill-attachable)`);
   notice("");
@@ -388,9 +388,9 @@ async function main() {
   for (const v of verdicts) notice(`    #${v.i + 1}  ${pad(v.doNo, 16)} ${pad(v.soNo, 16)} ${pad(rm(v.amt), 11)} ${v.verdict}`);
   notice("");
   notice("  RECOMMENDATION INPUTS (owner decides):");
-  notice(`   - If ADDITIONAL total (${rm(addCenti)}) > 0: those SOs are UNDER-recorded in Houzs today; a backfill of ONLY the additional rows into scm.delivery_order_payments (parent DO present) restores them without double-counting.`);
-  notice(`   - DUPLICATE rows (${rm(dupCenti)}) should be SKIPPED — the money is already on the Houzs SO ledger.`);
-  notice(`   - ORPHAN rows (${rm(missingDoCenti)}) can't attach (no parent DO in Houzs) — migrate the DO first, or fold onto the SO, per owner.`);
+  notice(`   - If ADDITIONAL total (${rm(addSen)}) > 0: those SOs are UNDER-recorded in Houzs today; a backfill of ONLY the additional rows into scm.delivery_order_payments (parent DO present) restores them without double-counting.`);
+  notice(`   - DUPLICATE rows (${rm(dupSen)}) should be SKIPPED — the money is already on the Houzs SO ledger.`);
+  notice(`   - ORPHAN rows (${rm(missingDoSen)}) can't attach (no parent DO in Houzs) — migrate the DO first, or fold onto the SO, per owner.`);
   notice("");
   notice("=== END — read-only, no rows changed. ===");
 }

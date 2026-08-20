@@ -52,12 +52,12 @@ async function main() {
            (CASE WHEN bool_and(COALESCE(l.recv, 0) >= poi.qty) THEN 'RECEIVED'
                  WHEN bool_or(COALESCE(l.recv, 0) > 0) THEN 'PARTIALLY_RECEIVED'
                  ELSE 'SUBMITTED' END) AS should_be,
-           po.total_centi
+           po.total_sen
     FROM scm.purchase_order_items poi
     JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
     LEFT JOIN live l ON l.poi_id = poi.id
     WHERE po.status <> 'CANCELLED'
-    GROUP BY po.id, po.company_id, po.po_number, po.status, po.total_centi
+    GROUP BY po.id, po.company_id, po.po_number, po.status, po.total_sen
     HAVING SUM(COALESCE(poi.received_qty, 0)) <> SUM(COALESCE(l.recv, 0))
     ORDER BY po.company_id, po.po_number`;
 
@@ -100,10 +100,10 @@ async function main() {
   console.error(`=== PO receipt drift: ${rows.length} purchase order(s) ===`);
   console.error("  received_qty disagrees with the GRN lines that received against it.");
   console.error("");
-  let strandedCenti = 0;
+  let strandedSen = 0;
   for (const r of rows) {
     const wrongStatus = r.po_status !== r.should_be;
-    if (wrongStatus && r.should_be === "RECEIVED") strandedCenti += Number(r.total_centi ?? 0);
+    if (wrongStatus && r.should_be === "RECEIVED") strandedSen += Number(r.total_sen ?? 0);
     console.error(
       `  co=${r.company_id}  ${r.po_number}` +
         `  ordered=${r.ordered}  stored=${r.stored_recv}  actual=${r.live_recv}` +
@@ -111,9 +111,9 @@ async function main() {
     );
   }
   console.error("");
-  if (strandedCenti > 0) {
+  if (strandedSen > 0) {
     console.error(
-      `  RM ${(strandedCenti / 100).toLocaleString("en-MY", { minimumFractionDigits: 2 })} ` +
+      `  RM ${(strandedSen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2 })} ` +
         "of fully-received POs are still counted as outstanding.",
     );
   }

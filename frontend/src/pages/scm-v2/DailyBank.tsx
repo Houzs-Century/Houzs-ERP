@@ -11,12 +11,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Calendar, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose, type DailyBankBoard } from './accounting-phase1-queries';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-const fmt = (sen: number | null | undefined) => fmtCenti(sen);
+const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const todayLocal = (): string => {
@@ -223,21 +223,21 @@ const drawBoard = (b: DailyBankBoard): HTMLCanvasElement => {
 
   text(`DAILY BANK — ${b.date}`, P, { bold: true, size: 20 });
   nl(1.5);
-  text(`Can actually move: ${fmtCenti(b.availableSen)}`, P, { bold: true, size: 17, color: '#2F5D4F' });
+  text(`Can actually move: ${fmtSen(b.availableSen)}`, P, { bold: true, size: 17, color: '#2F5D4F' });
   nl();
-  text(`In transit (not yet remitted): ${fmtCenti(b.totalTransitSen)}   ·   Awaiting approval: ${fmtCenti(b.pendingApprovalSen)}`, P, { size: 13, color: '#555' });
+  text(`In transit (not yet remitted): ${fmtSen(b.totalTransitSen)}   ·   Awaiting approval: ${fmtSen(b.pendingApprovalSen)}`, P, { size: 13, color: '#555' });
   nl(1.5);
 
   for (const bl of b.blocks) {
     text(`${bl.accountName}  (${bl.accountCode})`, P, { bold: true, size: 15 });
-    text(`${fmtCenti(bl.openingSen)}  +${fmtCenti(bl.inSen)}  −${fmtCenti(bl.outSen)}  =  ${fmtCenti(bl.closingSen)}`, W - P, { bold: true, size: 14, right: true });
+    text(`${fmtSen(bl.openingSen)}  +${fmtSen(bl.inSen)}  −${fmtSen(bl.outSen)}  =  ${fmtSen(bl.closingSen)}`, W - P, { bold: true, size: 14, right: true });
     nl();
     for (const m of bl.receipts) {
-      text(`+ ${fmtCenti(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#2F5D4F' });
+      text(`+ ${fmtSen(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#2F5D4F' });
       nl();
     }
     for (const m of bl.payouts) {
-      text(`− ${fmtCenti(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#B8331F' });
+      text(`− ${fmtSen(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#B8331F' });
       nl();
     }
     nl(0.5);
@@ -248,7 +248,7 @@ const drawBoard = (b: DailyBankBoard): HTMLCanvasElement => {
     nl();
     for (const t of b.transit) {
       text(`${t.acquirerCode}  ${t.accountName}`, P + 14, { size: 13 });
-      text(fmtCenti(t.balanceSen), W - P, { size: 13, right: true, bold: true });
+      text(fmtSen(t.balanceSen), W - P, { size: 13, right: true, bold: true });
       nl();
     }
   }

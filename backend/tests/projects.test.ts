@@ -179,39 +179,31 @@ describe("Projects module — smoke pack", () => {
     expect(allIds).toContain(id);
   });
 
-  test("PIC brand-gate rejects rep without the matching brand allow-list", async () => {
+  test("PIC assignment no longer requires the picked user's brand allow-list (ACL removed 2026-08-19)", async () => {
     const rep = await seedUser({
       email: "rep_a@test.local",
       permissions: ["projects.read", "projects.write"],
       scopeToPic: true,
     });
 
-    // First attempt: rep has no user_brands row for AKEMI → reject.
-    const blocked = await api("POST", "/api/projects", adminBearer, {
-      name: "Brand-gated",
-      brand: "AKEMI",
-      state: "SELANGOR",
-      venue: "TEST VENUE",
-      pic_id: rep.userId,
-    });
-    expect(blocked.status).toBe(403);
-    expect(String(blocked.json?.error ?? "")).toMatch(/brand/i);
-
-    // Grant the rep AKEMI access, retry → 201.
-    await env.DB.prepare(`INSERT INTO user_brands (user_id, brand) VALUES (?, ?)`)
-      .bind(rep.userId, "AKEMI")
-      .run();
+    // The rep has NO user_brands row for AKEMI. Before the PIC/brand ACL was
+    // removed this returned 403; now the assignment succeeds — brand no longer
+    // gates who can be a project's PIC.
     const ok = await api("POST", "/api/projects", adminBearer, {
-      name: "Brand-gated",
+      name: "Brand-gated no more",
       brand: "AKEMI",
       state: "SELANGOR",
       venue: "TEST VENUE",
       pic_id: rep.userId,
     });
     expect(ok.status).toBe(201);
+    const row = await env.DB.prepare(`SELECT pic_id FROM projects WHERE id = ?`)
+      .bind(ok.json.id)
+      .first<{ pic_id: number }>();
+    expect(row!.pic_id).toBe(rep.userId);
   });
 
-  test("ACL boundary — scoped rep cannot PATCH another rep's project", async () => {
+  test("a projects.write holder can now PATCH any project in their company (row ACL removed 2026-08-19)", async () => {
     const repA = await seedUser({
       email: "rep_a@test.local",
       permissions: ["projects.read", "projects.write"],
@@ -222,12 +214,6 @@ describe("Projects module — smoke pack", () => {
       permissions: ["projects.read", "projects.write"],
       scopeToPic: true,
     });
-    // Give both reps the AKEMI brand so the PIC assignment passes the
-    // brand-gate (the test we're isolating is the subtree boundary,
-    // not the brand check).
-    await env.DB.prepare(`INSERT INTO user_brands (user_id, brand) VALUES (?, ?)`)
-      .bind(repB.userId, "AKEMI")
-      .run();
 
     const created = await api("POST", "/api/projects", adminBearer, {
       name: "rep B's project",
@@ -239,22 +225,19 @@ describe("Projects module — smoke pack", () => {
     expect(created.status).toBe(201);
     const projectId = created.json.id;
 
-    // rep A tries to PATCH → 403 (not in their subtree)
-    const blocked = await api(
-      "PATCH",
-      `/api/projects/${projectId}`,
-      repA.bearer,
-      { name: "stolen" },
-    );
-    expect(blocked.status).toBeGreaterThanOrEqual(400);
-    // rep B (the PIC) succeeds.
+    // rep A is NOT the PIC and has no brand rows, yet — with the row-level ACL
+    // gone — a projects.write holder may edit any project in the same company.
     const ok = await api(
       "PATCH",
       `/api/projects/${projectId}`,
-      repB.bearer,
-      { name: "rep B updated" },
+      repA.bearer,
+      { name: "edited by a non-PIC rep" },
     );
     expect(ok.status).toBeLessThan(400);
+    const row = await env.DB.prepare(`SELECT name FROM projects WHERE id = ?`)
+      .bind(projectId)
+      .first<{ name: string }>();
+    expect(row!.name).toBe("edited by a non-PIC rep");
   });
 
   test("Finance rollup — sales entry bumps project_finance.total_sales", async () => {

@@ -9,7 +9,7 @@
 // payment knocks off the invoice, costing should be computed from it.
 //
 // So when a SUPPLIER_PAYMENT voucher settles a purchase invoice (pv_allocations →
-// paid_centi, migration 0202), the voucher's own exchange_rate becomes the
+// paid_sen, migration 0202), the voucher's own exchange_rate becomes the
 // invoice's rate, and the GRN behind that invoice is re-costed at it
 // (recostFromGrn cascades lot → consumption → DO line → SI line).
 //
@@ -69,7 +69,7 @@ export type RateAdoptionSkipReason =
    *  hole this module exists to fill, not evidence of what was paid. */
   | 'voucher_rate_unusable'
   /** The voucher and the invoice are denominated differently. An RMB payment says
-   *  nothing about a USD invoice's rate, and pv_allocations settles paid_centi at
+   *  nothing about a USD invoice's rate, and pv_allocations settles paid_sen at
    *  FACE value, so the two are only comparable in one currency. */
   | 'currency_mismatch'
   /** The invoice already carries this very rate — the write would be a no-op. */
@@ -102,14 +102,14 @@ export type RateAdoptionPlan =
  * a hole. Every other value is somebody's answer, and row 7 respects it.
  */
 export function planPvRateAdoption(input: {
-  /** settlePiPaidCenti's appliedCenti — what the database ACTUALLY moved, never
+  /** settlePiPaidSen's appliedSen — what the database ACTUALLY moved, never
    *  what the allocation asked for. No money applied ⇒ no evidence of payment. */
-  appliedCenti: number;
+  appliedSen: number;
   pvCurrency: string | null;
   pvExchangeRate: string | number | null;
   pi: PiRateFacts;
 }): RateAdoptionPlan {
-  if (!(Number(input.appliedCenti) > 0)) return { action: 'skip', reason: 'nothing_applied' };
+  if (!(Number(input.appliedSen) > 0)) return { action: 'skip', reason: 'nothing_applied' };
 
   const piCurrency = normalizeCurrency(input.pi.currency);
   if (piCurrency === MYR) return { action: 'skip', reason: 'myr_invoice' };

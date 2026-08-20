@@ -36,7 +36,7 @@ import { createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { canViewAllSales, canViewScmFinance, hasHouzsPerm } from '../lib/houzs-perms';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
@@ -202,7 +202,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
 
 /* ── Cost snapshot ──────────────────────────────────────────────────────
    Pull cost_price_sen off mfg_products on line create so the header's
-   total_cost_centi / category cost columns get populated even when the
+   total_cost_sen / category cost columns get populated even when the
    client doesn't snapshot the cost. Explicit client value (>0) →
    mfg_products.cost_price_sen → 0. Returns sen (integer). ─────────────── */
 
@@ -232,7 +232,7 @@ consignmentOrders.get('/', async (c) => {
      summed these columns over the whole filtered array; paging broke that (the
      client could only sum the current page). Recomputed server-side here over
      the identical filters. Only present on the paginated path. */
-  let aggregates: { revenueCenti: number; outstandingCenti: number; paidCenti: number } | undefined;
+  let aggregates: { revenueSen: number; outstandingSen: number; paidSen: number } | undefined;
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
     let q = sb.from('consignment_sales_orders').select(HEADER).order('so_date', { ascending: false }).limit(500);
@@ -248,7 +248,7 @@ consignmentOrders.get('/', async (c) => {
     /* Deterministic order + a unique tiebreaker (doc_no — the CO number is
        unique per company) so range paging can't skip/repeat rows that share the
        sort key. Sort over columns already in HEADER (schema-drift safe). */
-    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_centi']);
+    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'so_date:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
@@ -263,10 +263,10 @@ consignmentOrders.get('/', async (c) => {
     if (qText) { const s = escapeForOr(qText); if (s) q = q.or(`doc_no.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
     /* Outstanding-only overlay (?outstanding=1) — the FE's "Outstanding only"
        view (live balance > 0). Applied SERVER-SIDE here so it stays correct
-       across pages + so the total/aggregate agree. balance_centi is in HEADER
+       across pages + so the total/aggregate agree. balance_sen is in HEADER
        (schema-drift safe). Legacy path is untouched (it filtered client-side). */
     const outstanding = c.req.query('outstanding') === '1';
-    if (outstanding) q = q.gt('balance_centi', 0);
+    if (outstanding) q = q.gt('balance_sen', 0);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
     const res = await q;
@@ -274,31 +274,31 @@ consignmentOrders.get('/', async (c) => {
     data = res.data ?? [];
     count = res.count ?? (res.data?.length ?? 0);
 
-    /* Full-set money KPIs — sum local_total_centi (Revenue) / balance_centi
-       (Outstanding, only when > 0) / paid_centi (Paid) over the SAME scope +
+    /* Full-set money KPIs — sum local_total_sen (Revenue) / balance_sen
+       (Outstanding, only when > 0) / paid_sen (Paid) over the SAME scope +
        status + debtor + search + outstanding filters as the page query, WITHOUT
-       .range(). Mirrors the pre-pagination client KPI (liveBalance = balance_centi
+       .range(). Mirrors the pre-pagination client KPI (liveBalance = balance_sen
        fallback local_total − paid). paginateAll pages past the 1000-row cap.
        All three columns are already in HEADER (schema-drift safe). */
-    const moneyRes = await paginateAll<{ local_total_centi: number | null; balance_centi: number | null; paid_centi: number | null }>((mfrom, mto) => {
-      let mq = sb.from('consignment_sales_orders').select('local_total_centi, balance_centi, paid_centi');
+    const moneyRes = await paginateAll<{ local_total_sen: number | null; balance_sen: number | null; paid_sen: number | null }>((mfrom, mto) => {
+      let mq = sb.from('consignment_sales_orders').select('local_total_sen, balance_sen, paid_sen');
       if (scopeIds) mq = mq.in('salesperson_id', scopeIds);
       if (status) mq = mq.eq('status', status);
       if (debtor) mq = mq.ilike('debtor_name', `%${debtor}%`);
       if (qText) { const s = escapeForOr(qText); if (s) mq = mq.or(`doc_no.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
-      if (outstanding) mq = mq.gt('balance_centi', 0);
+      if (outstanding) mq = mq.gt('balance_sen', 0);
       mq = scopeToCompany(mq, c);
       return mq.range(mfrom, mto);
     });
     if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-    let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
+    let revenueSen = 0, outstandingSen = 0, paidSen = 0;
     for (const m of (moneyRes.data ?? [])) {
-      revenueCenti += m.local_total_centi ?? 0;
-      paidCenti += m.paid_centi ?? 0;
-      const bal = m.balance_centi ?? ((m.local_total_centi ?? 0) - (m.paid_centi ?? 0));
-      if (bal > 0) outstandingCenti += bal;
+      revenueSen += m.local_total_sen ?? 0;
+      paidSen += m.paid_sen ?? 0;
+      const bal = m.balance_sen ?? ((m.local_total_sen ?? 0) - (m.paid_sen ?? 0));
+      if (bal > 0) outstandingSen += bal;
     }
-    aggregates = { revenueCenti, outstandingCenti, paidCenti };
+    aggregates = { revenueSen, outstandingSen, paidSen };
   }
 
   const rows = (data ?? []) as unknown as Array<{ doc_no?: string } & Record<string, unknown>>;
@@ -438,7 +438,7 @@ consignmentOrders.get('/mine', async (c) => {
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
-        'total_revenue_centi, line_count, deposit_centi',
+        'total_revenue_sen, line_count, deposit_sen',
       )
       .eq('salesperson_id', myStaffId)
       .not('status', 'in', '("CANCELLED","ON_HOLD")'),
@@ -448,19 +448,19 @@ consignmentOrders.get('/mine', async (c) => {
     .limit(80);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_centi?: number } & Record<string, unknown>>;
+  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_sen?: number } & Record<string, unknown>>;
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
-  const itemsByDoc = new Map<string, Array<{ item_code: string; description: string | null; qty: number; total_centi: number; variants: unknown }>>();
+  const itemsByDoc = new Map<string, Array<{ item_code: string; description: string | null; qty: number; total_sen: number; variants: unknown }>>();
   if (docNos.length > 0) {
     const { data: itemRows } = await sb
       .from('consignment_sales_order_items')
-      .select('doc_no, item_code, description, qty, total_centi, variants')
+      .select('doc_no, item_code, description, qty, total_sen, variants')
       .in('doc_no', docNos)
       .eq('cancelled', false)
       .order('created_at', { ascending: true });
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_code: string; description: string | null; qty: number; total_centi: number; variants: unknown }>) {
+    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_code: string; description: string | null; qty: number; total_sen: number; variants: unknown }>) {
       const arr = itemsByDoc.get(it.doc_no) ?? [];
-      arr.push({ item_code: it.item_code, description: it.description, qty: it.qty, total_centi: it.total_centi, variants: it.variants });
+      arr.push({ item_code: it.item_code, description: it.description, qty: it.qty, total_sen: it.total_sen, variants: it.variants });
       itemsByDoc.set(it.doc_no, arr);
     }
   }
@@ -469,19 +469,19 @@ consignmentOrders.get('/mine', async (c) => {
   if (docNos.length > 0) {
     const { data: payRows } = await sb
       .from('consignment_sales_order_payments')
-      .select('so_doc_no, amount_centi')
+      .select('so_doc_no, amount_sen')
       .in('so_doc_no', docNos);
-    for (const p of (payRows ?? []) as Array<{ so_doc_no: string; amount_centi: number }>) {
-      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_centi ?? 0));
+    for (const p of (payRows ?? []) as Array<{ so_doc_no: string; amount_sen: number }>) {
+      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_sen ?? 0));
     }
   }
 
   const salesOrders = rows.map((r) => {
-    const deposit = typeof r.deposit_centi === 'number' ? r.deposit_centi : 0;
+    const deposit = typeof r.deposit_sen === 'number' ? r.deposit_sen : 0;
     const ledger = paidLedgerByDoc.get(r.doc_no ?? '') ?? 0;
     return {
       ...r,
-      paid_centi_total: deposit + ledger,
+      paid_sen_total: deposit + ledger,
       items: itemsByDoc.get(r.doc_no ?? '') ?? [],
     };
   });
@@ -734,7 +734,7 @@ consignmentOrders.post('/', async (c) => {
       itemCode,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty:            Number(it.qty ?? 1),
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       (it.variants as MfgItemForRecompute['variants']) ?? null,
     };
     return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, null, null, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides);
@@ -747,14 +747,14 @@ consignmentOrders.post('/', async (c) => {
     /* The server-computed selling price (the bound price-list figure) is always
        persisted — the Backend is costing-only. Backend authors the price; no
        drift rejection (consignment has no POS path). */
-    const unit = recomputed ? recomputed.unit_price_sen : Number(it.unitPriceCenti ?? 0);
-    const discount = Number(it.discountCenti ?? 0);
+    const unit = recomputed ? recomputed.unit_price_sen : Number(it.unitPriceSen ?? 0);
+    const discount = Number(it.discountSen ?? 0);
     // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
     const lineTotal = Math.max(0, (qty * unit) - discount);
     const itemCode = String(it.itemCode ?? '');
     const unitCost = recomputed && recomputed.unit_cost_sen > 0
       ? recomputed.unit_cost_sen
-      : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostCenti ?? 0), c);
+      : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostSen ?? 0), c);
     const lineCost = unitCost * qty;
     const group = String(it.itemGroup ?? '').toLowerCase();
     total += lineTotal;
@@ -790,15 +790,15 @@ consignmentOrders.post('/', async (c) => {
       description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       uom: (it.uom as string) ?? 'UNIT',
       qty,
-      unit_price_centi: unit,
-      discount_centi: discount,
-      total_centi: lineTotal,
-      total_inc_centi: lineTotal,
-      balance_centi: lineTotal,
+      unit_price_sen: unit,
+      discount_sen: discount,
+      total_sen: lineTotal,
+      total_inc_sen: lineTotal,
+      balance_sen: lineTotal,
       variants: (it.variants as unknown) ?? null,
-      unit_cost_centi: unitCost,
-      line_cost_centi: lineCost,
-      line_margin_centi: lineTotal - lineCost,
+      unit_cost_sen: unitCost,
+      line_cost_sen: lineCost,
+      line_margin_sen: lineTotal - lineCost,
       divan_price_sen:         recomputed?.divan_price_sen ?? 0,
       leg_price_sen:           recomputed?.leg_price_sen ?? 0,
       special_order_price_sen: recomputed?.special_order_sen ?? 0,
@@ -845,19 +845,19 @@ consignmentOrders.post('/', async (c) => {
     address3: (body.address3 as string) ?? null,
     address4: (body.address4 as string) ?? null,
     phone: normPhone,
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
-    local_total_centi: total,
-    balance_centi: total,
-    total_cost_centi: totalCost,
-    total_revenue_centi: total,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
+    local_total_sen: total,
+    balance_sen: total,
+    total_cost_sen: totalCost,
+    total_revenue_sen: total,
+    total_margin_sen: margin,
     margin_pct_basis: marginPctBasis,
     line_count: items.length,
     currency: ((body.currency as string) ?? 'MYR').toUpperCase(),
@@ -893,12 +893,12 @@ consignmentOrders.post('/', async (c) => {
     /* Clamp >= 0 (the /mfg-sales-orders create path this was cloned from does;
        this copy didn't) — the header deposit is added on top of the ledger in
        the CO list's paid rollup, so a negative value would deflate it. */
-    deposit_centi:      Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0),
+    deposit_sen:      Math.max(0, typeof body.depositSen === 'number' ? body.depositSen : 0),
     /* SERVER-OWNED — never the client's number. Same back-door the SO create
        carried: paid is derived from the payments ledger, and taking
-       body.paidCenti here let a create book a CO as already-paid with zero
+       body.paidSen here let a create book a CO as already-paid with zero
        payment rows. Always 0 at birth. */
-    paid_centi:         0,
+    paid_sen:         0,
     /* Every new CO is CONFIRMED on insert (2990 has no DRAFT step). */
     status: 'CONFIRMED',
     created_by: user.id,
@@ -927,9 +927,9 @@ consignmentOrders.post('/', async (c) => {
   captureIfSet('email', body.email);
   captureIfSet('soDate', body.soDate);
   captureIfSet('lineCount', items.length);
-  captureIfSet('localTotalCenti', total);
+  captureIfSet('localTotalSen', total);
   captureIfSet('paymentMethod', body.paymentMethod);
-  captureIfSet('depositCenti', body.depositCenti);
+  captureIfSet('depositSen', body.depositSen);
   captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
@@ -1009,7 +1009,7 @@ consignmentOrders.get('/:docNo/audit-log', async (c) => {
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   /* The audit HISTORY is a finance read too — the line PATCH records
-     `cmp('unitCostCenti', prev.unit_cost_centi, unitCost)`, so field_changes
+     `cmp('unitCostSen', prev.unit_cost_sen, unitCost)`, so field_changes
      carries the old AND new unit cost in plain sight. Stripping the detail
      while leaving the history would just move the leak one endpoint over (this
      is the "one path gets missed" shape #600 / #625 / #632 each repeated).
@@ -1023,11 +1023,14 @@ consignmentOrders.get('/:docNo/audit-log', async (c) => {
 });
 
 // POST — override the price on a single line item.
-consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const consignmentOverridePriceHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId');
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // WRITES MONEY — only an admin-level caller may override the SKU-Master price, as the SO twin's /override does (isPriceOverrideCaller, mfg-sales-orders.ts:6205). Without this a scm.so.view_all-only caller could re-price. Gate before the self-scope / row reads. BUG-HISTORY 2026-08-19.
+  if (!hasHouzsPerm(c, 'scm.so.price_override')) return c.json({ error: 'price_override_admin_only', message: 'Unit prices follow the SKU Master sell price. Only an admin can override a line price.' }, 403);
   // Self-scoped sales may only re-price a line on their OWN CO. This verb WRITES MONEY.
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { overridePriceSen?: number; reason?: string };
@@ -1036,28 +1039,28 @@ consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
   if (!Number.isFinite(newPrice) || newPrice < 0) return c.json({ error: 'invalid_price' }, 400);
 
   const { data: item } = await scopeToCompanyId(sb.from('consignment_sales_order_items')
-    .select('id, doc_no, item_code, unit_price_centi, qty, discount_centi')
+    .select('id, doc_no, item_code, unit_price_sen, qty, discount_sen')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!item) return c.json(NOT_THIS_COMPANY, 404);
-  const i = item as { id: string; doc_no: string; item_code: string; unit_price_centi: number; qty: number; discount_centi: number };
+  const i = item as { id: string; doc_no: string; item_code: string; unit_price_sen: number; qty: number; discount_sen: number };
   if (i.doc_no !== docNo) return c.json({ error: 'item_doc_mismatch' }, 400);
 
-  const originalPriceSen = i.unit_price_centi;
+  const originalPriceSen = i.unit_price_sen;
   const overridePriceSen = newPrice;
 
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
-  const newLineTotal = Math.max(0, (i.qty * newPrice) - i.discount_centi);
+  const newLineTotal = Math.max(0, (i.qty * newPrice) - i.discount_sen);
   const { data: costRow } = await scopeToCompanyId(sb.from('consignment_sales_order_items')
-    .select('line_cost_centi')
+    .select('line_cost_sen')
     .eq('id', itemId), co.companyId)
     .maybeSingle();
-  const currentLineCost = Number((costRow as { line_cost_centi?: number } | null)?.line_cost_centi ?? 0);
+  const currentLineCost = Number((costRow as { line_cost_sen?: number } | null)?.line_cost_sen ?? 0);
   const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_items').update({
-    unit_price_centi: newPrice,
-    total_centi: newLineTotal,
-    total_inc_centi: newLineTotal,
-    balance_centi: newLineTotal,
-    line_margin_centi: newLineTotal - currentLineCost,
+    unit_price_sen: newPrice,
+    total_sen: newLineTotal,
+    total_inc_sen: newLineTotal,
+    balance_sen: newLineTotal,
+    line_margin_sen: newLineTotal - currentLineCost,
   }).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, docNo);
@@ -1068,13 +1071,14 @@ consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: [
-      { field: 'unitPriceCenti', from: originalPriceSen, to: overridePriceSen },
+      { field: 'unitPriceSen', from: originalPriceSen, to: overridePriceSen },
     ],
     note: (body.reason as string) || undefined,
   });
 
   return c.json({ ok: true, itemId, newPrice });
-});
+};
+consignmentOrders.post('/:docNo/items/:itemId/override', consignmentOverridePriceHandler);
 
 // ── PATCH header — edit debtor info, addresses, note, etc. ───────────
 consignmentOrders.patch('/:docNo', async (c) => {
@@ -1083,7 +1087,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   /* Self-scoped sales may only amend their OWN CO. `salespersonId` is in the map
      below, so without this a rep could REASSIGN another rep's order to
-     themselves; `depositCenti` is money. */
+     themselves; `depositSen` is money. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1125,30 +1129,30 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['merchantProvider', 'merchant_provider'],
     ['approvalCode', 'approval_code'],
     ['paymentDate', 'payment_date'],
-    ['depositCenti', 'deposit_centi'],
-    /* `paidCenti` is deliberately NOT mapped — paid is SERVER-OWNED, derived
+    ['depositSen', 'deposit_sen'],
+    /* `paidSen` is deliberately NOT mapped — paid is SERVER-OWNED, derived
        from the payments ledger (the CO list rollup sums it). Mapping it let a
-       caller PATCH {paidCenti: <order total>} and book the CO paid with zero
+       caller PATCH {paidSen: <order total>} and book the CO paid with zero
        payment rows. Mirrors /mfg-sales-orders. Record a payment, not a total. */
   ];
   const PHONE_FIELDS = new Set(['phone', 'emergencyContactPhone']);
   /* A caller who cannot READ deposit must not WRITE it. gateCoFinance now strips
-     deposit_centi from the detail payload, and this map accepts ANY defined
+     deposit_sen from the detail payload, and this map accepts ANY defined
      value — so a client that seeded its header draft off that payload would
      round-trip the stripped field as a genuine 0 and wipe the deposit (the #632
      trap, which bit the DR line PATCH for real). No Houzs caller sends
-     depositCenti on PATCH today — ConsignmentOrderDetail never renders or echoes
+     depositSen on PATCH today — ConsignmentOrderDetail never renders or echoes
      it — so this is defence-in-depth that keeps the strip safe by construction
      rather than by the frontend's current shape. A finance caller is unaffected. */
   const canFinance = canViewScmFinance(c);
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of map) {
     if (body[from] === undefined) continue;
-    if (from === 'depositCenti' && !canFinance) continue;
+    if (from === 'depositSen' && !canFinance) continue;
     if (PHONE_FIELDS.has(from) && typeof body[from] === 'string') {
       const raw = body[from] as string;
       updates[to] = normalizePhone(raw) ?? raw;
-    } else if (from === 'depositCenti') {
+    } else if (from === 'depositSen') {
       /* Clamp >= 0, matching the create path — the header deposit feeds the
          list's paid rollup, so a negative value would deflate it. */
       updates[to] = Math.max(0, typeof body[from] === 'number' ? (body[from] as number) : 0);
@@ -1306,7 +1310,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
 // 2026-07-17 (fix/zeroing-twins).
 async function recomputeTotals(sb: any, docNo: string) {
   const { data: items, error: itemsErr } = await sb.from('consignment_sales_order_items')
-    .select('id, item_code, item_group, variants, qty, total_centi, line_cost_centi')
+    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen')
     .eq('doc_no', docNo).eq('cancelled', false);
   /* A failed READ is not an empty order, and `?? []` cannot tell them apart — it
      folded a transient blip into local_total / balance / revenue / margin / every
@@ -1320,13 +1324,13 @@ async function recomputeTotals(sb: any, docNo: string) {
     console.error('[co-recompute] item read failed — header left unchanged:', docNo, itemsErr.message);
     return;
   }
-  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_centi: number; line_cost_centi: number };
+  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread ─────────────────────────────────────────
      A sofa is a set of per-module lines. When those lines (same base model)
      match a MASTER combo, the set's COST = the combo price, spread across the
-     matched lines off the stored per-line line_cost_centi. Idempotent. */
+     matched lines off the stored per-line line_cost_sen. Idempotent. */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
     const combos = await loadActiveSofaCombos(sb); // master scope only
@@ -1384,22 +1388,22 @@ async function recomputeTotals(sb: any, docNo: string) {
         if (!match) continue;
         const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is Row => !!m);
         if (matched.length === 0) continue;
-        /* Audit 2026-06-11 I1 — combo price is ONE set; line_cost_centi is a
+        /* Audit 2026-06-11 I1 — combo price is ONE set; line_cost_sen is a
            LINE total. Uniform qty q → q sets → comboTotal×q; mixed qtys →
            SKIP (keep per-module costs, never under-book). */
         const qtySet = new Set(matched.map((m) => Math.max(1, m.qty || 1)));
         if (qtySet.size !== 1) continue;
         const uniformQty = [...qtySet][0]!;
-        const comboTotal = match.comboPriceCenti * uniformQty;
+        const comboTotal = match.comboPriceSen * uniformQty;
         if (comboTotal <= 0) continue;
-        const spread = spreadComboTotal(matched.map((m) => m.line_cost_centi || 0), comboTotal);
+        const spread = spreadComboTotal(matched.map((m) => m.line_cost_sen || 0), comboTotal);
         for (let i = 0; i < matched.length; i++) {
           const m = matched[i]!; const newLineCost = spread[i] ?? 0; const q = Math.max(1, m.qty || 1);
-          m.line_cost_centi = newLineCost; // mutate in place so the rollup below sees it
+          m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
           const { error: spreadErr } = await sb.from('consignment_sales_order_items').update({
-            line_cost_centi:   newLineCost,
-            unit_cost_centi:   Math.round(newLineCost / q),
-            line_margin_centi: (m.total_centi || 0) - newLineCost,
+            line_cost_sen:   newLineCost,
+            unit_cost_sen:   Math.round(newLineCost / q),
+            line_margin_sen: (m.total_sen || 0) - newLineCost,
           }).eq('id', m.id);
           /* The in-memory mutation above already fed this cost to the roll-up, so
              a failed line write would have the header assert a cost its own lines
@@ -1419,9 +1423,9 @@ async function recomputeTotals(sb: any, docNo: string) {
 
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string; total_centi: number; line_cost_centi: number }>) {
-    const lineTotal = it.total_centi || 0;
-    const lineCost  = it.line_cost_centi || 0;
+  for (const it of (items ?? []) as Array<{ item_group: string; total_sen: number; line_cost_sen: number }>) {
+    const lineTotal = it.total_sen || 0;
+    const lineCost  = it.line_cost_sen || 0;
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -1441,19 +1445,19 @@ async function recomputeTotals(sb: any, docNo: string) {
   }
   const grandMargin = total - totalCost;
   const { error: updErr } = await sb.from('consignment_sales_orders').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
-    local_total_centi: total,
-    balance_centi: total,
-    total_cost_centi: totalCost,
-    total_revenue_centi: total,
-    total_margin_centi: grandMargin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
+    local_total_sen: total,
+    balance_sen: total,
+    total_cost_sen: totalCost,
+    total_revenue_sen: total,
+    total_margin_sen: grandMargin,
     margin_pct_basis: total > 0 ? Math.round((grandMargin / total) * 10000) : 0,
     line_count: (items ?? []).length,
     updated_at: new Date().toISOString(),
@@ -1501,7 +1505,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = Number(it.qty ?? 1);
-  const discount = Number(it.discountCenti ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   const itemCodeStr = String(it.itemCode ?? '');
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* allowed_options check on add-item. */
@@ -1544,7 +1548,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
       itemCode:       itemCodeStr,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty,
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       variantsObj,
     },
     productLite,
@@ -1567,7 +1571,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const lineTotal = Math.max(0, (qty * unit) - discount);
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
-    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0), c);
+    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostSen ?? 0), c);
   const lineCost = unitCost * qty;
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
@@ -1588,17 +1592,17 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
     qty,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    total_centi: lineTotal,
-    total_inc_centi: lineTotal,
-    balance_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    total_sen: lineTotal,
+    total_inc_sen: lineTotal,
+    balance_sen: lineTotal,
     venue: header.venue,
     branding: header.branding,
     variants: (it.variants as unknown) ?? null,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
     divan_price_sen:         recomputed.divan_price_sen,
     leg_price_sen:           recomputed.leg_price_sen,
     special_order_price_sen: recomputed.special_order_sen,
@@ -1622,8 +1626,8 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     fieldChanges: [
       { field: 'itemCode', to: row.item_code },
       { field: 'qty', to: row.qty },
-      { field: 'unitPriceCenti', to: row.unit_price_centi },
-      { field: 'totalCenti', to: row.total_centi },
+      { field: 'unitPriceSen', to: row.unit_price_sen },
+      { field: 'totalSen', to: row.total_sen },
     ],
   });
 
@@ -1650,7 +1654,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_sales_order_items')
-    .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, description2, uom, variants, remark, cancelled')
+    .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, description2, uom, variants, remark, cancelled')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
   /* Composition guard — a product SWAP must not INTRODUCE a sofa x
@@ -1663,18 +1667,18 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
 
   const qty = it.qty !== undefined ? Number(it.qty) : prev.qty;
-  const clientUnit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;
+  const clientUnit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
 
   /* Server-side recompute on PATCH when the caller touches variants OR
-     unitPriceCenti OR itemCode. */
+     unitPriceSen OR itemCode. */
   let recomputedPatch: RecomputedLine | null = null;
   const variantsAfter = it.variants !== undefined
     ? (it.variants as MfgItemForRecompute['variants'])
     : ((prev as { variants?: MfgItemForRecompute['variants'] }).variants ?? null);
   const itemCodeAfter = it.itemCode !== undefined ? String(it.itemCode) : prev.item_code;
   const itemGroupAfter = it.itemGroup !== undefined ? String(it.itemGroup) : prev.item_group;
-  const shouldRecompute = it.variants !== undefined || it.unitPriceCenti !== undefined || it.itemCode !== undefined;
+  const shouldRecompute = it.variants !== undefined || it.unitPriceSen !== undefined || it.itemCode !== undefined;
 
   if (it.variants !== undefined || it.itemCode !== undefined) {
     const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
@@ -1716,7 +1720,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
         itemCode:       itemCodeAfter,
         itemGroup:      itemGroupAfter,
         qty,
-        unitPriceCenti: clientUnit,
+        unitPriceSen: clientUnit,
         variants:       variantsAfter,
       },
       prodLite,
@@ -1738,16 +1742,16 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
      saves silently (no POS path). */
   const unit = recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit;
   let unitCost: number;
-  /* DO NOT relax this to `it.unitCostCenti !== undefined ? … : prev` — the
+  /* DO NOT relax this to `it.unitCostSen !== undefined ? … : prev` — the
      `explicitCost > 0` precedence below is load-bearing SECURITY, not style.
-     gateCoFinance strips unit_cost_centi from the detail payload, and
-     ConsignmentOrderDetail seeds each line draft off it (`unit_cost_centi ?? 0`)
+     gateCoFinance strips unit_cost_sen from the detail payload, and
+     ConsignmentOrderDetail seeds each line draft off it (`unit_cost_sen ?? 0`)
      and posts the value back here on save; the `> 0` test makes that stripped
      0 fall through to the recompute / stored cost instead of wiping the line's
      cost basis. The Consignment Note + Return line PATCHes took ANY defined
      value and had to be guarded explicitly (#632's DR trap). Same reason
      gateSoFinance was safe on the SO (#625). */
-  const explicitCost = it.unitCostCenti !== undefined ? Number(it.unitCostCenti) : 0;
+  const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
   const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
   if (explicitCost > 0) {
     unitCost = explicitCost;
@@ -1756,16 +1760,16 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   } else if (itemCodeChanged) {
     unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0, c);
   } else {
-    unitCost = prev.unit_cost_centi;
+    unitCost = prev.unit_cost_sen;
   }
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unit) - discount);
   const lineCost = unitCost * qty;
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unit, discount_centi: discount, unit_cost_centi: unitCost,
-    total_centi: lineTotal, total_inc_centi: lineTotal, balance_centi: lineTotal,
-    line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
+    qty, unit_price_sen: unit, discount_sen: discount, unit_cost_sen: unitCost,
+    total_sen: lineTotal, total_inc_sen: lineTotal, balance_sen: lineTotal,
+    line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
   };
   if (recomputedPatch) {
     updates.divan_price_sen         = recomputedPatch.divan_price_sen;
@@ -1806,9 +1810,9 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (a !== b) fieldChanges.push({ field, from: fromVal ?? null, to: toVal ?? null });
   };
   cmp('qty', prev.qty, qty);
-  cmp('unitPriceCenti', prev.unit_price_centi, unit);
-  cmp('discountCenti', prev.discount_centi, discount);
-  cmp('unitCostCenti', prev.unit_cost_centi, unitCost);
+  cmp('unitPriceSen', prev.unit_price_sen, unit);
+  cmp('discountSen', prev.discount_sen, discount);
+  cmp('unitCostSen', prev.unit_cost_sen, unitCost);
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
     ['description2', 'description2'], ['uom', 'uom'], ['remark', 'remark'], ['cancelled', 'cancelled'],
@@ -1841,10 +1845,10 @@ consignmentOrders.delete('/:docNo/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_sales_order_items')
-    .select('item_code, qty, unit_price_centi, total_centi, photo_urls')
+    .select('item_code, qty, unit_price_sen, total_sen, photo_urls')
     .eq('id', itemId), co.companyId).maybeSingle();
   const prevTyped = prev as
-    | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null }
+    | { item_code: string; qty: number; unit_price_sen: number; total_sen: number; photo_urls: string[] | null }
     | null;
   if (!prevTyped) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1878,8 +1882,8 @@ consignmentOrders.delete('/:docNo/items/:itemId', async (c) => {
       fieldChanges: [
         { field: 'itemCode', from: prevTyped.item_code },
         { field: 'qty', from: prevTyped.qty },
-        { field: 'unitPriceCenti', from: prevTyped.unit_price_centi },
-        { field: 'totalCenti', from: prevTyped.total_centi },
+        { field: 'unitPriceSen', from: prevTyped.unit_price_sen },
+        { field: 'totalSen', from: prevTyped.total_sen },
         ...(photoKeys.length > 0
           ? [{ field: 'photosCleaned', from: photoKeys.length, to: photosCleaned } satisfies FieldChange]
           : []),
@@ -2156,7 +2160,7 @@ consignmentOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => 
 // ── Payments — transaction ledger per CO ──────────────────────────────
 const PAYMENT_COLS =
   'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, collected_by, note, ' +
+  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
   'created_at, created_by';
 
 consignmentOrders.get('/:docNo/payments', async (c) => {
@@ -2200,7 +2204,7 @@ const paymentCreateSchema = z.object({
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
   approvalCode:       z.string().optional().nullable(),
-  amountCenti:        z.number().int().nonnegative(),
+  amountSen:        z.number().int().nonnegative(),
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
@@ -2239,7 +2243,7 @@ consignmentOrders.post('/:docNo/payments', async (c) => {
     installment_months: installmentMonths,
     online_type:        onlineType,
     approval_code:      p.approvalCode ?? null,
-    amount_centi:       p.amountCenti,
+    amount_sen:       p.amountSen,
     account_sheet:      p.accountSheet ?? null,
     collected_by:       p.collectedBy ?? null,
     note:               p.note ?? null,
@@ -2255,7 +2259,7 @@ consignmentOrders.post('/:docNo/payments', async (c) => {
     fieldChanges: [
       { field: 'paidAt',             from: null, to: p.paidAt },
       { field: 'method',             from: null, to: p.method },
-      { field: 'amountCenti',        from: null, to: p.amountCenti },
+      { field: 'amountSen',        from: null, to: p.amountSen },
       ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
       ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
       ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
@@ -2277,7 +2281,7 @@ consignmentOrders.delete('/:docNo/payments/:id', async (c) => {
 
   const { data: row } = await scopeToCompanyId(sb.from('consignment_sales_order_payments').select('*').eq('id', id), co.companyId).maybeSingle();
   if (!row) return c.json(NOT_THIS_COMPANY, 404);
-  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_centi: number; approval_code: string | null };
+  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_sen: number; approval_code: string | null };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
 
   const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_payments').delete().eq('id', id), co.companyId);
@@ -2291,7 +2295,7 @@ consignmentOrders.delete('/:docNo/payments/:id', async (c) => {
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
-      { field: 'amountCenti',  from: rowTyped.amount_centi,  to: null },
+      { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });

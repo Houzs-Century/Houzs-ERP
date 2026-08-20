@@ -44,7 +44,7 @@ export type DocView = {
   documentRef: string | null;
   issueDate: string | null;
   expiryDate: string | null;
-  costCenti: number | null;
+  costSen: number | null;
   owner: string | null;
   result: "PASS" | "FAIL" | null;
   reinspectionDeadline: string | null;
@@ -84,7 +84,7 @@ export type PlanView = {
   lastDoneDate: string | null;
   lastDoneKm: number | null;
   workshop: string | null;
-  estCostCenti: number | null;
+  estCostSen: number | null;
   notes: string | null;
   active: boolean;
   nextDueKm: number | null;
@@ -163,7 +163,7 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
   VERIFIED: "Verified",
 };
 
-type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceCenti: number; lineCenti: number; serial: string | null };
+type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceSen: number; lineSen: number; serial: string | null };
 export type WorkOrderView = {
   id: string;
   /** WO-#### (mig 0248) — OURS. quotationNo is the workshop's own number, off
@@ -180,11 +180,11 @@ export type WorkOrderView = {
    *  the two are never confused for each other. */
   quotationNo?: string | null;
   invoiceNo?: string | null;
-  labourCenti: number;
-  outsideServiceCenti: number;
-  towingCenti: number;
-  taxCenti: number;
-  totalCenti: number;
+  labourSen: number;
+  outsideServiceSen: number;
+  towingSen: number;
+  taxSen: number;
+  totalSen: number;
   warrantyUntil: string | null;
   reportedAt: string | null;
   estComplete: string | null;
@@ -208,7 +208,7 @@ export type BreakdownView = {
   mediaRefs: string[];
   driverDescription: string | null;
   towingCompany: string | null;
-  towingCostCenti: number | null;
+  towingCostSen: number | null;
   workshop: string | null;
   breakdownStart: string | null;
   recoveryTime: string | null;
@@ -219,7 +219,7 @@ export type BreakdownView = {
   notes: string | null;
 };
 
-type ComponentEventView = { id: string; eventType: string; eventDate: string | null; odometerKm: number | null; toPosition: string | null; costCenti: number | null; note: string | null };
+type ComponentEventView = { id: string; eventType: string; eventDate: string | null; odometerKm: number | null; toPosition: string | null; costSen: number | null; note: string | null };
 export type ComponentView = {
   id: string;
   componentType: string;
@@ -232,7 +232,7 @@ export type ComponentView = {
   serial: string | null;
   fittedDate: string | null;
   fittedKm: number | null;
-  purchasePriceCenti: number | null;
+  purchasePriceSen: number | null;
   treadDepth: number | null;
   removedDate: string | null;
   removedKm: number | null;
@@ -240,7 +240,7 @@ export type ComponentView = {
   status: "ACTIVE" | "REMOVED";
   notes: string | null;
   kmUsed: number | null;
-  costPerKmCenti: number | null;
+  costPerKmSen: number | null;
   underWarranty: boolean | null;
   events: ComponentEventView[];
 };
@@ -268,9 +268,9 @@ type DashboardPayload = {
     cantDispatch: number;
     openWorkOrders: number;
     fleetSize: number;
-    repairSpendThisMonthCenti: number | null;
+    repairSpendThisMonthSen: number | null;
     costliestVehicle: string | null;
-    costliestVehicleCenti: number | null;
+    costliestVehicleSen: number | null;
   };
   statusCounts: Record<string, number>;
   vehicles: VehicleRow[];
@@ -288,7 +288,7 @@ export type VehicleDetailPayload = {
     registrationDate?: string | null;
     inServiceDate?: string | null;
     purchaseDate?: string | null;
-    purchasePriceCenti?: number | null;
+    purchasePriceSen?: number | null;
     capacityM3?: number | null;
     lengthFt?: number | null;
     widthFt?: number | null;
@@ -547,8 +547,8 @@ export function FleetHealth() {
         <StatCard label="Active breakdowns" value={kpis?.activeBreakdowns ?? 0} subtitle={kpis?.openWorkOrders ? `${kpis.openWorkOrders} open work order${kpis.openWorkOrders === 1 ? "" : "s"}` : "no open work orders"} tone={kpis?.activeBreakdowns ? "error" : "default"} pending={dash.loading} onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"} />
         <StatCard
           label="This-month repairs"
-          value={kpis?.repairSpendThisMonthCenti != null ? money(kpis.repairSpendThisMonthCenti) : "—"}
-          subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleCenti ?? 0)}` : "No repairs logged"}
+          value={kpis?.repairSpendThisMonthSen != null ? money(kpis.repairSpendThisMonthSen) : "—"}
+          subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleSen ?? 0)}` : "No repairs logged"}
           pending={dash.loading}
         />
       </div>
@@ -936,7 +936,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
   const [lastDoneKm, setLastDoneKm] = useState(plan?.lastDoneKm != null ? String(plan.lastDoneKm) : "");
   const [lastDoneDate, setLastDoneDate] = useState(plan?.lastDoneDate ?? "");
   const [workshop, setWorkshop] = useState(plan?.workshop ?? "");
-  const [estCost, setEstCost] = useState(plan?.estCostCenti != null ? (plan.estCostCenti / 100).toFixed(2) : "");
+  const [estCost, setEstCost] = useState(plan?.estCostSen != null ? (plan.estCostSen / 100).toFixed(2) : "");
   const [active, setActive] = useState(plan?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -962,7 +962,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
         lastDoneKm: num(lastDoneKm),
         lastDoneDate: lastDoneDate || null,
         workshop: workshop.trim() || null,
-        estCostCenti: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
+        estCostSen: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
         active,
       });
       onSaved();
@@ -1502,7 +1502,7 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
   const [stillDrivable, setStillDrivable] = useState(b.stillDrivable);
   const [description, setDescription] = useState(b.driverDescription ?? "");
   const [towingCompany, setTowingCompany] = useState(b.towingCompany ?? "");
-  const [towingCost, setTowingCost] = useState(b.towingCostCenti != null ? (b.towingCostCenti / 100).toFixed(2) : "");
+  const [towingCost, setTowingCost] = useState(b.towingCostSen != null ? (b.towingCostSen / 100).toFixed(2) : "");
   const [workshop, setWorkshop] = useState(b.workshop ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1518,7 +1518,7 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
         stillDrivable,
         driverDescription: description.trim() || null,
         towingCompany: towingCompany.trim() || null,
-        towingCostCenti: cost != null && Number.isFinite(cost) ? Math.round(cost * 100) : null,
+        towingCostSen: cost != null && Number.isFinite(cost) ? Math.round(cost * 100) : null,
         workshop: workshop.trim() || null,
       });
       setOpen(false); onChanged();
@@ -1587,10 +1587,10 @@ function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: 
   const [quotationNo, setQuotationNo] = useState(wo.quotationNo ?? "");
   const [invoiceNo, setInvoiceNo] = useState(wo.invoiceNo ?? "");
   const rm = (c: number | null | undefined) => (c == null || c === 0 ? "" : (c / 100).toFixed(2));
-  const [labour, setLabour] = useState(rm(wo.labourCenti));
-  const [outside, setOutside] = useState(rm(wo.outsideServiceCenti));
-  const [towing, setTowing] = useState(rm(wo.towingCenti));
-  const [tax, setTax] = useState(rm(wo.taxCenti));
+  const [labour, setLabour] = useState(rm(wo.labourSen));
+  const [outside, setOutside] = useState(rm(wo.outsideServiceSen));
+  const [towing, setTowing] = useState(rm(wo.towingSen));
+  const [tax, setTax] = useState(rm(wo.taxSen));
   const [warranty, setWarranty] = useState(wo.warrantyUntil ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1610,10 +1610,10 @@ function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: 
         workshop: workshop.trim() || null,
         quotationNo: quotationNo.trim() || null,
         invoiceNo: invoiceNo.trim() || null,
-        labourCenti: centi(labour),
-        outsideServiceCenti: centi(outside),
-        towingCenti: centi(towing),
-        taxCenti: centi(tax),
+        labourSen: centi(labour),
+        outsideServiceSen: centi(outside),
+        towingSen: centi(towing),
+        taxSen: centi(tax),
         warrantyUntil: warranty || null,
       });
       onSaved();
@@ -1690,7 +1690,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
     setBusy(true);
     try {
       await api.post(`/api/fleet-maintenance/work-orders/${wo.id}/parts`, {
-        name: pName.trim(), qty: Number(pQty) || 1, unitPriceCenti: Math.round((Number(pPrice) || 0) * 100),
+        name: pName.trim(), qty: Number(pQty) || 1, unitPriceSen: Math.round((Number(pPrice) || 0) * 100),
       });
       setAddingPart(false); setPName(""); setPQty("1"); setPPrice(""); onChanged();
     } catch { /* surfaced on reload */ } finally { setBusy(false); }
@@ -1713,7 +1713,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       subtitle={[
         cause ? `from ${cause.caseNo ?? "breakdown"}: ${cause.faultType || cause.driverDescription || "incident"}` : null,
         partCount ? `${partCount} line${partCount === 1 ? "" : "s"}` : null,
-        wo.totalCenti ? money(wo.totalCenti) : null,
+        wo.totalSen ? money(wo.totalSen) : null,
         wo.quotationNo ? `their ref ${wo.quotationNo}` : wo.invoiceNo ? `their invoice ${wo.invoiceNo}` : null,
       ].filter(Boolean).join(" · ")}
       when={wo.reportedAt ? fmtDateTime(wo.reportedAt) : null}
@@ -1766,8 +1766,8 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
               <tr key={p.id} className="border-t border-border/60">
                 <td className="py-1 pr-2 text-ink">{p.name}{p.partNo ? <span className="text-ink-muted"> · {p.partNo}</span> : ""}{p.serial ? <span className="text-ink-muted"> · SN {p.serial}</span> : ""}</td>
                 <td className="py-1 pr-2 tabular-nums">{p.qty}</td>
-                <td className="py-1 pr-2 text-right tabular-nums">{money(p.unitPriceCenti)}</td>
-                <td className="py-1 pr-2 text-right tabular-nums">{money(p.lineCenti)}</td>
+                <td className="py-1 pr-2 text-right tabular-nums">{money(p.unitPriceSen)}</td>
+                <td className="py-1 pr-2 text-right tabular-nums">{money(p.lineSen)}</td>
                 <td className="py-1 text-right"><button type="button" onClick={() => removePart(p.id)} className="text-ink-muted hover:text-err" aria-label="Remove part"><X size={12} /></button></td>
               </tr>
             ))}
@@ -1793,7 +1793,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
               {editing ? "Close" : "Edit details"}
             </button>
           </span>
-          <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalCenti)}</span>
+          <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalSen)}</span>
         </div>
       )}
       {editing && <WorkOrderEdit wo={wo} onSaved={() => { setEditing(false); onChanged(); }} onCancel={() => setEditing(false)} />}
@@ -1822,7 +1822,7 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/components`, {
         componentType: type, position, brand: brand.trim() || undefined, serial: serial.trim() || undefined,
         fittedKm: fittedKm ? Number(fittedKm) : undefined, fittedDate: new Date().toISOString().slice(0, 10),
-        purchasePriceCenti: price ? Math.round(Number(price) * 100) : undefined, warrantyUntil: warranty || undefined,
+        purchasePriceSen: price ? Math.round(Number(price) * 100) : undefined, warrantyUntil: warranty || undefined,
       });
       setAdding(false); setBrand(""); setSerial(""); setPrice(""); setWarranty(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
@@ -1907,7 +1907,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
       subtitle={[
         [c.brand, c.model, c.size].filter(Boolean).join(" ") || null,
         c.kmUsed != null ? `${c.kmUsed.toLocaleString()} km used` : null,
-        c.costPerKmCenti != null ? `${money(c.costPerKmCenti)}/km` : null,
+        c.costPerKmSen != null ? `${money(c.costPerKmSen)}/km` : null,
         c.status === "ACTIVE" ? null : "removed",
       ].filter(Boolean).join(" · ")}
       when={c.fittedDate}
@@ -1918,7 +1918,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
         <Detail label="Fitted" value={c.fittedDate ? `${fmtDate(c.fittedDate)}${c.fittedKm != null ? ` @ ${c.fittedKm.toLocaleString()} km` : ""}` : "—"} />
         <Detail label="Removed" value={c.removedDate ? `${fmtDate(c.removedDate)}${c.removedKm != null ? ` @ ${c.removedKm.toLocaleString()} km` : ""}` : "still fitted"} />
         <Detail label="Km used" value={c.kmUsed != null ? c.kmUsed.toLocaleString() : "—"} />
-        <Detail label="Cost / km" value={c.costPerKmCenti != null ? money(c.costPerKmCenti) : "—"} />
+        <Detail label="Cost / km" value={c.costPerKmSen != null ? money(c.costPerKmSen) : "—"} />
         <Detail label="Tread" value={c.treadDepth != null ? `${c.treadDepth} mm` : "—"} />
         <Detail label="Serial" value={c.serial ?? "—"} />
       </dl>
@@ -2045,7 +2045,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
           issueDate: issueDate || null,
           expiryDate,
           documentRef: documentRef || null,
-          costCenti: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+          costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
           owner: owner || null,
           ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
         },

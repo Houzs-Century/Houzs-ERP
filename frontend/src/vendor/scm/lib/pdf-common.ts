@@ -7,7 +7,7 @@
 // now carries HOUZS's registered entity (see below), not 2990's.
 // ----------------------------------------------------------------------------
 
-import { fmtDate, fmtDateTime, fmtMoneyCenti } from '@2990s/shared';
+import { fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared';
 import {
   composeCompanyAddress,
   getBrandingCache,
@@ -344,7 +344,7 @@ export const intToWords = (n: number): string => {
   return parts.join(' ');
 };
 
-/** Centi amount → "RINGGIT MALAYSIA … AND SEN … ONLY" (AutoCount footer). */
+/** Sen amount → "RINGGIT MALAYSIA … AND SEN … ONLY" (AutoCount footer). */
 export const amountInWordsMyr = (centi: number | null | undefined): string => {
   const v = Math.max(0, Math.round(centi ?? 0));
   const rm = Math.floor(v / 100);
@@ -353,7 +353,7 @@ export const amountInWordsMyr = (centi: number | null | undefined): string => {
   return `RINGGIT MALAYSIA ${intToWords(rm)}${senPart} ONLY`;
 };
 
-export const fmtRm = (centi: number | null, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+export const fmtRm = (centi: number | null, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /** Document date → "31/05/2026". Null-safe ("—"). Delegates to the shared
  *  {@link fmtDate} so PDFs and the SPA share ONE date format (no 2nd source). */

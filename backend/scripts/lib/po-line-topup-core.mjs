@@ -27,7 +27,7 @@
 //    is claimed by the LONGEST matching ItemCode, so a code that prefixes
 //    another cannot steal its rows.
 //
-// 3. material_code AS FALLBACK, and ONLY for a row that has NO supplier_sku.
+// 3. item_code AS FALLBACK, and ONLY for a row that has NO supplier_sku.
 //    Measured against prod on 2026-08-10: 225 of the 862 lines on migrated
 //    purchase orders carry no supplier_sku at all - 206 written in one batch at
 //    04:46-04:50 and 19 later - and NOT by the two importers, which always set
@@ -37,7 +37,7 @@
 //    with-supplier_sku row's code on the same PO, so they ARE the AutoCount
 //    lines, just unlabelled. Keying on supplier_sku alone declared 183 of them
 //    missing in the first DRY-RUN - 183 duplicates, had it been applied.
-//    A no-supplier_sku row is claimed by exact material_code, or - for a sofa
+//    A no-supplier_sku row is claimed by exact item_code, or - for a sofa
 //    line, whose ONE AutoCount line becomes many `${model}-{compartment}` rows -
 //    by the model prefix. A row two families could both claim is claimed by
 //    NEITHER; it is reported as ambiguous.
@@ -230,7 +230,7 @@ function buildFamilies(acLines, resolve) {
 }
 
 /* Claim the document's ERP rows for its families. erpRows are
-   { supplierSku, materialCode, ... }. Rules 2 and 3 above. */
+   { supplierSku, itemCode, ... }. Rules 2 and 3 above. */
 function claimErpRows(families, erpRows) {
   for (const f of families) { f.keyRows = 0; f.skuRows = 0; f.codeRows = 0; f.claimed = 0; f.rows = []; }
   const byLongestKey = [...families].sort((a, b) => b.key.length - a.key.length);
@@ -254,7 +254,7 @@ function claimErpRows(families, erpRows) {
       if (hit) { hit.skuRows++; hit.claimed++; hit.rows.push(row); } else unassigned.push(row);
       continue;
     }
-    const code = normSku(row.materialCode);
+    const code = normSku(row.itemCode);
     const hits = code
       ? families.filter((f) => (f.code && normSku(f.code) === code) || (f.sofaModel && code.startsWith(normSku(f.sofaModel) + "-")))
       : [];
@@ -282,7 +282,7 @@ function planFamilyInserts(family, expectedRows) {
 
 /* Belt and braces immediately before an INSERT runs: an exact MULTISET diff on
    supplier_sku, so even a family judged absent cannot write a supplier_sku the
-   document already holds. material_code is NOT part of this key - a row present
+   document already holds. item_code is NOT part of this key - a row present
    under a different code is still present, and keying on it too would duplicate.
    Code disagreements come back reported instead. */
 function diffExpectedRows(expected, existing) {
@@ -299,8 +299,8 @@ function diffExpectedRows(expected, existing) {
     const q = have.get(normSku(e.supplierSku));
     if (q && q.length) {
       const hit = q.shift();
-      if (e.materialCode && hit.materialCode && normSku(e.materialCode) !== normSku(hit.materialCode)) {
-        codeDisagreements.push({ supplierSku: e.supplierSku, expected: e.materialCode, found: hit.materialCode });
+      if (e.itemCode && hit.itemCode && normSku(e.itemCode) !== normSku(hit.itemCode)) {
+        codeDisagreements.push({ supplierSku: e.supplierSku, expected: e.itemCode, found: hit.itemCode });
       }
       continue;
     }

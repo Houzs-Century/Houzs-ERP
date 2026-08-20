@@ -97,9 +97,29 @@ function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
   if (typeof a === 'object' || typeof b === 'object') {
-    try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+    try { return stableStringify(a) === stableStringify(b); } catch { return false; }
   }
   return false;
+}
+
+/** JSON.stringify with every object's keys emitted in sorted order, so the
+ *  compare in valuesEqual is key-order-insensitive: {a:1,b:2} equals {b:2,a:1}.
+ *  Without this, a saved object field (address, variants) whose readback
+ *  serialises its keys in a different order than `expect` was reported a
+ *  spurious 'save did not stick'. Array order is PRESERVED — element order is
+ *  meaningful, so a reordered array stays a real change. Nested objects are
+ *  handled because the replacer re-runs on each re-keyed object's values. */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) =>
+    val && typeof val === 'object' && !Array.isArray(val)
+      ? Object.keys(val as Record<string, unknown>)
+          .sort()
+          .reduce<Record<string, unknown>>((acc, k) => {
+            acc[k] = (val as Record<string, unknown>)[k];
+            return acc;
+          }, {})
+      : val,
+  );
 }
 
 /** Authenticated fetch to the API (same auth as authed-fetch). */

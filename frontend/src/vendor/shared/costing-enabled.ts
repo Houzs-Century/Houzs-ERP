@@ -20,7 +20,7 @@
 //     2026-06-22: "不需要價格先"), so cost_price_sen is empty across ~1326 SKUs:
 //       cost_price_sen empty
 //         -> snapshotUnitCostSen falls through to 0 on every SO line
-//         -> total_cost_centi = 0
+//         -> total_cost_sen = 0
 //         -> margin_pct_basis = round((margin/total) * 10000) = 10000
 //         -> "100.0% margin", in GREEN, on every order.
 //     #649's evidence: prod SO-2607-018, a real RM 3,888 mattress order.
@@ -33,8 +33,8 @@
 // the rest are empty — same lie, intermittent and harder to see. If the 100%
 // becomes a problem before HOUZS is costed, the fix is per-DOCUMENT (hide the
 // margin when a product category has revenue but zero cost — the header already
-// carries mattress_sofa_cost_centi/bedframe_cost_centi/... alongside their
-// revenue twins, and service_cost_centi is separate because a service line
+// carries mattress_sofa_cost_sen/bedframe_cost_sen/... alongside their
+// revenue twins, and service_cost_sen is separate because a service line
 // legitimately has none), NOT a global flag and NOT a company gate.
 // ----------------------------------------------------------------------------
 

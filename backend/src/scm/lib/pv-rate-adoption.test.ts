@@ -20,7 +20,7 @@ const RMB_PI: PiRateFacts = {
 
 const plan = (over: Partial<Parameters<typeof planPvRateAdoption>[0]> = {}) =>
   planPvRateAdoption({
-    appliedCenti: 2_162_500,
+    appliedSen: 2_162_500,
     pvCurrency: 'RMB',
     pvExchangeRate: 0.619838,
     pi: RMB_PI,
@@ -70,7 +70,7 @@ describe('row 7 — a foreign invoice with a DIFFERENT deliberate rate is LEFT A
   test('a partial payment at a second rate is reported, never resolved', () => {
     // Half the invoice paid in January at 0.62, the rest now at 0.6099. Neither
     // is "the" rate for the whole invoice — that is the owner's call, not ours.
-    expect(plan({ appliedCenti: 1_081_250, pvExchangeRate: 0.6099, pi: { ...RMB_PI, exchangeRate: 0.62 } }))
+    expect(plan({ appliedSen: 1_081_250, pvExchangeRate: 0.6099, pi: { ...RMB_PI, exchangeRate: 0.62 } }))
       .toEqual({ action: 'report_mismatch', piRate: 0.62, pvRate: 0.6099 });
   });
 
@@ -104,15 +104,15 @@ describe('row 2 — an MYR invoice is never touched', () => {
 });
 
 describe('row 1 — nothing applied means no evidence of payment', () => {
-  test.each([0, -1, -2_162_500, Number.NaN])('appliedCenti %p is a no-op', (applied) => {
-    expect(plan({ appliedCenti: applied }))
+  test.each([0, -1, -2_162_500, Number.NaN])('appliedSen %p is a no-op', (applied) => {
+    expect(plan({ appliedSen: applied }))
       .toEqual({ action: 'skip', reason: 'nothing_applied' });
   });
 
   test('a fully-clamped allocation (the invoice was already paid) adopts nothing', () => {
-    // settlePiPaidCenti returns appliedCenti 0 when the clamp refuses the whole
+    // settlePiPaidSen returns appliedSen 0 when the clamp refuses the whole
     // request. No money reached the invoice, so the payment says nothing about it.
-    expect(plan({ appliedCenti: 0 })).toEqual({ action: 'skip', reason: 'nothing_applied' });
+    expect(plan({ appliedSen: 0 })).toEqual({ action: 'skip', reason: 'nothing_applied' });
   });
 });
 

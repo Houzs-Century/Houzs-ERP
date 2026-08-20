@@ -99,7 +99,7 @@ export function soEditHeader(
   lines: ErpLine[],
   /** REQUIRED, never optional: it decides what the account book says a live
    *  customer still owes. `null` omits the key and keeps the book's own. */
-  outstandingCenti: number | null,
+  outstandingSen: number | null,
   /** The payment references, oldest first — REQUIRED for the same reason as
    *  the three above: it decides what the book's PAYEMENT field says. An empty
    *  array omits the key and the book keeps whatever the cutover left. */
@@ -175,7 +175,7 @@ export function soEditHeader(
      the customer has now settled has to stop showing a debt in the account
      book, and `acUdfMoney` renders that as "0.00" precisely so this `if` does
      not drop it. Only a null — the ERP has no answer — omits the key. */
-  const balance = acUdfMoney(outstandingCenti);
+  const balance = acUdfMoney(outstandingSen);
   if (balance != null) udf.BALANCE = balance;
 
   /* AN EXPLICIT NULL IS THE MESSAGE — `Str` turns it into "", and the book's

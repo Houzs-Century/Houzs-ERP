@@ -42,7 +42,7 @@ const HEADER =
   'id, transfer_no, status, from_warehouse_id, to_warehouse_id, transfer_date, ' +
   'notes, posted_at, cancelled_at, created_at, created_by';
 const LINE =
-  'id, stock_transfer_id, product_code, product_name, variant_key, qty, notes, created_at';
+  'id, stock_transfer_id, item_code, product_name, variant_key, qty, notes, created_at';
 
 const VALID_STATUS = new Set(['POSTED', 'CANCELLED']);
 
@@ -156,14 +156,14 @@ async function writeTransferMovements(
 ): Promise<string[]> {
   const movementErrors: string[] = [];
   const { data: lines } = await sb.from('stock_transfer_lines')
-    .select('product_code, product_name, variant_key, qty')
+    .select('item_code, product_name, variant_key, qty')
     .eq('stock_transfer_id', header.id);
-  const lineList = (lines as Array<{ product_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
+  const lineList = (lines as Array<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
 
   /* Resolve the dye-lot batch each line moves so a batched (sofa) lot keeps its
      batch_no across the warehouse hop — otherwise the destination can't satisfy
      a batch-scoped sofa ship. We read OPEN lots at the SOURCE warehouse and, for
-     each (product_code, variant_key) bucket, carry the batch ONLY when the source
+     each (item_code, variant_key) bucket, carry the batch ONLY when the source
      stock sits in a single non-null batch. If the bucket spans multiple batches
      (or is plain un-batched), we leave the line un-batched → plain FIFO, rather
      than guess a wrong dye-lot. Forward-compat: pre-0120 the column/view is absent
@@ -173,7 +173,7 @@ async function writeTransferMovements(
     const { data: lots, error: lotsErr } = await scopeToCompany(
       sb
         .from('v_inventory_lots_open')
-        .select('warehouse_id, product_code, variant_key, batch_no, qty_remaining')
+        .select('warehouse_id, item_code, variant_key, batch_no, qty_remaining')
         .eq('warehouse_id', header.from_warehouse_id)
         .not('batch_no', 'is', null)
         .gt('qty_remaining', 0),
@@ -183,10 +183,10 @@ async function writeTransferMovements(
       // Collect the distinct non-null batches per bucket; single → carry, else null.
       const batchesByBucket = new Map<string, Set<string>>();
       for (const r of (lots ?? []) as Array<{
-        product_code: string; variant_key: string | null; batch_no: string | null;
+        item_code: string; variant_key: string | null; batch_no: string | null;
       }>) {
         if (!r.batch_no) continue;
-        const k = `${r.product_code}::${r.variant_key ?? ''}`;
+        const k = `${r.item_code}::${r.variant_key ?? ''}`;
         const set = batchesByBucket.get(k) ?? new Set<string>();
         set.add(r.batch_no);
         batchesByBucket.set(k, set);
@@ -229,7 +229,7 @@ async function writeTransferMovements(
           payload.map((p) => ({
             movement_type: 'IN',
             warehouse_id: header.to_warehouse_id,
-            product_code: p.product_code,
+            item_code: p.item_code,
             variant_key: p.variant_key,
             qty: p.qty,
           })),
@@ -252,7 +252,7 @@ async function writeTransferMovements(
 
 // ── Create + auto-post ────────────────────────────────────────────────
 // body: { fromWarehouseId, toWarehouseId, transferDate?, notes?,
-//         items: [{ productCode, productName?, variantKey?, qty, notes? }] }
+//         items: [{ itemCode, productName?, variantKey?, qty, notes? }] }
 // PR-DRAFT-removal: row is inserted as POSTED and inventory_movements
 // are written inline. No separate /post call needed.
 stockTransfers.post('/', async (c) => {
@@ -284,7 +284,7 @@ stockTransfers.post('/', async (c) => {
      be booked as their own document.
      That is not a bookkeeping-only defect: fn_stock_transfer_apply
      (mig 0192) writes an OUT movement at from_warehouse_id, and the FIFO consumer
-     keys on (warehouse_id, product_code, variant_key) with no company argument —
+     keys on (warehouse_id, item_code, variant_key) with no company argument —
      so it consumes the other company's lots at their cost and opens the stock in
      ours. Stock and valuation both move.
      Checked as a SET so one round trip covers both ids; `scopeToCompany` keeps the
@@ -337,10 +337,10 @@ stockTransfers.post('/', async (c) => {
   const lineRows = items.map((it) => {
     const qty = Math.max(0, Math.floor(Number(it.qty ?? 0)));
     if (qty <= 0) throw new Error('qty must be > 0');
-    if (!it.productCode) throw new Error('productCode required per line');
+    if (!it.itemCode) throw new Error('itemCode required per line');
     return {
       stock_transfer_id: header.id,
-      product_code: String(it.productCode),
+      item_code: String(it.itemCode),
       product_name: (it.productName as string | undefined) ?? null,
       // Variant bucket so the OUT@from / IN@to movements consume + re-open the
       // matching FIFO batch. Omit / '' = unclassified (legacy behaviour).
@@ -422,7 +422,7 @@ stockTransfers.post('/', async (c) => {
 // opposite-direction movement per original row (IN@to → OUT@to, OUT@from →
 // IN@from) via reverseMovements, so stock flows back to the source warehouse
 // and the FIFO cost basis is restored. Variant-aware (reverseMovements buckets
-// by product_code + variant_key + warehouse). Idempotent two ways: the
+// by item_code + variant_key + warehouse). Idempotent two ways: the
 // status flip is gated POSTED→CANCELLED (the .neq guard returns no row on a
 // second call → 409), and reverseMovements itself skips buckets whose signed
 // net is already 0, so even a retry that slipped past the gate is a no-op.

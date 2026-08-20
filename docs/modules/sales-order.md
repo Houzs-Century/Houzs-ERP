@@ -5,6 +5,19 @@
 
 # Module: Sales Order (SCM)
 
+> **Naming (vocabulary registry).** Three SO-header concepts are now declared in
+> `backend/scripts/lib/vocabulary.mjs` (glossary: `docs/generated/GLOSSARY.md`):
+> the salesperson is `salesperson_id` (uuid; the legacy `agent` text is kept for
+> the AutoCount book, see "stamped TWICE" below), the ship-from warehouse is
+> `warehouse_id` (the header's free-text `sales_location` snapshot is being
+> unified onto it by a staged backfill migration), and the customer's own
+> reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
+> fallback and the dead `po_doc_no` / `customer_po` / `customer_po_id` /
+> `customer_po_date` columns — 0%-filled, census-verified — are DROPPED from the
+> SO header by migration 0310).
+> No column was renamed in this registration — the two renames are reviewed
+> follow-ups because they need a backfill / a view-guarded drop.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission
@@ -296,9 +309,13 @@ thereby say the stored value is standing alone.
 Where it is used:
 
 - `GET /mfg-sales-orders` rolls it up into `stock_remark` / `is_main_ready` /
-  `planning_state`. It costs no extra query: that handler ALREADY awaits one
-  `computeMrp` (`mrpForListProm`, for the source-PO union) and `mrpLineCoverage`
-  is a pure flatten of that result.
+  `planning_state`. Since 2026-08-18 the list DOES NOT run `computeMrp` on its
+  critical path — those three fields (and the READY arm of the "PO No." chips)
+  are emitted from the STORED status alone on first paint (`null` live coverage,
+  the fail-soft branch above), and the client heals them a beat later from
+  `GET /mfg-sales-orders/list-mrp-enrichment` (see the LIST "PO No." column note
+  in §2 and §"why the list opens instantly"). The DETAIL endpoints below still
+  run `computeMrp` inline.
 - `GET /:docNo` and `GET /:docNo/items` stamp it on every line as
   `stock_status_effective`. `stock_state` and `stock_status` both stay on the
   payload — they are the two INPUTS, and the source chips and MRP page still read
@@ -512,7 +529,7 @@ It is wired to the real backend on the **unchanged** contract:
 | VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
 
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
-client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
+client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 
 **CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
 `SoLineCard` uses, never hardcoded arrays:**
@@ -652,6 +669,16 @@ Three layers, tuned so the list never shows a full-load spinner on a revisit:
    ~81ms, revalidation fetch didn't start until ~767ms. Namespaced by `__BUILD_ID__`
    so a payload-shape change on deploy can't hydrate a stale shape.
 3. **`api/cache.ts`** — 15s path-cache + in-flight dedup under `authedFetch`.
+4. **Deferred MRP enrichment** (2026-08-18) — the list handler no longer runs the
+   company-wide `computeMrp` (its dominant cost). It returns immediately with the
+   SHIPPED-only "PO No." chips and stored-status readiness; the client then calls
+   `GET /mfg-sales-orders/list-mrp-enrichment?docNos=…` once for the visible page
+   and overlays the four MRP-derived fields (READY chips, `stock_remark`,
+   `is_main_ready`, `planning_state`). The endpoint's pure assembly lives in
+   `backend/src/scm/lib/so-list-mrp-enrichment.ts`; the client side is shared by
+   desktop + mobile via `useSoListMrpEnrichmentMap` + `applySoListMrpEnrichment`
+   (`frontend/src/lib/soListEnrichment.ts`); the doc set is chunked at 100 so
+   mobile's infinite scroll stays bounded and each chunk caches independently.
 
 Invalidation always wins over all three (mutation → invalidate → forced refetch).
 
@@ -662,14 +689,190 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | Method | Path | Handler | Purpose |
 |--------|------|---------|---------|
 | GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract) |
+| GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
 | GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines |
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
 
-All under `backend/src/scm/routes/mfg-sales-orders.ts`. Auth: inside `/api/scm/*`,
+All under `backend/src/scm/routes/mfg-sales-orders.ts`, except the deferred
+`list-mrp-enrichment` endpoint, which lives in its own thin router
+`backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` and is mounted at
+the same `/mfg-sales-orders` prefix in `backend/src/scm/index.ts` — BEFORE the
+main router, so its static path resolves ahead of `/:docNo`. It shares the
+`scm.sales.orders` area guard via that prefix. Auth: inside `/api/scm/*`,
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
+
+### Company hazards in this router — HAZARD 1 and HAZARD 2
+
+`mfg-sales-orders.ts` carries two company traps that recur, so they are stated
+ONCE here and referenced from the code as `HAZARD 1` / `HAZARD 2`. Five copies of
+one paragraph is how a reason stops being read.
+
+**HAZARD 1 — a NULL company is not "unscoped", it is "Houzs".** The customer
+resolve RPC is defined by mig 0164 as
+
+```sql
+COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code = 'HOUZS'))
+```
+
+so passing `p_company_id: activeCompanyId(c) ?? null` does not mean "no
+preference" — it means **book it to Houzs**. A 2990 session whose company failed
+to resolve would file its customer under the other organisation, with no error.
+Both call sites (`createSalesOrderCore` and `patchMfgSalesOrderHeaderHandler`)
+therefore use `requireActiveCompanyId` and refuse with a 409 rather than pass a
+NULL. Never reintroduce `?? null` on that parameter.
+
+**HAZARD 2 — `pwp_codes` is keyed `(company_id, code)`, and the writes BURN a
+voucher.** Mig 0188 re-keyed the table, so a write keyed on `code` alone reaches
+whichever company's row sorts first. Three paths do this and all three are
+company-filtered:
+
+| path | what an unfiltered write does |
+| --- | --- |
+| the claim (bulk / create) | burns the OTHER company's voucher |
+| the rollback | un-burns the OTHER company's voucher |
+| the TBC sofa reward swap | hands the OTHER company's code back to stock |
+
+Where the company cannot be resolved these refuse — `409 company_unresolved` on a
+route, a thrown error on the command path. **Claiming nothing is the safe
+outcome; claiming another company's identically named code is not.** Widening the
+filter to every company is never the answer to an unresolved company.
+
+The rollback also carries `companyId` on each claim record rather than
+re-resolving it, because the rollback loop runs outside the loop that resolved it.
+
+### The 2990 receiver: `POST /api/sync/so-mirror` — IMPORT-ONCE since 2026-08-20
+
+Not in the table above because it is not a staff endpoint. It is mounted
+PRE-AUTH in `src/index.ts` and authenticated by a shared secret
+(`x-sync-secret` == `SYNC_SECRET`), because the caller is 2990's DATABASE —
+pg_cron + pg_net — not a person. Handler: `routes/so-mirror.ts`.
+
+| inbound | what it does now |
+|---|---|
+| `{docNo, header, items, payments}`, `doc_no` **absent** for company 2 | imports it: header, then the whole item + payment set. Unchanged from before. |
+| `{docNo, …}`, `doc_no` **present** | **writes nothing.** `200 {action:"skipped_existing", skipped:true}` + a `[so-mirror] skipped_existing` warning. |
+| `{docNo, deleted:true}`, `doc_no` **present** | **refuses.** `200 {action:"refused_delete", refused:true}` + a `[so-mirror] refused_delete` warning. |
+| `{docNo, deleted:true}`, `doc_no` absent | unchanged: the DELETE runs, matches nothing, acknowledges. |
+
+**Why it changed.** Before the 2026-07-21 cutover this was a live replica and
+re-applying 2990's copy was correct. After it, Houzs is the WRITER of `2990-`
+orders (`HOUZS_OWNS_2990="true"`; the POS creates them here, Houzs mints the
+numbers, the readonly wall lifts so staff can edit them) — and the receiver went
+on replaying 2990's older copy over those edits. Worse than losing the edit: it
+replaced the item set with a DELETE-then-INSERT, and
+`delivery_order_items.so_item_id` is `ON DELETE SET NULL`, so every replay
+blanked the Delivery Order lines that named those SO lines. Ten such lines
+across four documents were live on 2026-08-20, **whole documents at a time**,
+which is the shape only a whole-item-set replacement produces.
+
+**How busy is this receiver, actually — measure, do not assume.** 2990's own
+`public.sync_outbox` is readable from CI with the credentials this repo already
+holds, and `mirror-drift-sentinel.mjs` (workflow **Mirror drift sentinel**)
+prints it: on 2026-08-20 it read `source=69 mirrored=102 pending=0 sent=0
+done=102 stuck=0 lastDelivery=2026-08-19T08:42:39Z`. So the queue is drained and
+has delivered nothing for a day — the outbox is fed by triggers on 2990's OWN
+tables, and post-cutover almost nothing writes there.
+
+Two consequences worth knowing before you reason about this route:
+
+- **An empty queue is a state, not a guarantee.** Any 2990-side change, or any
+  row that fails and returns to `pending`, re-arms it. That is why import-once
+  is the fix rather than "the mirror is quiet now".
+- **A "the edit stuck" test proves nothing while the queue is idle.** It would
+  also be true of a dormant mirror. The conclusive signal is the
+  `[so-mirror] skipped_existing` log line firing for that doc while the value
+  survives; the outbox reading above is how you tell whether a delivery was even
+  offered during the window.
+
+**Every refusal is 200, deliberately.** 2990's drainer keys on HTTP status;
+non-2xx keeps the outbox row PENDING and retries forever, so one refused order
+would wedge the queue and every later SO would stop arriving. A skip is a
+delivered message we chose not to apply.
+
+**The header is the commit marker.** A first import that dies part-way deletes
+the header it just wrote before returning 500, so the retry redoes the whole
+document instead of finding a header-only order and skipping it. Pinned by
+`backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
+
+**Every decline is RECORDED — `scm.so_mirror_skips`, migration 0311.** This is
+what makes the refusal provable rather than merely claimed, and it exists
+because of the reading above: while the queue is idle a surviving edit proves
+nothing, so the missing fact was "was a delivery even offered?".
+
+| column | |
+|---|---|
+| `(company_id, doc_no, action)` | primary key. `action` is `skipped_existing` or `refused_delete` |
+| `hits` | how many deliveries have been declined for that pair |
+| `first_seen` / `last_seen` | `last_seen` is the one an acceptance test turns on |
+
+One row per pair, **never one per delivery** — the drainer retries every 10s, so
+append-per-event would grow by 8,640 rows a day per wedged document. The ceiling
+is (2990 orders) x 2.
+
+**Reading it:** `node backend/scripts/check-so-mirror-skips.mjs`, workflow **So
+mirror skips**. An edit that survived while that doc's `last_seen` moved inside
+your wait window is proof import-once held; an edit that survived while it did
+not move says only that the mirror was quiet.
+
+Two properties worth not breaking:
+
+- **The write is wrapped and never fatal.** Same rule as mig 0302's delete
+  audit: turning a correct refusal into a 500 would put the outbox row back to
+  PENDING and wedge the queue, which is the exact failure the 200 avoids. A
+  failed record is logged, and the refusal still stands.
+- **The reader asserts the COLUMN SHAPE, not a row count.** 0311 is `CREATE
+  TABLE IF NOT EXISTS`, so a pre-existing table of that name and a different
+  shape would be skipped in silence and the INSERT would fail against it
+  forever. An empty table and a wrong table both count zero; only the shape
+  check tells them apart.
+
+### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
+
+Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
+HOUZS, `2990-` = 2990) and by nothing else. There is no constraint behind it, so
+a `.eq('doc_no', docNo)` on its own resolves whichever company's row happens to
+carry that string. The frontend fires the detail panels straight off the URL
+(`enabled: Boolean(docNo)`), so a pasted or emailed `2990-` link is enough — no
+deliberate act is needed.
+
+Six child reads were keyed that way until 2026-08-18 and served the other
+company's Sales Order panels: `/:docNo/audit-log`, `/:docNo/status-changes`,
+`/:docNo/price-overrides`, `/:docNo/payments`, `/:docNo/slip-url`, and
+`/cross-category-eligibility` via `checkCrossCategorySource`. Two of those are
+worse than a row leak — `/slip-url` streams the R2 **object** (the payment slip
+image itself), and the eligibility probe returns `debtor_name`, a customer
+identity, from a GET needing only a document number. See BUG-HISTORY, 2026-08-18.
+
+**The rule for anything new under `/:docNo/`:**
+
+- a child-table read gets `scopeToCompany(builder, c)` — the same predicate
+  `/:docNo/revisions` has always carried;
+- a route that also needs the salesperson tier calls `selfScopedSalesBlocked(c, docNo)`,
+  whose **step 1** is a `scopeToCompany` read of `mfg_sales_orders`. That is why
+  the `/:docNo/payments/:id/*` routes were already safe and were left untouched;
+- a helper that cannot express scoping — `checkCrossCategorySource` took only
+  `sb` — takes `c` instead of being worked around at the call site.
+
+**`pwp_codes.code` is a natural key too (2026-08-19).** Mig 0188 re-keyed
+`pwp_codes` on `(company_id, code)`, but the voucher `code` is caller-supplied, so
+a `.eq('code', X)` on its own resolves whichever company's row carries that string
+— the same trap as `doc_no`. On SO create the PWP loop now resolves
+`pwpCompanyId = activeCompanyId(c)` (refusing `409 company_unresolved` when unset
+while codes are present) and carries `.eq('company_id', pwpCompanyId)` on the
+prefetch, the atomic burn and the rollback; the two swap-line reads go through
+`scopeToCompany`. The already-safe siblings are `lib/pwp-claim-single.ts` and the
+add-line path. See BUG-HISTORY, 2026-08-19.
+
+**Do not expect the gate to catch a miss.** `scripts/check-company-scope.mjs`
+screens routes on `ID_PREDICATE` (`.eq('id')` / `.eq('*_id')`), so a `doc_no` key
+is invisible to it; its natural-key pass understands `doc_no` but walks
+`LIB_DIRS` and screens on `LIB_WRITE`, so it sees neither routes nor reads.
+`backend/scripts/probe-natural-key-reads.mjs` reports the surface that falls
+between the two passes — and its header explains why that count is an upper
+bound on exposure rather than a defect list.
 
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
@@ -699,7 +902,20 @@ plus `other` (rows whose status is outside the vocabulary — legacy spellings,
 blanks), so the buckets always sum to `all`. It is computed by ONE grouped
 PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
-status stays an exact match.
+status stays an exact match. `?status=all` / `ALL` / empty means the **All** tab
+— NO status filter (normalised by `effectiveStatusFilter`,
+`scm/lib/so-list-filters.ts`); the raw param is never applied as
+`eq('status', …)`, because no order carries the literal status `all`.
+
+> **FIXED 2026-08-18: the list showed "no orders" for a company with 2,726 of
+> them.** Two defects zeroed the paginated read (proven with the read-only probe
+> `backend/scripts/check-so-list-empty.mjs`: HOUZS base=2726 / view=2726,
+> `service_role` reads all 2,726 through the view — the money-rename view recreate
+> was NOT the cause). (1) `?status=all` was applied as `eq('status','all')` →
+> 0 rows; now normalised to no filter. (2) A page whose offset is at/beyond the
+> count makes PostgREST answer `416 "Requested range not satisfiable"`, which the
+> handler returned as a 500 and the grid masked as "No sales orders yet"; it now
+> returns an EMPTY PAGE with the true count (`isRangeNotSatisfiable`, same lib).
 
 > **FIXED 2026-08-18: a `statusCounts` that could not be READ was served as
 > zeros.** The aggregate's error was inspected, the FALLBACK's was not:
@@ -742,11 +958,23 @@ drill-down, `SalesOrderDetailV2` (Stock + Incoming PO columns — added
 `source_po_union` + `source_po_adj` per row — the UNION of the per-line source
 chips the drill shows (shipped consumed batches ∪ READY projections, pure
 `unionSoLineChips` over the same two resolvers; READY suppressed on
-fully-shipped lines; ONE `computeMrp` per list load). The visible chips read
+fully-shipped lines). The visible chips read
 THAT, because the previous content (`converted_po_nos`, the convert-time
 raise-link) lied by omission: an accessories/CS SO fulfilled from stock bought
 under other POs raises no PO of its own and showed "—" while its drill named
 the source PO.
+
+**Since 2026-08-18 the two arms of that union arrive at different times.** The
+list handler computes only the SHIPPED arm inline (cheap real-batch reads) and
+emits `source_po_union` = shipped-only on first paint. The READY arm needs the
+company-wide `computeMrp` — the list's dominant cost — so it is no longer on the
+list path: the client fetches it from
+`GET /mfg-sales-orders/list-mrp-enrichment` (`sourcePoReady` / `sourcePoAdj`) and
+merges it in with `applySoListMrpEnrichment` (sorted set union of shipped ∪ ready,
+adj flags OR'd). `Union(shipped-only, ready-only)` per doc equals the old combined
+union, so the healed cell is byte-identical to the old inline one — it just fills
+in a beat later. Same deferral for `stock_remark` / `is_main_ready` /
+`planning_state` (§0.5).
 
 **LIST "PO No." column — the raised PO is a CHIP again (2026-08-11, SURFACE
 CHANGE).** Demoting `converted_po_nos` to a tooltip reintroduced the same lie
@@ -970,12 +1198,20 @@ readers; they are not what drives this.)
 Owner, 2026-07-31: **"我们的 item 都不会有仓库, 还是跟着 SO 的"** — an item never
 carries a warehouse of its own; the warehouse comes from the Sales Order.
 
-**There is NO warehouse FK on `scm.mfg_sales_orders`.** This is the surprising
-part and the reason people look in the wrong place. The header records its
-warehouse as the free-text **`sales_location`**, written by `warehouseLabel()`
-(`lib/warehouse-label.ts` — the warehouse CODE when there is one, else the
-name), which is itself derived from `customer_state` through
-`state_warehouse_mappings`. So the SO's warehouse resolves as:
+**The header's warehouse is the free-text `sales_location` snapshot, with a
+canonical `warehouse_id` alongside it since mig 0309.** For most of this
+module's life there was NO warehouse FK on the header at all — that is why people
+look in the wrong place — and `sales_location` (written by `warehouseLabel()`,
+`lib/warehouse-label.ts`: the warehouse CODE when there is one, else the name,
+itself derived from `customer_state` through `state_warehouse_mappings`) is still
+the value every reader/writer resolves through. Mig 0309 (batch-3 naming
+unification) ADDED a nullable header `warehouse_id uuid -> scm.warehouses(id)`
+and backfilled it from `sales_location` (code-then-name, company-scoped, only
+where exactly one warehouse matches — 2772 of 2823 rows; the 51 unresolved
+`"SLGR WAREHOUSE"` orders in company 2 stay on `sales_location`). It is a
+SNAPSHOT that mirrors the per-line binding, NOT yet a read path: `sales_location`
+remains the source of truth and is not being dropped. So the SO's warehouse
+still resolves as:
 
 ```
 sales_location  ->  warehouses.code / warehouses.name    (what the SO says)
@@ -1001,6 +1237,19 @@ answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
 rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
 — and the split was in the backend's own allocation, not only on screen.
 
+
+**A goods line written with NO warehouse now says so** (2026-08-20).
+`lib/null-warehouse-signal.ts::signalNullWarehouseRows` is called at all three
+SO-line write paths — create (`POST /`), the sofa-split add-line and the
+single-row add-line (both `PATCH /:docNo/items`) — and LOGS (never throws)
+under the greppable `[null-warehouse]` tag, naming the route, document and
+item. It exists because a null here is SILENT downstream: allocation buckets
+by (warehouse, item, variant), so the line sits at PENDING with no incoming
+PO while its goods sit received in the right bucket — 18 such lines from
+three different writers were found on 2026-08-18, none of which said anything.
+Service lines are excluded (they hold no stock; a guard that cries on every
+delivery-fee line is one somebody turns off). The hourly do-link sentinel
+counts the same shape, baseline 10 (the addressless orders below).
 
 Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
@@ -1105,11 +1354,19 @@ agreement, else the company's single active warehouse. The sibling arm does
 NOT breach the callout above: the callout guards against pooling across a
 warehouse boundary, and an SO whose every warehoused line names ONE warehouse
 has no boundary to pool across — disagreeing siblings refuse, and the
-single-warehouse fallback must not rescue them. Company-2990 rows are
-mirror-maintained (`so-mirror.ts` drains DELETE-then-INSERT per SO, wiping
-local stamps), so they verdict `mirror-source` — reported with the exact stamp
-for the 2990 SOURCE database, never written here. Rule:
-`classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
+single-warehouse fallback must not rescue them. Company-2990 rows verdict
+`mirror-source` — reported with the exact stamp for the 2990 SOURCE database,
+never written here. Rule: `classifySoLineWarehouse`,
+`backend/scripts/lib/doc-evidence-core.mjs`.
+
+> **The REASON for that verdict expired on 2026-08-20, the verdict did not.**
+> This paragraph used to justify it with *"`so-mirror.ts` drains
+> DELETE-then-INSERT per SO, wiping local stamps"*. It no longer does — the
+> receiver is import-once and never rewrites a doc_no Houzs already holds, so a
+> stamp written here now survives. What still holds is that these lines'
+> warehouse evidence lives in the 2990 source database, which is why the classifier
+> reports rather than writes. If that ever stops being the reason, the verdict
+> should be revisited on its own merits, not on this sentence.
 
 **Historical backfill for the MIGRATED AutoCount lines (2026-08-11, applied).**
 A different population and a different rule. `import-ac-outstanding-so.mjs`
@@ -1298,6 +1555,13 @@ company-2 order would wedge the queue behind it. The rule for company 2 belongs
 in 2990's own write paths. The route says so in a comment, and
 `tests/soDatePairWiring.test.ts` asserts the comment is still there.
 
+**Since 2026-08-20 that exclusion is a ONE-TIME exclusion, and it shrank on its
+own.** The receiver is import-once: it writes only a `doc_no` company 2 does not
+already hold, and every later delivery of the same order is a no-op. So the
+unpaired-dates exemption now covers the FIRST import of a legacy order and
+nothing else — every subsequent state of a 2990 order is authored in Houzs, by a
+path that does run the pair gate.
+
 The enumeration is a TEST, not prose: `tests/soDatePairWiring.test.ts` anchors on
 each path's source and fails if one stops calling the predicate. That file exists
 because the rule was previously hand-written in five places and simply missing
@@ -1469,6 +1733,9 @@ deploy schedule, which never got the 2026-08-13 unification) was written straigh
 through. It needs no code change: `applyMap` filters against
 `information_schema`, so the drop silently ends it. Until then it is the only
 thing that can still put a value in the column, and nothing reads it.
+*(Narrowed further 2026-08-20: import-once means it can only do so on an order's
+FIRST arrival, so the reachable population is new legacy imports, not every
+re-delivery of every company-2 order.)*
 
 Also gone with the writes: **`soProceedGateBlocked`**, whose two call sites were
 the `/status` stamp block and the header PATCH's `proceededAt` branch. The RULE
@@ -1531,7 +1798,7 @@ it, and the removal condition for each legacy alias is written there.
 | `lib/autocount-outbox.soEditHeader` | Reads its header off a bare `Record`, so NOT type-checked. A stale literal reads `undefined` → `acUdfDate` null → the omit-when-absent rule fires → `UDF.PDate` is never sent and the AutoCount book keeps the old date. | keyed on the constant |
 | `services/autocount-writeback.AcSoHeader` / `composeCreateSo` | The header is passed `as never` at the call site, so only the field name inside the type is checking anything. | computed property key from the constant |
 | `scm.so_amendments.header_changes` (jsonb) | The heaviest one. Written at REQUEST time, read at APPROVE time — days later, across deploys. `applySoAmendment` `continue`s on a key the allow-list lacks, and `routes/so-amendments.ts` gates on the same literal. A pending amendment would approve cleanly, audit cleanly, skip the deposit gate, and write nothing. | `canonicaliseSoHeaderChanges` on both read sites |
-| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_centi, balance_centi_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
+| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_sen, balance_sen_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
 | The `.mjs` audits under `backend/scripts` — the cutover / go-live / reconciliation / completeness family, plus `backfill-so-dates.mjs` and `probe-rename-preconditions.mjs` | Raw SQL, so 42703 kills the WHOLE statement: the audit does not narrow, it stops. Twelve of them were still naming `internal_expected_dd` after 0286 — see BUG-HISTORY 2026-08-14. `backfill-so-dates.mjs` is the one that WRITES: its "a person touched this date, refuse" scan matches audit-log TEXT, so it needs the retired spellings AND the current ones. | `SO_PROCESSING_DATE_COLUMN` from `backend/scripts/lib/so-processing-date.mjs` — the .mjs mirror, since a script cannot import the `.ts`. `tests/soProcessingDateMirror.test.ts` pins the two together; `tests/soProcessingDateOneName.test.mjs` walks the directory and fails on any non-comment mention of the retired name |
 | `frontend/src/vendor/scm/lib/so-field-policy.test.ts` | Parses the backend policy table out of the file by regex on **quoted literals**. Loud (row-for-row equality), but it constrains HOW a rename may be written: the policy rows must keep string literals, so do not replace them with a constant. | n/a — a constraint, not a fix |
 | `so_processing_date` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts:688` and `routes/delivery-orders-mfg.ts:2889`, then read as a string by three frontends (`SalesInvoicesListV2:99`, `MfgDeliveryOrdersListV2:88`, and `MobileModuleList:1147,1198`'s `pick(r, "soProcessingDate", "so_processing_date")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13. **Corrected 2026-08-14:** this row said `so_internal_expected_dd` / `soInternalExpectedDd` until today; both ends moved to `so_processing_date` with the rename and the register did not. |
@@ -1743,8 +2010,8 @@ created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 connection. The stamp ran through `backfill-specials-into-variants.mjs` with
 `SKIP_PRICED=1` (run **31454747001**): **SO 41 + PO 8 = 49 lines**, with **27
 unrelated lines held back** for carrying a priced code. Every money column was
-summed inside the transaction before and after — `unit_price_centi`,
-`total_centi`, `unit_cost_centi`, `line_cost_centi`, `special_order_price_sen`,
+summed inside the transaction before and after — `unit_price_sen`,
+`total_sen`, `unit_cost_sen`, `line_cost_sen`, `special_order_price_sen`,
 `divan_price_sen`, `leg_price_sen` — all **IDENTICAL**, and the transaction
 would have rolled back on any difference. A fresh read-only re-run
 (**31454827796**) shows every one of the 49 now carrying the code, no line still
@@ -1940,7 +2207,9 @@ familiar RM250), decomposed into line specs by `buildDeliveryFeeServiceLines`
 (`scm/shared/service-lines.ts` — Σ lines === fee.total by construction), and
 written by exactly one primitive: the atomic RPC
 `scm.rebuild_mfg_so_delivery_lines` (migration **0214**: per-doc advisory xact
-lock, delete → insert → header stamp in one call — the duplicate-fee race fix).
+lock, re-derive → header stamp in one call — the duplicate-fee race fix;
+migration **0310** made the re-derive REUSE its rows, see "the line keeps its
+identity" below).
 
 **Path inventory — how each SO-producing path satisfies the ruling:**
 
@@ -1956,7 +2225,7 @@ lock, delete → insert → header stamp in one call — the duplicate-fee race 
 
 **The bail rule (the 2990-SO-2608-006 fix).** `recomputeDeliveryFeeCore` bails
 (derives nothing) only when the SO has **no `SVC-DELIVERY*` lines AND no header
-`delivery_fee_centi`** — the dormant-fee rule: backend-authored SOs never grow
+`delivery_fee_sen`** — the dormant-fee rule: backend-authored SOs never grow
 a fee. It used to bail on "no fee lines" alone, which was half of a back door
 AND a heal-blocker: deleting/cancelling the fee line orphaned the header
 snapshot, the derivation turned itself off forever (a fee-line-less SO could
@@ -1968,6 +2237,107 @@ derivation** on the next edit — the recompute no longer depends on a fee line
 already existing; deleting a derived fee line is therefore a no-op — the way
 to change the fee is to change what drives it (the items, the rate config, or
 the `SVC-DELIVERY-ADD` operator line).
+
+**Reducing the fee on ONE order (2026-08-19): use the line's DISCOUNT, and it
+survives.** Typing a lower unit price on a fee line was never going to hold —
+the rebuild derives the price, one truth — and until this date the discount
+road was silently dead too: the line PATCH accepted a bounded discount on a
+delivery line, and the very next rebuild wrote `discount_sen: 0` over it. An
+operator who typed 250 → 125 watched the line "nuke to 0 and disappear"
+(the rebuild deleted and re-inserted the `SVC-DELIVERY*` set). Now the rebuild
+recovers each fee line's discount by `item_code`, clamps it to the rebuilt
+line's own total (a fee line can never go negative), and re-applies it — so
+the SO prints unit 250 / discount 125 / total 125, which is how every other
+price reduction on an SO is expressed. The header mirror carries the NET, so
+Σ(lines) === header still holds. The `SVC-DELIVERY-ADD` gross is recovered
+from unit × qty rather than `total_sen`, or a discounted ADD line would
+compound the reduction on every save. A component that disappears on rebuild
+(the base swapping to CROSS on a follow-up change) drops its discount rather
+than migrating it to money it never named.
+
+**The line keeps its identity (2026-08-20, migration 0310).** The rebuild now
+UPDATEs the fee lines in place instead of deleting and re-inserting them
+(`backend/src/db/migrations-pg/0310_scm_rebuild_so_delivery_lines_keeps_identity.sql`
+— this module owns that RPC; the earlier bodies are 0214 and 0305).
+This is not tidiness — **a Delivery Order can carry a delivery-fee line**
+(`routes/delivery-orders-mfg.ts` records Nico's DO for 2990-SO-2606-034, blocked
+on `SVC-DISPOSE-SOFA` and `SVC-DELIVERY-CROSS` being "short" at BALAKONG), and
+`delivery_order_items.so_item_id` is **ON DELETE SET NULL** (0235). So every
+single fee change used to blank the link of any DO that had shipped that fee,
+and left an SO that still showed a delivery line — a *different row wearing the
+same `item_code`*, which is why an investigator checking "is the line still
+there?" sees yes. That appearance is why 0302 set the FK theory aside; only
+`created_at` distinguishes the two, and `scm.mfg_so_item_deletions` now records
+the deletes directly. Rows are matched per `item_code` by their **position in
+the specs array**, because `buildDeliveryFeeServiceLines` emits
+`SVC-DELIVERY-CROSS` twice on a follow-up that also crosses categories — so
+keep that order stable. A component that genuinely disappears is still deleted,
+and still takes its link, which is correct: the line it named is gone. This is
+also the precondition for ever exposing an editable delivery charge — without
+it, every edit manufactures an orphan.
+
+**Where the operator types it (2026-08-20).** The reduction had a server road
+and no door: the line PATCH accepted a bounded discount, the rebuild kept it
+(#2490) on a row that now keeps its id (0310) — but `SoLineCard.tsx` rendered
+`discountSen` only as a READ-ONLY "− Discount" row that appears once the value
+is already above zero. Its editable inputs were description, remark, qty, unit
+price, delivery date, variants and photos; `$ Override price` writes
+`unit_price_sen`, not a discount. So the only writer of a delivery-line discount
+was the POS voucher split, and an operator could not reduce a fee at all.
+
+Now the SAME amount cell does it, because that is where the operator already
+tried: on a `SVC-DELIVERY*` line the cell SHOWS the line net and WRITES the
+difference as `discountSen` (`frontend/src/vendor/scm/lib/delivery-fee-amount.ts`,
+executed by `delivery-fee-amount.test.ts`). Type the amount you want charged —
+250 → 125 books a 125 discount, and the printed SO still reads unit 250 /
+discount 125 / total 125. Three properties are deliberate: **the semantics are
+TARGET, not discount** (on a 250 fee, wanting 200 books 50 — 250 → 125 is a
+coincidence that hides the difference, which is why a test pins 200); **a higher
+figure books no discount**, since a fee rise needs its own `SVC-DELIVERY-ADD`
+line rather than a negative discount with nothing naming the money; and **a
+blank or unreadable box writes nothing**, because `Number('')` is 0 and that
+would read as charge-nothing and waive the fee on the way to retyping it. A real
+waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
+unit price, on the same `canEditPrice` gate.
+
+**...and the verdict is LOCKED per mounted line (2026-08-20, third pass).**
+Deriving fee-vs-price live from the gross shipped a second regression within the
+hour of the first fix: typing "250" writes RM 2 after the first keystroke, the
+gross is now positive, the next render flips the cell into amount-to-charge, and
+"25…" reads as a target above the RM 2 gross — no discount, and the sync-back
+pins the box at 2.00 ("stuck at RM 2"; pasting 250 worked because paste is one
+change event). `lockedFeeSemantics` makes the decision ONCE per mounted line and
+never re-derives it per keystroke: a line that ARRIVES priced edits as a fee, a
+line authored from 0 stays a plain unit price until saved and re-mounted, and a
+product pick over the line resets the verdict. The keystroke sequence itself is
+a test case.
+
+**Only once the fee EXISTS (2026-08-20, same day).** The cell reads as
+"amount to charge" only when the line already carries a gross. A delivery-fee
+line added by hand on a NEW SO starts at 0, and there the operator is AUTHORING
+the fee: reading 250 as a target booked a discount of `max(0 - 250, 0)` = 0,
+never wrote the price, and the box snapped back to RM 0. That matters more than
+it sounds, because `applyDeliveryFee` — the create flag that makes the server
+derive a fee — is sent ONLY by the POS handover (`git grep applyDeliveryFee --
+frontend/src` returns nothing; see `mfg-sales-orders.ts:4477`), so a
+Houzs-authored SO has always had its fee typed in as a unit price. The rule is
+`editsFeeAsDiscount(isFeeCode, grossSen)`: no gross, plain unit price. The GROSS
+decides and not the net, so a fee waived to zero keeps fee semantics rather than
+flipping the cell's meaning under the operator's hands.
+
+**All three faults were on THIS side — it was not the mirror.** An earlier draft
+of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
+#2518 withdrew that with a measurement: 2990's `sync_outbox` shows its last
+successful delivery at **2026-08-19T08:42:39Z** with an empty queue, while both
+`SVC-DELIVERY` deletes on 2990-SO-2608-033 (2026-08-20 01:41 and 02:40, mig
+0302's forensic log) postdate it and carry `application_name = PostgREST 14.5` —
+the fee rebuild, not the mirror, which reaches Postgres through postgres.js and
+appears nowhere in that log. The three faults were `discount_sen: 0` written
+over an accepted discount (#2490), the rebuild replacing rows so they changed id
+(#2514), and the discount having no input (#2516). The mirror's
+DELETE-then-INSERT is still real and still worth import-once (#2515) — it is the
+only known mechanism that orphans a WHOLE document's DO lines at once — but it
+explains the repaired delivery links, not a reverted fee.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
@@ -2108,7 +2478,7 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 | `scm.mfg_sales_orders` | SO header (doc_no PK-ish, status, salesperson_id, totals in sen, so_date, delivery_state, amended_delivery_date, company_id) |
 | `scm.mfg_sales_order_items` | SO lines (item_group, stock_status, variants, warehouse_id) |
 | `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type) |
-| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_centi` + `balance_centi_live` (Σ over payments) — the list reads this |
+| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_sen` + `balance_sen_live` (Σ over payments) — the list reads this |
 
 Indexes that matter here:
 - `idx_msop_doc` on `mfg_sales_order_payments(so_doc_no)` — the payment-totals view's
@@ -2287,7 +2657,7 @@ and since that date it CARRIES the money. It did not before, and the paragraph
 that used to sit here described the old behaviour as deliberate:
 
 > Approving an amendment re-runs the honest-pricing recompute on every changed
-> line … **authoritative by default**: it rewrites `unit_price_centi` to
+> line … **authoritative by default**: it rewrites `unit_price_sen` to
 > `mfg_products.sell_price_sen`… That is deliberate for a NATIVE order.
 
 That was true of the code and wrong about the product. An operator typed RM 50,
@@ -2302,8 +2672,45 @@ it passes is derived from the APPROVAL, not from the payload:
 
 | what the apply is given | native order | migrated order |
 | --- | --- | --- |
-| `approval` (the approve-so gate's receipt) | the requested price persists (`trustOperatorSelling: true`) | stored / requested price persists (`'including-zero'`) |
+| `approval` (the approve-so gate's receipt) | the requested price persists, **RM 0 included** (`trustOperatorSelling: 'operator-zero'`) | stored / requested price persists (`'including-zero'`) |
+| `approval`, but the line is an **ADD** | requested price persists, except a **0**, which reads as "not provided" and takes the catalogue figure (plain `true`) | same |
 | `null` (any other caller) | catalogue, exactly as before | stored price kept |
+
+**RM 0 (2026-08-19).** Until this date the native row above passed plain `true`,
+which reads `manualUnitSelling > 0` — so zero was the one amount an approved
+amendment could not carry, and an approver who signed RM 0 got the catalogue
+price instead, silently. That matched the unlocked road when it was written; on
+2026-08-18 the unlocked road gained an operator-authored zero
+(`zeroPriceIntended` -> `'operator-zero'`, #2425), and this path did not follow,
+so the two disagreed on one value. Editing an existing line now uses
+`'operator-zero'` and the two agree again. It also stops a pure QUANTITY
+amendment re-pricing a line that sits at 0 — a free gift or PWP reward — which
+the editor triggers because it sends `newUnitPriceSen` on every changed line.
+
+**Add and Edit differ on 0 IN AN AMENDMENT, deliberately.** An amendment's ADD
+line names a SKU and nothing else about it is established, so a 0 there is
+likelier an unfilled field than an intended giveaway; an EDIT moves a price the
+line already carries. Both behaviours are pinned in
+`so-revision.amendmentPrice.test.ts`. Changing either means changing that test in
+the same PR — and asking the owner first.
+
+**On an UNLOCKED SO both accept 0, and the difference is the claim, not the
+operation** (2026-08-19). The direct line writes — `PATCH /:docNo/items/:itemId`
+and `POST /:docNo/items` — both ask one helper, `erpLineTrust`
+(mfg-pricing-recompute.ts):
+
+| the line write is given | trust |
+| --- | --- |
+| a POS session | `false` — the POS cannot state intent; its 0 is the documented "not provided" case |
+| price 0 **with** `zeroPriceIntended: true` | `'operator-zero'` — the 0 persists |
+| price 0 **without** the claim | `true` — reads as "not provided", takes the catalogue figure |
+| any non-zero price | `true` — a non-POS author prices freely |
+
+Until 2026-08-19 only the PATCH had this wired, so an office user could set a
+line to RM 0 by editing it but not by adding it at 0 — the same amount accepted
+on one click and silently replaced on another. The amendment path has no
+`zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
+the split above rather than joining this table.
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after
@@ -2326,7 +2733,7 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   unlocked edit path uses; `'including-zero'` is reserved for a MIGRATED line,
   where 0 is a real AutoCount figure. An ADD line never gets `'including-zero'`
   on any order type — it is being authored now, so it has no AutoCount history.
-- **`discount_centi` still has no amendment channel.** `scm.so_amendment_lines`
+- **`discount_sen` still has no amendment channel.** `scm.so_amendment_lines`
   has no discount column (mig 0080 + 0281: `new_item_code`, `new_variants`,
   `new_qty`, `new_unit_price_sen`, `new_remark`, `old_snapshot`), so a discount
   cannot be requested, approved or applied. The apply carries the line's existing
@@ -2404,3 +2811,65 @@ drift-gated POS caller is not: it must send `sofaSellingSen + surcharges + …` 
 in either tree** — it is a WIRING GAP, not dead code, and must not be deleted.
 It is inert only while every add-on is priced 0; the first add-on the owner
 prices is the moment a price-submitting client has to call it.
+
+---
+
+## The AutoCount answer arrives with the save, not five minutes later
+
+Owner 2026-08-19. Two changes to this module's surface; the rule and the reasons
+live in `docs/modules/autocount-writeback.md` §6b, and the code in
+`backend/src/scm/lib/ac-preflight.ts`.
+
+`ac-preflight.ts` carries a SECOND verdict from 2026-08-20, and it is not this
+one. `AC_NOT_SENT` means *the accounts do not have this document*;
+`AC_SENT_INCOMPLETE` (`acNotCarriedProblems`) means *they DO have it, and a
+field on it did not come with it* — the case that only arises on the four
+TRANSFERRED documents, whose route applies a strictly narrower header than an
+edit does. Two codes and not one, because filing the second under the first
+would tell an operator their goods receipt is ERP-only when the book already
+holds it, which sends them to raise it twice. Nothing on a sales order or a
+purchase order raises `AC_SENT_INCOMPLETE`; it is named here only so the two
+are not confused when reading that module.
+See `docs/modules/autocount-writeback.md` §7c5.
+
+
+**1. CONFIRM now asks the write-back's own salesperson question (a 422, and it
+is narrower than it sounds).** `backend/src/scm/lib/so-confirm-gate.ts` used to
+accept `salesperson_id` OR any non-blank `agent` text. `agent` is free text with
+no writer that keeps it honest — production rows hold bare `scm.staff` UUIDs and
+the literal placeholder `"Unassigned"` — so the order the rule was written for
+(HC-SO-2607-008, owner 2026-08-08) satisfied it, and then died in the write-back
+queue as `MissingAgentError` where nobody saw it. The gate now calls
+`resolveAcAgent`, the same function that decides what the account book is given.
+
+- **What is newly refused:** an order with NO salesperson link whose `agent` is
+  not an AutoCount sales agent. Message names the text — *"'Unassigned' is not a
+  salesperson this order can be credited to"* — because telling someone to
+  assign a salesperson while the box visibly holds a value sends them in a
+  circle.
+- **What is NOT refused, and is pinned by tests:** an order carrying a
+  salesperson (any real `scm.staff.name`, including a rep hired since the
+  cutover), or an `agent` the book already spells. Same `salesperson_required`
+  code as before, so no confirm surface changes.
+- **Cost:** zero extra reads. Both callers already select `salesperson_id,
+  agent`.
+
+**2. CREATE returns `acNotSent` when the accounts will not take the order.**
+`POST /api/scm/mfg-sales-orders` now carries `acNotSent: SaveProblem[]` beside
+`docNo` when the write-back composer refused the document — absent otherwise.
+Never a 422: the order is committed by then, and every remaining cause needs
+master data the salesperson does not own. Rendered by
+`frontend/src/vendor/scm/lib/ac-not-sent.tsx`, which owns the whole dialog so a
+new surface cannot get it subtly different.
+
+**Not yet wired**, and recorded here rather than counted as done: the mobile
+wizard (`frontend/src/mobile/MobileNewSO.tsx`), the POS handover, and the
+DRAFT → live transition (its response object is built inside the status command,
+so it carries no key). Those three still save in silence.
+
+**Also folded in:** the aggregated save-gate popup — the renderer for every
+refusal above — moved from three hand-written copies into `notifySaveProblems`
+(`frontend/src/vendor/scm/components/SaveProblemsList.tsx`). What is shared is
+"is this an aggregated gate failure, and if so, this popup". What is deliberately
+NOT shared is each surface's own fallback: this page's inline banner and the
+mobile wizard's own wording both survive.
