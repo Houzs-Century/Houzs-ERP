@@ -1,6 +1,6 @@
 ## The phone ISSUED a customer-facing invoice in three taps, while the desktop made it a deliberate act [high]
 
-<!-- area: SCM: sales invoice + mobile -->
+<!-- area: Frontend + mobile -->
 
 The owner, 2026-08-20: **「以电脑为准 —— 手机也先出草稿」** — the desktop is the
 standard, and the phone drafts first too.
