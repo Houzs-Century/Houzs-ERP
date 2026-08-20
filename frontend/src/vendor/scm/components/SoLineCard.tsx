@@ -51,7 +51,7 @@ import {
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
-import { feeAmountSen, feeDiscountForAmount } from '../lib/delivery-fee-amount';
+import { editsFeeAsDiscount, feeAmountSen, feeDiscountForAmount } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -256,8 +256,15 @@ const SoLineCardInner = ({
      other price reduction on an order. Raising a fee is NOT expressible this
      way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
      for — so a higher figure clamps to no discount rather than pretending. */
-  const isFeeLine = isDeliveryFeeServiceCode(draft.itemCode);
   const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
+  /* ...but ONLY once there is a fee to reduce. A delivery-fee line added by
+     hand on a NEW SO starts at 0, and there the operator is AUTHORING the fee,
+     not discounting it: reading 250 as "charge 250" computed a discount of
+     max(0 - 250, 0) = 0, never wrote the price, and the box snapped back to
+     RM 0 on blur. Reported on a new SO within an hour of shipping this. You
+     cannot discount a fee that does not exist yet, so with no gross the cell
+     goes back to being a plain unit price. */
+  const isFeeLine = editsFeeAsDiscount(isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen);
   const amountCellSen = isFeeLine
     ? feeAmountSen(feeGrossSen, draft.discountSen)
     : draft.unitPriceSen;
