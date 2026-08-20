@@ -18,23 +18,23 @@ export interface SaOrderRow {
   sourceDocNo: string | null;
   /** so_date as 'YYYY-MM-DD'. */
   soDate: string;
-  /** total_revenue_centi — full order grand total incl. delivery/service. */
-  totalRevenueCenti: number;
-  /** total_margin_centi. */
-  totalMarginCenti: number;
-  /** service_centi — delivery+lift+dispose bucket; subtracted for product-only. */
-  serviceCenti: number;
+  /** total_revenue_sen — full order grand total incl. delivery/service. */
+  totalRevenueSen: number;
+  /** total_margin_sen. */
+  totalMarginSen: number;
+  /** service_sen — delivery+lift+dispose bucket; subtracted for product-only. */
+  serviceSen: number;
 }
 
 export interface OverviewResult {
   /** Sample size = non-cancelled orders in scope. */
   n: number;
   orderCount: { bySo: number; byPurchase: number };
-  aovCenti: {
+  aovSen: {
     perSo: { full: number; product: number };
     perPurchase: { full: number; product: number };
   };
-  deliveryCenti: { avgAll: number; avgCharged: number; chargedCount: number };
+  deliverySen: { avgAll: number; avgCharged: number; chargedCount: number };
   /** margin / revenue × 100; null when revenue is 0. */
   grossMarginPct: number | null;
 }
@@ -42,8 +42,8 @@ export interface OverviewResult {
 export interface MonthlyRow {
   month: string; // 'YYYY-MM'
   orders: number;
-  revenueCenti: number;
-  marginCenti: number;
+  revenueSen: number;
+  marginSen: number;
 }
 
 /** Union-find collapse of cross_category follow-up chains into physical
@@ -94,9 +94,9 @@ export function summarizeOverview(
 
   let sumRevenue = 0; let sumMargin = 0; let sumService = 0; let sumDelivery = 0; let chargedCount = 0;
   for (const ord of orders) {
-    sumRevenue += ord.totalRevenueCenti;
-    sumMargin += ord.totalMarginCenti;
-    sumService += ord.serviceCenti;
+    sumRevenue += ord.totalRevenueSen;
+    sumMargin += ord.totalMarginSen;
+    sumService += ord.serviceSen;
     const d = deliveryByDoc.get(ord.docNo) ?? 0;
     sumDelivery += d;
     if (d > 0) chargedCount += 1;
@@ -106,11 +106,11 @@ export function summarizeOverview(
   return {
     n,
     orderCount: { bySo: n, byPurchase: purchaseCount },
-    aovCenti: {
+    aovSen: {
       perSo: { full: divRound(sumRevenue, n), product: divRound(sumProduct, n) },
       perPurchase: { full: divRound(sumRevenue, purchaseCount), product: divRound(sumProduct, purchaseCount) },
     },
-    deliveryCenti: {
+    deliverySen: {
       avgAll: divRound(sumDelivery, n),
       avgCharged: divRound(sumDelivery, chargedCount),
       chargedCount,
@@ -123,10 +123,10 @@ export function monthlyTrend(orders: ReadonlyArray<SaOrderRow>): MonthlyRow[] {
   const byMonth = new Map<string, MonthlyRow>();
   for (const ord of orders) {
     const month = ord.soDate.slice(0, 7);
-    const row = byMonth.get(month) ?? { month, orders: 0, revenueCenti: 0, marginCenti: 0 };
+    const row = byMonth.get(month) ?? { month, orders: 0, revenueSen: 0, marginSen: 0 };
     row.orders += 1;
-    row.revenueCenti += ord.totalRevenueCenti;
-    row.marginCenti += ord.totalMarginCenti;
+    row.revenueSen += ord.totalRevenueSen;
+    row.marginSen += ord.totalMarginSen;
     byMonth.set(month, row);
   }
   return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
@@ -141,8 +141,8 @@ export interface SaCustomerRow {
   state: string | null;
   city: string | null;
   orderCount: number;     // collapsed physical purchases in scope
-  ltvCenti: number;       // sum of total_revenue_centi over scoped orders
-  marginCenti: number;    // sum of total_margin_centi over scoped orders
+  ltvSen: number;       // sum of total_revenue_sen over scoped orders
+  marginSen: number;    // sum of total_margin_sen over scoped orders
   firstOrderDate: string | null;
   lastOrderDate: string | null;
   isReturning: boolean;   // >1 physical purchase in scope
@@ -348,11 +348,11 @@ export function computeTargetMatch(
 export interface SpendBucket {
   key: string;
   customers: number;
-  revenueCenti: number;
+  revenueSen: number;
   purchases: number;
-  aovCenti: number;        // revenueCenti / purchases
-  marginCenti: number;
-  marginPct: number | null; // marginCenti / revenueCenti × 100
+  aovSen: number;        // revenueSen / purchases
+  marginSen: number;
+  marginPct: number | null; // marginSen / revenueSen × 100
 }
 
 /** Spend power per categorical segment. 'Unknown' for blank keys. Sorted by
@@ -360,28 +360,28 @@ export interface SpendBucket {
 export function spendBySegment(
   customers: ReadonlyArray<SaCustomerRow>, dim: 'race' | 'gender' | 'city',
 ): SpendBucket[] {
-  const m = new Map<string, { customers: number; revenueCenti: number; purchases: number; marginCenti: number }>();
+  const m = new Map<string, { customers: number; revenueSen: number; purchases: number; marginSen: number }>();
   for (const c of customers) {
     const raw = c[dim];
     const key = raw && raw.trim() ? raw : 'Unknown';
-    const b = m.get(key) ?? { customers: 0, revenueCenti: 0, purchases: 0, marginCenti: 0 };
+    const b = m.get(key) ?? { customers: 0, revenueSen: 0, purchases: 0, marginSen: 0 };
     b.customers += 1;
-    b.revenueCenti += c.ltvCenti;
+    b.revenueSen += c.ltvSen;
     b.purchases += c.orderCount;
-    b.marginCenti += c.marginCenti;
+    b.marginSen += c.marginSen;
     m.set(key, b);
   }
   return [...m.entries()]
     .map(([key, b]) => ({
       key,
       customers: b.customers,
-      revenueCenti: b.revenueCenti,
+      revenueSen: b.revenueSen,
       purchases: b.purchases,
-      aovCenti: b.purchases > 0 ? Math.round(b.revenueCenti / b.purchases) : 0,
-      marginCenti: b.marginCenti,
-      marginPct: b.revenueCenti > 0 ? (b.marginCenti / b.revenueCenti) * 100 : null,
+      aovSen: b.purchases > 0 ? Math.round(b.revenueSen / b.purchases) : 0,
+      marginSen: b.marginSen,
+      marginPct: b.revenueSen > 0 ? (b.marginSen / b.revenueSen) * 100 : null,
     }))
-    .sort((a, b) => b.revenueCenti - a.revenueCenti || a.key.localeCompare(b.key));
+    .sort((a, b) => b.revenueSen - a.revenueSen || a.key.localeCompare(b.key));
 }
 
 // ── Task 1: age bands + buyer demographics ──────────────────────────────────
@@ -437,7 +437,7 @@ export function summarizeBuyerDemographics(
 export interface SaItemRow {
   docNo: string; soDate: string;
   itemCode: string; itemGroup: string;
-  qty: number; totalCenti: number; costCenti: number;
+  qty: number; totalSen: number; costSen: number;
   buildKey: string | null; fabricId: string | null;
   legHeight: string | null; seatHeight: string | null;
   isPwp: boolean;   // variants.pwp === true (PWP reward line)
@@ -448,7 +448,7 @@ export interface SaItemRow {
 export interface ProductUnit {
   docNo: string; category: string; modelId: string | null; modelName: string;
   variantLabel: string;
-  qty: number; revenueCenti: number; marginCenti: number;
+  qty: number; revenueSen: number; marginSen: number;
   sofaClass: 'combo' | 'custom' | 'pwp' | null;
   comboLabel: string | null;
   fabricUpgrade: boolean | null;
@@ -491,7 +491,7 @@ export function foldProductUnits(rows: ReadonlyArray<SaItemRow>, ctx: ProductCtx
       docNo: r.docNo, category, modelId: p?.modelId ?? null,
       modelName: (p?.modelId && ctx.modelById.get(p.modelId)) || p?.baseModel || r.itemCode,
       variantLabel: isSofa ? 'Custom' : (p?.sizeLabel ?? '—'),
-      qty: r.qty, revenueCenti: r.totalCenti, marginCenti: r.totalCenti - r.costCenti,
+      qty: r.qty, revenueSen: r.totalSen, marginSen: r.totalSen - r.costSen,
       sofaClass: isSofa ? 'custom' : null, comboLabel: null, fabricUpgrade: null,
       itemCodes: [r.itemCode], fabricId: r.fabricId, seatHeight: r.seatHeight, isPwp: r.isPwp,
       race: buyer.race, birthday: buyer.birthday, gender: buyer.gender,
@@ -501,12 +501,12 @@ export function foldProductUnits(rows: ReadonlyArray<SaItemRow>, ctx: ProductCtx
     const lead = lines[0]!;
     const p = ctx.productByCode.get(lead.itemCode);
     const buyer = ctx.buyerByDoc.get(lead.docNo) ?? { race: null, birthday: null, gender: null };
-    const revenueCenti = lines.reduce((s, l) => s + l.totalCenti, 0);
-    const marginCenti  = lines.reduce((s, l) => s + (l.totalCenti - l.costCenti), 0);
+    const revenueSen = lines.reduce((s, l) => s + l.totalSen, 0);
+    const marginSen  = lines.reduce((s, l) => s + (l.totalSen - l.costSen), 0);
     out.push({
       docNo: lead.docNo, category: 'SOFA', modelId: p?.modelId ?? null,
       modelName: (p?.modelId && ctx.modelById.get(p.modelId)) || p?.baseModel || lead.itemCode,
-      variantLabel: 'Custom', qty: lead.qty, revenueCenti, marginCenti,
+      variantLabel: 'Custom', qty: lead.qty, revenueSen, marginSen,
       sofaClass: 'custom', comboLabel: null, fabricUpgrade: null,
       itemCodes: lines.map((l) => l.itemCode),
       fabricId: lines.find((l) => l.fabricId)?.fabricId ?? null,
@@ -591,7 +591,7 @@ export function isFabricUpgrade(
 export interface VariantRank {
   label: string;
   units: number;
-  revenueCenti: number;
+  revenueSen: number;
   demographics: BuyerDemographics;
 }
 
@@ -600,8 +600,8 @@ export interface ModelRank {
   modelName: string;
   category: string;
   units: number;
-  revenueCenti: number;
-  marginCenti: number;
+  revenueSen: number;
+  marginSen: number;
   variants: VariantRank[];
   demographics: BuyerDemographics;
   comboUnits: number;
@@ -620,7 +620,7 @@ export interface ProductsSection {
  *  Grouping key for a model = modelId when non-null, else '|name:' + modelName
  *  (keeps null-id models apart from real ids, groups name-synonyms together).
  *
- *  Ranking: models sorted by Σqty desc, tie revenueCenti desc.
+ *  Ranking: models sorted by Σqty desc, tie revenueSen desc.
  *  Variants: sorted by Σqty desc, tie label asc.
  *
  *  CRITICAL: all tallies (units / comboUnits / fabricEligibleUnits / …) are
@@ -663,8 +663,8 @@ export function buildProductsSection(
 
       for (const u of modelUnits) {
         totalUnits += u.qty;
-        totalRevenue += u.revenueCenti;
-        totalMargin += u.marginCenti;
+        totalRevenue += u.revenueSen;
+        totalMargin += u.marginSen;
         if (u.sofaClass === 'combo')   comboUnits  += u.qty;
         if (u.sofaClass === 'custom')  customUnits += u.qty;
         if (u.sofaClass === 'pwp')     pwpUnits    += u.qty;
@@ -682,7 +682,7 @@ export function buildProductsSection(
         .map(([label, varUnits]) => ({
           label,
           units: varUnits.reduce((s, u) => s + u.qty, 0),
-          revenueCenti: varUnits.reduce((s, u) => s + u.revenueCenti, 0),
+          revenueSen: varUnits.reduce((s, u) => s + u.revenueSen, 0),
           demographics: summarizeBuyerDemographics(varUnits, asOf),
         }))
         .sort((a, b) => b.units - a.units || a.label.localeCompare(b.label));
@@ -692,8 +692,8 @@ export function buildProductsSection(
         modelName: lead.modelName,
         category,
         units: totalUnits,
-        revenueCenti: totalRevenue,
-        marginCenti: totalMargin,
+        revenueSen: totalRevenue,
+        marginSen: totalMargin,
         variants,
         demographics: summarizeBuyerDemographics(modelUnits, asOf),
         comboUnits,
@@ -704,8 +704,8 @@ export function buildProductsSection(
       });
     }
 
-    // Sort models: units desc, tie revenueCenti desc
-    models.sort((a, b) => b.units - a.units || b.revenueCenti - a.revenueCenti);
+    // Sort models: units desc, tie revenueSen desc
+    models.sort((a, b) => b.units - a.units || b.revenueSen - a.revenueSen);
     byCategory[category] = models;
   }
 

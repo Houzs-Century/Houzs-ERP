@@ -119,9 +119,9 @@ export const useUpdateSalesInvoiceStatus = () => {
 export const useRecordSiPayment = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, amountCenti, notes }: { id: string; amountCenti: number; notes?: string }) =>
+    mutationFn: ({ id, amountSen, notes }: { id: string; amountSen: number; notes?: string }) =>
       authedFetch(`/sales-invoices/${id}/payment`, {
-        method: 'PATCH', body: JSON.stringify({ amountCenti, notes }),
+        method: 'PATCH', body: JSON.stringify({ amountSen, notes }),
       }),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['sales-invoices'] });
@@ -153,9 +153,9 @@ export type DoRemainingLine = {
   invoiced: number;
   returned: number;
   remaining: number;
-  unitPriceCenti: number;
-  unitCostCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  unitCostSen: number;
+  discountSen: number;
   variants: unknown;
 };
 
@@ -291,7 +291,7 @@ export type SiPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;

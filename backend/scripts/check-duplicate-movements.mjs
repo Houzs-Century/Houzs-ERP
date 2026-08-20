@@ -181,7 +181,7 @@ async function main() {
            source_doc_id::text            AS source_doc_id,
            MAX(source_doc_no)             AS source_doc_no,
            warehouse_id::text             AS warehouse_id,
-           product_code,
+           item_code,
            COALESCE(variant_key,'')       AS variant_key,
            ${batchKey}                    AS batch_no,
            movement_type,
@@ -192,7 +192,7 @@ async function main() {
       FROM ${M}
      WHERE source_doc_id IS NOT NULL
        AND movement_type IN ('IN','OUT')
-     GROUP BY source_doc_type, source_doc_id, warehouse_id, product_code,
+     GROUP BY source_doc_type, source_doc_id, warehouse_id, item_code,
               COALESCE(variant_key,''), ${batchKey}, movement_type
     HAVING COUNT(*) > 1
      ORDER BY COUNT(*) DESC, source_doc_type ASC`);
@@ -209,7 +209,7 @@ async function main() {
     notice(`  HARD double-post sample (up to ${SAMPLE}, most rows first):`);
     notice(`    ${pad("docType", 16)} ${pad("docNo", 18)} ${pad("type", 4)} ${pad("rows", 4)} ${pad("Σqty", 6)} ${pad("product", 20)} ${pad("variant", 10)} ${pad("first", 10)} ${pad("last", 10)} warehouse`);
     for (const r of hardDupes.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_type, 16), 16)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.row_count, 4)} ${pad(r.total_qty, 6)} ${pad(short(r.product_code, 20), 20)} ${pad(short(r.variant_key, 10), 10)} ${pad(dateOnly(r.first_at) ?? "-", 10)} ${pad(dateOnly(r.last_at) ?? "-", 10)} ${short(r.warehouse_id, 40)}`);
+      notice(`    ${pad(short(r.source_doc_type, 16), 16)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.row_count, 4)} ${pad(r.total_qty, 6)} ${pad(short(r.item_code, 20), 20)} ${pad(short(r.variant_key, 10), 10)} ${pad(dateOnly(r.first_at) ?? "-", 10)} ${pad(dateOnly(r.last_at) ?? "-", 10)} ${short(r.warehouse_id, 40)}`);
     }
     if (hardDupes.length > SAMPLE) notice(`    ... and ${hardDupes.length - SAMPLE} more.`);
     notice("");
@@ -221,7 +221,7 @@ async function main() {
     notice(`  RESYNC-type multi-row sample (up to ${SAMPLE}, context only):`);
     notice(`    ${pad("docType", 16)} ${pad("docNo", 18)} ${pad("type", 4)} ${pad("rows", 4)} ${pad("Σqty", 6)} ${pad("product", 20)} warehouse`);
     for (const r of resyncDupes.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_type, 16), 16)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.row_count, 4)} ${pad(r.total_qty, 6)} ${pad(short(r.product_code, 20), 20)} ${short(r.warehouse_id, 40)}`);
+      notice(`    ${pad(short(r.source_doc_type, 16), 16)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.row_count, 4)} ${pad(r.total_qty, 6)} ${pad(short(r.item_code, 20), 20)} ${short(r.warehouse_id, 40)}`);
     }
     if (resyncDupes.length > SAMPLE) notice(`    ... and ${resyncDupes.length - SAMPLE} more.`);
     notice("");
@@ -241,7 +241,7 @@ async function main() {
              m.source_doc_no,
              m.source_doc_id::text AS source_doc_id,
              m.warehouse_id::text  AS warehouse_id,
-             m.product_code,
+             m.item_code,
              COALESCE(m.variant_key,'') AS variant_key,
              ${hasBatch ? "COALESCE(m.batch_no,'')" : "''::text"} AS batch_no,
              ABS(m.qty)            AS out_qty,
@@ -274,7 +274,7 @@ async function main() {
     notice(`  sample (up to ${SAMPLE}, largest shortfall first):`);
     notice(`    ${pad("docType", 12)} ${pad("docNo", 18)} ${pad("type", 4)} ${pad("outQty", 6)} ${pad("consumed", 8)} ${pad("short", 6)} ${pad("cost", 11)} ${pad("product", 20)} ${pad("variant", 10)} created`);
     for (const r of woutRows.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_type, 12), 12)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.out_qty, 6)} ${pad(r.consumed, 8)} ${pad(r.shortfall, 6)} ${pad(rm(r.total_cost_sen), 11)} ${pad(short(r.product_code, 20), 20)} ${pad(short(r.variant_key, 10), 10)} ${dateOnly(r.created_at) ?? "-"}`);
+      notice(`    ${pad(short(r.source_doc_type, 12), 12)} ${pad(short(r.source_doc_no, 18), 18)} ${pad(r.movement_type, 4)} ${pad(r.out_qty, 6)} ${pad(r.consumed, 8)} ${pad(r.shortfall, 6)} ${pad(rm(r.total_cost_sen), 11)} ${pad(short(r.item_code, 20), 20)} ${pad(short(r.variant_key, 10), 10)} ${dateOnly(r.created_at) ?? "-"}`);
     }
     if (woutRows.length > SAMPLE) notice(`    ... and ${woutRows.length - SAMPLE} more.`);
     notice("");

@@ -38,7 +38,7 @@ export type TripStop = {
   stop_type: string;
   customer_name: string | null;
   address: string | null;
-  revenue_centi: number;
+  revenue_sen: number;
   /* Mig 0134 — filled by the route optimiser; null when never optimised. */
   leg_distance_m: number | null;
   leg_duration_s: number | null;

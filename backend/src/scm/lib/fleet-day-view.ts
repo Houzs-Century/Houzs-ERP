@@ -61,7 +61,7 @@ export interface RawStopRow {
   so_id: string | null;
   customer_name: string | null;
   address: string | null;
-  revenue_centi: number | null;
+  revenue_sen: number | null;
   eta_offset_s: number | null;
   leg_distance_m: number | null;
 }
@@ -90,7 +90,7 @@ export interface DayStop {
   access_note: string | null;
   eta_offset_s: number | null;
   leg_distance_m: number | null;
-  revenue_centi: number;
+  revenue_sen: number;
   lat: number | null;
   lng: number | null;
   geocoded: boolean;
@@ -108,7 +108,7 @@ export interface DayTrip {
   helpers: MasterName[];
   warehouse: MasterWarehouse | null;
   depot: LatLng | null;
-  total_revenue_centi: number;
+  total_revenue_sen: number;
   total_drops: number;
   stops: DayStop[];
 }
@@ -144,7 +144,7 @@ function num(v: unknown): number {
  *   last, keeping an un-numbered stop visible rather than dropping it).
  * - total_drops counts DELIVERY stops only (a supplier pickup is not a drop); the
  *   full ordered stop list is still returned so the map + run-sheet show every leg.
- * - total_revenue_centi sums revenue_centi over ALL stops (the trip's delivery
+ * - total_revenue_sen sums revenue_sen over ALL stops (the trip's delivery
  *   value, the same figure lorry-capacity aggregates).
  * - A stop is `geocoded` only when a real point resolved; otherwise lat/lng are
  *   null and the map omits its pin — honest "not located", never a fabricated 0,0.
@@ -173,7 +173,7 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
     const dayStops: DayStop[] = raw.map((s, idx) => {
       const enrich = enrichByStopId.get(s.id) ?? EMPTY_ENRICH;
       const geo = geoByStopId.get(s.id) ?? null;
-      const rev = Math.max(0, Math.round(num(s.revenue_centi)));
+      const rev = Math.max(0, Math.round(num(s.revenue_sen)));
       totalRevenue += rev;
       const stopType = (s.stop_type ?? 'DELIVERY').toUpperCase();
       if (stopType === 'DELIVERY') drops += 1;
@@ -190,7 +190,7 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
         access_note: enrich.accessNote,
         eta_offset_s: s.eta_offset_s ?? null,
         leg_distance_m: s.leg_distance_m ?? null,
-        revenue_centi: rev,
+        revenue_sen: rev,
         lat: geo?.lat ?? null,
         lng: geo?.lng ?? null,
         geocoded: geo != null,
@@ -219,7 +219,7 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
       helpers,
       warehouse,
       depot,
-      total_revenue_centi: totalRevenue,
+      total_revenue_sen: totalRevenue,
       total_drops: drops,
       stops: dayStops,
     };

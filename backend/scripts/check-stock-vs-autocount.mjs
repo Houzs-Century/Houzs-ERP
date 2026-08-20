@@ -210,15 +210,15 @@ async function main() {
      are not commensurable at all, which is exactly why section 4 excludes sofa
      from the balance axis. Exclude it on BOTH sides, and report the total so
      the exclusion stays visible rather than silent. */
-  const erpBal = await sql`SELECT b.product_code, b.warehouse_id, SUM(b.qty)::int qty,
+  const erpBal = await sql`SELECT b.item_code, b.warehouse_id, SUM(b.qty)::int qty,
       bool_or(UPPER(COALESCE(p.category::text,'')) = 'SOFA') AS is_sofa
     FROM scm.inventory_balances b
-    LEFT JOIN scm.mfg_products p ON p.code = b.product_code AND p.company_id = ${CO}
-   WHERE b.company_id = ${CO} GROUP BY b.product_code, b.warehouse_id`;
+    LEFT JOIN scm.mfg_products p ON p.code = b.item_code AND p.company_id = ${CO}
+   WHERE b.company_id = ${CO} GROUP BY b.item_code, b.warehouse_id`;
   const erpSofa = erpBal.filter((r) => r.is_sofa);
   const erpSofaUnits = erpSofa.reduce((s, r) => s + Number(r.qty), 0);
   log(`  ERP side, same exclusion: ${erpSofa.length} sofa-compartment cells / ${erpSofaUnits} units held out (AutoCount counts one whole sofa where the ERP counts its compartments — the two are not commensurable, so the balance axis excludes sofa on BOTH sides)`);
-  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
   const whName = new Map(whs.map((w) => [String(w.id), w.name]));
 
   /* Did the cutover import actually run? The repo contains a script that
@@ -284,13 +284,13 @@ async function main() {
      categories from each other: a cell whose only movement is the cutover
      adjustment cannot have drifted through trading, and a cell carrying the
      same source_doc_no twice is a duplicate rather than a missing posting. */
-  const mv = await sql`SELECT product_code, warehouse_id, source_doc_type,
+  const mv = await sql`SELECT item_code, warehouse_id, source_doc_type,
       COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
     FROM scm.inventory_movements WHERE company_id = ${CO}
-    GROUP BY product_code, warehouse_id, source_doc_type`;
+    GROUP BY item_code, warehouse_id, source_doc_type`;
   const mvBy = new Map();
   for (const r of mv) {
-    const k = `${norm(r.product_code)}|${r.warehouse_id}`;
+    const k = `${norm(r.item_code)}|${r.warehouse_id}`;
     if (!mvBy.has(k)) mvBy.set(k, new Map());
     mvBy.get(k).set(r.source_doc_type ?? "(null)", { n: r.n, units: Number(r.units) });
   }
@@ -302,17 +302,17 @@ async function main() {
      normal resyncs as corruption. A multi-line document posting the same
      product twice is likewise not a duplicate — hence doc_id, not doc_no. */
   const SINGLE_POST = ["GRN", "PURCHASE_RETURN", "STOCK_TRANSFER", "STOCK_TAKE"];
-  const dup = await sql`SELECT product_code, warehouse_id, source_doc_type, source_doc_no,
+  const dup = await sql`SELECT item_code, warehouse_id, source_doc_type, source_doc_no,
       movement_type, COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
     FROM scm.inventory_movements
     WHERE company_id = ${CO} AND source_doc_id IS NOT NULL
       AND source_doc_type = ANY(${SINGLE_POST})
-    GROUP BY product_code, warehouse_id, variant_key, batch_no, movement_type,
+    GROUP BY item_code, warehouse_id, variant_key, batch_no, movement_type,
              source_doc_type, source_doc_id, source_doc_no
     HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 200`;
-  const dupCell = new Set(dup.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  const dupCell = new Set(dup.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`single-post documents posted more than once (hard double-post signal): ${dup.length} buckets over ${dupCell.size} cells`);
-  for (const r of dup.slice(0, 15)) log(`  DOUBLE-POST ${r.product_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} ${r.movement_type} x${r.n} = ${r.units} units`);
+  for (const r of dup.slice(0, 15)) log(`  DOUBLE-POST ${r.item_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} ${r.movement_type} x${r.n} = ${r.units} units`);
 
   const provenance = (r) => {
     const m = mvBy.get(`${r.code}|${r.whId}`);
@@ -324,10 +324,10 @@ async function main() {
      by product name. DO-2607-005 and DO-2607-017 both dispatched SO-2606-019;
      DO-2607-017 additionally carries two phantom XAMMAR movements. Traced and
      confirmed already — it is labelled, not re-litigated. */
-  const knownDo = await sql`SELECT DISTINCT product_code, warehouse_id, source_doc_no
+  const knownDo = await sql`SELECT DISTINCT item_code, warehouse_id, source_doc_no
     FROM scm.inventory_movements
     WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
-  const knownCells = new Set(knownDo.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  const knownCells = new Set(knownDo.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
 
   const causeOf = (r) => {

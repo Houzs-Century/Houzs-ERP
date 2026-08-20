@@ -65,14 +65,14 @@ type EditLine = {
   rid:              string;
   description:      string;
   debitAccountCode: string;
-  amountCenti:      number;
+  amountSen:      number;
 };
 
 const newLine = (): EditLine => ({
   rid:              `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   description:      '',
   debitAccountCode: '',
-  amountCenti:      0,
+  amountSen:      0,
 });
 
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
@@ -161,7 +161,7 @@ export const PaymentVoucherDetail = () => {
     setMyrPaidSen(null);
     // Seed the applied-amount map from the loaded allocations (keyed by PI id).
     setAllocAmounts(Object.fromEntries(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountCenti ?? a.amount_centi ?? 0)]),
+      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
     ));
     setEditLines(
       lines.length > 0
@@ -169,7 +169,7 @@ export const PaymentVoucherDetail = () => {
             rid:              `l${l.id}`,
             description:      l.description ?? '',
             debitAccountCode: l.debit_account_code ?? '',
-            amountCenti:      Number(l.amount_centi ?? 0),
+            amountSen:      Number(l.amount_sen ?? 0),
           }))
         : [newLine()],
     );
@@ -181,9 +181,9 @@ export const PaymentVoucherDetail = () => {
   const dropLine = (rid: string) => setEditLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setEditLines((prev) => [...prev, newLine()]);
 
-  const editTotalCenti = useMemo(() => editLines.reduce((s, l) => s + l.amountCenti, 0), [editLines]);
-  const viewTotalCenti = Number(pv?.total_centi ?? 0);
-  const totalCenti = isEditing ? editTotalCenti : viewTotalCenti;
+  const editTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
+  const viewTotalSen = Number(pv?.total_sen ?? 0);
+  const totalSen = isEditing ? editTotalSen : viewTotalSen;
 
   /* Multi-currency (Phase 1-A) — the PV keeps its own currency; the exchange
      rate converts the GL posting to MYR. In VIEW we show the stored currency; in
@@ -200,8 +200,8 @@ export const PaymentVoucherDetail = () => {
      when either moves. null (blank figure, or a zero total — the divide-by-zero)
      leaves the rate alone rather than blanking it. */
   const derivedRate = useMemo(
-    () => (isEditing && isForeign ? deriveRateFromMyrPaid(myrPaidSen, editTotalCenti) : null),
-    [isEditing, isForeign, myrPaidSen, editTotalCenti],
+    () => (isEditing && isForeign ? deriveRateFromMyrPaid(myrPaidSen, editTotalSen) : null),
+    [isEditing, isForeign, myrPaidSen, editTotalSen],
   );
   useEffect(() => {
     if (derivedRate === null) return;
@@ -217,11 +217,11 @@ export const PaymentVoucherDetail = () => {
   const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
   const piListQ = usePurchaseInvoices();
   const editAllocRows = useMemo(() => {
-    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingCenti: number }>;
+    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>;
     const appliedByThisPv = new Map<string, number>(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountCenti ?? a.amount_centi ?? 0)]),
+      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
     );
-    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingCenti: number }>();
+    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>();
     for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
       const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
       if (sid !== supplierId) continue;
@@ -229,14 +229,14 @@ export const PaymentVoucherDetail = () => {
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
       const piId = String(r.id ?? '');
       if (!piId) continue;
-      const baseOutstanding = Number(r.total_centi ?? 0) - Number(r.paid_centi ?? 0);
+      const baseOutstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       const outstanding = baseOutstanding + (appliedByThisPv.get(piId) ?? 0);
       if (outstanding <= 0) continue;
       byId.set(piId, {
         piId,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
-        outstandingCenti:   outstanding,
+        outstandingSen:   outstanding,
       });
     }
     // Ensure every already-allocated PI is present even if it dropped off.
@@ -247,35 +247,35 @@ export const PaymentVoucherDetail = () => {
         piId,
         invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? piId),
         supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
-        outstandingCenti:   Number(a.amountCenti ?? a.amount_centi ?? 0),
+        outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
       });
     }
     return [...byId.values()];
   }, [editApplyToPi, piListQ.data, allocations, supplierId]);
 
-  const editAllocatedCenti = useMemo(
+  const editAllocatedSen = useMemo(
     () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.piId] ?? 0), 0),
     [editAllocRows, allocAmounts],
   );
-  const editOverAllocated = editApplyToPi && editAllocatedCenti > editTotalCenti;
+  const editOverAllocated = editApplyToPi && editAllocatedSen > editTotalSen;
 
   if (detailQ.isLoading || !pv) return <SkeletonDetailPage />;
 
   const onSave = async () => {
-    const realLines = editLines.filter((l) => l.debitAccountCode && l.amountCenti > 0);
+    const realLines = editLines.filter((l) => l.debitAccountCode && l.amountSen > 0);
     if (!payeeName.trim()) { notify({ title: 'Enter a payee', body: 'Who is this voucher paying?', tone: 'error' }); return; }
     if (!creditAccountCode) { notify({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account.', tone: 'error' }); return; }
     if (realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
     if (editOverAllocated) {
-      notify({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(editAllocatedCenti)} to PIs but the voucher total is only ${fmtRm(editTotalCenti)}.`, tone: 'error' });
+      notify({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(editAllocatedSen)} to PIs but the voucher total is only ${fmtRm(editTotalSen)}.`, tone: 'error' });
       return;
     }
     // Migration 0202 — settled PIs (SUPPLIER_PAYMENT only). Send the full set of
     // applied rows (amount > 0) so the server replaces the prior allocations.
     const sendAllocations = editApplyToPi
       ? editAllocRows
-          .map((r) => ({ piId: r.piId, amountCenti: allocAmounts[r.piId] ?? 0 }))
-          .filter((a) => a.amountCenti > 0)
+          .map((r) => ({ piId: r.piId, amountSen: allocAmounts[r.piId] ?? 0 }))
+          .filter((a) => a.amountSen > 0)
       : [];
     try {
       await update.mutateAsync({
@@ -295,7 +295,7 @@ export const PaymentVoucherDetail = () => {
         lines: realLines.map((l) => ({
           description:      l.description || undefined,
           debitAccountCode: l.debitAccountCode,
-          amountCenti:      l.amountCenti,
+          amountSen:      l.amountSen,
         })),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
@@ -459,7 +459,7 @@ export const PaymentVoucherDetail = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines ({isEditing ? editLines.length : lines.length})</h2>
-          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalCenti, currency)}</span>
+          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalSen, currency)}</span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {!isEditing ? (
@@ -481,7 +481,7 @@ export const PaymentVoucherDetail = () => {
                       <td style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>{idx + 1}</td>
                       <td style={{ padding: '6px 8px' }}>{l.description || '—'}</td>
                       <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}</td>
-                      <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_centi ?? 0), currency)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_sen ?? 0), currency)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -498,7 +498,7 @@ export const PaymentVoucherDetail = () => {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(l.amountCenti, currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(l.amountSen, currency)}</span>
                       {editLines.length > 1 && (
                         <button type="button" onClick={() => dropLine(l.rid)} title="Remove line"
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, #B8331F)', padding: 4, display: 'inline-flex' }}>
@@ -520,8 +520,8 @@ export const PaymentVoucherDetail = () => {
                   <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Amount (MYR)</span>
-                      <MoneyInput bare valueSen={l.amountCenti}
-                        onCommit={(sen) => setLine(l.rid, { amountCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.amountSen}
+                        onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                   </div>
@@ -543,7 +543,7 @@ export const PaymentVoucherDetail = () => {
             <h2 className={styles.cardTitle}>Linked Purchase Invoices</h2>
             {isEditing && editApplyToPi ? (
               <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
-                Allocated {fmtRm(editAllocatedCenti)} / PV total {fmtRm(editTotalCenti)}
+                Allocated {fmtRm(editAllocatedSen)} / PV total {fmtRm(editTotalSen)}
               </span>
             ) : (
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
@@ -580,11 +580,11 @@ export const PaymentVoucherDetail = () => {
                         <tr key={r.piId} style={{ borderTop: '1px solid var(--line)' }}>
                           <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{r.invoiceNumber}</td>
                           <td style={{ padding: '6px 8px', color: r.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{r.supplierInvoiceRef || '—'}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outstandingCenti)}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outstandingSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                             <MoneyInput bare valueSen={allocAmounts[r.piId] ?? 0}
                               onCommit={(sen) => {
-                                const v = Math.max(0, Math.min(r.outstandingCenti, sen ?? 0));
+                                const v = Math.max(0, Math.min(r.outstandingSen, sen ?? 0));
                                 setAllocAmounts((prev) => ({ ...prev, [r.piId]: v }));
                               }}
                               inputClassName={styles.fieldInput} selectOnFocus />
@@ -621,7 +621,7 @@ export const PaymentVoucherDetail = () => {
                         <td style={{ padding: '6px 8px' }}>
                           {a.status ? <StatusPill docType="pi" status={String(a.status)} /> : '—'}
                         </td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(a.amountCenti ?? a.amount_centi ?? 0))}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(a.amountSen ?? a.amount_sen ?? 0))}</td>
                       </tr>
                     );
                   })}
@@ -638,13 +638,13 @@ export const PaymentVoucherDetail = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700 }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(totalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(totalSen, currency)}</span>
             </div>
             {/* Multi-currency (Phase 1-A) — MYR posted to GL for a foreign PV. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>≈ posted to GL</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(totalCenti * rate), 'MYR')}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(totalSen * rate), 'MYR')}</span>
               </div>
             )}
           </div>

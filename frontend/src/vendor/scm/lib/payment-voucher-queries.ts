@@ -29,7 +29,7 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   status: string;
   voucher_date: string | null;
   payee_name: string;
-  total_centi?: number;
+  total_sen?: number;
   currency?: string;
   credit_account_code?: string;
   supplier?: { id: string; code: string; name: string } | null;
@@ -37,13 +37,13 @@ export type PaymentVoucherRow = Record<string, unknown> & {
 
 export type PaymentVoucherAllocation = {
   id: string;
-  amountCenti: number;
+  amountSen: number;
   piId: string | null;
   invoiceNumber: string | null;
   supplierInvoiceRef: string | null;
   currency: string | null;
-  totalCenti: number | null;
-  paidCenti: number | null;
+  totalSen: number | null;
+  paidSen: number | null;
   status: string | null;
 };
 

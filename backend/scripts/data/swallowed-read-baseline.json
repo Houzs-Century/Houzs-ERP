@@ -70,7 +70,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/customer-credits.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/derive-line-branding.ts": {
@@ -110,6 +110,10 @@
       "catches": 0
     },
     "backend/src/scm/lib/geocode.ts": {
+      "reads": 1,
+      "catches": 0
+    },
+    "backend/src/scm/lib/grn-audit-meta.ts": {
       "reads": 1,
       "catches": 0
     },
@@ -286,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 50,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -318,7 +322,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 48,
+      "reads": 46,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {

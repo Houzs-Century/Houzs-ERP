@@ -46,19 +46,19 @@ deliveryReturns.use('*', supabaseAuth);
    subtotals. All are in HEADER (so they travel in the DR list payload) but must
    reach ONLY a finance-viewer (lib/houzs-perms.canViewScmFinance). Stripped from
    every row for a non-finance caller. The DR header carries FOUR categories (no
-   service_centi, unlike SO/DO/SI). Refund/total shown to everyone
-   (local_total_centi / refund_centi) are NOT listed here. */
+   service_sen, unlike SO/DO/SI). Refund/total shown to everyone
+   (local_total_sen / refund_sen) are NOT listed here. */
 const DR_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
 /* KEPT LOCAL, deliberately — do NOT "converge" DR_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select,
    and the delivery return speaks a narrower money vocabulary than the SO: no
-   service_centi / service_cost_centi and no deposit_centi (a return takes no
-   deposit). refund_centi is in HEADER and deliberately NOT here — the refund is
+   service_sen / service_cost_sen and no deposit_sen (a return takes no
+   deposit). refund_sen is in HEADER and deliberately NOT here — the refund is
    what the customer is owed and everyone who passes the access gate may see it,
    the same line #625 drew and #632 kept. The per-LINE keys ARE shared: they are
    byte-identical across all seven sales documents, so they live in
@@ -87,20 +87,20 @@ function gateDrFinance(
 const HEADER =
   'id, return_number, do_doc_no, delivery_order_id, sales_invoice_id, ' +
   'debtor_code, debtor_name, return_date, reason, status, ' +
-  'received_at, inspected_at, refunded_at, refund_centi, inspection_notes, ' +
+  'received_at, inspected_at, refunded_at, refund_sen, inspection_notes, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, sales_location, customer_state, customer_country, note, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
-  'local_total_centi, total_cost_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
+  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, warehouse_id, notes, created_at, created_by, updated_at';
 
 const ITEM =
   'id, delivery_return_id, do_item_id, item_code, item_group, description, description2, ' +
-  'uom, qty_returned, condition, unit_price_centi, discount_centi, line_total_centi, ' +
-  'unit_cost_centi, line_cost_centi, line_margin_centi, refund_centi, variants, notes, created_at';
+  'uom, qty_returned, condition, unit_price_sen, discount_sen, line_total_sen, ' +
+  'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
   const d = new Date();
@@ -121,10 +121,10 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, deliveryReturnId: string) {
   const { data: items, error: itemsErr } = await sb.from('delivery_return_items')
-    .select('item_group, line_total_centi, line_cost_centi')
+    .select('item_group, line_total_sen, line_cost_sen')
     .eq('delivery_return_id', deliveryReturnId);
   /* A failed READ is not an empty return, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO header AND a ZERO refund_centi on a
+     it folded a transient blip into a ZERO header AND a ZERO refund_sen on a
      return whose lines were intact, i.e. a refund owed to a customer silently
      became no refund. The ERROR is the signal, never the emptiness: a genuinely
      empty return resolves error === null with data === [] and MUST still zero. */
@@ -135,9 +135,9 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost  = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost  = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -148,22 +148,22 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
   }
   const margin = total - totalCost;
   const { error: updErr } = await sb.from('delivery_returns').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    local_total_centi: total,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    local_total_sen: total,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
     // The refund total tracks the returned line value (kept for the legacy
-    // refund_centi column the list + report still read).
-    refund_centi: total,
+    // refund_sen column the list + report still read).
+    refund_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', deliveryReturnId);
   /* The write's own result was discarded until 2026-07-17: a rejected UPDATE left
@@ -183,8 +183,8 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
 
    This is the MIRROR IMAGE of delivery-orders-mfg.ts deductInventoryForDo: it
    writes IN movements (the FIFO trigger from migration 0053/0095 creates a lot
-   per IN row), one row per (product_code, variant_key) bucket. The lot's unit
-   cost is seeded from the line's unit_cost_centi (sen) so returned stock
+   per IN row), one row per (item_code, variant_key) bucket. The lot's unit
+   cost is seeded from the line's unit_cost_sen (sen) so returned stock
    re-enters at its original cost rather than zero. */
 /* ── resolveDrLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
    PER-WAREHOUSE CORRECTNESS for the RETURNS side. A Delivery Return must put
@@ -324,7 +324,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     .select('return_number, warehouse_id, company_id')
     .eq('id', deliveryReturnId).maybeSingle();
   const { data: items } = await sb.from('delivery_return_items')
-    .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_centi')
+    .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
     .eq('delivery_return_id', deliveryReturnId);
   const drHeaderWarehouseId = (drHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const drNo = (drHeader as { return_number: string } | null)?.return_number ?? deliveryReturnId;
@@ -341,7 +341,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
   const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null }>);
 
-  /* Collapse identical (warehouse_id, product_code, variant_key, batch_no) lines
+  /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
      two warehouses (multi-DO merge); bucketing by warehouse keeps each
      warehouse's increase correct + idempotency-safe. batch_no joins the key so a
@@ -349,9 +349,9 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
      cost carried from the first line in the bucket (returned stock re-enters at
      its original per-unit cost). */
   const byKey = new Map<string, {
-    warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
+    warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
   }>();
-  for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_centi?: number | null }>)) {
+  for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>)) {
     /* P1 SO-SKU spec §4.6 — depth guard: a SERVICE line must never write stock
        IN. The route guards reject them at create/edit; this keeps any line
        that slips through (legacy data, direct DB write) inventory-neutral. */
@@ -367,18 +367,18 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     if (cur) { cur.qty += qty; }
     else byKey.set(k, {
       warehouse_id: warehouseId,
-      product_code: it.item_code,
+      item_code: it.item_code,
       variant_key: variantKey,
       product_name: it.description,
       qty,
-      unit_cost_sen: Number(it.unit_cost_centi ?? 0),
+      unit_cost_sen: Number(it.unit_cost_sen ?? 0),
       batch_no: batchNo,
     });
   }
   const movements = [...byKey.values()].map((m) => ({
     movement_type: 'IN' as const,
     warehouse_id: m.warehouse_id,
-    product_code: m.product_code,
+    item_code: m.item_code,
     variant_key: m.variant_key,
     product_name: m.product_name,
     qty: m.qty,
@@ -455,13 +455,13 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the DR's CURRENT lines (mirror of increaseInventoryForReturn's bucketing,
   //    batch_no included so a sofa line targets its OWN dye-lot). A CANCELLED DR
   //    has a target of zero — every bucket must drain back out.
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
   const targetByBucket = new Map<string, Bucket>();
   if (drStatus !== 'CANCELLED') {
     const { data: items } = await sb.from('delivery_return_items')
-      .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_centi')
+      .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
       .eq('delivery_return_id', deliveryReturnId);
-    const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_centi?: number | null }>;
+    const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>;
     const lineWh = await resolveDrLineWarehouses(
       sb,
       lineRows as Array<{ id: string; do_item_id?: string | null }>,
@@ -483,7 +483,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       const k = `${warehouseId}::${it.item_code}::${variant_key}::${batch_no ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) { cur.qty += qty; }
-      else targetByBucket.set(k, { warehouse_id: warehouseId, product_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_centi ?? 0) });
+      else targetByBucket.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_sen ?? 0) });
     }
   }
 
@@ -494,8 +494,8 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the batch_no column doesn't exist → retry without it (every batch '').
   type Agg = { net_in: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  const addMov = (m: { movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  const addMov = (m: { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let agg = aggByBucket.get(k);
     if (!agg) { agg = { net_in: 0, product_name: m.product_name }; aggByBucket.set(k, agg); }
     const q = Number(m.qty ?? 0);
@@ -505,12 +505,12 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
     if (!agg.product_name) agg.product_name = m.product_name;
   };
   const readDrMovs = async (sourceType: string) => {
-    const sel = 'movement_type, warehouse_id, product_code, variant_key, batch_no, qty, product_name';
+    const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, product_name';
     let res = await sb.from('inventory_movements').select(sel)
       .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     if (res.error && (res.error.message ?? '').includes('batch_no')) {
       res = await sb.from('inventory_movements')
-        .select('movement_type, warehouse_id, product_code, variant_key, qty, product_name')
+        .select('movement_type, warehouse_id, item_code, variant_key, qty, product_name')
         .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     }
     return (res.data ?? []) as any[];
@@ -540,7 +540,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       : `Delivery return ${drNo} line edited — resyncing returned stock`;
     const base = {
       warehouse_id: parts[0] ?? '',
-      product_code: parts[1] ?? '',
+      item_code: parts[1] ?? '',
       variant_key: parts[2] ?? '',
       product_name: t?.product_name ?? a.product_name ?? null,
       source_doc_type: 'ADJUSTMENT' as const,
@@ -706,8 +706,8 @@ async function checkDrOverRemaining(
    recomputeTotals can roll them up.
 
    `sourceCostByDoItem` (lib/source-cost) is the server's own read of the SOURCE
-   DO line's unit_cost_centi. When the line is DO-linked it WINS over the
-   client's `unitCostCenti` unconditionally — a return must be booked at the cost
+   DO line's unit_cost_sen. When the line is DO-linked it WINS over the
+   client's `unitCostSen` unconditionally — a return must be booked at the cost
    the DO actually shipped at, and that is a historical snapshot, not a catalog
    lookup. Ignoring the client here is what makes stripping the cost off
    /returnable-do-lines safe: a non-finance caller now echoes nothing that can
@@ -719,17 +719,17 @@ function buildItemRow(
   sourceCostByDoItem?: Map<string, number>,
 ) {
   const qty = Number(it.qtyReturned ?? it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceCenti ?? 0);
-  const discount = Number(it.discountCenti ?? 0);
+  const unitPrice = Number(it.unitPriceSen ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   const doItemId = (it.doItemId as string | undefined) ?? undefined;
   const sourceCost = doItemId ? sourceCostByDoItem?.get(doItemId) : undefined;
-  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostCenti ?? 0);
+  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostSen ?? 0);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string) ?? null;
   const variants = (it.variants as unknown) ?? null;
-  const refund = it.refundCenti !== undefined ? Number(it.refundCenti) : lineTotal;
+  const refund = it.refundSen !== undefined ? Number(it.refundSen) : lineTotal;
   return {
     delivery_return_id: deliveryReturnId,
     do_item_id: (it.doItemId as string | undefined) ?? null,
@@ -740,13 +740,13 @@ function buildItemRow(
     uom: (it.uom as string) ?? 'UNIT',
     qty_returned: qty,
     condition: (it.condition as string) ?? null,
-    unit_price_centi: unitPrice,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
-    refund_centi: refund,
+    unit_price_sen: unitPrice,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
+    refund_sen: refund,
     variants,
     notes: (it.notes as string | undefined) ?? null,
   };
@@ -820,7 +820,7 @@ deliveryReturns.get('/', async (c) => {
    IMPORTANT (route ordering): this STATIC path MUST be registered BEFORE the
    `/:id` param route below, or Hono tries to cast it to an id.
 
-   FINANCE: each descriptor carries the source DO line's `unitCostCenti`, so this
+   FINANCE: each descriptor carries the source DO line's `unitCostSen`, so this
    picker shipped every delivered line's unit cost to any caller who could reach
    it — #632 named it and correctly declined to strip it, because the New-Return
    form echoed the value back and the create path trusted it, so a strip alone
@@ -845,7 +845,7 @@ deliveryReturns.get('/returnable-do-lines', async (c) => {
   if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
   const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   if (!canViewScmFinance(c)) {
-    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostCenti;
+    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
   return c.json({ lines });
 });
@@ -884,8 +884,8 @@ deliveryReturns.get('/:id', async (c) => {
     return { ...it, warehouse_id: wid, warehouse_code: wid ? (codeMap.get(wid) ?? null) : null };
   });
   /* Finance gate — cost / margin (header + per line) reach ONLY a finance-viewer.
-     The refund/total everyone is meant to see (local_total_centi / refund_centi /
-     line_total_centi) are deliberately NOT stripped. */
+     The refund/total everyone is meant to see (local_total_sen / refund_sen /
+     line_total_sen) are deliberately NOT stripped. */
   gateDrFinance(c, h.data, items);
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
@@ -1392,11 +1392,11 @@ export const convertDoLinesToReturn = async (c: any) => {
     uom: line.uom,
     qtyReturned: pickQtyById.get(line.doItemId)!,
     condition: conditionById.get(line.doItemId) ?? 'NEW',
-    unitPriceCenti: line.unitPriceCenti,
+    unitPriceSen: line.unitPriceSen,
     // Carry the DO line's discount (hardcoding 0 overstated the refund);
     // mirrors the SI convert-from-DO path.
-    discountCenti: line.discountCenti,
-    unitCostCenti: line.unitCostCenti,
+    discountSen: line.discountSen,
+    unitCostSen: line.unitCostSen,
     variants: line.variants,
   }));
   const { error: iErr } = await sb.from('delivery_return_items').insert(stampCompany(rows, c));
@@ -1570,7 +1570,7 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
      run against this one. Company scope layered on top so the line can't belong
      to another company's return either. */
   const { data: prev } = await scopeToCompanyId(sb.from('delivery_return_items')
-    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
+    .select('qty_returned, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
     .eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1601,11 +1601,11 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     }
   }
 
-  const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
+  const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_centi for a non-finance caller, and DeliveryReturnDetail
-     seeds each line draft straight off that payload (`unit_cost_centi ?? 0`) and
+     strips unit_cost_sen for a non-finance caller, and DeliveryReturnDetail
+     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
      posts the value back here on save — so trusting the client would let the
      stripped field round-trip as a genuine 0 and wipe the line's cost basis
      (recomputeTotals would then roll the DR's cost to 0 and its margin to the
@@ -1613,17 +1613,17 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
      whose `explicitCost > 0` precedence makes a 0 fall through to the stored
      cost — which is why the same strip was safe there (#625). Keep the stored
      cost for a non-finance caller; a finance caller is unaffected. */
-  const unitCost = (canViewScmFinance(c) && it.unitCostCenti !== undefined)
-    ? Number(it.unitCostCenti)
-    : Number(prev.unit_cost_centi);
+  const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
+    ? Number(it.unitCostSen)
+    : Number(prev.unit_cost_sen);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
 
   const updates: Record<string, unknown> = {
-    qty_returned: qty, unit_price_centi: unitPrice, discount_centi: discount, unit_cost_centi: unitCost,
-    line_total_centi: lineTotal, line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
-    refund_centi: lineTotal,
+    qty_returned: qty, unit_price_sen: unitPrice, discount_sen: discount, unit_cost_sen: unitCost,
+    line_total_sen: lineTotal, line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
+    refund_sen: lineTotal,
   };
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
@@ -1791,7 +1791,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed
   // ADJUSTMENT (unindexed by the DR source key, carrying variant_key) — we CANNOT
   // reuse reverseMovements: its balancing OUT reuses the DR's (source_doc_type,
-  // source_doc_id, product_code, variant_key) key, which the partial UNIQUE index
+  // source_doc_id, item_code, variant_key) key, which the partial UNIQUE index
   // uq_inv_mov_dr_source (migration 0102, keyed WITHOUT movement_type) rejects →
   // the insert silently fails and the returned stock stays added.
   // Hoisted: the response below is OUTSIDE this block, so a block-scoped

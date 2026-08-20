@@ -69,7 +69,7 @@ const VIEW_BASE = new Map([
   ["mfg_sales_orders_with_payment_totals", { table: "mfg_sales_orders", columns: {} }],
   ["v_inventory_product_totals", {
     table: "mfg_products",
-    columns: { product_code: "code", product_name: "name" },
+    columns: { item_code: "code", product_name: "name" },
   }],
 ]);
 

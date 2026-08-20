@@ -33,7 +33,7 @@ export type FleetDayStop = {
   access_note: string | null;
   eta_offset_s: number | null;
   leg_distance_m: number | null;
-  revenue_centi: number;
+  revenue_sen: number;
   lat: number | null;
   lng: number | null;
   geocoded: boolean;
@@ -51,7 +51,7 @@ export type FleetDayTrip = {
   helpers: Array<{ id: string; name: string }>;
   warehouse: FleetDayWarehouse | null;
   depot: { lat: number; lng: number } | null;
-  total_revenue_centi: number;
+  total_revenue_sen: number;
   total_drops: number;
   stops: FleetDayStop[];
 };

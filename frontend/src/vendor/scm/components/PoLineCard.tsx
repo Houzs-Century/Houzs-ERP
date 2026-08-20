@@ -63,12 +63,12 @@ export type PoLineDraft = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   /* Supplier-revised per-line delivery dates (migration 0180). All optional;
      the supplier pushes the date back. The EFFECTIVE line date readers use =
@@ -77,7 +77,7 @@ export type PoLineDraft = {
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* Set when materialCode matches an mfg_product — drives which variant editor
+  /* Set when itemCode matches an mfg_product — drives which variant editor
      renders (sofa / bedframe). Lowercase to match SoLineCard's itemGroup. */
   category?: string;
   /** Variant payload (fabric / gap / divan / leg / seat / total height /
@@ -96,10 +96,10 @@ export type PoLineDraft = {
 export const emptyPoLine = (): PoLineDraft => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -184,8 +184,8 @@ export const PoLineCard = ({
      SoLineCard reads, so a PO variant dropdown offers ONLY what the SKU's Model
      permits (owner 2026-07-15 "not a backdoor"). Null for legacy/unknown codes
      ⇒ no restriction, exactly the SoLineCard fallback. */
-  const allowOpts = useModelAllowedOptionsByCode(l.materialCode || undefined).data ?? null;
-  const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+  const allowOpts = useModelAllowedOptionsByCode(l.itemCode || undefined).data ?? null;
+  const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   // PR #135 — only sofa / bedframe carry a variant editor (mattress size +
   // branding are encoded in the SKU code itself).
@@ -271,7 +271,7 @@ export const PoLineCard = ({
           ) : null}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+          <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
           {!disabled && (
             <button
               type="button"
@@ -301,13 +301,13 @@ export const PoLineCard = ({
           <input
             type="text"
             list={`bindings-${l.rid}`}
-            value={l.materialCode}
+            value={l.itemCode}
             disabled={identityLocked}
             onChange={(e) => {
               const code = e.target.value;
               // Bound match wins (autofills supplier SKU + price).
               const match = supplierId
-                ? bindings.find((b) => b.material_code === code)
+                ? bindings.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
               // No binding (no supplier yet, OR supplier has no binding for this
@@ -315,7 +315,7 @@ export const PoLineCard = ({
               // list so the row isn't left blank.
               const sku = allSkus.find((p) => p.code === code);
               onChange({
-                materialCode: code,
+                itemCode: code,
                 materialName: sku?.name ?? l.materialName,
                 bindingId: undefined,
                 category: sku?.category.toLowerCase() ?? l.category,
@@ -333,8 +333,8 @@ export const PoLineCard = ({
                 dead. */}
             {supplierId && bindings.length > 0
               ? [...bindings].sort((a, b) => byText(a.material_name, b.material_name)).map((b) => (
-                  <option key={b.id} value={b.material_code}>
-                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                  <option key={b.id} value={b.item_code}>
+                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
                 ))
               : sortByText(allSkus).map((p) => (
@@ -350,7 +350,7 @@ export const PoLineCard = ({
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier SKU</span>
           {/* Bi-directional picker: typing/picking a supplier_sku reverse-fills
-              the matching binding's internal materialCode + name + price.
+              the matching binding's internal itemCode + name + price.
               Requires a supplier picked first (we only know which bindings to
               search). */}
           <input
@@ -378,9 +378,9 @@ export const PoLineCard = ({
             style={{ fontFamily: 'var(--font-mono)' }}
           />
           <datalist id={`supplier-skus-${l.rid}`}>
-            {supplierId && [...bindings].sort((a, b) => byText(a.material_code, b.material_code)).map((b) => (
+            {supplierId && [...bindings].sort((a, b) => byText(a.item_code, b.item_code)).map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
-                {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>
             ))}
           </datalist>
@@ -402,7 +402,7 @@ export const PoLineCard = ({
             disabled={disabled}
             onChange={(v) => onChange({ soItemId: v || null })}
             options={[
-              { value: '', label: l.materialCode.trim()
+              { value: '', label: l.itemCode.trim()
                 ? '— None (stock replenishment) —'
                 : '— Pick an item code first —' },
               ...soLinkOptions,
@@ -575,9 +575,9 @@ export const PoLineCard = ({
               stops overwriting this line. */}
           <MoneyInput
             bare
-            valueSen={l.unitPriceCenti}
+            valueSen={l.unitPriceSen}
             disabled={disabled}
-            onCommit={(sen) => onChange({ unitPriceCenti: sen ?? 0, priceTouched: true })}
+            onCommit={(sen) => onChange({ unitPriceSen: sen ?? 0, priceTouched: true })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />
@@ -586,9 +586,9 @@ export const PoLineCard = ({
           <span className={styles.fieldLabel}>Discount ({currency})</span>
           <MoneyInput
             bare
-            valueSen={l.discountCenti ?? 0}
+            valueSen={l.discountSen ?? 0}
             disabled={disabled}
-            onCommit={(sen) => onChange({ discountCenti: sen ?? 0 })}
+            onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />

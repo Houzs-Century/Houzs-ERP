@@ -79,7 +79,7 @@ export interface KpiUnitsResult {
 const EMPTY: KpiUnitsResult = { flags: [], flagLabel: new Map(), unitsByDoc: new Map() };
 
 type LineRow = {
-  doc_no: string; item_code: string; qty: number; total_centi: number;
+  doc_no: string; item_code: string; qty: number; total_sen: number;
   special_order_price_sen: number; item_group: string | null; variants: Record<string, unknown> | null;
 };
 type ProductLite = { category?: string | null; model_id?: string | null };
@@ -102,10 +102,10 @@ export async function loadKpiUnitsByDoc(
   const docs = [...new Set(docNos.map((d) => (d ?? '').trim()).filter(Boolean))];
   if (docs.length === 0) return EMPTY;
 
-  const flagsRes = await paginateAll<{ flag_type: string; ref: string; label: string | null; bonus_centi: number }>(
+  const flagsRes = await paginateAll<{ flag_type: string; ref: string; label: string | null; bonus_sen: number }>(
     (from, to) => sb
       .from('hr_item_kpi')
-      .select('flag_type, ref, label, bonus_centi')
+      .select('flag_type, ref, label, bonus_sen')
       .eq('active', true)
       .eq('company_id', companyId)
       .order('id')
@@ -114,7 +114,7 @@ export async function loadKpiUnitsByDoc(
   // A failed flag read is NOT "no flags" — see PORT NOTE 4.
   if (flagsRes.error) throw new Error(`kpi_flags_failed: ${flagsRes.error.message}`);
   const flagRows = flagsRes.data ?? [];
-  const flags: ItemKpiFlag[] = flagRows.map((f: any) => ({ flagType: f.flag_type, ref: f.ref, bonusCenti: f.bonus_centi }));
+  const flags: ItemKpiFlag[] = flagRows.map((f: any) => ({ flagType: f.flag_type, ref: f.ref, bonusSen: f.bonus_sen }));
   if (flags.length === 0) return EMPTY;
   const flagLabel = new Map<string, string>(
     flagRows.map((f: any) => [`${f.flag_type}:${f.ref}`, (f.label as string) ?? f.ref]),
@@ -127,7 +127,7 @@ export async function loadKpiUnitsByDoc(
     docs,
     (batch, from, to) => sb
       .from('mfg_sales_order_items')
-      .select('doc_no, item_code, qty, total_centi, special_order_price_sen, item_group, variants')
+      .select('doc_no, item_code, qty, total_sen, special_order_price_sen, item_group, variants')
       .eq('cancelled', false)
       .eq('company_id', companyId)
       .in('doc_no', batch)
@@ -207,7 +207,7 @@ export async function loadKpiUnitsByDoc(
   // The flat fabric-tier Δ a single built item charged (centi). SOFA / BEDFRAME
   // only (the shared fn returns 0 elsewhere); for a sofa the Δ is per BUILD, so
   // every module line reports the SAME figure and the collapse keeps one.
-  const fabricAddonUnitCentiOf = (l: LineRow): number => {
+  const fabricAddonUnitSenOf = (l: LineRow): number => {
     if (!hasFabricFlag || !addonConfig) return 0;
     const fid = fabricIdOf(l.variants);
     if (!fid || !fabricFlagRefs.has(fid)) return 0; // unflagged fabric → its Δ stays goods
@@ -260,9 +260,9 @@ export async function loadKpiUnitsByDoc(
       category: categoryOf(l),
       fabricId: fabricIdOf(l.variants),
       specialCodes: specialsOf(l.variants),
-      lineTotalCenti: Number(l.total_centi) || 0,
-      fabricAddonUnitCenti: fabricAddonUnitCentiOf(l),
-      specialSurchargeUnitCenti: Number(l.special_order_price_sen) || 0,
+      lineTotalSen: Number(l.total_sen) || 0,
+      fabricAddonUnitSen: fabricAddonUnitSenOf(l),
+      specialSurchargeUnitSen: Number(l.special_order_price_sen) || 0,
     };
     const arr = unitsByDoc.get(l.doc_no) ?? [];
     if (!unitsByDoc.has(l.doc_no)) unitsByDoc.set(l.doc_no, arr);
@@ -279,11 +279,11 @@ export async function loadKpiUnitsByDoc(
        module's product row can be missing, and letting that null overwrite a
        resolved category would silently stop the build's rule firing. */
     existing.category = existing.category ?? unit.category;
-    existing.lineTotalCenti += unit.lineTotalCenti;            // Σ → whole build's goods
+    existing.lineTotalSen += unit.lineTotalSen;            // Σ → whole build's goods
     // fabric Δ + special surcharge are per-BUILD figures on the lead module line;
     // keep the lead's value (max picks it over the 0s), never sum. qty is uniform.
-    existing.fabricAddonUnitCenti = Math.max(existing.fabricAddonUnitCenti, unit.fabricAddonUnitCenti);
-    existing.specialSurchargeUnitCenti = Math.max(existing.specialSurchargeUnitCenti, unit.specialSurchargeUnitCenti);
+    existing.fabricAddonUnitSen = Math.max(existing.fabricAddonUnitSen, unit.fabricAddonUnitSen);
+    existing.specialSurchargeUnitSen = Math.max(existing.specialSurchargeUnitSen, unit.specialSurchargeUnitSen);
   }
 
   return { flags, flagLabel, unitsByDoc };

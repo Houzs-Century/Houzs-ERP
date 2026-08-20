@@ -322,7 +322,7 @@ async function appendScmHits(
     .select("doc_no, debtor_name, phone, ref, so_date, branding")
     .or(
       `doc_no.ilike.${wildcard},debtor_name.ilike.${wildcard},` +
-        `ref.ilike.${wildcard},phone.ilike.${wildcard},po_doc_no.ilike.${wildcard}`
+        `ref.ilike.${wildcard},phone.ilike.${wildcard}`
     );
   const prodQuery = sb
     .from("mfg_products")

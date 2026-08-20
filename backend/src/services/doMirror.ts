@@ -18,6 +18,7 @@
 import type { Env, ACDeliveryOrder } from "../types";
 import { AutoCountClient, dateOnly } from "./autocount";
 import { writeLog } from "./logger";
+import { isCancelled } from "./acSnapshot";
 
 export interface DoMirrorResult {
   mode: "incremental" | "full";
@@ -96,7 +97,7 @@ export async function runDoMirrorSync(
       o.DebtorName ?? null,
       o.SalesAgent ?? null,
       typeof o.Total === "number" ? o.Total : null,
-      o.Cancelled === "T" ? 1 : 0,
+      isCancelled(o.Cancelled) ? 1 : 0,
       lm,
       syncedAt,
     ]);

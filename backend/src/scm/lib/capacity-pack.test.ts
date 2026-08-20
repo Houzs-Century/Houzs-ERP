@@ -14,17 +14,17 @@ function cfg(over: Partial<PackConfig> = {}): PackConfig {
     startDate: '2026-08-01',
     klangValleyZones: KV,
     defaultMaxSets: 10,
-    defaultMaxRevenueCenti: 3_000_000,
+    defaultMaxRevenueSen: 3_000_000,
     ...over,
   };
 }
 
-function order(ref: string, zone: string, sets: number, revenueCenti = 0, hasFurniture = true): PackOrder {
-  return { ref, zone, sets, revenueCenti, hasFurniture };
+function order(ref: string, zone: string, sets: number, revenueSen = 0, hasFurniture = true): PackOrder {
+  return { ref, zone, sets, revenueSen, hasFurniture };
 }
 
-function lorry(id: string, layer: PackLorry['layer'], maxSets: number | null = null, maxRevenueCenti: number | null = null): PackLorry {
-  return { id, plate: id.toUpperCase(), maxSets, maxRevenueCenti, layer };
+function lorry(id: string, layer: PackLorry['layer'], maxSets: number | null = null, maxRevenueSen: number | null = null): PackLorry {
+  return { id, plate: id.toUpperCase(), maxSets, maxRevenueSen, layer };
 }
 
 describe('addDays', () => {
@@ -82,7 +82,7 @@ describe('packProposals — REVENUE layer', () => {
     const r = packProposals({ orders, lorries, config: cfg() });
     const day1 = r.days[0];
     expect(day1.lorries[0].orders).toEqual(['A', 'B']);
-    expect(day1.lorries[0].revenueCenti).toBe(3_000_000);
+    expect(day1.lorries[0].revenueSen).toBe(3_000_000);
     expect(day1.lorries[0].ceilingSets).toBeNull();
     expect(day1.lorries[1].orders).toEqual(['C']);
   });

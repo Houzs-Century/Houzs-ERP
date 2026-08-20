@@ -70,7 +70,7 @@ function harness(over: {
       customer_delivery_date: '2099-03-01',
       processing_date: '2099-02-01',
       proceeded_at: null,
-      local_total_centi: 0,              // ← free order: nothing to collect
+      local_total_sen: 0,              // ← free order: nothing to collect
       edit_lease_token: null,
       edit_lease_expires_at: null,
       ...(over.header ?? {}),
@@ -85,6 +85,10 @@ function harness(over: {
       from: (table: string) => new FakeQuery((tables[table] ||= [])),
       rpc: async () => ({ data: [{ applied: true, current_version: 2 }], error: null }),
     } as never);
+    /* The header PATCH became a STRICT company write (an unresolved company is
+       refused, not defaulted to Houzs by mig 0164's COALESCE). The fixture
+       carries the company its own row already has. */
+    c.set('companyId' as never, 1 as never);
     c.set('user' as never, { id: 'actor-1', user_metadata: { name: 'Test User' } } as never);
     c.set('companyCode' as never, (over.companyCode ?? 'HOUZS') as never);
     c.set('houzsUser' as never, {
@@ -162,8 +166,8 @@ describe('the proceed refusal names the condition that failed', () => {
 
   test('a REAL deposit shortfall states what is paid, what is needed and the company %', async () => {
     const app = harness({
-      header: { local_total_centi: 1000_00 },      // RM 1,000 order
-      payments: [{ so_doc_no: 'SO-PROCEED-1', amount_centi: 100_00 }],  // RM 100 in
+      header: { local_total_sen: 1000_00 },      // RM 1,000 order
+      payments: [{ so_doc_no: 'SO-PROCEED-1', amount_sen: 100_00 }],  // RM 100 in
       companyCode: '2990',                          // 2990's rule is 50%
     });
     const res = await proceed(app);

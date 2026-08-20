@@ -166,7 +166,7 @@ export async function executeReorderProposal(
     /* Absent = the companies master was unresolved at plan time (the
        single-company case). Pass undefined so stamping no-ops per the sentinel's
        UNRESOLVED rule — do NOT substitute anyone else's company to fill it. */
-    companyId: hasCompany ? planCompanyId : undefined,
+    companyId: hasCompany ? planCompanyId : null,
     allowedCompanyIds: hasCompany ? [planCompanyId] : undefined,
     /* The CODE string. companyDocPrefix stringifies whatever it gets. */
     companyCode: typeof payload?.companyCode === 'string' ? payload.companyCode : null,

@@ -28,16 +28,30 @@ const RECOMPUTE = code(recompute);
 const EDITOR = code(salesOrderDetail);
 
 describe("operator-zero wiring", () => {
-  test('the route selects the mode only on a strict claim, at a zero price, off the POS', () => {
-    expect(SO).toMatch(/!posTablet\s*&&\s*clientUnit === 0\s*&&\s*it\.zeroPriceIntended === true/);
+  /* 2026-08-19 — both line writes now ask ONE helper, `erpLineTrust`. Editing a
+     line to RM 0 worked while ADDING one at RM 0 silently took the catalogue
+     price, because only the PATCH had the mode wired. A single decision cannot
+     drift between the two the way two copies did. */
+  test('the mode is selected in exactly ONE place: the shared helper', () => {
+    expect(RECOMPUTE.match(/'operator-zero'/g) ?? []).toHaveLength(3); // the type, the helper, the trust condition
+    expect(SO.match(/'operator-zero'/g) ?? []).toHaveLength(0);
   });
 
-  test('the mode is never selected anywhere else in the route', () => {
-    expect(SO.match(/'operator-zero'/g) ?? []).toHaveLength(1);
+  test('the helper demands a strict claim, at a zero price, off the POS', () => {
+    expect(RECOMPUTE).toMatch(
+      /!posTablet && unitPriceSen === 0 && zeroPriceIntended === true \? 'operator-zero' : !posTablet/,
+    );
+  });
+
+  test('BOTH line writes go through it — PATCH and ADD', () => {
+    expect(SO).toMatch(/erpLineTrust\(posTablet, clientUnit, it\.zeroPriceIntended\)/);
+    expect(SO).toMatch(/erpLineTrust\(addLinePosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/);
+    expect(SO.match(/erpLineTrust\(/g) ?? []).toHaveLength(2);
   });
 
   test('the ERP line editor sends the claim, and only at zero', () => {
-    expect(EDITOR).toMatch(/unitPriceCenti === 0 \? \{ zeroPriceIntended: true \}/);
+    expect(EDITOR).toMatch(/sen === 0 \? \{ zeroPriceIntended: true \}/);
+    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen\)/g) ?? []).toHaveLength(2);
   });
 
   /* The migrated-document arm must stay exclusive to migrated documents: it

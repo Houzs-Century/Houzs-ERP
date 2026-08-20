@@ -105,6 +105,27 @@ export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
  * WHICH DELIVERIES MAY BE INVOICED — the owner's ruling, 2026-08-18:
  *   "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED — 这些 status 都可以转 SI"
  *
+ * SUPERSEDED ON MEMBERSHIP, 2026-08-19, and LOADED joined the set. PR #2485
+ * carries the owner's next-day decision: a Sales Invoice may be raised from
+ * EVERY confirmed delivery order — anything past DRAFT that is not CANCELLED —
+ * with no "Mark signed" step in front of it. That is the broader ruling and it
+ * is the one in force.
+ *
+ * It is also the one the SERVER has always enforced, which is why it wins on
+ * evidence and not only on date. The SI-from-DO create refuses exactly one
+ * source status — `if (doHeader.status === 'CANCELLED') -> 409 do_cancelled`,
+ * routes/sales-invoices.ts — and has never refused an un-signed or un-dispatched
+ * one. A four-state list here would have made this file the first thing in the
+ * system to REFUSE a LOADED delivery its invoice, which is a new restriction
+ * wearing the clothes of a de-duplication.
+ *
+ * What did NOT change with it is the reason this constant exists at all: the
+ * rule has ONE home. The 2026-08-18 work moved it out of two hand-typed
+ * frontend lists into this file, put the frontend twin under
+ * check-shared-mirrors.mjs --strict, and made the server ENFORCE it rather than
+ * letting each screen decide. Membership is the owner's to set; having a single
+ * place for him to set it is what stops the next screen disagreeing.
+ *
  * A SEPARATE declaration from DO_SHIPPED_STATES on purpose, because the two
  * answer different questions and only one of them is about money-in:
  *   DO_SHIPPED_STATES     — has the stock left our hands? (drives DO_STOCK_OUT_STATES,
@@ -129,7 +150,7 @@ export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
  * See docs/modules/document-conversion.md.
  * -------------------------------------------------------------------------- */
 export const SI_TRANSFERABLE_DO_STATES = [
-  'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED',
+  'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED',
 ] as const;
 
 export type SiTransferableDoState = (typeof SI_TRANSFERABLE_DO_STATES)[number];

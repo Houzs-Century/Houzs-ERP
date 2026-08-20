@@ -270,6 +270,33 @@ export function acParentlessCreateReason(missing: string): string {
 }
 
 /**
+ * What a document is going to the accounts WITHOUT — the note left on its own
+ * outbox row, at save time.
+ *
+ * THIS IS A NOTE ON A ROW THAT IS BEING SENT, not a refusal. `acNeedsAttention`
+ * reads the STATUS, so a `pending` row carrying one of these is not counted as
+ * needing anybody — the document is going, it is simply going incomplete. The
+ * page returns `reason` for every state (routes/autocount-outbox.ts:238), so
+ * this is visible on the row the moment the operator saves, which is the whole
+ * point: a delivery order that will reach the book with no reference and no date
+ * of its own is worth knowing about BEFORE the five-minute cron, not after.
+ *
+ * THE SENTENCES COME FROM `downstreamNotCarried`, which knows the difference
+ * between "the ERP has none of this" and "this route has no field for it". This
+ * function only frames them, the way `acParentlessCreateReason` frames its own —
+ * one home for wording that an owner reads.
+ *
+ * Returns null for a document that is carrying everything, so the row keeps a
+ * null `last_error` and nothing has to learn that an empty string means fine.
+ */
+export function acNotCarriedReason(notCarried: readonly string[]): string | null {
+  if (!notCarried.length) return null;
+  return 'sent, but not everything on it reached the accounts — '
+    + notCarried.join('; ')
+    + '. The document itself transferred; these are fields on it that did not.';
+}
+
+/**
  * Is this skip's reason the annotation the re-queue tool leaves behind?
  *
  * Deliberately a prefix test and not a `includes`: the annotation is prepended

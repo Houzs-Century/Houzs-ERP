@@ -7,6 +7,7 @@ import {
 } from './do-next-step';
 // @ts-expect-error — .mjs constants module, no types, deliberately not vendored.
 import { DO_SHIPPED_STATES } from '../../../../../backend/scripts/lib/do-shipped-states.mjs';
+import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 
 /* The status vocabulary is DERIVED, not hand-typed. DO_SHIPPED_STATES is the
    canonical shipped list (backend/src/scm/shared/do-shipped-states.ts, mirrored
@@ -34,25 +35,43 @@ const PRE_SIGNATURE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).fi
       future edit that returns null from both is a regression, not a tidy-up. */
 
 describe('siTransferBlockReason', () => {
-  it('allows exactly the four shipped statuses the owner ruled on', () => {
-    /* OWNER RULING 2026-08-18: "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED —
-       这些 status 都可以转 SI". This test asserted ['signed','delivered'] until
-       then, which was the narrowest of three live spellings and — because 2990's
-       source system has no "delivered" step — silently told one whole
-       organisation the transfer did not exist. */
+  it('allows every confirmed shipped status (owner 2026-08-19: no forced sign)', () => {
     for (const s of SI_TRANSFERABLE_DO_STATUSES) {
       expect(siTransferBlockReason(s)).toBeNull();
     }
-    expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['dispatched', 'in_transit', 'signed', 'delivered']);
+    // Every status past DRAFT that is not CANCELLED — the set the server has
+    // always permitted an SI to be raised from (only CANCELLED is refused there).
+    expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['loaded', 'dispatched', 'in_transit', 'signed', 'delivered']);
+  });
+
+  it('DERIVES that list from the shared declaration — it is not typed here', () => {
+    /* The other half of this fix, and the half a membership assertion alone
+       cannot protect. Two hand-typed lists are what caused the original bug:
+       ['signed','delivered'] on the desktop while the server picker accepted
+       everything but CANCELLED/DRAFT, so one organisation — whose deliveries sit
+       at DISPATCHED because its source system has no "delivered" step — was told
+       the transfer did not exist.
+
+       So the assertion is not "these five strings". It is "this module does not
+       decide membership at all": it lower-cases SI_TRANSFERABLE_DO_STATES from
+       shared/do-shipped-states.ts, which the backend gate
+       (routes/sales-invoices.ts), the server's DO picker (lib/do-line-remaining.ts)
+       and the phone's convert wizard all read too, and whose frontend twin
+       check-shared-mirrors.mjs --strict holds byte-identical. Re-type the list
+       here and this fails even if the strings happen to match today. */
+    expect([...SI_TRANSFERABLE_DO_STATUSES])
+      .toEqual(SI_TRANSFERABLE_DO_STATES.map((x) => x.toLowerCase()));
   });
 
   it('is case- and whitespace-insensitive, because rows carry raw DB values', () => {
     expect(siTransferBlockReason('SIGNED')).toBeNull();
     expect(siTransferBlockReason('  Delivered ')).toBeNull();
+    expect(siTransferBlockReason('DISPATCHED')).toBeNull();
   });
 
   it('gives every blocking status an actionable sentence', () => {
-    for (const s of DO_STATUSES.filter((x) => !['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED'].includes(x))) {
+    const transferable = SI_TRANSFERABLE_DO_STATUSES as readonly string[];
+    for (const s of DO_STATUSES.filter((x) => !transferable.includes(x.toLowerCase()))) {
       const r = siTransferBlockReason(s);
       expect(r, s).toBeTruthy();
       expect(r!.length, s).toBeGreaterThan(20);
@@ -60,13 +79,12 @@ describe('siTransferBlockReason', () => {
     }
   });
 
-  it('names the DISPATCH step from the states that have not shipped', () => {
-    /* Was "names the SIGN step from the pre-signature shipped states". Under the
-       owner's ruling the pre-signature SHIPPED states (DISPATCHED, IN_TRANSIT)
-       are transferable, so the only blockers left are the pre-SHIP ones, and the
-       action to name is dispatch, not signing. */
-    for (const s of ['DRAFT', 'LOADED']) {
-      expect(siTransferBlockReason(s), s).toMatch(/dispatch/i);
+  it('now ALLOWS the pre-signature shipped states — Mark signed is no longer required', () => {
+    /* The gate this reverses: LOADED / DISPATCHED / IN_TRANSIT used to be blocked
+       with "Mark this delivery order signed first". They are confirmed shipments,
+       so their Sales Invoice may now be raised directly. */
+    for (const s of PRE_SIGNATURE) {
+      expect(siTransferBlockReason(s), s).toBeNull();
     }
   });
 
@@ -76,13 +94,13 @@ describe('siTransferBlockReason', () => {
        it", never "this was billed". The sentence must state the gate instead. */
     const r = siTransferBlockReason('INVOICED')!;
     expect(r).not.toMatch(/already been invoiced|already invoiced/i);
-    expect(r).toMatch(/signed or delivered/i);
+    expect(r).toMatch(/confirmed delivery order/i);
   });
 
   it('falls back to the generic sentence for an unrecognised status', () => {
     /* Never a guess. COMPLETED is the cautionary case: it lived in these lists
        for months on a comment's authority and Postgres rejected it outright. */
-    expect(siTransferBlockReason('COMPLETED')).toMatch(/signed or delivered/i);
+    expect(siTransferBlockReason('COMPLETED')).toMatch(/confirmed delivery order/i);
     expect(siTransferBlockReason('')).toBeTruthy();
     expect(siTransferBlockReason(null)).toBeTruthy();
     expect(siTransferBlockReason(undefined)).toBeTruthy();

@@ -129,7 +129,7 @@ describe('repair scripts are write paths too', () => {
    rule, with nothing anywhere saying so. */
 describe('the Processing Date is read out of a request body through the helper', () => {
   test('create auto-proceed', () => {
-    expect(between(SO, 'const procDateOnCreate =', 'const depositTotalCenti'))
+    expect(between(SO, 'const procDateOnCreate =', 'const depositTotalSen'))
       .toContain('readSoProcessingDateFromBody');
   });
 

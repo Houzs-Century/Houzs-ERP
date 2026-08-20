@@ -99,7 +99,7 @@ const OPERATOR_REASON = 'operator-confirmed';
                   into slipDate would teach the model to read the factory start
                   date off the slip's date line.
    priceRmGuess   the create core REPRICES every goods line through the
-                  pricing engine, so unit_price_centi is the catalog's figure,
+                  pricing engine, so unit_price_sen is the catalog's figure,
                   not the operator's correction of the handwritten one.
    installment-   the header stores an INTEGER month count; the pool's label
    PlanMatch      spelling ("One Shot" / "6 months") is not recoverable, and
@@ -131,8 +131,8 @@ export type SoItemSnapshot = Record<string, unknown>;
 const SO_HEADER_COLS =
   'debtor_name, phone, emergency_contact_phone, address1, city, postcode, customer_state, ' +
   'customer_so_no, customer_type, building_type, payment_method, merchant_provider, ' +
-  'approval_code, deposit_centi, customer_delivery_date';
-const SO_ITEM_COLS = 'item_group, item_code, qty, unit_price_centi, variants, cancelled, line_no, created_at';
+  'approval_code, deposit_sen, customer_delivery_date';
+const SO_ITEM_COLS = 'item_group, item_code, qty, unit_price_sen, variants, cancelled, line_no, created_at';
 
 /* postgres.js camelCases columns; PostgREST does not. Dual-read is the house
    rule (same shape as scan-so.ts's job serializer). */
@@ -373,11 +373,11 @@ export function buildCorrectedSlipFromSo(
   if (method === 'Merchant') putOpt('bankMatch', col(header, 'merchant_provider'));
   putText('approvalCode', col(header, 'approval_code'));
 
-  /* depositRm -> deposit_centi collapses null and 0 onto the same column
+  /* depositRm -> deposit_sen collapses null and 0 onto the same column
      (scan-so.ts:3852), so compare on the collapsed value and only write when
      the money actually moved. */
-  const depositCenti = numOrNull(col(header, 'deposit_centi'));
-  const invDeposit = depositCenti !== null && depositCenti > 0 ? depositCenti / 100 : null;
+  const depositSen = numOrNull(col(header, 'deposit_sen'));
+  const invDeposit = depositSen !== null && depositSen > 0 ? depositSen / 100 : null;
   if ((numOrNull(ai.depositRm) ?? 0) !== (invDeposit ?? 0)) out.depositRm = invDeposit;
 
   /* Delivery date: only invert a date that is actually there. The forward rule

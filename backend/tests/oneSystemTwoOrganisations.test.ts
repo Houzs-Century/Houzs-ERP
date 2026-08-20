@@ -15,7 +15,7 @@ import { describe, test, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DO_SHIPPED_STATES } from "../src/scm/shared/do-shipped-states";
+import { DO_SHIPPED_STATES, SI_TRANSFERABLE_DO_STATES } from "../src/scm/shared/do-shipped-states";
 import { SO_PROCESSING_DATE_LEGACY_COLUMNS } from "../src/scm/shared/so-processing-date";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -93,13 +93,27 @@ describe("the DO→Sales-Invoice transfer is offered from ONE declaration", () =
   /* The five-state set is what the whole rest of the chain means by "shipped",
      and DISPATCHED being IN it is the entire fix — that is the state 2990's
      imported deliveries sit at, and the state at which the inventory OUT is
-     written. LOADED being OUT of it is equally load-bearing: nothing has left
-     the building yet, so it must not be invoiceable. */
-  test("DISPATCHED is a shipped state and LOADED is not", () => {
+     written.
+
+     LOADED IS THE CASE THAT PROVES THE TWO SETS ARE DIFFERENT QUESTIONS, and
+     this comment used to get it wrong: it said LOADED "must not be invoiceable"
+     because nothing has left the building. The owner ruled otherwise on
+     2026-08-19 (#2485) — every CONFIRMED delivery may be invoiced — and the
+     server had never refused one, so the stricter reading was this repo's
+     opinion, not the business's. A LOADED delivery is therefore NOT shipped (no
+     inventory OUT has been written; the ledger must not think otherwise) and IS
+     invoiceable. Folding the two sets into one would have to break one of those
+     two facts, which is why they are two constants. */
+  test("LOADED is not a shipped state, but it IS invoiceable", () => {
     expect(DO_SHIPPED_STATES).toContain("DISPATCHED");
     expect(DO_SHIPPED_STATES).toContain("IN_TRANSIT");
     expect(DO_SHIPPED_STATES).not.toContain("LOADED");
     expect(DO_SHIPPED_STATES).not.toContain("DRAFT");
+    // The stock question and the money question, on the same status, disagreeing
+    // on purpose. DRAFT and CANCELLED are out of both.
+    expect(SI_TRANSFERABLE_DO_STATES).toContain("LOADED");
+    expect(SI_TRANSFERABLE_DO_STATES).not.toContain("DRAFT");
+    expect(SI_TRANSFERABLE_DO_STATES).not.toContain("CANCELLED");
   });
 
   /* The list drawer's two buttons must not be mutually exclusive again. The bug

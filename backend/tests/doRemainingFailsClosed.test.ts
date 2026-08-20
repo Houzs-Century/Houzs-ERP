@@ -168,7 +168,7 @@ const tables = (): Record<string, Row[]> => ({
   delivery_order_items: [{
     id: 'dl-1', delivery_order_id: 'do-1', company_id: CO, item_code: 'ITEM-1',
     item_group: null, description: null, description2: null, uom: 'UNIT',
-    qty: 10, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0,
+    qty: 10, unit_price_sen: 100, unit_cost_sen: 50, discount_sen: 0,
     variants: null, line_no: 0,
   }],
   sales_invoices: [
@@ -215,7 +215,7 @@ describe('DO -> Sales Invoice refuses when the Pending ledger cannot be read', (
     const res = await postJson(
       harness(t, { failing: ['sales_invoice_items'] }),
       '/sales-invoices',
-      { debtorName: 'Cust', items: [{ itemCode: 'ITEM-1', doItemId: 'dl-1', qty: 10, unitPriceCenti: 100 }] },
+      { debtorName: 'Cust', items: [{ itemCode: 'ITEM-1', doItemId: 'dl-1', qty: 10, unitPriceSen: 100 }] },
     );
     expect(res.status).toBe(503);
     expect((await body(res)).error).toBe('remaining_check_failed');

@@ -82,9 +82,9 @@ export type DoRemainingLine = {
   returned: number;
   /** delivered − invoiced − returned (= Pending = remaining to invoice OR return) */
   remaining: number;
-  unitPriceCenti: number;
-  unitCostCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  unitCostSen: number;
+  discountSen: number;
   variants: unknown;
   /* Migration 0058 — dedicated sofa/bedframe variant-breakdown columns. Carried
      so the DO→SI picker convert keeps them (sales_invoice_items has them too);
@@ -190,7 +190,7 @@ export async function doLineRemaining(
     .from('delivery_order_items')
     .select(
       'id, delivery_order_id, item_code, item_group, description, description2, uom, qty, ' +
-      'unit_price_centi, unit_cost_centi, discount_centi, variants, ' +
+      'unit_price_sen, unit_cost_sen, discount_sen, variants, ' +
       'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
       'custom_specials, line_suffix, special_order_price_sen',
     )
@@ -298,9 +298,9 @@ export async function doLineRemaining(
       invoiced,
       returned,
       remaining: delivered - invoiced - returned,
-      unitPriceCenti: Number(l.unit_price_centi ?? 0),
-      unitCostCenti: Number(l.unit_cost_centi ?? 0),
-      discountCenti: Number(l.discount_centi ?? 0),
+      unitPriceSen: Number(l.unit_price_sen ?? 0),
+      unitCostSen: Number(l.unit_cost_sen ?? 0),
+      discountSen: Number(l.discount_sen ?? 0),
       variants: l.variants ?? null,
       /* Migration 0058 — carry the dedicated variant-breakdown columns (supabase-js
          returns snake_case; dual-read camelCase ?? snake_case stays safe either way). */
@@ -389,12 +389,14 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-        /* OFFER EXACTLY WHAT THE SERVER WILL ACCEPT. This filtered on
-           NOT IN (CANCELLED, DRAFT), which let LOADED deliveries into the picker
-           — and since sales-invoices.ts started refusing those with
-           `do_not_shipped`, picking one produced a 409 instead of an invoice.
-           One declaration for "may be invoiced", used by the gate AND by the
-           thing that offers the choice. */
+        /* OFFER EXACTLY WHAT THE SERVER WILL ACCEPT — one declaration for "may
+           be invoiced", read by the create gate (siTransferRefusal) AND by the
+           thing that offers the choice, so the picker cannot advertise a
+           document the create path then refuses. This filtered on
+           NOT IN (CANCELLED, DRAFT) by hand; the only member that predicate has
+           and this one does not is INVOICED, which nothing in this codebase ever
+           writes (routes/unbilled-deliveries.ts:13). LOADED is IN the set —
+           owner 2026-08-19, #2485. */
         .in('status', SI_TRANSFERABLE_DO_STATES as unknown as string[]);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);

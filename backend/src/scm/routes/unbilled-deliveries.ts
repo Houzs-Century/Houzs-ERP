@@ -118,17 +118,17 @@ const ageDaysBetween = (fromYmd: string, toYmd: string): number => {
    delivery-orders-mfg.ts. DO lines carry NO tax column (unlike SI lines), so
    there is no tax term to pro-rate. The line discount is a whole-line amount, so
    a PARTIAL quantity takes its pro-rata share of it. When n == delivered this is
-   exactly the stored line_total_centi, so a fully-unbilled line reports the
+   exactly the stored line_total_sen, so a fully-unbilled line reports the
    document's own number and nothing is invented. */
 const valueOfUnits = (
   n: number,
   delivered: number,
-  unitPriceCenti: number,
-  discountCenti: number,
+  unitPriceSen: number,
+  discountSen: number,
 ): number => {
   if (n <= 0 || delivered <= 0) return 0;
-  const share = Math.round((discountCenti * n) / delivered);
-  return Math.max(0, n * unitPriceCenti - share);
+  const share = Math.round((discountSen * n) / delivered);
+  return Math.max(0, n * unitPriceSen - share);
 };
 
 type Row = {
@@ -144,10 +144,10 @@ type Row = {
   debtor_name: string | null;
   phone: string | null;
   salesperson: string | null;
-  delivered_centi: number;
-  invoiced_centi: number;
-  returned_centi: number;
-  unbilled_centi: number;
+  delivered_sen: number;
+  invoiced_sen: number;
+  returned_sen: number;
+  unbilled_sen: number;
   lines_total: number;
   lines_pending: number;
   partly_invoiced: boolean;
@@ -243,7 +243,7 @@ unbilledDeliveries.get('/', async (c) => {
      offer him when he acts on a row — the report cannot promise money the picker
      then refuses to bill.
      It also gives three exclusions for free, as VALUE rather than as guesswork —
-     see the unbilled_centi > 0 filter below.
+     see the unbilled_sen > 0 filter below.
 
      COST — read this before widening the default. doLineRemaining is built for a
      PICKER (a handful of DOs): it chunks every id list at 200 and issues a
@@ -273,7 +273,7 @@ unbilledDeliveries.get('/', async (c) => {
   for (const line of remainingByItem.values()) {
     const a = aggByDo.get(line.deliveryOrderId)
       ?? { delivered: 0, invoiced: 0, returned: 0, unbilled: 0, lines: 0, pending: 0 };
-    const val = (n: number) => valueOfUnits(n, line.delivered, line.unitPriceCenti, line.discountCenti);
+    const val = (n: number) => valueOfUnits(n, line.delivered, line.unitPriceSen, line.discountSen);
     a.delivered += val(line.delivered);
     a.invoiced += val(line.invoiced);
     a.returned += val(line.returned);
@@ -287,7 +287,7 @@ unbilledDeliveries.get('/', async (c) => {
   const rows: Row[] = [];
   for (const h of headers) {
     const a = aggByDo.get(h.id);
-    /* EXCLUSIONS — all three fall out of `unbilled_centi > 0`, none is a
+    /* EXCLUSIONS — all three fall out of `unbilled_sen > 0`, none is a
        hand-maintained flag list that could rot:
          • FULLY INVOICED — every line's invoiced qty consumed its delivered qty,
            so remaining = 0. (This is also how a DO whose header status was never
@@ -329,10 +329,10 @@ unbilledDeliveries.get('/', async (c) => {
       phone: h.phone,
       // Filled from the staff batch below.
       salesperson: h.agent,
-      delivered_centi: a.delivered,
-      invoiced_centi: a.invoiced,
-      returned_centi: a.returned,
-      unbilled_centi: a.unbilled,
+      delivered_sen: a.delivered,
+      invoiced_sen: a.invoiced,
+      returned_sen: a.returned,
+      unbilled_sen: a.unbilled,
       lines_total: a.lines,
       lines_pending: a.pending,
       /* The expensive case: SOME of this DO was billed and the rest was not. A
@@ -366,7 +366,7 @@ unbilledDeliveries.get('/', async (c) => {
   }
 
   // Oldest money first — the tail is the finding, the current month is the noise.
-  rows.sort((x, y) => y.age_days - x.age_days || y.unbilled_centi - x.unbilled_centi);
+  rows.sort((x, y) => y.age_days - x.age_days || y.unbilled_sen - x.unbilled_sen);
 
   // Buckets + totals over the ROWS RETURNED, so the summary always reconciles
   // with the list (a filtered read never shows a total it isn't showing rows for).
@@ -374,39 +374,39 @@ unbilledDeliveries.get('/', async (c) => {
   const byKey = new Map(buckets.map((b) => [b.key, b]));
   for (const r of rows) {
     const b = byKey.get(r.bucket);
-    if (b) { b.rows += 1; b.unbilled_centi += r.unbilled_centi; }
+    if (b) { b.rows += 1; b.unbilled_sen += r.unbilled_sen; }
   }
   const totals = {
     rows: rows.length,
-    unbilled_centi: rows.reduce((s, r) => s + r.unbilled_centi, 0),
+    unbilled_sen: rows.reduce((s, r) => s + r.unbilled_sen, 0),
     /* The headline. Steady-state un-invoiced is 1–3%/month and the current month
        is billing lag — so the number that means something is the tail that never
        got billed at all. Surfaced separately so a caller (or a KPI card) doesn't
        have to re-derive it and get the boundary wrong. */
     over_365: {
       rows: rows.filter((r) => r.age_days > 365).length,
-      unbilled_centi: rows.filter((r) => r.age_days > 365).reduce((s, r) => s + r.unbilled_centi, 0),
+      unbilled_sen: rows.filter((r) => r.age_days > 365).reduce((s, r) => s + r.unbilled_sen, 0),
     },
     /* Partly-invoiced value, called out because it is invisible to any
        header-status report and is the likeliest place for silent leakage. */
     partly_invoiced: {
       rows: rows.filter((r) => r.partly_invoiced).length,
-      unbilled_centi: rows.filter((r) => r.partly_invoiced).reduce((s, r) => s + r.unbilled_centi, 0),
+      unbilled_sen: rows.filter((r) => r.partly_invoiced).reduce((s, r) => s + r.unbilled_sen, 0),
     },
   };
 
   return c.json({ as_of: asOf, rows, buckets, totals });
 });
 
-function emptyBuckets(): Array<{ key: string; label: string; rows: number; unbilled_centi: number }> {
-  return BUCKETS.map((b) => ({ key: b.key, label: b.label, rows: 0, unbilled_centi: 0 }));
+function emptyBuckets(): Array<{ key: string; label: string; rows: number; unbilled_sen: number }> {
+  return BUCKETS.map((b) => ({ key: b.key, label: b.label, rows: 0, unbilled_sen: 0 }));
 }
 
 function emptyTotals() {
   return {
     rows: 0,
-    unbilled_centi: 0,
-    over_365: { rows: 0, unbilled_centi: 0 },
-    partly_invoiced: { rows: 0, unbilled_centi: 0 },
+    unbilled_sen: 0,
+    over_365: { rows: 0, unbilled_sen: 0 },
+    partly_invoiced: { rows: 0, unbilled_sen: 0 },
   };
 }

@@ -75,7 +75,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { formatPhone } from '@2990s/shared/phone';
-import { maintValues, fmtCenti, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { maintValues, fmtSen, fmtDateOrDash, fmtQty } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import styles from './SupplierDetail.module.css';
@@ -142,11 +142,11 @@ const fmtCurrency = (centi: number, currency: Currency): string => {
   return currency === 'MYR' ? `RM ${v}` : `${v} ${currency}`;
 };
 
-/* Display dates + RM totals use the shared `fmtDateOrDash` / `fmtCenti`
+/* Display dates + RM totals use the shared `fmtDateOrDash` / `fmtSen`
    (Commander 2026-06-18 — one canonical format system-wide). The old local
    fmtDate/fmtRm helpers were exact equivalents and have been retired. The
    currency-aware `fmtCurrency` above stays — it renders non-MYR binding prices
-   (RMB/USD/SGD) which `fmtCenti` (MYR-only) cannot. */
+   (RMB/USD/SGD) which `fmtSen` (MYR-only) cannot. */
 
 /* ────────────────────────────────────────────────────────────────────────
    usePersistedOpen — collapsible-panel state persisted per panel in
@@ -683,7 +683,7 @@ const SupplierSkuPricingPanel = ({
     };
     const buckets = new Map<string, BindingRow[]>();
     for (const b of bindings) {
-      const key = classify(productByCode.get(b.material_code));
+      const key = classify(productByCode.get(b.item_code));
       const arr = buckets.get(key) ?? [];
       arr.push(b);
       buckets.set(key, arr);
@@ -1012,10 +1012,10 @@ function bindingHeadColumns(
       key: 'code',
       label: 'Internal Code',
       width: 150,
-      accessor: (b) => <span className={styles.codeCell}>{b.material_code}</span>,
-      searchValue: (b) => b.material_code,
-      filterValue: (b) => b.material_code,
-      sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+      accessor: (b) => <span className={styles.codeCell}>{b.item_code}</span>,
+      searchValue: (b) => b.item_code,
+      filterValue: (b) => b.item_code,
+      sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
     },
     {
       key: 'name',
@@ -1149,9 +1149,9 @@ const DefaultSkuMappingsTable = ({
           <InlineUnitPrice binding={b} supplierId={supplierId} update={update} />
         </CellStop>
       ),
-      searchValue: (b) => fmtCurrency(b.unit_price_centi, b.currency),
-      filterValue: (b) => fmtCurrency(b.unit_price_centi, b.currency),
-      sortFn: (a, b) => a.unit_price_centi - b.unit_price_centi,
+      searchValue: (b) => fmtCurrency(b.unit_price_sen, b.currency),
+      filterValue: (b) => fmtCurrency(b.unit_price_sen, b.currency),
+      sortFn: (a, b) => a.unit_price_sen - b.unit_price_sen,
     },
     ...bindingTailColumns(supplierId, update, remove, onEdit, setAnchor),
   ], [supplierId, update, remove, onEdit, setAnchor]);
@@ -1417,8 +1417,8 @@ const MainStarCell = ({
 /* ────────────────────────────────────────────────────────────────────────
    AnchorCell — the ⚓ "Cost anchor" toggle (migration 0177).
 
-   Marks THIS binding as the cost anchor for its material_code: while anchored,
-   editing either side's cost (this binding's unit_price_centi / price_matrix,
+   Marks THIS binding as the cost anchor for its item_code: while anchored,
+   editing either side's cost (this binding's unit_price_sen / price_matrix,
    or the linked mfg_products base_price_sen / price1_sen) mirrors onto the
    other, so Product-Maintenance cost == this supplier's cost. Setting the
    anchor clears it on any other binding for the same product (one per code,
@@ -1472,7 +1472,7 @@ const AnchorCell = ({
           if (!anchored) {
             // Turning ON pushes this binding's cost onto the product — confirm.
             const ok = await askConfirm({
-              title: `Anchor ${binding.material_code} to this supplier’s cost?`,
+              title: `Anchor ${binding.item_code} to this supplier’s cost?`,
               body:
                 `Product-Maintenance cost will be kept equal to this supplier’s cost ` +
                 `(editing either side updates the other).` +
@@ -1528,7 +1528,7 @@ const RowActionsCell = ({
       onClick={async (e) => {
         e.stopPropagation();
         if (await askConfirm({
-          title: `Remove mapping ${binding.material_code} → ${binding.supplier_sku}?`,
+          title: `Remove mapping ${binding.item_code} → ${binding.supplier_sku}?`,
           confirmLabel: 'Remove',
           danger: true,
         })) {
@@ -1598,12 +1598,12 @@ const InlineUnitPrice = ({
   // and no clobbering from background refetches (see MoneyInput.tsx).
   return (
     <MoneyInput
-      valueSen={binding.unit_price_centi}
+      valueSen={binding.unit_price_sen}
       currency={binding.currency === 'MYR' ? 'RM' : binding.currency}
       onCommit={(sen) => {
         const next = sen ?? 0;
-        if (next === binding.unit_price_centi) return;
-        update.mutate({ supplierId, bindingId: binding.id, unitPriceCenti: next });
+        if (next === binding.unit_price_sen) return;
+        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next });
       }}
     />
   );
@@ -1618,7 +1618,7 @@ const InlineUnitPrice = ({
    We intentionally treat the matrix as a sparse object: clearing a cell sets
    the value to undefined, which `removeMatrixCell` strips out so the row's
    JSON doesn't accumulate `null`s. NULL of the entire object means "fall
-   back to unit_price_centi or 0" downstream (see SO line pricing).
+   back to unit_price_sen or 0" downstream (see SO line pricing).
    ════════════════════════════════════════════════════════════════════════ */
 
 /** Read sen value from a sofa matrix cell. Tolerant of empty / missing
@@ -1808,7 +1808,7 @@ const AutoSuffixButton = ({
     setRunning(true);
     try {
       for (const b of candidates) {
-        const p = productsByCode.get(b.material_code);
+        const p = productsByCode.get(b.item_code);
         if (!p) continue;
         const next = composeSupplierSku(b.supplier_sku, p);
         if (next === b.supplier_sku) continue;
@@ -1879,7 +1879,7 @@ function csvCell(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Centi → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
+/** Sen → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
  *  "0.00" into every cell that's never been filled. */
 function fmtRmCell(centi: number | null | undefined): string {
   if (centi == null || centi === 0) return '';
@@ -1904,7 +1904,7 @@ function bindingKindForCsv(
   binding: BindingRow,
   productByCode: Map<string, MfgProductRow>,
 ): 'sofa' | 'bedframe' | 'other' {
-  const p = productByCode.get(binding.material_code);
+  const p = productByCode.get(binding.item_code);
   if (!p) return 'other';
   if (p.category === 'SOFA') return 'sofa';
   if (p.category === 'BEDFRAME') return 'bedframe';
@@ -1939,7 +1939,7 @@ function exportBindingsCsv(
   // adds rows, never columns, so the file shape is stable across pool edits.
   const lines: string[] = [BINDINGS_LONG_HEADER.map(csvCell).join(',')];
   const scalar = (b: BindingRow) => ({
-    internal_code: b.material_code,
+    internal_code: b.item_code,
     supplier_sku: b.supplier_sku,
     lead_time_days: b.lead_time_days || '',
     moq: b.moq || '',
@@ -1982,7 +1982,7 @@ function exportBindingsCsv(
       if (emitted === 0) emit(b, 'bedframe', '', '', '');
     } else {
       // mattress / accessory / service — a single flat unit price.
-      emit(b, 'other', '', '', fmtRmCell(b.unit_price_centi));
+      emit(b, 'other', '', '', fmtRmCell(b.unit_price_sen));
     }
   }
 
@@ -2149,7 +2149,7 @@ function buildWidePatches(
     applyScalarCols(r, scalarCols, binding, patch);
     if (kind === 'other' && colUnitPriceRm >= 0) {
       const sen = parseRmCell(r[colUnitPriceRm]);
-      if (sen != null && sen !== binding.unit_price_centi) patch.unitPriceCenti = sen;
+      if (sen != null && sen !== binding.unit_price_sen) patch.unitPriceSen = sen;
     }
 
     // Price matrix updates are wholesale (send the merged matrix) so a partial
@@ -2251,7 +2251,7 @@ function buildLongPatches(
     if (kind === 'other') {
       // Flat unit price. Blank price on an "other" row = no change (don't zero
       // a price just because an anchor row carried no value).
-      if (sen != null && sen !== binding.unit_price_centi) acc.patch.unitPriceCenti = sen;
+      if (sen != null && sen !== binding.unit_price_sen) acc.patch.unitPriceSen = sen;
     } else if (kind === 'bedframe') {
       if (tier === 'P1' || tier === 'P2') {
         const m = bedMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as BedframePriceMatrix) };
@@ -2319,7 +2319,7 @@ const ImportBindingsDialog = ({
   );
 
   const bindingByCode = useMemo(
-    () => new Map<string, BindingRow>(bindings.map((b) => [b.material_code, b])),
+    () => new Map<string, BindingRow>(bindings.map((b) => [b.item_code, b])),
     [bindings],
   );
 
@@ -2454,7 +2454,7 @@ type LastPo = {
   poDate: string;
   expectedDate: string | null;
   receivedDate: string | null;
-  totalCenti: number;
+  totalSen: number;
   orderedQty: number;
   receivedQty: number;
 };
@@ -2495,7 +2495,7 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
               <td className={styles.muted}>{po.status}</td>
               <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.orderedQty)}</td>
               <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.receivedQty)}</td>
-              <td className={styles.priceCell}>{fmtCenti(po.totalCenti)}</td>
+              <td className={styles.priceCell}>{fmtSen(po.totalSen)}</td>
               <td className={styles.muted}>{fmtDateOrDash(po.expectedDate)}</td>
               <td className={styles.muted}>{fmtDateOrDash(po.receivedDate)}</td>
               <td>
@@ -2525,10 +2525,10 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
 
 type SkuDraft = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   currency: Currency;
   leadTimeDays: number;
   moq: number;
@@ -2559,10 +2559,10 @@ const SkuFormDialog = ({
     editing
       ? {
           materialKind: editing.material_kind,
-          materialCode: editing.material_code,
+          itemCode: editing.item_code,
           materialName: editing.material_name,
           supplierSku: editing.supplier_sku,
-          unitPriceCenti: editing.unit_price_centi,
+          unitPriceSen: editing.unit_price_sen,
           currency: editing.currency,
           leadTimeDays: editing.lead_time_days,
           moq: editing.moq,
@@ -2570,10 +2570,10 @@ const SkuFormDialog = ({
         }
       : {
           materialKind: 'mfg_product',
-          materialCode: '',
+          itemCode: '',
           materialName: '',
           supplierSku: '',
-          unitPriceCenti: 0,
+          unitPriceSen: 0,
           currency: 'MYR',
           leadTimeDays: 0,
           moq: 0,
@@ -2602,9 +2602,9 @@ const SkuFormDialog = ({
     if (editing) return;
     if (draft.materialKind !== 'mfg_product') return;
     if (supplierSkuRef.current.trim()) return;
-    const p = findProductByCode(draft.materialCode);
+    const p = findProductByCode(draft.itemCode);
     if (!p) return;
-    const next = composeSupplierSku(draft.materialCode, p);
+    const next = composeSupplierSku(draft.itemCode, p);
     if (!next || next === supplierSkuRef.current) return;
     setDraft((s) => ({
       ...s,
@@ -2614,7 +2614,7 @@ const SkuFormDialog = ({
       supplierSku: next,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.materialCode, draft.materialKind, products.data, editing]);
+  }, [draft.itemCode, draft.materialKind, products.data, editing]);
 
   /* #5 — live "becomes →" preview (mirrors the New Models bulk form's
      previewCodes banner). As the operator types the internal code, resolve it
@@ -2624,7 +2624,7 @@ const SkuFormDialog = ({
      manufacturing SKUs that resolve to a known product. */
   const skuPreview = useMemo(() => {
     if (draft.materialKind !== 'mfg_product') return null;
-    const code = draft.materialCode.trim();
+    const code = draft.itemCode.trim();
     if (!code) return null;
     const p = findProductByCode(code);
     if (!p) return null;
@@ -2635,10 +2635,10 @@ const SkuFormDialog = ({
     const overridden = current.length > 0 && current !== composed;
     return { composed, overridden, current };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- findProductByCode reads products.data
-  }, [draft.materialKind, draft.materialCode, draft.supplierSku, products.data]);
+  }, [draft.materialKind, draft.itemCode, draft.supplierSku, products.data]);
 
   const submit = () => {
-    if (!draft.materialCode.trim() || !draft.materialName.trim() || !draft.supplierSku.trim()) {
+    if (!draft.itemCode.trim() || !draft.materialName.trim() || !draft.supplierSku.trim()) {
       notify({ title: 'Internal code, description and supplier SKU are required.', tone: 'error' });
       return;
     }
@@ -2717,8 +2717,8 @@ const SkuFormDialog = ({
               <input
                 className={styles.fieldInput}
                 placeholder="e.g. 1003-(K), AVANI 01"
-                value={draft.materialCode}
-                onChange={(e) => set('materialCode', e.target.value)}
+                value={draft.itemCode}
+                onChange={(e) => set('itemCode', e.target.value)}
               />
             </label>
 
@@ -2769,10 +2769,10 @@ const SkuFormDialog = ({
               <span className={styles.fieldLabel}>Unit Price</span>
               <MoneyInput
                 bare
-                valueSen={draft.unitPriceCenti}
+                valueSen={draft.unitPriceSen}
                 inputClassName={styles.fieldInput}
                 align="left"
-                onCommit={(sen) => set('unitPriceCenti', sen ?? 0)}
+                onCommit={(sen) => set('unitPriceSen', sen ?? 0)}
               />
             </label>
 
@@ -3151,7 +3151,7 @@ type ModelDraft = {
   // into supplier_material_bindings.notes for every SKU fanned out from
   // this Model. Same value applied across the batch.
   description: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
@@ -3219,7 +3219,7 @@ const ModelSkuPickerDialog = ({
   }, [productsQ.data]);
 
   const boundCodes = useMemo(
-    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.material_code}`)),
+    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.item_code}`)),
     [existingBindings],
   );
 
@@ -3295,7 +3295,7 @@ const ModelSkuPickerDialog = ({
           .map((s) => s.code),
         supplierCode: '',
         description: '',
-        unitPriceCenti: avgPrice,
+        unitPriceSen: avgPrice,
         leadTimeDays: 7,
         moq: 1,
         isMainSupplier: false,
@@ -3328,10 +3328,10 @@ const ModelSkuPickerDialog = ({
         const supplierSku = composeSupplierSku(code, sku);
         list.push({
           materialKind: 'mfg_product' as MaterialKind,
-          materialCode: sku.code,
+          itemCode: sku.code,
           materialName: sku.name ?? sku.code,
           supplierSku,
-          unitPriceCenti: d.unitPriceCenti,
+          unitPriceSen: d.unitPriceSen,
           currency: 'MYR' as Currency,
           leadTimeDays: d.leadTimeDays,
           moq: d.moq,
@@ -3656,8 +3656,8 @@ const ModelSkuPickerDialog = ({
                             <td className={styles.tableRight}>
                               <MoneyInput
                                 bare
-                                valueSen={d.unitPriceCenti}
-                                onCommit={(sen) => setDraft(d.modelId, { unitPriceCenti: sen ?? 0 })}
+                                valueSen={d.unitPriceSen}
+                                onCommit={(sen) => setDraft(d.modelId, { unitPriceSen: sen ?? 0 })}
                                 style={{ ...smallInputStyle, width: 100, textAlign: 'right' }}
                               />
                             </td>
@@ -3732,10 +3732,10 @@ const ModelSkuPickerDialog = ({
    ════════════════════════════════════════════════════════════════════════ */
 
 type MultiDraft = {
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
@@ -3788,7 +3788,7 @@ const MultiSkuPickerDialog = ({
   });
 
   const alreadyBound = useMemo(
-    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.material_code}`)),
+    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.item_code}`)),
     [existingBindings],
   );
 
@@ -3810,10 +3810,10 @@ const MultiSkuPickerDialog = ({
     const seeded: Record<string, MultiDraft> = {};
     for (const p of Object.values(picked)) {
       seeded[p.code] = drafts[p.code] ?? {
-        materialCode: p.code,
+        itemCode: p.code,
         materialName: p.name,
         supplierSku: '',
-        unitPriceCenti: p.base_price_sen ?? 0,
+        unitPriceSen: p.base_price_sen ?? 0,
         leadTimeDays: 7,
         moq: 1,
         isMainSupplier: false,
@@ -3830,10 +3830,10 @@ const MultiSkuPickerDialog = ({
   const submit = () => {
     const list: NewBinding[] = Object.values(drafts).map((d) => ({
       materialKind: 'mfg_product' as MaterialKind,
-      materialCode: d.materialCode,
+      itemCode: d.itemCode,
       materialName: d.materialName,
-      supplierSku: d.supplierSku.trim() || d.materialCode,
-      unitPriceCenti: d.unitPriceCenti,
+      supplierSku: d.supplierSku.trim() || d.itemCode,
+      unitPriceSen: d.unitPriceSen,
       currency: 'MYR' as Currency,
       leadTimeDays: d.leadTimeDays,
       moq: d.moq,
@@ -3996,15 +3996,15 @@ const MultiSkuPickerDialog = ({
                   </thead>
                   <tbody>
                     {Object.values(drafts).map((d) => (
-                      <tr key={d.materialCode}>
+                      <tr key={d.itemCode}>
                         <td>
-                          <div className={styles.codeCell}>{d.materialCode}</div>
+                          <div className={styles.codeCell}>{d.itemCode}</div>
                           <div className={styles.muted}>{d.materialName}</div>
                         </td>
                         <td>
                           <input
                             value={d.supplierSku}
-                            onChange={(e) => setDraft(d.materialCode, { supplierSku: e.target.value })}
+                            onChange={(e) => setDraft(d.itemCode, { supplierSku: e.target.value })}
                             placeholder="(blank = same as our code)"
                             style={smallInputStyle}
                           />
@@ -4012,8 +4012,8 @@ const MultiSkuPickerDialog = ({
                         <td className={styles.tableRight}>
                           <MoneyInput
                             bare
-                            valueSen={d.unitPriceCenti}
-                            onCommit={(sen) => setDraft(d.materialCode, { unitPriceCenti: sen ?? 0 })}
+                            valueSen={d.unitPriceSen}
+                            onCommit={(sen) => setDraft(d.itemCode, { unitPriceSen: sen ?? 0 })}
                             style={{ ...smallInputStyle, width: 100, textAlign: 'right' }}
                           />
                         </td>
@@ -4021,7 +4021,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="number"
                             value={d.leadTimeDays}
-                            onChange={(e) => setDraft(d.materialCode, { leadTimeDays: Number(e.target.value) || 0 })}
+                            onChange={(e) => setDraft(d.itemCode, { leadTimeDays: Number(e.target.value) || 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>
@@ -4029,7 +4029,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="number"
                             value={d.moq}
-                            onChange={(e) => setDraft(d.materialCode, { moq: Number(e.target.value) || 0 })}
+                            onChange={(e) => setDraft(d.itemCode, { moq: Number(e.target.value) || 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>
@@ -4037,7 +4037,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="checkbox"
                             checked={d.isMainSupplier}
-                            onChange={(e) => setDraft(d.materialCode, { isMainSupplier: e.target.checked })}
+                            onChange={(e) => setDraft(d.itemCode, { isMainSupplier: e.target.checked })}
                           />
                         </td>
                       </tr>

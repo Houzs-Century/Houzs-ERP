@@ -56,7 +56,7 @@ async function main() {
   }
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; AutoCount snapshot ${snap.exportedAt}, ${snap.rows.length} PO lines carry a FromSODtlKey`);
 
-  const po = await sql`SELECT i.id, p.po_number doc, i.material_code code, i.supplier_sku,
+  const po = await sql`SELECT i.id, p.po_number doc, i.item_code code, i.supplier_sku,
                               i.linked_ac_dtlkey k, i.so_item_id
       FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = 1`;

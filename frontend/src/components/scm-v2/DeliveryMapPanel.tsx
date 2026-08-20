@@ -52,7 +52,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { X, MapPin as MapPinIcon } from 'lucide-react';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import {
   clusterPins,
   legendFromRoutes,
@@ -428,7 +428,7 @@ export type DeliveryMapPanelProps = {
   /** Pin clicked — the page scrolls/highlights the board row. */
   onPinClick?: (ref: string) => void;
   /** Totals line: orders / sets / RM. */
-  totals?: { orders: number; sets: number; revenueCenti: number } | null;
+  totals?: { orders: number; sets: number; revenueSen: number } | null;
   /** The map's active region key ('ALL' or a bucket) — the zero-pin fly-to
    *  target and the wording of the zero-pin note. */
   regionKey?: string | null;
@@ -528,7 +528,7 @@ export function DeliveryMapPanel({
         <span className="text-[12.5px] font-semibold text-ink">{title}</span>
         {totals && (
           <span className="text-[11.5px] text-ink-muted">
-            {totals.orders} order{totals.orders === 1 ? '' : 's'} · {totals.sets} sets · {fmtCenti(totals.revenueCenti)}
+            {totals.orders} order{totals.orders === 1 ? '' : 's'} · {totals.sets} sets · {fmtSen(totals.revenueSen)}
           </span>
         )}
         <span className="flex-1" />
@@ -657,7 +657,7 @@ export function DeliveryMapPanel({
               </div>
             )}
             <div className="text-[11.5px] text-ink-secondary">
-              {card.sets} set{card.sets === 1 ? '' : 's'} · {fmtCenti(card.revenueCenti)}
+              {card.sets} set{card.sets === 1 ? '' : 's'} · {fmtSen(card.revenueSen)}
             </div>
             {card.address && <div className="text-[11px] text-ink-muted">{card.address}</div>}
           </div>

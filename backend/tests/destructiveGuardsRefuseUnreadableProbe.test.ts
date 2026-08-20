@@ -160,8 +160,8 @@ describe('SKU delete refuses when the usage probe could not run', () => {
      BEFORE dropping the SKU, so an unread probe costs stock history. */
   test('?force=true refuses too, and touches no side table', async () => {
     const t = tables();
-    t.inventory_movements.push({ product_code: 'SKU-1', company_id: CO });
-    t.supplier_material_bindings.push({ material_code: 'SKU-1', company_id: CO });
+    t.inventory_movements.push({ item_code: 'SKU-1', company_id: CO });
+    t.supplier_material_bindings.push({ item_code: 'SKU-1', company_id: CO });
     const res = await harness(t, ['inventory_movements'])
       .request('/mfg-products/p-1?force=true', { method: 'DELETE' });
     expect(res.status).toBe(409);
@@ -213,8 +213,8 @@ describe('SKU rename refuses when the duplicate probe could not run', () => {
       { id: 'p-1', code: 'OLD-1', company_id: CO, status: 'ACTIVE' },
       { id: 'p-2', code: 'TAKEN-1', company_id: CO, status: 'ACTIVE' },
     ],
-    supplier_material_bindings: [{ material_code: 'OLD-1', material_kind: 'mfg_product', company_id: CO }],
-    inventory_movements: [{ product_code: 'OLD-1', company_id: CO }],
+    supplier_material_bindings: [{ item_code: 'OLD-1', material_kind: 'mfg_product', company_id: CO }],
+    inventory_movements: [{ item_code: 'OLD-1', company_id: CO }],
     master_price_history: [] as Row[],
   });
 
@@ -230,7 +230,7 @@ describe('SKU rename refuses when the duplicate probe could not run', () => {
     const res = await rename(t, 'NEW-1');
     expect(res.status).toBe(200);
     expect(t.mfg_products.find((p) => p.id === 'p-1')!.code).toBe('NEW-1');
-    expect(t.supplier_material_bindings[0]!.material_code).toBe('NEW-1');
+    expect(t.supplier_material_bindings[0]!.item_code).toBe('NEW-1');
   });
 
   test('a taken code is refused, as before, and nothing cascades', async () => {
@@ -239,7 +239,7 @@ describe('SKU rename refuses when the duplicate probe could not run', () => {
     expect(res.status).toBe(409);
     expect((await body(res)).error).toBe('duplicate_code');
     expect(t.mfg_products.find((p) => p.id === 'p-1')!.code).toBe('OLD-1');
-    expect(t.supplier_material_bindings[0]!.material_code).toBe('OLD-1');
+    expect(t.supplier_material_bindings[0]!.item_code).toBe('OLD-1');
   });
 
   /* THE REGRESSION. An unreadable probe used to read as "no duplicate", and the
@@ -250,7 +250,7 @@ describe('SKU rename refuses when the duplicate probe could not run', () => {
     const res = await rename(t, 'TAKEN-1', ['mfg_products#neq']);
     expect(res.status).toBe(409);
     expect((await body(res)).error).toBe('duplicate_check_failed');
-    expect(t.supplier_material_bindings[0]!.material_code).toBe('OLD-1');
-    expect(t.inventory_movements[0]!.product_code).toBe('OLD-1');
+    expect(t.supplier_material_bindings[0]!.item_code).toBe('OLD-1');
+    expect(t.inventory_movements[0]!.item_code).toBe('OLD-1');
   });
 });

@@ -104,6 +104,41 @@ export const liftChargeableUnits = (floorsCount: number, itemsCount: number): nu
  *   · additional (operator free-form)                     → SVC-DELIVERY-ADD
  * Zero components produce no line; Σ lines === fee.total always.
  */
+/** What the OPERATOR owns on the existing SVC-DELIVERY* lines, recovered before
+ *  a rebuild discards them (2026-08-19). Two things and only two:
+ *
+ *  · the free-form additional fee — recovered from the GROSS side (unit × qty,
+ *    falling back to total for pre-discount rows). With discounts surviving,
+ *    total_sen is NET, and recovering the net as the next gross would compound
+ *    the reduction on every save (50 → 30 → 10 across three edits);
+ *  · per-line DISCOUNTS, keyed by item_code. The line PATCH accepts a bounded
+ *    discount on any line, delivery included — but the rebuild used to write
+ *    discount_sen: 0 over it, so the one sanctioned way to REDUCE a delivery
+ *    fee was silently undone by the very next derivation ("250 → 125 nuked the
+ *    line to 0"). Typing a lower unit price never could hold — the fee is
+ *    derived, one truth (owner 2026-08-07) — so the discount is the operator's
+ *    reduction, expressed like every other price cut on an SO.
+ *
+ *  The caller clamps each recovered discount to the REBUILT line's own total
+ *  (a fee line can never go negative), and a component that disappears on
+ *  rebuild drops its discount rather than migrating it to money it never
+ *  named. */
+export function recoverOperatorDeliveryState(
+  deliveryLines: Array<{ item_code: string; total_sen: number | null; unit_price_sen?: number | null; discount_sen?: number | null; qty?: number | null }>,
+): { additionalSen: number; discountByCode: Map<string, number> } {
+  const additionalSen = deliveryLines
+    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
+    .reduce((s, l) => s + (l.unit_price_sen != null
+      ? Number(l.unit_price_sen) * Math.max(1, Number(l.qty ?? 1))
+      : Number(l.total_sen ?? 0)), 0);
+  const discountByCode = new Map<string, number>();
+  for (const l of deliveryLines) {
+    const d = Math.max(0, Number(l.discount_sen ?? 0));
+    if (d > 0) discountByCode.set(l.item_code, (discountByCode.get(l.item_code) ?? 0) + d);
+  }
+  return { additionalSen, discountByCode };
+}
+
 export function buildDeliveryFeeServiceLines(
   fee: SoDeliveryFeeResult,
   crossCategorySourceDocNo?: string | null,

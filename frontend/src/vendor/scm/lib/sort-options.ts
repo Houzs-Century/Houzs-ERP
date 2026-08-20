@@ -34,7 +34,7 @@ const TEXT_KEYS = [
   'label', 'name', 'title',
   'material_name', 'materialName',
   'value',
-  'code', 'material_code', 'materialCode',
+  'code', 'item_code', 'itemCode',
   'supplier_sku', 'supplierSku',
   'account_code', 'accountCode',
   'fabric_description', 'fabricDescription',

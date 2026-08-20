@@ -94,8 +94,8 @@ describe("fieldChange", () => {
   test("keeps money as the integer sen it was given", () => {
     // Money in this codebase is INTEGER SEN. Recording a formatted string would
     // make the history unsummable and locale-dependent.
-    const c = fieldChange("totalCenti", 123450, 99900);
-    expect(c).toEqual({ field: "totalCenti", from: 123450, to: 99900 });
+    const c = fieldChange("totalSen", 123450, 99900);
+    expect(c).toEqual({ field: "totalSen", from: 123450, to: 99900 });
     expect(typeof c?.from).toBe("number");
     expect(typeof c?.to).toBe("number");
   });
@@ -104,7 +104,7 @@ describe("fieldChange", () => {
     // Postgres numerics can arrive as strings through PostgREST; a round-trip
     // must not manufacture a phantom edit in the history.
     expect(fieldChange("exchangeRate", "1", 1)).toBeNull();
-    expect(fieldChange("totalCenti", "500", 500)).toBeNull();
+    expect(fieldChange("totalSen", "500", 500)).toBeNull();
   });
 });
 
@@ -152,25 +152,25 @@ describe("diffFields is the SHARED differ, re-exported not reimplemented", () =>
   // these expectations are what should fail.
   const ALIASES: Array<[string, string]> = [
     ["payeeName", "payee_name"],
-    ["totalCenti", "total_centi"],
+    ["totalSen", "total_sen"],
     ["notes", "notes"],
   ];
 
   test("diffs camel patch against snake row", () => {
     expect(diffFields(
-      { payee_name: "Acme", total_centi: 1000, notes: null },
-      { payeeName: "Beta", totalCenti: 2000 },
+      { payee_name: "Acme", total_sen: 1000, notes: null },
+      { payeeName: "Beta", totalSen: 2000 },
       ALIASES,
     )).toEqual([
       { field: "payeeName", from: "Acme", to: "Beta" },
-      { field: "totalCenti", from: 1000, to: 2000 },
+      { field: "totalSen", from: 1000, to: 2000 },
     ]);
   });
 
   test("a field absent from the patch is not a change to null", () => {
     // PATCH is partial: an omitted key means "leave it alone", and recording it
     // as a clear would make every partial edit look destructive.
-    expect(diffFields({ payee_name: "Acme", total_centi: 1000 }, { payeeName: "Acme" }, ALIASES))
+    expect(diffFields({ payee_name: "Acme", total_sen: 1000 }, { payeeName: "Acme" }, ALIASES))
       .toEqual([]);
   });
 
@@ -183,43 +183,43 @@ describe("diffFields is the SHARED differ, re-exported not reimplemented", () =>
 describe("a document line's cost is gated on read by the field NAME it was written with", () => {
   /* The delivery-order line handlers record their diff with the API's camelCase
      names, and AUDIT_FINANCE_FIELDS is keyed on exactly those. That coupling is
-     invisible at the call site — a line recorded as `unit_cost_centi` or
+     invisible at the call site — a line recorded as `unit_cost_sen` or
      `unitCost` would sail straight past the strip and hand every non-finance
      reader the cost basis, which is the #600/#625/#632 shape one endpoint over.
      These tests are the guard on the spelling. */
 
   const DO_LINE_FIELD_NAMES = [
-    "qty", "unitPriceCenti", "discountCenti", "unitCostCenti",
-    "lineTotalCenti", "itemCode", "itemGroup", "description",
+    "qty", "unitPriceSen", "discountSen", "unitCostSen",
+    "lineTotalSen", "itemCode", "itemGroup", "description",
     "uom", "notes", "rackId", "lineDeliveryDate",
   ];
 
   test("the cost field a line diff emits is one the strip knows", () => {
-    expect(AUDIT_FINANCE_FIELDS.has("unitCostCenti")).toBe(true);
-    expect(DO_LINE_FIELD_NAMES).toContain("unitCostCenti");
+    expect(AUDIT_FINANCE_FIELDS.has("unitCostSen")).toBe(true);
+    expect(DO_LINE_FIELD_NAMES).toContain("unitCostSen");
   });
 
   test("stripping a line-edit entry removes the cost and keeps the rest", () => {
     const line = diffFields(
-      { qty: 2, unit_price_centi: 50000, unit_cost_centi: 30000, item_code: "BF-001" },
-      { qty: 3, unitPriceCenti: 55000, unitCostCenti: 31000 },
+      { qty: 2, unit_price_sen: 50000, unit_cost_sen: 30000, item_code: "BF-001" },
+      { qty: 3, unitPriceSen: 55000, unitCostSen: 31000 },
       [
         ["qty", "qty"],
-        ["unitPriceCenti", "unit_price_centi"],
-        ["unitCostCenti", "unit_cost_centi"],
+        ["unitPriceSen", "unit_price_sen"],
+        ["unitCostSen", "unit_cost_sen"],
         ["itemCode", "item_code"],
       ],
     );
     const entries = [{ field_changes: line }];
     stripAuditFinance(entries);
     const fields = (entries[0].field_changes as Array<{ field: string }>).map((f) => f.field);
-    expect(fields).toEqual(["qty", "unitPriceCenti"]);
+    expect(fields).toEqual(["qty", "unitPriceSen"]);
   });
 
   test("the price a customer is charged is NOT stripped", () => {
     // The line #625 drew: what the order is worth is visible to everyone who
     // passes the access gate; what it COST is not.
-    for (const f of ["qty", "unitPriceCenti", "discountCenti", "lineTotalCenti"]) {
+    for (const f of ["qty", "unitPriceSen", "discountSen", "lineTotalSen"]) {
       expect(AUDIT_FINANCE_FIELDS.has(f)).toBe(false);
     }
   });
@@ -261,19 +261,19 @@ describe("every line vocabulary is readable and diffable", () => {
   });
 
   test.each(LINE_VOCABULARIES)("%s: the cost column is recorded under the GATED name", (_l, fields) => {
-    /* Every one of these four documents carries unit_cost_centi and every line
+    /* Every one of these four documents carries unit_cost_sen and every line
        handler diffs it. If it is emitted under any other spelling the strip
        misses it and the cost basis reaches every reader who can see the
        document — the #600/#625/#632 shape, one endpoint over. */
-    const costEntry = fields.find(([, snake]) => snake === "unit_cost_centi");
+    const costEntry = fields.find(([, snake]) => snake === "unit_cost_sen");
     expect(costEntry).toBeDefined();
     expect(AUDIT_FINANCE_FIELDS.has(costEntry![0])).toBe(true);
   });
 
   test.each(LINE_VOCABULARIES)("%s: what the document is WORTH stays visible", (_l, fields) => {
-    // line_total_centi is the counterpart to the rule above: it is what the
+    // line_total_sen is the counterpart to the rule above: it is what the
     // paper says, not what it cost, and #625 ruled it visible.
-    const totalEntry = fields.find(([, snake]) => snake === "line_total_centi");
+    const totalEntry = fields.find(([, snake]) => snake === "line_total_sen");
     expect(totalEntry).toBeDefined();
     expect(AUDIT_FINANCE_FIELDS.has(totalEntry![0])).toBe(false);
   });
@@ -285,27 +285,27 @@ describe("the SI line vocabulary carries BOTH derived money columns", () => {
        stores the cost basis it was derived from. Both are cost data; recording
        either under an ungated name hands a reader the margin on every edit. */
     const byColumn = new Map(SI_LINE_AUDIT_FIELDS.map(([camel, snake]) => [snake, camel]));
-    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_cost_centi")!)).toBe(true);
-    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_margin_centi")!)).toBe(true);
-    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_total_centi")!)).toBe(false);
+    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_cost_sen")!)).toBe(true);
+    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_margin_sen")!)).toBe(true);
+    expect(AUDIT_FINANCE_FIELDS.has(byColumn.get("line_total_sen")!)).toBe(false);
   });
 
   test("stripping an SI line edit leaves the charged amounts and removes the basis", () => {
     const line = diffFields(
       {
-        qty: 2, unit_price_centi: 50000, unit_cost_centi: 30000,
-        line_total_centi: 100000, line_cost_centi: 60000, line_margin_centi: 40000,
+        qty: 2, unit_price_sen: 50000, unit_cost_sen: 30000,
+        line_total_sen: 100000, line_cost_sen: 60000, line_margin_sen: 40000,
       },
       {
-        qty: 3, unitPriceCenti: 55000, unitCostCenti: 31000,
-        lineTotalCenti: 165000, lineCostCenti: 93000, lineMarginCenti: 72000,
+        qty: 3, unitPriceSen: 55000, unitCostSen: 31000,
+        lineTotalSen: 165000, lineCostSen: 93000, lineMarginSen: 72000,
       },
       SI_LINE_AUDIT_FIELDS,
     );
     const entries = [{ field_changes: line }];
     stripAuditFinance(entries);
     const fields = (entries[0].field_changes as Array<{ field: string }>).map((f) => f.field);
-    expect(fields).toEqual(["qty", "unitPriceCenti", "lineTotalCenti"]);
+    expect(fields).toEqual(["qty", "unitPriceSen", "lineTotalSen"]);
   });
 });
 
@@ -316,8 +316,8 @@ describe("a line delete records the vanished values as from -> null", () => {
      route-tested (Postgres via Hyperdrive vs a D1 harness). */
   test("every audited column becomes a from-value with a null to-value", () => {
     const doomed: Record<string, unknown> = {
-      qty: 4, unit_price_centi: 25000, unit_cost_centi: 12000,
-      line_total_centi: 100000, item_code: "BF-009", uom: "UNIT",
+      qty: 4, unit_price_sen: 25000, unit_cost_sen: 12000,
+      line_total_sen: 100000, item_code: "BF-009", uom: "UNIT",
     };
     const changes = compactChanges(
       SI_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, doomed[snake] ?? null, null)),
@@ -325,7 +325,7 @@ describe("a line delete records the vanished values as from -> null", () => {
     // Only the columns that HAD a value produce a pair — a null-to-null column
     // is not a change and must not pad the history.
     expect(changes.map((ch) => ch.field)).toEqual([
-      "qty", "unitPriceCenti", "unitCostCenti", "lineTotalCenti", "itemCode", "uom",
+      "qty", "unitPriceSen", "unitCostSen", "lineTotalSen", "itemCode", "uom",
     ]);
     for (const ch of changes) expect(ch.to).toBeNull();
     expect(changes.find((ch) => ch.field === "qty")?.from).toBe(4);
@@ -336,9 +336,9 @@ describe("a line delete records the vanished values as from -> null", () => {
     // zero were folded in with null the deletion would record nothing at all.
     const changes = compactChanges(
       SI_LINE_AUDIT_FIELDS.map(([camel, snake]) =>
-        fieldChange(camel, ({ qty: 1, line_total_centi: 0 } as Record<string, unknown>)[snake] ?? null, null)),
+        fieldChange(camel, ({ qty: 1, line_total_sen: 0 } as Record<string, unknown>)[snake] ?? null, null)),
     );
-    expect(changes.map((ch) => ch.field)).toEqual(["qty", "lineTotalCenti"]);
+    expect(changes.map((ch) => ch.field)).toEqual(["qty", "lineTotalSen"]);
   });
 });
 
@@ -349,16 +349,16 @@ describe("a CREATE records the document as null -> value", () => {
      back as nothing and the helper returns before writing. What is asserted here
      is the shape it writes when the row DOES survive. */
   test("money is the integer sen off the column, not a formatted amount", () => {
-    const row = { status: "POSTED", total_centi: 123450, currency: "MYR" };
+    const row = { status: "POSTED", total_sen: 123450, currency: "MYR" };
     const changes = compactChanges([
       fieldChange("status", null, row.status),
       fieldChange("currency", null, row.currency),
-      fieldChange("totalCenti", null, row.total_centi),
+      fieldChange("totalSen", null, row.total_sen),
     ]);
     expect(changes).toEqual([
       { field: "status", from: null, to: "POSTED" },
       { field: "currency", from: null, to: "MYR" },
-      { field: "totalCenti", from: null, to: 123450 },
+      { field: "totalSen", from: null, to: 123450 },
     ]);
     expect(typeof changes[2].to).toBe("number");
   });
@@ -379,8 +379,8 @@ describe("a CREATE records the document as null -> value", () => {
 
 describe("auditSelectGaps", () => {
   test("names the missing column rather than answering false", () => {
-    expect(auditSelectGaps([["qty", "qty"], ["unitCostCenti", "unit_cost_centi"]], "qty, item_code"))
-      .toEqual(["unit_cost_centi"]);
+    expect(auditSelectGaps([["qty", "qty"], ["unitCostSen", "unit_cost_sen"]], "qty, item_code"))
+      .toEqual(["unit_cost_sen"]);
   });
 
   test("tolerates the spacing PostgREST tolerates", () => {

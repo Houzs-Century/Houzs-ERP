@@ -326,21 +326,21 @@ async function forCompany(CO) {
 async function dumpOrder(CO, byDoc) {
   if (!DOC && !AMOUNT) return;
   const hdr = DOC
-    ? await sql`SELECT doc_no, status, company_id, branding, local_total_centi,
+    ? await sql`SELECT doc_no, status, company_id, branding, local_total_sen,
                        processing_date::text AS processing_date, proceeded_at::text AS proceeded_at,
                        customer_delivery_date::text AS cdd
                   FROM scm.mfg_sales_orders
                  WHERE company_id = ${CO}::bigint AND doc_no = ${DOC}`
-    : await sql`SELECT doc_no, status, company_id, branding, local_total_centi,
+    : await sql`SELECT doc_no, status, company_id, branding, local_total_sen,
                        processing_date::text AS processing_date, proceeded_at::text AS proceeded_at,
                        customer_delivery_date::text AS cdd
                   FROM scm.mfg_sales_orders
-                 WHERE company_id = ${CO}::bigint AND local_total_centi = ${Number(AMOUNT)}::bigint
+                 WHERE company_id = ${CO}::bigint AND local_total_sen = ${Number(AMOUNT)}::bigint
                  ORDER BY doc_no LIMIT 5`;
   note(`\n[7] named-order dump, company ${CO} — ${hdr.length} match(es)  (no customer identity printed)`);
   for (const h of hdr) {
     const d = byDoc.get(h.doc_no);
-    note(`\n    ${h.doc_no}  status=${h.status}  branding=${JSON.stringify(h.branding ?? '')}  total_centi=${h.local_total_centi}`);
+    note(`\n    ${h.doc_no}  status=${h.status}  branding=${JSON.stringify(h.branding ?? '')}  total_sen=${h.local_total_sen}`);
     note(`      processing_date=${h.processing_date ?? '(null)'}  proceeded_at=${h.proceeded_at ?? '(null)'}  customer_delivery_date=${h.cdd ?? '(null)'}`);
     note(`      DERIVED stock_remark = ${JSON.stringify(d?.sum?.stockRemark ?? '(not in live set)')}`);
     if (d?.sum) note(`      main ${d.sum.mainReady}/${d.sum.mainCount}   acc ${d.sum.accReady}/${d.sum.accCount}   isShipReady=${d.sum.isShipReady}`);

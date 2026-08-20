@@ -52,7 +52,7 @@ export const REQUIRED_VARIANT_AXES_BY_CATEGORY: Record<string, readonly VariantA
   sofa: [
     // Backend coordinators fill seatHeight; the POS configurator captures the
     // same physical pick as `depth` (always set — Configurator activeDepth).
-    { key: 'seatHeight',  label: 'Seat Height',  aliases: ['seatHeight', 'depth'] },
+    { key: 'seatHeight',  label: 'Seat Size',    aliases: ['seatHeight', 'depth', 'seatSize'] },
     // Backend fills legHeight; POS sends sofaLegHeight (PR #473 leg picker).
     // NOT required: the sofa Leg Height always defaults to the "Default" option
     // (RM 0.00) at create/edit time, so it is never empty and must never block

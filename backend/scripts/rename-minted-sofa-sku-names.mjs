@@ -34,7 +34,7 @@ try {
       const b = await tx`UPDATE scm.supplier_material_bindings
         SET material_name = regexp_replace(material_name, '^ZANOTTI SOFA ', 'SOFA '), updated_at = now()
         WHERE company_id = ${co.id} AND material_kind = 'mfg_product'
-          AND material_code = ANY(${codes}) AND material_name LIKE 'ZANOTTI SOFA %'`;
+          AND item_code = ANY(${codes}) AND material_name LIKE 'ZANOTTI SOFA %'`;
       if (p.count !== rows.length) throw new Error(`expected ${rows.length} product renames, got ${p.count} — rolled back`);
       note(`APPLIED: ${p.count} product names + ${b.count} binding names aligned`);
     });

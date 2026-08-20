@@ -88,7 +88,7 @@ describe('company grants cannot exceed the grantor', () => {
  * STAMPS the active company, which is not a predicate — and
  * fn_stock_transfer_apply (mig 0192) writes the OUT movement at
  * from_warehouse_id, where the FIFO consumer keys on
- * (warehouse_id, product_code, variant_key) with NO company argument. So the
+ * (warehouse_id, item_code, variant_key) with NO company argument. So the
  * other company's lots were consumed at their cost and reopened as ours. */
 type Row = Record<string, any>;
 class FakeQuery {

@@ -72,7 +72,7 @@ type DoItem = {
   description: string | null;
   qty: number;
   m3_milli: number | null;
-  unit_price_centi: number;
+  unit_price_sen: number;
   /* Variant info snapshotted from the SO (migration 0058) — drives the unified
      variant line so DO/Consignment Note read like SO/PO/etc. */
   item_group?: string | null;
@@ -647,7 +647,7 @@ export async function renderDeliveryOrderInto(
   // document (Commander 2026-06-16).
   const fabric = await loadCustomerFabricMaps(items);
   // DO is QUANTITY-only (Owner 2026-06-26) — a delivery doc shows quantity /
-  // volume, not money. The unit_price_centi still flows to the Sales Invoice.
+  // volume, not money. The unit_price_sen still flows to the Sales Invoice.
   const listCell = (vals?: string[] | null): string =>
     vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
   const descOf = (it: DoItem): string =>

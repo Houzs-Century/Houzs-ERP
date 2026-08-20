@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateConvertShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
@@ -85,7 +86,7 @@ const META: Record<
 };
 
 // ── Money / helpers ────────────────────────────────────────────────────────
-// Money is integer *_centi → shared fmtCenti() (includes the "RM " symbol).
+// Money is integer *_sen → shared fmtSen() (includes the "RM " symbol).
 // Dates via the shared TZ-aware numeric DD/MM/YYYY helper.
 const dm = (d: string | null | undefined) => formatDate(d);
 /** First defined-and-non-empty of the candidates (pg driver camelCases result
@@ -98,6 +99,16 @@ const pick = (row: any, ...keys: string[]) => {
   return undefined;
 };
 const str = (v: unknown): string => (v == null ? "" : String(v));
+/** The line's live variant summary — the SAME shared buildVariantSummary the
+ *  desktop pickers render through VariantDescription, so a sofa module reads
+ *  identically on the phone and on the desk ("BF-01 / SEAT 24 / LEG 6\"").
+ *  Dual-reads itemGroup/item_group and variants/… through `pick` like every
+ *  other field here. Returns '' when the line carries no variants. */
+const variantLineOf = (row: unknown): string =>
+  buildVariantSummary(
+    str(pick(row, "itemGroup", "item_group")) || null,
+    (pick(row, "variants") as Record<string, unknown> | undefined) ?? null,
+  );
 /** Clamp a typed qty to 1..max integer (guards NaN / out-of-range). */
 const clampQty = (raw: string, max: number): number => {
   const n = Math.floor(Number(String(raw).replace(/[^\d.]/g, "")));
@@ -109,25 +120,34 @@ const clampQty = (raw: string, max: number): number => {
 // ── Source-list row shapes (only the fields we read) ─────────────────────────
 type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null;
-  so_date: string | null; local_total_centi: number | null; total_revenue_centi: number | null;
+  so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
-  do_date: string | null; local_total_centi: number | null;
+  do_date: string | null; local_total_sen: number | null;
 };
 type PoListRow = {
   id: string; po_number: string; status: string | null; po_date: string | null;
-  total_centi: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
+  total_sen: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
 };
 
 // ── Convertible-line shapes (from the remaining GETs) ────────────────────────
+/* itemGroup + variants ride on ALL FOUR of these reads already — they are not a
+   new request. Verified against the handlers, not against a payload type:
+     · deliverable-so-lines  → soDeliverableRemaining, routes/delivery-orders-mfg.ts:2258 (itemGroup) / :2266 (variants)
+     · invoiceable-do-lines  → doLineRemaining,        lib/do-line-remaining.ts:292 (itemGroup) / :303 (variants)
+     · outstanding-so-items  → routes/mfg-purchase-orders.ts:694 (itemGroup) / :699 (variants)
+     · outstanding-po-items  → lib/outstanding-po-lines.ts:418 (variants)
+   The mobile wizard simply threw them away at the map. */
 type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
-  qty: number; remaining: number; unitPriceCenti: number; debtorName: string | null;
+  itemGroup: string | null; variants: unknown;
+  qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
-  remaining: number; unitPriceCenti: number; debtorName: string | null;
+  itemGroup: string | null; variants: unknown;
+  remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 // SO→PO — the OUTSTANDING axis (qty − po_qty_picked + sofa MRP rollup), from
 // /mfg-purchase-orders/outstanding-so-items (the SAME stock-aware shortage view
@@ -136,7 +156,8 @@ type DoInvoiceableLine = {
 // picked SO's doc_no client-side.
 type OutstandingSoLine = {
   soItemId: string; soDocNo: string; itemCode: string; description: string | null;
-  qty: number; poQtyPicked: number; remainingQty: number; unitPriceCenti: number;
+  itemGroup: string | null; variants: unknown;
+  qty: number; poQtyPicked: number; remainingQty: number; unitPriceSen: number;
 };
 // GRN — outstanding PO lines (qty − received_qty > 0) from
 // /grns/outstanding-po-items (the SAME source as the desktop GrnFromPo picker).
@@ -149,7 +170,7 @@ type OutstandingPoLine = {
   supplierSku: string | null;
   description: string | null; itemGroup: string | null; variants: unknown;
   deliveryDate: string | null; warehouseLocationId: string | null;
-  qty: number; receivedQty: number; remainingQty: number; unitPriceCenti: number;
+  qty: number; receivedQty: number; remainingQty: number; unitPriceSen: number;
 };
 
 // A GRN pick line in the local UI — the outstanding PO line + a per-line
@@ -159,7 +180,7 @@ type OutstandingPoLine = {
 type GrnPickLine = {
   poItemId: string; poId: string; supplierId: string;
   itemCode: string; supplierSku: string | null; description: string | null; itemGroup: string | null;
-  variants: unknown; unitPriceCenti: number;
+  variants: unknown; unitPriceSen: number;
   origQty: number;       // ordered qty
   remaining: number;     // outstanding (qty − received_qty)
   checked: boolean;
@@ -170,9 +191,18 @@ type GrnPickLine = {
 type PickLine = {
   lineId: string;        // soItemId | doItemId
   label: string;         // item code / description
+  /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+     A sofa model decomposes into modules that share a name, so `label` alone
+     renders three identical-looking rows and the operator cannot tell which one
+     he is converting. This is the SAME live buildVariantSummary string the
+     desktop pickers render through VariantDescription — computed at map time so
+     the row render stays pure. Empty ('') on a line with no variants, and the
+     row then omits the line entirely (mobile convention, see
+     MobileModuleDetail.tsx:491 — no "Standard" filler on a phone). */
+  variantLine: string;
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
-  unitPriceCenti: number;
+  unitPriceSen: number;
   checked: boolean;
   qty: string;           // as typed (the qty to convert this pass)
 };
@@ -259,11 +289,13 @@ export function MobileConvertWizard({
   // received / cancelled POs (only open / partially_received can be received).
   const sources = useMemo(() => {
     const data = sourceQuery.data as any;
-    /* ONE DECLARATION, NOT A THIRD OPINION. This was `!== DRAFT && !== CANCELLED`,
-       which is wider than what the server accepts: sales-invoices.ts refuses a
-       LOADED delivery with `do_not_shipped`, so the phone offered a document the
-       server would reject. The desktop, the server gate and the server's own
-       picker all read SI_TRANSFERABLE_DO_STATES; this now does too. */
+    /* ONE DECLARATION, NOT A THIRD OPINION. This was a hand-typed
+       `!== DRAFT && !== CANCELLED` — a fourth spelling of the same rule, kept in
+       step with the other three only by whoever remembered. The desktop, the
+       server gate (siTransferRefusal) and the server's own DO picker all read
+       SI_TRANSFERABLE_DO_STATES; this now does too, so the phone offers exactly
+       what the create path accepts. The set includes LOADED (owner 2026-08-19,
+       #2485) and excludes INVOICED, which nothing ever writes. */
     const isProcessible = (status: string | null) =>
       (SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(str(status).toUpperCase());
     const isReceivablePo = (status: string | null) => {
@@ -325,9 +357,10 @@ export function MobileConvertWizard({
           .map<PickLine>((l) => ({
             lineId: l.soItemId,
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+            variantLine: variantLineOf(l),
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
-            unitPriceCenti: Number(l.unitPriceCenti) || 0,
+            unitPriceSen: Number(l.unitPriceSen) || 0,
             checked: true,
             qty: String(Number(l.remainingQty) || 0),
           }));
@@ -339,9 +372,10 @@ export function MobileConvertWizard({
         return (res.lines ?? []).map<PickLine>((l) => ({
           lineId: l.soItemId,
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+          variantLine: variantLineOf(l),
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
-          unitPriceCenti: Number(l.unitPriceCenti) || 0,
+          unitPriceSen: Number(l.unitPriceSen) || 0,
           checked: true,
           qty: String(Number(l.remaining) || 0),
         }));
@@ -355,9 +389,10 @@ export function MobileConvertWizard({
       return (res.lines ?? []).map<PickLine>((l) => ({
         lineId: l.doItemId,
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+        variantLine: variantLineOf(l),
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
-        unitPriceCenti: Number(l.unitPriceCenti) || 0,
+        unitPriceSen: Number(l.unitPriceSen) || 0,
         checked: true,
         qty: String(Number(l.remaining) || 0),
       }));
@@ -377,8 +412,8 @@ export function MobileConvertWizard({
     () => lines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [lines],
   );
-  const pickedTotalCenti = useMemo(
-    () => picks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const pickedTotalSen = useMemo(
+    () => picks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [picks],
   );
 
@@ -421,7 +456,7 @@ export function MobileConvertWizard({
           description: (pick(r, "description") as string | undefined) ?? null,
           itemGroup: (pick(r, "itemGroup") as string | undefined) ?? null,
           variants: r.variants ?? null,
-          unitPriceCenti: Number(r.unitPriceCenti) || 0,
+          unitPriceSen: Number(r.unitPriceSen) || 0,
           origQty: Number(r.qty) || 0,
           remaining: Number(r.remainingQty) || 0,
           checked: true,
@@ -455,8 +490,8 @@ export function MobileConvertWizard({
     () => grnLines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [grnLines],
   );
-  const grnPickedTotalCenti = useMemo(
-    () => grnPicks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const grnPickedTotalSen = useMemo(
+    () => grnPicks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [grnPicks],
   );
 
@@ -526,12 +561,12 @@ export function MobileConvertWizard({
             return {
               purchaseOrderItemId: l.poItemId,
               materialKind: "mfg_product",
-              materialCode: l.itemCode,
+              itemCode: l.itemCode,
               materialName: l.description || l.itemCode,
               qtyReceived: q,
               qtyAccepted: q,
               qtyRejected: 0,
-              unitPriceCenti: l.unitPriceCenti,
+              unitPriceSen: l.unitPriceSen,
               itemGroup: l.itemGroup,
               variants: l.variants,
             };
@@ -699,12 +734,12 @@ export function MobileConvertWizard({
             {meta.hasLinePicker ? (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{picks.length} {picks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(pickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickedTotalSen)}</span>
               </>
             ) : (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{grnPicks.length} {grnPicks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(grnPickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(grnPickedTotalSen)}</span>
               </>
             )}
           </div>
@@ -765,7 +800,7 @@ function SourceStep({
                 <span className="so-k">Date</span>
                 <span className="so-v">{dm(r.po_date)}</span>
                 <span className="so-k">Total</span>
-                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(r.total_centi)}</span>
+                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(r.total_sen)}</span>
               </div>
               {on && <Check />}
             </div>
@@ -783,8 +818,8 @@ function SourceStep({
         const docNo = kind === "so" ? str(r.doc_no) : str(r.do_number);
         const date = kind === "so" ? r.so_date : r.do_date;
         const totalC = kind === "so"
-          ? (r.local_total_centi ?? r.total_revenue_centi)
-          : r.local_total_centi;
+          ? (r.local_total_sen ?? r.total_revenue_sen)
+          : r.local_total_sen;
         return (
           <div key={id} onClick={() => onPickSingle(id)} className="so-row">
             <div className="so-row-head">
@@ -801,7 +836,7 @@ function SourceStep({
               <span className="so-k">Date</span>
               <span className="so-v">{dm(date)}</span>
               <span className="so-k">Total</span>
-              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(totalC)}</span>
+              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(totalC)}</span>
             </div>
           </div>
         );
@@ -866,9 +901,16 @@ function LinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
+                  {/* Owner rule 2026-08-19 — the variant summary, so three sofa
+                      modules under one model name are three DIFFERENT rows on
+                      the phone too. Wraps (no ellipsis): a truncated
+                      "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
+                  {l.variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{l.variantLine}</span>
+                  )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -904,7 +946,7 @@ function LinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>
@@ -965,6 +1007,7 @@ function GrnLinesStep({
           const ofQty = l.origQty > 0 ? l.origQty : l.remaining;
           const dec = () => onSetLine(l.poItemId, { qty: String(Math.max(1, qtyNum - 1)) });
           const inc = () => onSetLine(l.poItemId, { qty: String(clampQty(String(qtyNum + 1), l.remaining)) });
+          const variantLine = variantLineOf(l);
           return (
             <div key={l.poItemId} className="card" style={{ padding: "11px 12px", borderColor: l.checked ? "var(--teal)" : undefined }}>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
@@ -976,13 +1019,21 @@ function GrnLinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
+                  {/* Owner rule 2026-08-19 — RECEIVING is where getting the
+                      module wrong costs the most: the stock lands under a code
+                      whose variants nobody checked. GrnPickLine already carried
+                      itemGroup + variants (they are needed to CREATE the GRN
+                      line); only the render was missing them. */}
+                  {variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{variantLine}</span>
+                  )}
                   {l.supplierSku && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       Supplier SKU: {l.supplierSku}
                     </span>
                   )}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -1017,7 +1068,7 @@ function GrnLinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>

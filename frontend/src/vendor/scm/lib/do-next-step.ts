@@ -78,15 +78,23 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 // salesperson may never take is noise and leaks org structure.
 // ----------------------------------------------------------------------------
 
-/** Statuses a Sales Invoice can be raised from. */
-/* THE FIVE SHIPPED STATES, NOT A HAND-TYPED PAIR. `['signed','delivered']` stood
-   here until 2026-08-18 and was the narrowest of three live spellings of "this
-   delivery has shipped"; the owner ruled on 2026-08-18 that DISPATCHED, IN_TRANSIT, SIGNED and
-   DELIVERED may all be invoiced, and SI_TRANSFERABLE_DO_STATES is that rule's
-   one home. The first transition into any of them writes the inventory OUT — by
-   then the goods have left. It is a SEPARATE constant from DO_SHIPPED_STATES on
-   purpose: that one drives DO_STOCK_OUT_STATES and the money audits, and folding
-   the two would tell the ledger an INVOICED delivery's stock never left.
+/* THE OWNER'S RULE, FROM ITS ONE HOME — NOT A HAND-TYPED LIST. `['signed',
+   'delivered']` stood here until 2026-08-18 and was the narrowest of three live
+   spellings of "this delivery may be invoiced". Two things fixed it, a day
+   apart, and BOTH are kept:
+
+     · WHERE the rule lives (2026-08-18). SI_TRANSFERABLE_DO_STATES in
+       shared/do-shipped-states.ts is the single declaration; the backend
+       ENFORCES it in routes/sales-invoices.ts, the server's own DO picker and
+       the phone's convert wizard read the same constant, and the frontend twin
+       is held byte-identical by check-shared-mirrors.mjs --strict. This module
+       derives from it instead of restating it.
+     · WHAT the rule says (2026-08-19, #2485). Every CONFIRMED delivery order —
+       anything past DRAFT that is not CANCELLED — may be invoiced, LOADED
+       included. That superseded the previous day's four-state list, and it is
+       what the server has always permitted: the SI-from-DO create refuses only
+       a CANCELLED source. "Mark signed" survives as an OPTIONAL delivery-
+       tracking action (doAdvanceStep), never a prerequisite.
 
    It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
    no company term and never did; it fired on one organisation because of DATA.
@@ -131,10 +139,7 @@ export function siTransferBlockReason(status: string | null | undefined): string
     return 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.';
   }
   if (s === 'draft') {
-    return 'This delivery order is still a draft — confirm and dispatch it before raising a Sales Invoice.';
-  }
-  if (s === 'loaded') {
-    return 'This delivery order has not left yet — dispatch it before raising a Sales Invoice.';
+    return 'This delivery order is still a draft — confirm it before raising a Sales Invoice.';
   }
   /* INVOICED deliberately falls through to the generic sentence rather than
      getting an "already invoiced" one. routes/unbilled-deliveries.ts:13 records
@@ -143,8 +148,9 @@ export function siTransferBlockReason(status: string | null | undefined): string
      not advance the DO — so the label means "somebody clicked it", not "this was
      billed", and it is unreliable in both directions. Saying "already invoiced"
      here would state as fact the exact thing that file proves the flag cannot
-     tell us. The generic sentence states the gate, which is true. */
-  return 'A Sales Invoice can only be raised from a signed or delivered delivery order.';
+     tell us. The generic sentence states the gate, which is true. An unrecognised
+     status also lands here rather than a guess (COMPLETED once did — see header). */
+  return 'A Sales Invoice can only be raised from a confirmed delivery order.';
 }
 
 /**

@@ -55,7 +55,7 @@ for (const l of raw) {
   }
 }
 
-const heads = await sql`SELECT doc_no, linked_ac_docno, total_revenue_centi FROM scm.mfg_sales_orders
+const heads = await sql`SELECT doc_no, linked_ac_docno, total_revenue_sen FROM scm.mfg_sales_orders
                         WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
 const items = await sql`SELECT i.doc_no, i.item_code, i.qty, i.remark, i.description2, h.linked_ac_docno
                         FROM scm.mfg_sales_order_items i
@@ -133,7 +133,7 @@ for (const d of drift.slice(0, 15)) note(`   ${d.ac}: ERP ${d.erp} vs AC ${d.ac_
   note(`5 DELIVERED-BUT-IMPORTED: export carries ${full.length} fully-delivered orders; ${imported.length} of them are in the ERP`);
   const sofaOnes = imported.filter((h) => (acSofa.get(h.linked_ac_docno) || []).length);
   note(`   of those, with sofa lines: ${sofaOnes.length}`);
-  for (const h of imported.slice(0, 40)) note(`   ${h.linked_ac_docno} -> ${h.doc_no}  RM${(Number(h.total_revenue_centi || 0) / 100).toFixed(2)}${(acSofa.get(h.linked_ac_docno) || []).length ? "  [SOFA]" : ""}`);
+  for (const h of imported.slice(0, 40)) note(`   ${h.linked_ac_docno} -> ${h.doc_no}  RM${(Number(h.total_revenue_sen || 0) / 100).toFixed(2)}${(acSofa.get(h.linked_ac_docno) || []).length ? "  [SOFA]" : ""}`);
 }
 
 

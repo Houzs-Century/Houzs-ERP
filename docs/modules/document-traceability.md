@@ -133,7 +133,7 @@ Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, del
 where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked,
 source }], storedLink, provenance: [{ soDocNo, deliveryDate, locked: true,
 source: 'linked' }] }]` and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`,
-matched by SKU (`material_code`). The full relationship graph (SO/DO/SI +
+matched by SKU (`item_code`). The full relationship graph (SO/DO/SI +
 returns) stays on the Relationship Map modal (`/document-flow/:type/:id`) —
 unchanged.
 
@@ -584,7 +584,7 @@ against a real unique index in CI's postgres container.
 **Line-basis fallback since the 2026-08-01 live run** (which planned zero:
 the short product had written NO movement at all, so no sibling existed): when
 the sibling rule refuses with `no-sibling`, the insert falls back to the GRN
-line's OWN landed cost — `round(unit_price_centi x exchange_rate)`, the same
+line's OWN landed cost — `round(unit_price_sen x exchange_rate)`, the same
 `toMyrSen` path grns.ts uses for movements written outside the allocation —
 with the bucket from single-valued GRN facts (`deriveGrnLineBasis`: exactly
 one line for the product, one warehouse across the GRN's movements else the

@@ -29,6 +29,7 @@ import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import {
   useCreateSalesInvoice, useAddSalesInvoicePayment,
   useMfgDeliveryOrderDetail, useDeliveryOrderPayments,
@@ -50,7 +51,7 @@ import {
 } from '../../vendor/scm/components/PaymentsTable';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -61,7 +62,7 @@ const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const SalesInvoiceNew = () => {
   const navigate = useNavigate();
@@ -185,7 +186,7 @@ export const SalesInvoiceNew = () => {
     type Stash = {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number;
-      unitPriceCenti: number; discountCenti: number; unitCostCenti: number;
+      unitPriceSen: number; discountSen: number; unitCostSen: number;
       variants: unknown;
     };
     const stash = fromPicks ? readScmHandoff<Stash[]>('siFromDoPicks') : null;
@@ -200,9 +201,9 @@ export const SalesInvoiceNew = () => {
         description: s.description ?? '',
         uom: s.uom ?? 'UNIT',
         qty: Number(s.qty ?? 1),
-        unitPriceCenti: Number(s.unitPriceCenti ?? 0),
-        discountCenti: Number(s.discountCenti ?? 0),
-        unitCostCenti: Number(s.unitCostCenti ?? 0),
+        unitPriceSen: Number(s.unitPriceSen ?? 0),
+        discountSen: Number(s.discountSen ?? 0),
+        unitCostSen: Number(s.unitCostSen ?? 0),
         variants: (s.variants as Record<string, unknown>) ?? {},
       })));
       removeScmHandoff('siFromDoPicks');
@@ -216,9 +217,9 @@ export const SalesInvoiceNew = () => {
         description: (it.description as string) ?? '',
         uom: (it.uom as string) ?? 'UNIT',
         qty: Number(it.qty ?? 1),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        discountCenti: Number(it.discount_centi ?? 0),
-        unitCostCenti: Number(it.unit_cost_centi ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: Number(it.discount_sen ?? 0),
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         remark: (it.notes as string) ?? '',
       })));
@@ -239,7 +240,7 @@ export const SalesInvoiceNew = () => {
           merchantProvider: p.merchant_provider ?? '',
           installmentMonthsLabel: installmentLabel,
           onlineType: p.online_type ?? '',
-          amountCenti: p.amount_centi,
+          amountSen: p.amount_sen,
           accountSheet: p.account_sheet ?? '',
           approvalCode: p.approval_code ?? '',
           collectedBy: p.collected_by ?? '',
@@ -274,14 +275,14 @@ export const SalesInvoiceNew = () => {
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti), 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen), 0),
     [lines],
   );
 
   const canSave = debtorName.trim().length > 0;
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountCenti > 0);
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0);
 
   const flushPaymentDrafts = async (id: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -291,7 +292,7 @@ export const SalesInvoiceNew = () => {
           id,
           paidAt: d.paidAt,
           method,
-          amountCenti: d.amountCenti,
+          amountSen: d.amountSen,
           accountSheet: d.accountSheet || null,
           approvalCode: d.approvalCode || null,
           collectedBy: d.collectedBy || null,
@@ -338,7 +339,7 @@ export const SalesInvoiceNew = () => {
       return;
     }
     if (!canSave) { notify({ title: 'Customer name is required.', tone: 'error' }); return; }
-    if (asDraft && paymentDrafts.some((draft) => draft.amountCenti > 0)) {
+    if (asDraft && paymentDrafts.some((draft) => draft.amountSen > 0)) {
       notify({
         title: 'Payments are not saved on a draft invoice.',
         body: 'Confirm the invoice before recording payment, or remove the payment rows before saving this draft.',
@@ -394,9 +395,9 @@ export const SalesInvoiceNew = () => {
           description: l.description,
           uom: l.uom,
           qty: l.qty,
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti: l.discountCenti,
-          unitCostCenti: l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen: l.discountSen,
+          unitCostSen: l.unitCostSen,
           variants: l.variants,
         })),
       },
@@ -433,6 +434,12 @@ export const SalesInvoiceNew = () => {
               body: res.priceWarningMessage,
             });
           }
+          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — an invoice raised
+             from a delivery order is TRANSFERRED into AutoCount, and the
+             transfer route applies a narrower set of header fields than an edit
+             does. Said before either exit, so the early return below cannot
+             swallow it. Never blocks: the invoice exists. */
+          await notifyAcNotSent(notify, res, 'Invoice');
           if (!staged) {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
             return;
@@ -704,7 +711,7 @@ export const SalesInvoiceNew = () => {
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',
             fontWeight: 800, color: 'var(--c-burnt)',
           }}>
-            Subtotal: {fmtRm(subtotalCenti)}
+            Subtotal: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>
@@ -716,7 +723,7 @@ export const SalesInvoiceNew = () => {
         docNo={null}
         payments={paymentDrafts}
         onChange={setPaymentDrafts}
-        grandTotalCenti={subtotalCenti}
+        grandTotalSen={subtotalSen}
         currency="MYR"
       />
     </div>

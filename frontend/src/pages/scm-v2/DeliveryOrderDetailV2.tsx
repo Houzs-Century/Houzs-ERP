@@ -138,20 +138,20 @@ type DoHeader = {
   // rolls line prices/costs up in recomputeTotals; present on the DETAIL
   // payload for every caller (only the LIST endpoint strips these — #574).
   // The UI gates the Totals·Margin card behind project_finance_viewer.
-  local_total_centi?: number | null;
-  total_cost_centi?: number | null;
-  total_margin_centi?: number | null;
+  local_total_sen?: number | null;
+  total_cost_sen?: number | null;
+  total_margin_sen?: number | null;
   margin_pct_basis?: number | null;
-  mattress_sofa_centi?: number | null;
-  bedframe_centi?: number | null;
-  accessories_centi?: number | null;
-  others_centi?: number | null;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number | null;
-  bedframe_cost_centi?: number | null;
-  accessories_cost_centi?: number | null;
-  others_cost_centi?: number | null;
-  service_cost_centi?: number | null;
+  mattress_sofa_sen?: number | null;
+  bedframe_sen?: number | null;
+  accessories_sen?: number | null;
+  others_sen?: number | null;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number | null;
+  bedframe_cost_sen?: number | null;
+  accessories_cost_sen?: number | null;
+  others_cost_sen?: number | null;
+  service_cost_sen?: number | null;
 };
 
 type DoItem = {
@@ -161,7 +161,7 @@ type DoItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi?: number;
+  unit_price_sen?: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -181,7 +181,7 @@ type DoItem = {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 // The DO document is quantity-only for customers. The centi money formatter
-// (fmtMoneyCenti) that fed the finance-gated Totals·Margin card is gone with
+// (fmtMoneySen) that fed the finance-gated Totals·Margin card is gone with
 // that card (owner 2026-07-17) — the DO detail renders no money figures.
 
 const refOf = (h: DoHeader): string =>
@@ -898,9 +898,9 @@ export function DeliveryOrderDetailV2() {
       key: "type",
       label: "Type",
       width: "88px",
-      getValue: (l) => (Number(l.unit_price_centi ?? 0) === 0 ? "FOC" : "Sale"),
+      getValue: (l) => (Number(l.unit_price_sen ?? 0) === 0 ? "FOC" : "Sale"),
       render: (l) => {
-        const isFoc = Number(l.unit_price_centi ?? 0) === 0;
+        const isFoc = Number(l.unit_price_sen ?? 0) === 0;
         return (
           <Badge tone={isFoc ? "warning" : "neutral"} size="xs">
             {isFoc ? "FOC" : "Sale"}

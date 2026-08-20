@@ -135,7 +135,7 @@ const world = (a: Row, b: Row) => fakeSb({
   mfg_sales_orders: [a, b],
   mfg_sales_order_items: [line(String(a['doc_no'])), line(String(b['doc_no']))],
   mfg_products: [{ code: CODE, category: 'MATTRESS' }],
-  inventory_balances: [{ warehouse_id: WH, product_code: CODE, variant_key: '', qty: 1 }],
+  inventory_balances: [{ warehouse_id: WH, item_code: CODE, variant_key: '', qty: 1 }],
   delivery_orders: [],
   delivery_order_items: [],
   delivery_returns: [],
