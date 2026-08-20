@@ -43,7 +43,10 @@ import "./mobile.css";
  *            returns all outstanding PO lines, scoped to the selected poIds)
  *
  * Create responses (the new doc number we hand to onCreated):
- *   DO  POST /delivery-orders-mfg/from-sos   → { id, doNumber, movementErrors? }
+ *   DO  POST /delivery-orders-mfg/from-sos  { asDraft:true, picks } → { id, doNumber }
+ *                    (DRAFT — NOT auto-shipped; operator confirms the DO and
+ *                    that transition writes stock. No movementErrors on a draft:
+ *                    the OUT has not run yet.)
  *   SI  POST /sales-invoices/from-dos        → { id, invoiceNumber, ... }
  *   GRN POST /grns  { asDraft:true, items }  → { id, grnNumber } (DRAFT — NOT auto-posted;
  *                    operator posts it from the receipt, PATCH /:id/post writes stock)
@@ -497,7 +500,23 @@ export function MobileConvertWizard({
       let newDocNo = "";
 
       if (target === "do") {
-        const body = { picks: picks.map((l) => ({ soItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
+           `status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED'`, and the
+           same flag gates the write half (deductInventoryForDo +
+           syncSoDeliveredFromDo + the customer email). OMITTING the field is
+           not a neutral default, it is "ship it now" — a tap in a driveway
+           emptied the shelf, advanced the SO to delivered and emailed the
+           customer, with no review step and no undo.
+
+           Same reasoning as the GRN arm below, and the same shape: the phone
+           creates the document, a human confirms it from the receipt. For a DO
+           that confirm is the Confirm transition (PATCH /:id/status), which is
+           the single stock-writing chokepoint. */
+        const body = { asDraft: true, picks: picks.map((l) => ({ soItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* The short-stock pre-flight runs REGARDLESS of asDraft (it also
+           resolves the incoming-PO commitments), so the "Ship anyway?" confirm
+           below still fires on a draft — it is the binding decision, taken once,
+           at the moment the operator picked the lines. */
         // authedFetch handles the short_stock 409 in-app (Ship anyway? → replay).
         /* The short_stock 409 replay authedFetch runs internally re-sends this
            SAME key with confirmShortStock:true — correct and load-bearing. The
@@ -743,7 +762,13 @@ export function MobileConvertWizard({
             onClick={submit}
             style={{ opacity: !canCreate || submitting ? 0.55 : 1 }}
           >
-            {submitting ? "Creating…" : target === "grn" ? "Create draft Goods Receipt" : `Create ${meta.docTitle}`}
+            {/* The two targets that land a DRAFT say so on the button. A CTA
+                that promises a Delivery Order while creating a parked one is
+                the same lie in the other direction — the operator needs to know
+                a confirm step is still owed before the goods are counted out. */}
+            {submitting ? "Creating…" : (target === "grn" || target === "do")
+              ? `Create draft ${meta.docTitle}`
+              : `Create ${meta.docTitle}`}
           </button>
         </footer>
       )}
