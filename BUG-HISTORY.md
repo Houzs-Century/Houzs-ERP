@@ -67,7 +67,7 @@ allowed-values pool rather than a picker, but a HOUZS scan could still match a
 `routes/projects.ts`. `venue-binding.ts`'s showroom resolve follows the caller's
 own `staff.showroom_warehouse_id`, whose write is company-checked.
 
-**Ref.** PR #PRNUM, `fix/showroom-venue-company-scope`, 2026-08-20.
+**Ref.** PR #2536, `fix/showroom-venue-company-scope`, 2026-08-20.
 
 ## The Sales Orders list served ZERO rows to every account in both companies — the auth bridge ran twice and permissions came back empty [high]
 
