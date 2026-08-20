@@ -61,10 +61,65 @@ system notices never clutter the office composer list.
 | **Desktop pop-up** | `frontend/src/components/AnnouncementBanner.tsx` | mounted **once**, at the app root: `frontend/src/App.tsx:353` |
 | **Phone pop-up** | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | mounted above the tab shell AND above any overlay: `frontend/src/mobile/MobileApp.tsx:600-604` |
 | Shared pop-up logic | `frontend/src/components/useAnnouncementBanner.ts` | the feed read, the ack, the dismiss rules — **both** shells consume it |
-| Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | human list `:275-282`, bell `:286-292` |
+| Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | READER feed + system bell. **Publishers read the LEDGER instead** — see *The mobile list has two sources* below |
+| Shared status rule (Live / Hidden / Expired) | `frontend/src/lib/announcementStatus.ts` | imported by BOTH the desktop row and the phone card; neither re-derives it |
 | **Desktop system bell** | `frontend/src/components/NotificationBell.tsx` | System-notices section reading `?scope=system` (2026-08-08); mounted in `TopNavbar.tsx` + the sidebar's mobile drawer |
 | Media renderers | `frontend/src/components/AnnouncementMedia.tsx` (lazy) / `frontend/src/mobile/MobileAnnouncementMedia.tsx` | |
 | Unread badge hook | `frontend/src/mobile/useAnnouncementUnread.ts` | |
+
+### The mobile list has two sources, and which one you get is your permission
+
+*Added 2026-08-21.* `MobileAnnouncements` renders **the publisher ledger**
+(`GET /api/announcements`, query key `["mobile-ann-ledger"]`, `enabled: canCreate`)
+for anyone who can compose, and **the reader feed**
+(`GET /api/announcements/banner?scope=human`) for everyone else. The reader feed
+is still fetched for both, because it is what supplies `ackedIds` and it is the
+query the pop-up and the unread badge share — it must stay reader-scoped.
+
+**Why it is not one source.** The backend filters `/banner` to active AND
+not-expired. The phone read only that, so a publisher who hid or expired a notice
+could not see it on their own phone — nothing to badge, nothing to press, no way
+back. Worse, the gap was **asymmetric**: `announcements.ts` returns a Sales
+Director their OWN inactive/expired posts on the banner feed, so an SD saw theirs
+while a full `announcements.write` manager saw none of theirs.
+
+Two consequences to keep in mind when editing this screen:
+
+- **An unread dot may only be drawn for a row in the READER feed.** A publisher's
+  ledger contains hidden, expired and other-audience notices; a dot on one of
+  those can never be cleared by anybody. `readerIds` is the set that gates it.
+- **Every write busts BOTH** — `refreshFeeds()` invalidates
+  `ANNOUNCEMENT_FEED_KEY` and `["mobile-ann-ledger"]`. Invalidate one and the
+  screen the operator is looking at goes stale.
+
+### Publisher actions exist on the phone now
+
+*Added 2026-08-21.* Desktop had these from the start; the phone had none of them,
+so a notice posted from a phone was permanent and un-retractable from a phone.
+
+| Action | Mobile | Desktop |
+|---|---|---|
+| Set an expiry at compose time (`expiresAt`) | composer field "Hide automatically after", shared `DateTimeField` | `Announcements.tsx` composer, same label, same control |
+| Hide / show (`PATCH { isActive }`) | Detail > Publisher | row action |
+| Delete (`DELETE /:id`) | Detail > Publisher, behind a confirm | row action, behind a confirm |
+| Remind un-acked (`POST /:id/remind` `{ scope: "unacked" }`) | Receipts panel, behind a confirm, reports the server's `pendingCount` | same |
+| Reset all receipts (`{ scope: "all" }`) | Receipts panel, danger confirm | same |
+| Live / Hidden / Expired badge | `StatusChip`, from `lib/announcementStatus.ts` | same module |
+
+Both surfaces gate these on the same rule the backend enforces
+(`sdBlockedFromRow`): a full `announcements.write` manager may act on any human
+notice; a Sales-Director-only publisher may act only on notices they authored.
+Mobile passes it as a REQUIRED `canManage` prop rather than an optional one —
+an omitted permission flag that defaults to permissive is this repo's
+`optional-param-noop` bug class.
+
+**The Remind button used to lie.** It was
+`api.post(url).catch(() => {}); setReminded(true)` — no confirm, no body, no
+error path — so a 403 or 404 produced the words "Reminder sent" and nothing
+anywhere else. Every mutation on this screen now confirms first and reports the
+server's own answer, success or refusal. Do not reintroduce a bare `catch {}`
+here; `frontend/scripts/check-silent-mutations.mjs` is the standing check for
+the same shape on `useMutation` sites.
 
 ### Both pop-ups are human-only (owner 2026-08-08)
 
@@ -379,7 +434,9 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 |---|---|---|
 | Pop-up behaviour (feed, ack, dismiss, remind rule) | **`components/useAnnouncementBanner.ts`** — the shared file; editing it hits both shells and the badge hook | — |
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
-| Composer (audience picker, media layout, company target) | `pages/Announcements.tsx:459` | `mobile/MobileAnnouncements.tsx:355-362` |
+| Composer (audience picker, media layout, company target, **expiry**) | `pages/Announcements.tsx:459` | `mobile/MobileAnnouncements.tsx` `Compose` |
+| Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
+| Publisher row actions (hide/show, delete, remind, reset) | `pages/Announcements.tsx` row | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
 | Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |
