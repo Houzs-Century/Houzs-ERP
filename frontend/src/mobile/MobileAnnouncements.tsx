@@ -261,13 +261,13 @@ function Receipts({ ann }: { ann: Announcement }) {
       // Report the SERVER's count, not our own arithmetic: the backend rebuilds
       // the roster from the active users of the targeted companies, so its
       // number is the one that is true.
-      const n = res?.pendingCount ?? 0;
+      const n = res.pendingCount ?? 0;
       await notify({
         title: scope === "all" ? "Read-receipts reset" : "Reminder sent",
         body: `It will re-pop for ${n} user${n === 1 ? "" : "s"}.`,
       });
-      qc.invalidateQueries({ queryKey: ["announcement-acks", ann.id] });
-      qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
+      void qc.invalidateQueries({ queryKey: ["announcement-acks", ann.id] });
+      void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
     } catch (e) {
       await notify({
         title: "Reminder NOT sent",
@@ -477,8 +477,8 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
      BOTH surfaces: the publisher ledger it renders from, and the reader feed
      shared with the pop-up and the unread badge. */
   const refreshFeeds = () => {
-    qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
-    qc.invalidateQueries({ queryKey: ["mobile-ann-ledger"] });
+    void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
+    void qc.invalidateQueries({ queryKey: ["mobile-ann-ledger"] });
   };
 
   const markAcked = (id: string) => {

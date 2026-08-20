@@ -11,11 +11,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * the RAW hit count, so a search for a DO number returned hits, suppressed the
  * empty state, filtered every hit out, and rendered a BLANK screen. */
 
+/** The slice of a SearchHit these tests build. */
+type Hit = {
+  type: string;
+  id: string;
+  title: string;
+  subtitle: string;
+  date: string;
+};
+
 const { searchResult } = vi.hoisted(() => ({
   searchResult: {
     current: {
       term: "",
-      hits: [] as any[],
+      hits: [] as Hit[],
       loading: false,
       error: null as unknown,
       degradedNotice: null as string | null,
@@ -32,11 +41,11 @@ import { MobileSearch } from "./MobileSearch";
 
 afterEach(cleanup);
 
-function hit(type: string, id: string, title: string) {
+function hit(type: string, id: string, title: string): Hit {
   return { type, id, title, subtitle: "Acme Sdn Bhd", date: "2026-08-14" };
 }
 
-function show(hits: any[], term = "DO-2607") {
+function show(hits: Hit[], term = "DO-2607") {
   searchResult.current = { term, hits, loading: false, error: null, degradedNotice: null };
   render(<MobileSearch onBack={() => {}} onNavigate={() => {}} />);
 }
@@ -46,13 +55,13 @@ function show(hits: any[], term = "DO-2607") {
 function title(docNo: string): HTMLElement {
   return screen.getByText((_t, el) => {
     if (!el || el.tagName !== "SPAN") return false;
-    return (el.textContent ?? "") === docNo;
+    return el.textContent === docNo;
   });
 }
 function queryTitle(docNo: string): HTMLElement | null {
   return screen.queryByText((_t, el) => {
     if (!el || el.tagName !== "SPAN") return false;
-    return (el.textContent ?? "") === docNo;
+    return el.textContent === docNo;
   });
 }
 
@@ -74,7 +83,7 @@ describe("MobileSearch accounts for every hit", () => {
   it("never renders an empty screen when the server returned hits", () => {
     show([hit("sales_invoice", "SI-2608-011", "SI-2608-011")]);
 
-    const body = document.body.textContent ?? "";
+    const body = String(document.body.textContent);
     // Either the hit renders or an explanation does — silence is the bug.
     expect(body).toContain("SI-2608-011");
     expect(body.trim().length).toBeGreaterThan(0);

@@ -22,7 +22,10 @@ const { apiGet, apiPost, apiPatch, apiDel, authUser, confirmAnswer, notified } =
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDel: vi.fn(),
-  authUser: { current: { id: 7, name: "Nick" } as any, can: { current: (_p: string) => true } },
+  authUser: {
+    current: { id: 7, name: "Nick" } as { id: number; name: string } | null,
+    can: { current: (_p: string) => true },
+  },
   confirmAnswer: { current: true },
   notified: [] as Array<{ title: string; body?: unknown }>,
 }));
@@ -48,8 +51,18 @@ vi.mock("../vendor/scm/components/NotifyDialog", () => ({
 }));
 
 vi.mock("./MobileVirtualList", () => ({
-  MobileVirtualList: ({ items, renderItem }: any) => (
-    <div>{items.map((item: any, i: number) => <div key={item.id ?? i}>{renderItem(item, i)}</div>)}</div>
+  MobileVirtualList: ({
+    items,
+    renderItem,
+  }: {
+    items: Array<{ id?: string }>;
+    renderItem: (row: { id?: string }, index: number) => unknown;
+  }) => (
+    <div>
+      {items.map((item, i) => (
+        <div key={item.id ?? i}>{renderItem(item, i) as React.ReactNode}</div>
+      ))}
+    </div>
   ),
 }));
 
@@ -64,7 +77,10 @@ vi.mock("../lib/announcementAttachmentUpload", () => ({
 
 import { MobileAnnouncements } from "./MobileAnnouncements";
 
-function notice(over: Partial<Record<string, unknown>> = {}) {
+/** A human notice row, shaped like the API's. */
+type Row = Record<string, unknown> & { id: string; title: string; isActive: boolean };
+
+function notice(over: Partial<Record<string, unknown>> = {}): Row {
   return {
     id: "a1",
     title: "Warehouse closed Friday",
@@ -84,7 +100,7 @@ function notice(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function mountWith(rows: any[]) {
+function mountWith(rows: Row[]) {
   apiGet.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/announcements/banner?scope=human")) {
       return { success: true, data: rows.filter((r) => r.isActive && !r.expiresAt), ackedIds: [] };
@@ -138,7 +154,7 @@ async function openCompose() {
   await waitFor(() => expect(screen.getByText("New announcement")).toBeTruthy());
 }
 
-async function openDetail(rows: any[]) {
+async function openDetail(rows: Row[]) {
   mountWith(rows);
   await waitFor(() => expect(screen.getByText(rows[0].title)).toBeTruthy());
   fireEvent.click(screen.getByText(rows[0].title));
@@ -173,8 +189,9 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     await waitFor(() => expect(apiPost).toHaveBeenCalled());
     const [url, payload] = apiPost.mock.calls.find((c) => c[0] === "/api/announcements")!;
     expect(url).toBe("/api/announcements");
-    expect(typeof (payload as any).expiresAt).toBe("string");
-    expect(Date.parse((payload as any).expiresAt)).toBe(
+    const sent = (payload ?? {}) as Record<string, unknown>;
+    expect(typeof sent.expiresAt).toBe("string");
+    expect(Date.parse(String(sent.expiresAt))).toBe(
       new Date("2026-09-01T18:00").getTime(),
     );
   });
