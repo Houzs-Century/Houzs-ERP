@@ -17,8 +17,23 @@
 // receiver went on replaying 2990's older copy over those edits — and because
 // it replaced the item set with a DELETE-then-INSERT, every replay blanked the
 // Delivery-Order lines pointing at those SO lines through the FK's ON DELETE
-// SET NULL. Owner-visible: a delivery fee edited 250 -> 125 came back as 250,
-// and the order "went to 0 items".
+// SET NULL. Ten such orphaned delivery lines across four documents were live on
+// 2026-08-20, whole documents at a time — which is the shape only a
+// whole-item-set replacement produces.
+//
+// WHAT THIS IS *NOT*, corrected 2026-08-20 before it could mislead anyone. This
+// comment first said "Owner-visible: a delivery fee edited 250 -> 125 came back
+// as 250, and the order went to 0 items". That symptom is NOT this route's.
+// 2990's outbox (`public.sync_outbox`) shows the last successful delivery at
+// 2026-08-19T08:42:39Z with pending=0 and sent=0 since, read by
+// mirror-drift-sentinel.mjs; the fee edits postdate it, and the deletes behind
+// them carry application_name "PostgREST 14.5" — the Houzs fee rebuild, not
+// this receiver, which reaches Postgres through postgres.js. The fee symptom
+// was three Houzs-side faults, all fixed there: #2490 (rebuild wrote
+// discount_sen 0 over the discount), #2514 / mig 0310 (rebuild replaced the
+// SVC-DELIVERY* rows so they changed id), #2516 (the discount was read-only in
+// SoLineCard, so nobody could type one). Import-once stands on the orphaned
+// links, which is evidence it does carry.
 //
 // SO THE RULE IS NOW: THE FIRST DELIVERY WINS, AND ONLY THE FIRST.
 //
@@ -33,8 +48,16 @@
 // keys on HTTP STATUS — non-2xx keeps the outbox row PENDING and it retries
 // forever, so one refused order wedges the queue behind it and every later SO
 // stops arriving. A skip IS a successful delivery of a message we chose not to
-// apply: 200, a flag in the body, and a loud log line. Never a non-2xx. (The
-// same reasoning already governs the pair gate below.)
+// apply: 200, a flag in the body, a loud log line, and a DURABLE ROW. Never a
+// non-2xx. (The same reasoning already governs the pair gate below.)
+//
+// THE DURABLE ROW IS WHAT MAKES THE REFUSAL PROVABLE (mig 0311,
+// scm.so_mirror_skips). Without it the only evidence a delivery was declined is
+// a console line nobody was tailing — and with 2990's outbox idle, "I edited a
+// 2990 order and it survived" is equally true of a mirror that held the line
+// and a mirror that sent nothing. `last_seen` moving beside a surviving edit is
+// the proof; `last_seen` not moving says the mirror was quiet and the test
+// proved nothing. Read it with scripts/check-so-mirror-skips.mjs.
 //
 // FIRST-IMPORT ATOMICITY, and the window it closes is not theoretical. A
 // failure BETWEEN the header write and the items would leave a header-only
@@ -142,6 +165,37 @@ const { tableMap, applyMap } = createMirrorMapper({
  * ever writes a doc_no Houzs has never seen, so the exemption now covers the
  * FIRST import of a legacy order and nothing else. Every LATER state of a
  * company-2 order is authored in Houzs, by a path that does run the pair gate. */
+/* RECORD A DECLINED DELIVERY, so "the mirror did not touch it" is queryable.
+ *
+ * A console line is gone the moment nobody is tailing the Worker, and that gap
+ * has a concrete cost: with 2990's outbox idle (pending=0, last delivery
+ * 2026-08-19T08:42:39Z, read by mirror-drift-sentinel.mjs), an "I edited it and
+ * it survived" test is equally true of a mirror that held the line and a mirror
+ * that sent nothing. A row here is what separates them.
+ *
+ * ONE ROW PER (company, doc, action), never per delivery — the drainer retries
+ * every 10s, so append-per-event would grow by 8,640 rows a day per wedged
+ * document. `hits` carries the volume instead. Migration 0311.
+ *
+ * IT MUST NEVER BREAK THE THING IT WATCHES. Same rule as mig 0302's delete
+ * audit: a failure to record is logged and swallowed, because turning a correct
+ * refusal into a 500 would put the outbox row back into PENDING and wedge the
+ * queue — the exact failure the 200 exists to avoid. Swallowed is not silent:
+ * the console line is still emitted above, and the ledger going quiet while the
+ * queue is moving is itself visible in check-so-mirror-skips.mjs. */
+async function recordSkip(DB: Env['DB'], doc: string, action: 'skipped_existing' | 'refused_delete') {
+  try {
+    await DB.prepare(
+      `INSERT INTO scm."so_mirror_skips" (company_id, doc_no, action)
+            VALUES (?, ?, ?)
+       ON CONFLICT (company_id, doc_no, action)
+       DO UPDATE SET hits = scm."so_mirror_skips".hits + 1, last_seen = now()`,
+    ).bind(C2990, doc, action).run();
+  } catch (e) {
+    console.error('[so-mirror] could not record the declined delivery — the refusal still stands:', doc, action, (e as Error).message);
+  }
+}
+
 soMirror.post('/', async (c) => {
   if (!mirrorAuthed(c)) return c.json({ error: 'unauthorized' }, 401);
   let body: { docNo?: string; deleted?: boolean; header?: Record<string, unknown>; items?: Record<string, unknown>[]; payments?: Record<string, unknown>[] };
@@ -169,9 +223,11 @@ soMirror.post('/', async (c) => {
          every Delivery Order line pointing at them. */
       if (body.deleted) {
         console.warn('[so-mirror] refused_delete — 2990 asked to delete an order Houzs owns:', doc);
+        await recordSkip(DB, doc, 'refused_delete');
         return c.json({ ok: true, docNo: doc, action: 'refused_delete', refused: true });
       }
       console.warn('[so-mirror] skipped_existing — 2990 re-delivered an order Houzs already holds:', doc);
+      await recordSkip(DB, doc, 'skipped_existing');
       return c.json({ ok: true, docNo: doc, action: 'skipped_existing', skipped: true });
     }
 
