@@ -312,8 +312,9 @@ RETURNING next_n - 1 AS n;
 ```
 
 Seed it per series from `max(existing)` AND from the account book's high-water
-mark, whichever is higher. Change `mintMonthlyDocNo` itself, so all 19 call sites
-inherit it without being touched. Keep the unique indexes and
+mark, whichever is higher. Change `mintMonthlyDocNo` itself, so its 29 call
+sites inherit it without being touched (`git grep -n "mintMonthlyDocNo(" --
+backend/src` — 30 lines, one of which is the definition). Keep the unique indexes and
 `insertWithDocNoRetry` as the safety net.
 
 **Cost.** One migration plus one function. Roughly a day including the seed
