@@ -2222,6 +2222,44 @@ and still takes its link, which is correct: the line it named is gone. This is
 also the precondition for ever exposing an editable delivery charge — without
 it, every edit manufactures an orphan.
 
+**Where the operator types it (2026-08-20).** The reduction had a server road
+and no door: the line PATCH accepted a bounded discount, the rebuild kept it
+(#2490) on a row that now keeps its id (0310) — but `SoLineCard.tsx` rendered
+`discountSen` only as a READ-ONLY "− Discount" row that appears once the value
+is already above zero. Its editable inputs were description, remark, qty, unit
+price, delivery date, variants and photos; `$ Override price` writes
+`unit_price_sen`, not a discount. So the only writer of a delivery-line discount
+was the POS voucher split, and an operator could not reduce a fee at all.
+
+Now the SAME amount cell does it, because that is where the operator already
+tried: on a `SVC-DELIVERY*` line the cell SHOWS the line net and WRITES the
+difference as `discountSen` (`frontend/src/vendor/scm/lib/delivery-fee-amount.ts`,
+executed by `delivery-fee-amount.test.ts`). Type the amount you want charged —
+250 → 125 books a 125 discount, and the printed SO still reads unit 250 /
+discount 125 / total 125. Three properties are deliberate: **the semantics are
+TARGET, not discount** (on a 250 fee, wanting 200 books 50 — 250 → 125 is a
+coincidence that hides the difference, which is why a test pins 200); **a higher
+figure books no discount**, since a fee rise needs its own `SVC-DELIVERY-ADD`
+line rather than a negative discount with nothing naming the money; and **a
+blank or unreadable box writes nothing**, because `Number('')` is 0 and that
+would read as charge-nothing and waive the fee on the way to retyping it. A real
+waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
+unit price, on the same `canEditPrice` gate.
+
+**All three faults were on THIS side — it was not the mirror.** An earlier draft
+of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
+#2518 withdrew that with a measurement: 2990's `sync_outbox` shows its last
+successful delivery at **2026-08-19T08:42:39Z** with an empty queue, while both
+`SVC-DELIVERY` deletes on 2990-SO-2608-033 (2026-08-20 01:41 and 02:40, mig
+0302's forensic log) postdate it and carry `application_name = PostgREST 14.5` —
+the fee rebuild, not the mirror, which reaches Postgres through postgres.js and
+appears nowhere in that log. The three faults were `discount_sen: 0` written
+over an accepted discount (#2490), the rebuild replacing rows so they changed id
+(#2514), and the discount having no input (#2516). The mirror's
+DELETE-then-INSERT is still real and still worth import-once (#2515) — it is the
+only known mechanism that orphans a WHOLE document's DO lines at once — but it
+explains the repaired delivery links, not a reverted fee.
+
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
 and may not be deleted until Loo retires the column (SO-SKU spec §5 P6).
