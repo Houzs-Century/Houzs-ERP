@@ -191,18 +191,6 @@
       "whoSetIt": "Cutover design, owner-approved; runbook step documented in companyScope.ts."
     },
     {
-      "file": "backend/src/scm/routes/maintenance-push.ts",
-      "text": "if (mintsIntoMirroredNamespace(c)) {",
-      "why": "The maintenance-config push refuses to run while the mirrored company is active, because it sends the base company's option lists TO that company; running it the other way round would send 2990's own data back to itself.",
-      "whoSetIt": "Direction guard of the one-way bridge (the D5 rule cited at the call site)."
-    },
-    {
-      "file": "backend/src/scm/routes/maintenance-push.ts",
-      "text": "mintsIntoMirroredNamespace,",
-      "why": "The maintenance-config push refuses to run while the mirrored company is active, because it sends the base company's option lists TO that company; running it the other way round would send 2990's own data back to itself.",
-      "whoSetIt": "Direction guard of the one-way bridge (the D5 rule cited at the call site)."
-    },
-    {
       "file": "backend/src/scm/routes/mfg-sales-orders.ts",
       "text": "if (mintsIntoMirroredNamespace(c as unknown as Context<any>) && !houzsOwns2990(c.env)) {",
       "why": "Mirrored 2990 sales orders are read-only here and cannot be CREATED into the 2990 namespace, until the HOUZS_OWNS_2990 cutover flips. Same cutover rule as so-revision.ts.",
@@ -247,18 +235,6 @@
     {
       "file": "backend/src/scm/shared/so-branding-label.ts",
       "text": "const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;",
-      "why": "The Branding column's label: a sofa or mattress line under the non-HOUZS company reads '2990 Sofa' / '2990 Mattress'. A label on a row, not a capability. Frontend twin is byte-identical and pinned by check-shared-mirrors.",
-      "whoSetIt": "Owner, 2026-08-17 — the complaint that a branding cell must never be blank."
-    },
-    {
-      "file": "backend/src/scm/shared/so-branding-label.ts",
-      "text": "if (!isHouzs) return '2990 Sofa';",
-      "why": "The Branding column's label: a sofa or mattress line under the non-HOUZS company reads '2990 Sofa' / '2990 Mattress'. A label on a row, not a capability. Frontend twin is byte-identical and pinned by check-shared-mirrors.",
-      "whoSetIt": "Owner, 2026-08-17 — the complaint that a branding cell must never be blank."
-    },
-    {
-      "file": "backend/src/scm/shared/so-branding-label.ts",
-      "text": "return isHouzs ? noun : '2990 Mattress';",
       "why": "The Branding column's label: a sofa or mattress line under the non-HOUZS company reads '2990 Sofa' / '2990 Mattress'. A label on a row, not a capability. Frontend twin is byte-identical and pinned by check-shared-mirrors.",
       "whoSetIt": "Owner, 2026-08-17 — the complaint that a branding cell must never be blank."
     },
@@ -492,18 +468,6 @@
     },
     {
       "file": "frontend/src/vendor/shared/so-branding-label.ts",
-      "text": "if (!isHouzs) return '2990 Sofa';",
-      "why": "Byte-identical vendored twin of backend/src/scm/shared/so-branding-label.ts; check-shared-mirrors.mjs --strict pins the pair. Same reason as the backend copy.",
-      "whoSetIt": "Owner, 2026-08-17 — same rule, vendored copy."
-    },
-    {
-      "file": "frontend/src/vendor/shared/so-branding-label.ts",
-      "text": "return isHouzs ? noun : '2990 Mattress';",
-      "why": "Byte-identical vendored twin of backend/src/scm/shared/so-branding-label.ts; check-shared-mirrors.mjs --strict pins the pair. Same reason as the backend copy.",
-      "whoSetIt": "Owner, 2026-08-17 — same rule, vendored copy."
-    },
-    {
-      "file": "frontend/src/vendor/shared/so-branding-label.ts",
       "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
       "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
       "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
@@ -513,6 +477,12 @@
       "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
       "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
       "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
+    },
+    {
+      "file": "backend/src/scm/lib/doc-no.ts",
+      "text": "if (upper === BASE_COMPANY_CODE) return '';",
+      "why": "THE JE-NUMBER PREFIX — numbering, which is the one per-company difference the rule names as legitimate. HOUZS mints journal entries BARE (JE-2607-0001) and always has; every other company keys off the SAME resolver the SO/PO minters use, so 2990 gets '2990-' and a future third company gets '<CODE>-'. Deliberately unlike its own SO/PO numbers, which do carry 'HC-'. Renaming a live series would orphan every reference to an existing JE number. NOT a capability: both organisations post, read and reverse journals through identical code.",
+      "whoSetIt": "Owner — it is his live JE book's existing series. The design is recorded in docs/MULTICOMPANY-SCALING.md section 1 ('journal entries use jePrefixForCompany()'), and #2427 preserved the bare HOUZS series on purpose when it moved the resolver off a hardcoded companies.id."
     }
   ]
 }

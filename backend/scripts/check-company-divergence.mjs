@@ -228,7 +228,13 @@ function walk(dir, acc = []) {
    hit five times. Lifted from check-empty-state-claims.mjs, which was corrected
    for the JSX-apostrophe bug this inherits the fix for. Newlines preserved so
    line numbers survive. */
-const OPENERS = new Set(["=", "(", "[", "{", ",", ";", ":", "?", "+", "&", "|", "!", "\n", undefined]);
+/* `>` IS IN THIS SET BECAUSE OF `=>`. Without it `xs.map(() => "?")` desyncs the
+   whole stripper: the opening quote reads as code (prev char `>` unknown), the
+   CLOSING quote reads as an opener (prev char `?` is listed), and every comment
+   from there to the end of the file survives and gets scanned as source. It also
+   covers the two other `>` positions — a comparison (`a > "b"`) and JSX text
+   after a tag close (`<p>"quoted"</p>`) — both of which are string openers too. */
+const OPENERS = new Set(["=", "(", "[", "{", ",", ";", ":", "?", "+", "&", "|", "!", ">", "\n", undefined]);
 const OPENER_WORDS = new Set(["return", "typeof", "case", "in", "of", "await", "throw", "new", "delete", "void", "yield", "do", "else", "from", "import", "export", "extends", "as", "satisfies"]);
 function opensString(src, at) {
   let j = at - 1;
@@ -353,6 +359,22 @@ function matchShape(line) {
   }
   if (!/2990/.test(stripComments("const a = `brand ${is2990}`;"))) {
     failures.push("stripComments ate a template literal's text");
+  }
+  /* AN ARROW FUNCTION RETURNING A STRING — `() => "?"`. `>` was missing from
+     OPENERS, so the OPENING quote read as ordinary code and the CLOSING one
+     read as an opener; the stripper then sat in string-state for the rest of
+     the file and every comment after it survived. That is exactly how
+     companyScope.ts:294 — a JSDoc line QUOTING `companies.code === 'HOUZS'` to
+     explain the resolver — was reported as an unreviewed per-company branch,
+     three lines below `values.map(() => "?")`. */
+  const NL = String.fromCharCode(10);
+  const arrowProbe = [
+    'const s = xs.map(() => "?").join(", ");',
+    '/* isHouzs picks the logo */',
+    'const a = 1;',
+  ].join(NL);
+  if (/isHouzs/.test(stripComments(arrowProbe))) {
+    failures.push('stripComments desynced on a string literal after `=>` and leaked a later comment');
   }
   if (failures.length > 0) {
     warn("check-company-divergence: internal SELF-TEST FAILED — not reporting a number.");
