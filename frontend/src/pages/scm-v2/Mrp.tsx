@@ -24,7 +24,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Info, Clock } from 'lucide-react';
 import {
-  useMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
+  useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
   type MrpWarehouse, type CategoryLeadTimes,
 } from '../../vendor/scm/lib/mrp-queries';
@@ -32,7 +32,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -476,6 +476,10 @@ export const Mrp = () => {
   const apiCategory = VIEW_CATEGORY[view];
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
+  /* Stored planning snapshot (option B, 2026-08-19). `data.stored` is true when
+     this came from the saved snapshot (the default view opens instantly from it);
+     `regenerate` recomputes it server-side. See mrp-snapshot.ts. */
+  const regenerate = useRegenerateMrp();
   /* How much undated demand this tab is carrying — whether it is on screen or
      withheld. The sofa view reads the sofa tally (section 8 is SOFA-only and
      ignores the category filter); every other view reads the general one, which
@@ -894,6 +898,17 @@ export const Mrp = () => {
               <button type="button" className={TOOLBAR_BTN} onClick={() => void q.refetch()} disabled={q.isFetching}>
                 <RefreshCw {...ICON} className={q.isFetching ? 'animate-spin' : undefined} /> Refresh
               </button>
+              {/* Server-side Regenerate — recompute + save the stored planning
+                  snapshot (option B). Distinct from Refresh, which only re-reads. */}
+              <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
+                title="Recompute the MRP plan from current stock, orders and deliveries, and save it">
+                <RefreshCw {...ICON} className={regenerate.isPending ? 'animate-spin' : undefined} /> {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
+              </button>
+              {data?.stored && data.computedAt && (
+                <span className="inline-flex items-center gap-1 text-xs opacity-70" title="When this plan was last calculated">
+                  <Clock {...ICON} /> as of {fmtDateTime(data.computedAt)}
+                </span>
+              )}
               {isAdmin && (
                 <button type="button" className={TOOLBAR_BTN} onClick={onBackfillWarehouses} disabled={backfilling}
                   title="Bind a warehouse to older SOs that have none, derived from each SO's State">

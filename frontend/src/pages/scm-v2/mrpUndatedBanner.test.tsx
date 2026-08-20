@@ -68,6 +68,7 @@ vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   useMrp: () => ({ data: mrpData, isLoading: false, isError: false, error: null, refetch: () => {} }),
   useCategoryLeadTimes: () => ({ data: { leadTimes: {} }, isLoading: false }),
   useUpdateCategoryLeadTime: () => ({ mutate: () => {}, isPending: false }),
+  useRegenerateMrp: () => ({ mutate: () => {}, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/auth', () => ({
   useAuth: () => ({ user: { id: 'u1', role: 'ADMIN' } }),

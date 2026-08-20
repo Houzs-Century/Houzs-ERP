@@ -42,6 +42,134 @@ statement NOT being caught, put the statement outside the `try` where a reader
 can see it, rather than asserting it in prose next to a line that is inside one.
 
 **Ref.** 2026-08-20.
+## Mobile PMS: "Stock In Transfer Record" stayed pinned full-width after the Defect List split, stranding "Dismantle Image" alone in its row [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版专案的「Setup & Dismantle documents」是两栏排的图砖。之前砖是 7 块，
+单数，最后一块「Stock In Transfer Record」落单，所以老板 7 月 23 号叫把它拉成整行。
+7 月 29 号「Defect List」被拆成 Setup 和 Dismantle 两块，砖变成 8 块——双数了，
+但那条整行的设定没跟着改，结果换成倒数第二块「Dismantle Image」自己占半行、旁边空一格。
+现在把整行设定拿掉，8 块刚好排成四行两栏。
+
+**Symptom.** In the mobile project detail's `Setup & Dismantle documents` card
+(a `gridTemplateColumns: "1fr 1fr"` grid), `Dismantle Image` sat alone in its row
+with an empty half-row gap beside it, and `Stock In Transfer Record` sat below it
+as a full-width tile.
+
+**Root cause (traced by counting the array on `origin/main`, not guessed).**
+The `mgmtSdTiles` array in `frontend/src/mobile/MobilePMS.tsx` carried
+`fullWidth: true, mediaH: 108` on its last entry. That flag was correct when it
+was added, and the comment above it said why: *"Owner 2026-07-23: full-width
+('make it big') — the odd 7th tile was dangling half-width at the bottom of the
+grid."* At that point the array held **7** tiles. The owner's 2026-07-29 Defect
+List split (`Defect List` -> `Defect Item Setup` + `Defect Item Dismantle`) added
+an eighth. `fullWidth` renders as `gridColumn: "1 / -1"`, so against an EVEN
+count it stops curing the dangle and starts causing one — the 7th tile is now the
+one left alone. The flag outlived the condition it was written for, and nothing
+tied the two changes together.
+
+**Fix.** Drop `fullWidth` / `mediaH` from the `Stock In Transfer Record` entry so
+the 8 tiles lay out as four clean rows of two, and replace the stale 2026-07-23
+comment with one recording why the earlier decision no longer applies — so the
+next reader does not re-add the flag on the strength of a comment describing a
+7-tile grid that no longer exists.
+
+**Desktop twin: none needed, checked.** Tile width is not a concept the desktop
+surface expresses. `frontend/src/pages/Projects.tsx` renders each checklist
+document as one uniform row of its `DocumentTable`. Grepped over
+`frontend/src`, the identifiers this change depends on — `DocTile` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. `fullWidth` does
+occur in `Projects.tsx`, but as the design-system `Button` / `DateField` prop:
+same word, unrelated concept. "Stock In Transfer Record" reaches desktop only as
+a `REVIEWABLE_TITLES` member and a `PROJECT_STAGES` title, neither carrying
+layout.
+
+**Lesson.** A layout flag whose justification is a COUNT is a fact with an expiry
+date, exactly as CLAUDE.md says of a number in a comment. It should have been
+derived from the array length rather than pinned by hand; left pinned, it
+inverted its own purpose the day the count changed.
+
+**Ref.** `fix/pair-stockin-tile`, PR #2347, 2026-08-20.
+
+## Two authors could not pick a migration number without racing each other [medium]
+
+<!-- area: Deploy, CI, migrations -->
+
+**Symptom.** `0300` was taken twice inside thirty minutes on 2026-08-18, then
+`0302` was taken while the rename was still in review. Three renames for one
+change. The duplicate-number test caught each one — it is a good gate and it
+worked — but catching a collision is not the same as not having one.
+
+**Root cause.** A sequential number is CLAIMED at merge and CHOSEN at authoring
+time. With ~10 PRs open at once, every branch picks the same "next free" number
+off `ls *.sql`, and all but the first must rename. The renames are not free
+either: pg-migrate matches by FULL filename, so it must be a rename and nothing
+else — an edited body reads to it as an orphaned tracker row plus an unknown
+file to apply.
+
+**Fix.** New migrations are named by UTC timestamp — `npm run migration:new --
+<slug>` mints `20260818T0345_<slug>.sql`. A timestamp is chosen at authoring
+time and is already unique, so there is nothing to race. It needs no runner
+change: pg-migrate reads the directory, `.sort()`s by filename and keys its
+tracker on the full name, and `2026…` sorts after every `0…` file, so ordering
+is preserved. Rails, Django and Flyway all moved to timestamps for this reason.
+
+**Existing numbered files are NOT renamed and must never be** — the rename would
+re-run their SQL. The numbering test now skips timestamp names (a bare `\d{3,4}`
+would file every one of them under a phantom number "2026") and still enforces
+uniqueness on everything numbered.
+
+**Same PR, the other half of the friction.** `docs/generated/*` is regenerated
+per PR and tracked, so any two PRs conflict on it: measured across the 97 live
+branches, 21 conflict on `bug-index.md` and 13 conflict on nothing else at all,
+and nineteen commits in that backlog exist only to regenerate after a merge. A
+generated file has no merge — `union` duplicates rows and picking a side leaves
+a stale file — so a `regen` merge driver takes either side and rebuilds from
+source, which is the only correct answer.
+
+Ref: 2026-08-18.
+## Opening the MRP page ran the whole engine live every time (~4s) [high]
+
+<!-- area: Inventory, costing, FIFO -->
+
+**白话.** 打开 MRP(库存状态)页面每次都要现算一整套引擎,约 4 秒。老板 2026-08-19
+定了改成「算一次存起来」—— 就是 SAP / Oracle 那种做法:默认页面直接读存好的、**秒开**,
+顶上标「截至几点」,旁边一个「重新计算」按钮,后台每 15 分钟自动刷新一次。一有筛选(分类/
+仓库)或看未排期的,就照旧现算 —— **零风险**:表还没填之前等于没改,页面照旧现算。
+
+**Symptom.** `GET /api/scm/mrp` ran `computeMrp` — the global cross-table demand-
+vs-supply engine — LIVE on every open. Measured previously at **5,162 ms** for
+company 1 (`docs/modules/mrp.md` §5 / the SO-list serialization entry).
+
+**Root cause (traced).** The MRP GET handler (`mrp.ts`) called `computeMrp` with
+NO stored result and no cache, so every page open recomputed the whole plan. The
+cost is real engine work (stock / PO / SO / DO / allocation reads), not fan-out —
+so the durable fix is to stop recomputing it on every open, which is how large
+ERPs run MRP (a scheduled / on-demand "planning run", read from a stored result).
+
+**Fix (option B, owner-chosen 2026-08-19: store + schedule(~15min) + manual).**
+- `scm.mrp_snapshots` (mig `0313`) — one jsonb row per company. CACHE, not a book
+  of record; `DROP TABLE` reverses it.
+- `GET /mrp` serves the stored snapshot for the DEFAULT view (`isDefaultMrpView`:
+  no category/warehouse filter, undated hidden) — **instant**; any filtered/undated
+  view, or a company with no snapshot yet, computes live exactly as before. Served
+  only for the default view because `catFilter`/`whFilter` change the ALLOCATION
+  inputs (not just output rows), so a stored full result cannot be post-filtered.
+- `POST /mrp/regenerate` (manual Regenerate) + a `*/15` Worker cron
+  (`refreshAllMrpSnapshots`) keep it fresh. FE shows "as of &lt;computedAt&gt;" and
+  a Regenerate button (`mrp-queries.ts` `useRegenerateMrp`, `Mrp.tsx`).
+- **Additive / zero-risk:** no snapshot row -> live compute (today's behaviour),
+  so this is inert until first populated.
+
+**Measurement.** Before: ~5,162 ms (recorded above). After (snapshot read): the
+GET becomes a single `mrp_snapshots` row read — **UNMEASURED on prod until deploy**
+(the branch is not deployed; prod is behind login). The `*/15` cron and
+`POST /regenerate` runtime behaviour are likewise **UNTESTED until the first
+deploy** — the cron slot's log line `[cron mrp-snapshot] company=… computedAt=…`
+is the check to read (`gh api .../runs` + Worker logs), and the fingerprint of the
+stored result vs a live `computeMrp` is the byte-identical proof to run before
+trusting the snapshot.
 ## The queue's health report could say `sent 47` while a whole OPERATION had never once worked [low]
 
 **Symptom.** No incident — a blind spot found while answering the owner's
