@@ -91,6 +91,23 @@ export function DateTimeField({
     setParts(splitDateTimeLocal(value));
   }, [value]);
 
+  /* HALF-FILLED DISCLOSURE. joinDateTimeLocal emits '' unless BOTH halves are
+     present — native parity, deliberate, and asserted in this component's test.
+     That contract is NOT changed here. What it lacked was a way to tell the
+     operator, because the halves live in local state: the date they picked
+     stays on screen while '' is what the form sends, so the screen and the
+     payload disagree with nothing marking the difference.
+
+     Found on the PMS stock-transfer form (2026-08-21): a date with a blank time
+     saved a transfer with no date at all, and its auto-created schedule task
+     with no due date. Flagging the EMPTY half makes the disagreement visible
+     without inventing a time the operator never chose — which is the trade this
+     component's own header refuses to make, and still refuses. */
+  const incomplete = !!parts.date !== !!parts.time;
+  const flagDate = incomplete && !parts.date;
+  const flagTime = incomplete && !parts.time;
+  const INCOMPLETE_HINT = 'Date and time are both needed — nothing is saved until both are filled in.';
+
   const push = (next: { date: string; time: string }) => {
     setParts(next);
     const joined = joinDateTimeLocal(next.date, next.time);
@@ -114,7 +131,8 @@ export function DateTimeField({
         disabled={disabled}
         className={className}
         style={{ ...style, flex: '1 1 auto', minWidth: 0, width: 'auto' }}
-        title={title}
+        title={flagDate ? INCOMPLETE_HINT : title}
+        invalid={flagDate}
         aria-label={ariaLabel ? `${ariaLabel} date` : undefined}
       />
       <input
@@ -122,8 +140,13 @@ export function DateTimeField({
         value={parts.time}
         disabled={disabled}
         className={className}
-        style={{ ...style, flex: '0 0 auto', width: 'auto' }}
-        title={title}
+        style={
+          flagTime
+            ? { ...style, flex: '0 0 auto', width: 'auto', borderColor: 'var(--c-festive-b, #B8331F)' }
+            : { ...style, flex: '0 0 auto', width: 'auto' }
+        }
+        title={flagTime ? INCOMPLETE_HINT : title}
+        aria-invalid={flagTime || undefined}
         aria-label={ariaLabel ? `${ariaLabel} time` : undefined}
         onChange={(e) => push({ date: parts.date, time: e.target.value })}
       />
