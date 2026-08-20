@@ -62,6 +62,7 @@ import {
 import {
   useSalesInvoiceDetail,
   useUpdateSalesInvoiceStatus,
+  useUpdateSalesInvoiceHeader,
   useSalesInvoicePayments,
   useAddSalesInvoicePayment,
   useDeleteSalesInvoicePayment,
@@ -568,6 +569,21 @@ export function SalesInvoiceDetailV2() {
   const [savingPayments, setSavingPayments] = useState(false);
   const paymentsSectionRef = useRef<HTMLDivElement | null>(null);
 
+  // ── Header-only edit (owner 2026-08-20) ──────────────────────────────────
+  // An SI's LINES are read-only — they are what the Delivery Order actually
+  // shipped (industry standard: an invoice's lines are locked to the delivery).
+  // The "Edit" button used to navigate to a dead ?edit=1 that nothing consumed.
+  // It now opens an inline HEADER editor: invoice date (only while DRAFT — the
+  // backend freezes it once issued, SI_ISSUED_FROZEN_FIELDS), due date and notes.
+  // Payments are edited in their own inline editor below; nothing here touches a
+  // line or a variant.
+  const updateHeader = useUpdateSalesInvoiceHeader();
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [hdrInvoiceDate, setHdrInvoiceDate] = useState("");
+  const [hdrDueDate, setHdrDueDate] = useState("");
+  const [hdrNotes, setHdrNotes] = useState("");
+  const headerSectionRef = useRef<HTMLDivElement | null>(null);
+
   const salesInvoice =
     (detail.data as { salesInvoice?: SiHeader } | undefined)?.salesInvoice ??
     null;
@@ -667,7 +683,40 @@ export function SalesInvoiceDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/sales-invoices"));
-  const goEdit = () => id && navigate(`/scm/sales-invoices/${id}?edit=1`);
+  // Header-only edit — seed the drafts from the invoice and reveal the inline
+  // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
+  // while DRAFT; the backend rejects it once issued.
+  const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
+  const startEditHeader = () => {
+    if (!salesInvoice) return;
+    setHdrInvoiceDate((salesInvoice.invoice_date ?? "").slice(0, 10));
+    setHdrDueDate((salesInvoice.due_date ?? "").slice(0, 10));
+    setHdrNotes(salesInvoice.note ?? salesInvoice.notes ?? "");
+    setEditingHeader(true);
+    setTimeout(() => headerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  };
+  const cancelEditHeader = () => setEditingHeader(false);
+  const saveEditHeader = () => {
+    if (!id || !salesInvoice) return;
+    const body: Record<string, unknown> = {
+      dueDate: hdrDueDate || null,
+      notes: hdrNotes,
+    };
+    // Only send invoice date when it may change (DRAFT) — the backend freezes it
+    // once issued and rejects the whole PATCH if a frozen field is present.
+    if (siIsDraft) body.invoiceDate = hdrInvoiceDate || null;
+    updateHeader.mutate(
+      { id, ...body },
+      {
+        onSuccess: () => {
+          setEditingHeader(false);
+          notify({ title: "Invoice updated", tone: "info" });
+        },
+        onError: (err) =>
+          notify({ title: "Update failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }),
+      },
+    );
+  };
   // Status transitions post to the same server endpoint the ledger page uses.
   // The endpoint keys off UPPERCASE status values (SENT / CANCELLED / PAID) — a
   // lowercase value silently misroutes (e.g. cancel would write "cancelled" and
@@ -1203,7 +1252,7 @@ export function SalesInvoiceDetailV2() {
               <Button
                 variant="primary"
                 icon={<Edit3 size={14} />}
-                onClick={goEdit}
+                onClick={startEditHeader}
               >
                 Edit
               </Button>
@@ -1214,6 +1263,56 @@ export function SalesInvoiceDetailV2() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
+        {/* Header-only edit panel (owner 2026-08-20). Lines stay read-only — an
+            invoice's lines are what the DO shipped. Only invoice date (DRAFT
+            only), due date and notes are editable here. */}
+        {editingHeader && salesInvoice && (
+          <div ref={headerSectionRef} className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-stone">
+            <div className="mb-3 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+              Edit invoice header
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">
+                  Invoice date{!siIsDraft && <span className="italic"> (locked once issued)</span>}
+                </span>
+                <input
+                  type="date"
+                  value={hdrInvoiceDate}
+                  disabled={!siIsDraft}
+                  onChange={(e) => setHdrInvoiceDate(e.target.value)}
+                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px] disabled:opacity-60"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">Due date</span>
+                <input
+                  type="date"
+                  value={hdrDueDate}
+                  onChange={(e) => setHdrDueDate(e.target.value)}
+                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px]"
+                />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-3">
+                <span className="text-[12px] text-ink-muted">Notes</span>
+                <textarea
+                  value={hdrNotes}
+                  rows={2}
+                  onChange={(e) => setHdrNotes(e.target.value)}
+                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px]"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Button variant="primary" icon={<Save size={14} />} onClick={saveEditHeader} disabled={updateHeader.isPending}>
+                {updateHeader.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="ghost" onClick={cancelEditHeader} disabled={updateHeader.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Mobile-only Outstanding hero — sits at the top of the scroll body.
             On md+ the dark aside hero replaces this. */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
@@ -1637,7 +1736,7 @@ export function SalesInvoiceDetailV2() {
             ) : (
               <button
                 type="button"
-                onClick={goEdit}
+                onClick={startEditHeader}
                 className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
               >
                 <Edit3 size={16} /> Edit
