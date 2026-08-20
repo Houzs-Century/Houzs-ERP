@@ -96,3 +96,58 @@ already how `requireServiceCaseAccess` is applied.
 - **Measure who gains access.** This widens what Sales can see. Count the
   affected users and cases first, with a read-only workflow, and put the number
   in the PR — this repo does not ship access changes on reasoning alone.
+
+## CONFIRMED BY THE OWNER 2026-08-20 — and one axis left deliberately undecided
+
+The company boundary is the whole of it, and it is simpler than the code assumes:
+
+> "我们的 team 会 set 员工 under 哪家公司,可以 under specific company,也可以 under
+> both company。如果 under both company,所有数据都可以看;如果 under single
+> company,就只能看到对应那一家"
+
+So: a grant for both companies sees both; a grant for one sees one. **Job title
+and department do not enter into it** — the `/^sales/i` test on `position_name`
+is out, per "有 Houzs 这家公司的授权 就好（不看职称）".
+
+**Service Case is 互通** — cases from both companies are visible. The owner also
+named why the live incident should never have existed: the orders come from
+AutoCount, and "如果已经在 ERP 里面开了,原本就可以开到 service case".
+
+### The ERP-sourced branch is NOT being changed yet, on purpose
+
+The owner described the salesperson axis THREE times and the direction was not
+consistent — twice as **下线** (the people I manage, looking down) and once as
+**上线** (the person who manages me, looking up). Asked to settle it, he answered
+"autocount".
+
+Read straightforwardly: the AutoCount branch is the one that is broken now and
+the one he has confirmed without ambiguity, so **ship that and leave the
+ERP-sourced branch exactly as it is**. ERP-raised orders are described as future
+usage ("之后会开始用 ERP"), so the axis can be decided when it carries real
+traffic.
+
+**Do not guess the direction.** 下线 and 上线 are opposite, both are
+implementable, and getting it wrong means somebody sees an order they should not.
+Ask before touching that branch.
+
+### 3PL rate cards — answered
+
+"3PL 它是根据我的 TMS 计算的,所以不跟着公司,其实是算 centralized 的意思,就是说
+building centralized 的意思,然后只是 bold 去看什么公司,我们到时之后再去 set."
+
+Centralised: built once against the TMS, with the company tag applied later.
+The Medium-confidence flag on `delivery-rate-card` in the classification is
+resolved as **bucket B**, not a scoping bug.
+
+### Venues — the owner's reason is more general than the one recorded above
+
+This doc and MASTER-DATA-SCOPE-RULE.md justify per-company venues as "separate
+companies raise separate revenue documents". The owner's own reason is upstream
+of that:
+
+> "你的场地,基本上都是根据你的 project 的,我们 project 是完全分开的 Modular 来的。
+> 所以你 Modular 分开的情况之下,你 project 等等肯定都是分开的。"
+
+**The MODULE is separate, so everything hanging off it is separate.** That
+generalises: for a new thing, ask which module owns it and whether that module is
+separate — rather than asking the owner case by case.
