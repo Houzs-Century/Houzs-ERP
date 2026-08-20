@@ -22,8 +22,8 @@ with the fix.
 
 | what you want | how |
 | --- | --- |
-| "have we hit this before, in this subsystem?" | `npm --prefix backend run gen:bug-index` → `docs/generated/bug-index.md`, grouped by area, one row per entry |
-| the whole ledger newest-first, as one document | `npm --prefix backend run gen:bug-history` → `docs/generated/bug-history.md` |
+| "have we hit this before, in this subsystem?" | `npm --prefix backend run gen:bug-index` → `docs/generated/bug-index.md` [generated], grouped by area, one row per entry |
+| the whole ledger newest-first, as one document | `npm --prefix backend run gen:bug-history` → `docs/generated/bug-history.md` [generated] |
 | one entry | open its file — the path is the citation |
 
 Both generated views are **gitignored**. They are rebuilt from these files in

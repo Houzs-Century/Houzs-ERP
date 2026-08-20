@@ -8,9 +8,9 @@ follows one of those should land somewhere useful rather than nowhere.
   `NNNN-slug.md`, opening with `## Title [severity]`. Every entry that was in this
   file is there, unchanged.
 - **Read by subsystem:** `npm --prefix backend run gen:bug-index` →
-  `docs/generated/bug-index.md`.
+  `docs/generated/bug-index.md` [generated].
 - **Read the whole thing, newest first:** `npm --prefix backend run gen:bug-history`
-  → `docs/generated/bug-history.md`. That file is byte-identical to what this one
+  → `docs/generated/bug-history.md` [generated]. That file is byte-identical to what this
   held, apart from blank-line runs between entries.
 - **Add one:** `node scripts/new-bug.mjs "<title>"`. Do NOT append here — the
   working-agreement gate wants a new FILE under `docs/bugs/`, and a `## ` heading

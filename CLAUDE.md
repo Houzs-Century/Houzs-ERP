@@ -274,7 +274,7 @@ node scripts/new-bug.mjs "The confirm gate accepted a cancelled PO" --severity h
 ```
 
 **Reading it has not got harder.** `npm --prefix backend run gen:bug-index` builds
-`docs/generated/bug-index.md` — every entry, grouped by subsystem, one row each —
+`docs/generated/bug-index.md` [generated] — every entry, grouped by subsystem, one row —
 and `gen:bug-history` builds the whole ledger newest-first as one document. Both
 are gitignored and rebuilt in under a second.
 
@@ -747,6 +747,7 @@ it tells the checker:
 | `` `path` [gone] `` | the doc is RECORDING a deletion — much of `docs/bugs/` is this by construction |
 | `` `path` [planned] `` | proposed, not written yet |
 | `` `path` [external] `` | lives in the 2990 source repo this SCM tree was vendored from, not here |
+| `` `path` [generated] `` | REGENERATED on demand and gitignored — `docs/generated/bug-index.md` [generated], `docs/generated/bug-history.md` [generated]. Absent in a fresh checkout, present the moment you run the generator. NOT for a TRACKED generated file: those are in the tree and must resolve |
 
 Do not add a silent exemption list instead. A suppression the reader cannot see
 is a suppression nobody re-checks — which is the whole failure mode here.
