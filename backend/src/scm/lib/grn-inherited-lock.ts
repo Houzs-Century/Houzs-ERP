@@ -10,7 +10,7 @@
  * re-serialised-but-unchanged payload (key order, a recomputed totalHeight) never
  * false-trips; only a real spec change is flagged. Pure — the route passes the
  * summary builder in so this stays free of the shared-module import graph. */
-import { GRN_LOCK_COLS } from '../shared/document-policy';
+import { GRN_LOCK_COLS, GRN_LOCK_LABELS } from '../shared/document-policy';
 
 export type GrnLinePrev = {
   purchase_order_item_id: string | null;
@@ -95,10 +95,12 @@ export function grnHeaderInheritedChanges(
 /** The 409 body when a header PATCH moves an inherited field on a GRN that
     already has a Purchase Invoice / Purchase Return. */
 export function grnHeaderInheritedRefusal(cols: string[]) {
-  const label: Record<string, string> = {
-    supplier_id: 'supplier', currency: 'currency',
-    exchange_rate: 'exchange rate', allocation_method: 'cost allocation method',
-  };
+  /* The LABELS come from the same rulebook as the COLUMNS (GRN_LOCK_COLS, above).
+     They were re-typed here, so adding a column to the rulebook gave it a human
+     label in every sibling document's refusal and a raw `allocation_method` in
+     this one — the label map is a second answer to a question document-policy.ts
+     calls "the single source". */
+  const label = GRN_LOCK_LABELS;
   return {
     error: 'grn_header_inherited_locked',
     message:
