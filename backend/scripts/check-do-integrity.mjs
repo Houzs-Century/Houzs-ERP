@@ -284,9 +284,9 @@ try {
      ORDER BY d.do_number`;
 
   if (blocked.length === 0) {
-    notice("R4b BLOCKED BY THE GATE: 0 — no LOADED delivery order would 409 today.");
+    notice("R4b LOADED AND GENUINELY OVER-DELIVERING: 0 — no LOADED delivery order would be refused on dispatch.");
   } else {
-    notice(`R4b BLOCKED BY THE GATE: ${blocked.length} LOADED delivery order(s) would 409 on dispatch RIGHT NOW.`);
+    notice(`R4b LOADED AND GENUINELY OVER-DELIVERING: ${blocked.length} LOADED delivery order(s) would be refused on dispatch.`);
     for (const r of blocked.slice(0, SHOW)) {
       notice(`R4b  company ${r.company_id}  ${r.do_number}`);
     }
