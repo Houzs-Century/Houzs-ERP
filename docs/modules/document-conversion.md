@@ -537,7 +537,8 @@ Three properties, each of which was a real defect before:
 
 `DO_SHIPPED_STATES` (`backend/src/scm/shared/do-shipped-states.ts`, mirrored to
 `frontend/src/vendor/shared/do-shipped-states.ts` and pinned byte-identical by
-`check-shared-mirrors.mjs --strict`) is the system's ONLY definition of "this
+`frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`) is the system's
+ONLY definition of "this
 delivery has shipped and is billable": `DISPATCHED`, `IN_TRANSIT`, `SIGNED`,
 `DELIVERED`, `INVOICED`. The first transition into any of them writes the
 inventory OUT, so by then the goods have left. `LOADED` and `DRAFT` are
