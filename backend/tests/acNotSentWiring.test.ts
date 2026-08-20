@@ -154,8 +154,16 @@ describe('a transferred document that arrived incomplete reaches the operator to
     ['sales invoice', () => siRoute],
   ])('the %s route returns them on the response, not only to the queue', (_name, src) => {
     const s = src();
-    expect(s).toContain('problems:');
-    expect(s).toContain(`${KEY}.length ? { ${KEY}`);
+    /* It READS the outcome's problems — the enqueue's boolean is no longer the
+       whole answer — and it SPREADS them onto the body under the one key. Two
+       assertions and not one literal, because the four routes reach the same
+       key by different local names (`ac`, `bucketAc`, a destructured
+       `problems`) and pinning one spelling would be pinning a variable name. */
+    expect(s).toMatch(/\bproblems\b/);
+    expect(s).toMatch(/\{\s*acNotSent\b/);
+    /* CONDITIONAL, always: a key present on every ordinary save is a warning
+       nobody needed, which is how an operator learns to stop reading them. */
+    expect(s).toContain('.length ? {');
   });
 
   test.each([
