@@ -29,9 +29,9 @@ await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); 
 
 and its comment claimed "jsdom's FileReader resolves on a macrotask". It does
 not. `_readFile` in
-`frontend/node_modules/jsdom/lib/jsdom/living/file-api/FileReader-impl.js`
-schedules a `setImmediate`, and fires `load` from a **second `setImmediate`
-scheduled inside the first**. Node runs due timers *before* the check phase, and
+`jsdom/lib/jsdom/living/file-api/FileReader-impl.js` [external] schedules a
+`setImmediate`, and fires `load` from a **second `setImmediate` scheduled inside
+the first**. Node runs due timers *before* the check phase, and
 an immediate scheduled from within the check phase is deferred to the next turn.
 `setTimeout(…, 0)` is clamped to 1ms — so whenever the loop turn takes longer
 than that clamp, the timer becomes due first and `settle()` returns before the
