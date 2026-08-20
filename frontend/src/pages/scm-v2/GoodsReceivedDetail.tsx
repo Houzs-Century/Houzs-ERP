@@ -68,6 +68,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -77,14 +78,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return `${currency} ${(v / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`;
-};
-
-/* T12 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg + Gap (mirrors
-   GrnNew / SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* T12 — existing GRN lines whose product is a bedframe/sofa get the SAME
@@ -361,11 +354,8 @@ export const GoodsReceivedDetail = () => {
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
       const variants: Record<string, unknown> = { ...(cur.variants ?? {}), [key]: value };
-      if (cur.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(cur.itemGroup) && isTotalHeightPart(key)) {
+        variants.totalHeight = computeTotalHeight(cur.itemGroup, variants);
       }
       return { ...prev, [it.id]: { ...cur, variants } };
     });
