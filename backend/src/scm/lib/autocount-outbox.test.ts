@@ -19,6 +19,10 @@ import {
   type AcOutboxRow,
 } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
+/* Asked of the real classifier rather than restated as "pending is fine": the
+   whole claim under test is that a note on a sent-able row does NOT make the
+   page count it as stuck, and that is this function's answer, not this file's. */
+import { acNeedsAttention } from './autocount-outbox-status';
 /* The fake used to live here. It moved when autocount-requeue.test.ts needed
    the same one — two copies of a fake drift, and this one earns its keep by
    answering 42703 for a column the table does not have. */
@@ -1694,5 +1698,86 @@ describe("a conversion says nothing rather than blanking the target's reference"
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.Ref).toBe('DN-99');
     expect(body.DocDate).toBe('2026-08-14');
+  });
+
+  /* ── AND THE ABSENCE IS SAID OUT LOUD ─────────────────────────────────────
+     The two tests above prove the safe half — a value the ERP does not have is
+     OMITTED, never sent as a blank, because a blank is a foreign key error on a
+     master field and a destroyed value on a text one. On its own that half is
+     just a quieter version of the same bug: the delivery order still reaches
+     the account book with no reference and nobody is any the wiser.
+
+     So the omission is reported, on the row the operator already reads, at the
+     moment they save. NOT a new status and NOT a second channel: `last_error`
+     is returned for every state by the outbox page
+     (routes/autocount-outbox.ts:238) and `acNeedsAttention` branches on the
+     STATUS, so a `pending` row carrying one of these is visible without being
+     counted as something stuck. */
+  test('what the document is going WITHOUT is on the row, and does not read as a failure', async () => {
+    const sb = seeded();
+    await enqueueConvert(client(sb), {
+      companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    });
+    const row = outbox(sb)[0];
+    expect(row.status).toBe('pending');
+    expect(acNeedsAttention(row.status, row.last_error)).toBe(false);
+    /* Named, one by one. "Some fields are missing" would be the sentence that
+       sends an operator to look through six screens. */
+    expect(row.last_error).toContain('DocDate');
+    expect(row.last_error).toContain('Ref');
+    expect(row.last_error).toContain('the ERP document has none');
+    /* Durable too: the drain CLEARS last_error on success, and the book still
+       holds the blank afterwards. */
+    expect(row.payload.notCarried).toEqual(expect.arrayContaining([
+      expect.stringContaining('DocDate'),
+      expect.stringContaining('Ref'),
+    ]));
+  });
+
+  test('a document carrying everything says nothing — no reason, no noise', async () => {
+    const sb = withFlag('1', {
+      delivery_orders: [{
+        id: 'do-1', do_number: 'HC-DO-1', do_date: '2026-08-19',
+        debtor_name: 'Trial Customer', ref: 'CUST-9', phone: '011', note: 'Back gate',
+        linked_ac_docno: null,
+      }],
+      delivery_order_items: [],
+    });
+    await enqueueConvert(client(sb), {
+      companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    });
+    const row = outbox(sb)[0];
+    expect(row.last_error).toBeNull();
+    expect(row.payload.notCarried).toBeUndefined();
+    const body = row.payload.body as Record<string, unknown>;
+    expect(body.DocDate).toBe('2026-08-19');
+    expect(body.Ref).toBe('CUST-9');
+    expect(body.DebtorName).toBe('Trial Customer');
+    expect(body.Note).toBe('Back gate');
+  });
+
+  /* THE TRANSFER IS WORTH MORE THAN ITS HEADER. enqueueConvert runs after the
+     route has already committed the operator's document, so a header read that
+     fails must cost the header fields and never the conversion — the shipment
+     exists either way, and one that is not queued is one nobody can find. */
+  test('a header read that fails still queues the transfer, and says why it is bare', async () => {
+    const sb = withFlag('1', {
+      /* No delivery_orders row at all: the document the conversion produced
+         cannot be read back. */
+      delivery_orders: [],
+    });
+    expect(await enqueueConvert(client(sb), {
+      companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    })).toBe(true);
+    const row = outbox(sb)[0];
+    expect(row.status).toBe('pending');
+    expect(row.payload.body.DocNo).toBe('HC-DO-1');
+    expect(row.last_error).toContain('not found');
   });
 });

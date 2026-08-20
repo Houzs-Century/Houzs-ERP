@@ -2421,6 +2421,34 @@ class AcSyncService {
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     AllowZeroValue(doc);
+    /* ── THE CUSTOMER, ON THE DOCUMENT ITSELF ────────────────────────────────
+       Added 2026-08-20, and the reason is that CARRYING a field is not LANDING
+       one. These four are in Edit()'s allow-list and were in NO slot on the
+       transfer route, so a delivery order or sales invoice reaching the book by
+       conversion carried whatever AutoCount defaulted off the fixed debtor
+       account 300-C002 - while this system's own design note says the opposite:
+       "Fixed AutoCount debtor account; the customer's real name is written over
+       it" (autocount-writeback.ts:43-44). On /create-so it is. On the two sales
+       conversions it never was, because SalesHeader is all they get.
+
+       The property names are CreateSo's own - so.DebtorName, so.Attention,
+       so.Phone1 (the payload key there is "Phone", the PROPERTY is Phone1) -
+       and Edit() reaches the same four on a DO and an invoice through
+       reflection, so they exist on those classes too.
+
+       GUARDED, every one. Str() of an absent key is "", and an unguarded
+       assignment here would blank the book's own value for any caller that
+       sends nothing - which is exactly the D4 failure being fixed, reintroduced
+       from the other side. Set() on top of that, because a class that does not
+       expose one of them must cost the field and never the document. */
+    if (p.ContainsKey("DebtorName") && !string.IsNullOrEmpty(Str(p, "DebtorName")))
+      Set(() => doc.DebtorName = Str(p, "DebtorName"));
+    if (p.ContainsKey("Attention") && !string.IsNullOrEmpty(Str(p, "Attention")))
+      Set(() => doc.Attention = Str(p, "Attention"));
+    if (p.ContainsKey("Phone1") && !string.IsNullOrEmpty(Str(p, "Phone1")))
+      Set(() => doc.Phone1 = Str(p, "Phone1"));
+    if (p.ContainsKey("Note") && !string.IsNullOrEmpty(Str(p, "Note")))
+      Set(() => doc.Note = Str(p, "Note"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));

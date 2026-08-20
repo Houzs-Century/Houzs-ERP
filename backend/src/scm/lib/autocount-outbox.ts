@@ -100,7 +100,7 @@ import {
 } from './autocount-read';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
-import { acParentlessCreateReason } from './autocount-outbox-status';
+import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
 import { persistLineKeys } from './autocount-line-keys';
@@ -111,7 +111,12 @@ import {
   CONVERT_TARGET,
   readConvertSourceKeys,
   readConvertTargetLines,
+  readConvertHeaderFacts,
+  downstreamEditHeader,
+  downstreamTransferHeader,
+  downstreamNotCarried,
   type AcDownstreamSpec,
+  type AcHeaderCtx,
 } from './autocount-convert-lines';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -219,6 +224,17 @@ export interface AcOutboxPayload {
      */
     desc2?: Array<string | null>;
   };
+  /**
+   * Header facts this operation did NOT carry to AutoCount, and why — one
+   * sentence each, in the operator's vocabulary, from `downstreamNotCarried`
+   * (two different silences, and they read differently — see it).
+   *
+   * NEVER GOES ON THE WIRE: `dispatchOne` POSTs `payload.body` and this is a
+   * sibling of it. It is the DURABLE half of the report; the row's `last_error`
+   * is the half an operator sees at save time, and the drain clears that on
+   * success while the blank in the book stays true.
+   */
+  notCarried?: string[];
 }
 
 export interface AcOutboxRow {
@@ -832,6 +848,10 @@ export async function enqueueConvert(
   const creditor = PURCHASE_CONVERSION.has(opts.op)
     ? await readConvertCreditor(sb, froms[0])
     : null;
+  /* THE DOCUMENT'S OWN HEADER, resolved before the enqueue for the same reason
+     the source keys are: what goes in the payload is decided once, here, where
+     an omission can still be written down. */
+  const own = await readConvertHeaderFacts(sb, opts.docType, opts.docId ?? null);
   return enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
@@ -862,14 +882,26 @@ export async function enqueueConvert(
            raised in its own UI keeps its own series in parallel — which is
            what tells the two apart. */
         DocNo: opts.docNo ?? null,
-        /* OMITTED WHEN THE ERP HAS NONE, not sent as null. `SalesHeader` /
-           `PurchaseHeader` apply `Set(() => doc.Ref = Str(p, "Ref"))`
-           unconditionally, and `Str` turns a present-null into "" — so every
-           conversion was writing an empty Ref over whatever the transfer had
-           put there. No caller passes `ref` yet (audit finding 13); until they
-           do, saying nothing is the only answer that cannot destroy a value.
-           `DocDate` was already correct and is written the same way for the
-           same reason: the target keeps the transfer's own posting date. */
+        /* ── THE DOCUMENT'S OWN HEADER, AND IT IS NOT A LIST OF FIELDS ───────
+           `AcDownstreamSpec.facts` — every AutoCount-named fact the ERP holds
+           about this delivery order / receipt / invoice — projected onto the
+           keys `SalesHeader` / `PurchaseHeader` actually apply, blanks stripped
+           by `present()`. A fact added to a spec reaches this payload with no
+           edit here, and one no route can carry fails the build by name; the
+           reasoning is in autocount-convert-lines.ts and guide §7c5.
+
+           This block used to build the header itself, and the two keys it had
+           were dead: `DocDate` / `Ref` were spread in behind `if (opts.docDate)`
+           / `if (opts.ref)` and NO caller passes either, all eight verified
+           (delivery-orders-mfg.ts:3576, :4216; grns.ts:1974, :2356;
+           purchase-invoices.ts:1691, :1891; sales-invoices.ts:1394;
+           si-autocount-source.ts:178). So every conversion since the cutover
+           landed under the DRAIN's date with a blanked Ref, and the GRN and
+           purchase invoice threw away the supplier's own document number.
+
+           THE CALLER STILL WINS: `opts` is spread AFTER, and the `if` stays
+           because a present-null is how you blank a live book. */
+        ...own.header,
         ...(opts.docDate ? { DocDate: opts.docDate } : {}),
         ...(opts.ref ? { Ref: opts.ref } : {}),
         /* THE CUSTOMER, AND THE TRANSFER DOES NOT HAPPEN WITHOUT ONE.
@@ -931,8 +963,18 @@ export async function enqueueConvert(
          degrades to "no keys stored", which costs a refused edit later and is
          visible, and must never cost the conversion itself. */
       lineWriteback: await readConvertTargetLines(sb, opts.op, opts.docId ?? null),
+      /* WHAT THIS DOCUMENT IS GOING WITHOUT. Kept HERE as well as in the row's
+         reason because the drain clears last_error on success — rightly, a sent
+         row must not read like a failure — while the blank in the book stays
+         true, and one missing supplier invoice number is a different fact from
+         every purchase invoice this month missing one. */
+      ...(own.notCarried.length ? { notCarried: own.notCarried } : {}),
     },
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
+    /* SAID AT SAVE TIME, ON THE ROW THE OPERATOR ALREADY READS — the channel
+       that exists, not a second one. `acNeedsAttention` branches on STATUS, so
+       a note on a `pending` row reports without crying wolf. */
+    reason: acNotCarriedReason(own.notCarried),
     createdBy: opts.createdBy ?? null,
   });
 }
@@ -1417,8 +1459,10 @@ async function composeDownstreamState(
     photos: undefined as AcOutboxPayload['photos'],
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as (() => Record<string, unknown>) | null,
+    /* The SAME master the conversion route projects, narrowed to /edit's own
+       allow-list instead — see `AcDownstreamSpec.facts`. */
     edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
+      docType, String(h.linked_ac_docno ?? docNo), downstreamEditHeader(docType, h), lines, {}, retired,
     ),
   };
 }

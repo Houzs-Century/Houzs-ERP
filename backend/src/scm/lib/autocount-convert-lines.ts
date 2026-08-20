@@ -87,8 +87,47 @@ export interface AcDownstreamSpec {
   /** The human document number, for the outbox row's doc_no. */
   docNoOf: (h: Record<string, unknown>) => string;
   line: (r: Record<string, unknown>) => ErpLine;
-  /** NEVER `string | null`: a present-null key BLANKS the book. See `present`. */
-  header: (h: Record<string, unknown>) => Record<string, string>;
+  /**
+   * EVERY AutoCount-named header fact the ERP holds for this document — the ONE
+   * master both routes are projected from, and the whole structural point of
+   * this file.
+   *
+   * It used to be `header`, a hand-built object for `/edit` alone, while the
+   * CONVERSION route built a second, narrower object of its own in
+   * `enqueueConvert`. Two hand-written shapes for one document is the defect
+   * this repo has now paid for three times on the purchase side — `/so-to-po`
+   * threw the create's whole master away and was patched ONE FIELD AT A TIME,
+   * `CreditorCode` on 2026-08-17 09:15 and `DocNo` at 10:15, and five fields
+   * were still missing after both. The four conversions had the identical hole
+   * and nobody had looked.
+   *
+   * So there is one master and the routes are PROJECTIONS of it —
+   * `downstreamEditHeader` and `downstreamTransferHeader` below. A fact added
+   * here reaches whichever route can apply it with no further edit, and a fact
+   * that reaches NEITHER fails `every downstream header fact reaches a route`
+   * by name rather than going out silently.
+   *
+   * RETURNS `string | null`, and every key is ALWAYS PRESENT. That is not
+   * sloppiness about `present` — it is what makes the ABSENCE reportable. The
+   * projections apply `present()` (so a blank is still omitted rather than
+   * blanking the book), and `downstreamNotCarried` reads the nulls to say which
+   * facts this document has none of. A shape that dropped its own blanks could
+   * not tell "the ERP has no supplier invoice number" from "this document type
+   * has no such field".
+   */
+  facts: (h: Record<string, unknown>, ctx?: AcHeaderCtx) => Record<string, string | null>;
+}
+
+/**
+ * What a header fact needs that is NOT a column on the header row.
+ *
+ * Only the warehouse today: `scm.grns.warehouse_id` is a uuid and AutoCount's
+ * `dbo.Location` is keyed by the short code, so the hop needs a query and
+ * `facts` is deliberately pure. The caller resolves it and passes the answer.
+ */
+export interface AcHeaderCtx {
+  /** The `dbo.Location` code for this document's own warehouse, already resolved. */
+  locationCode?: string | null;
 }
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
@@ -124,16 +163,36 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     sourceFk: 'so_item_id',
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty',
-    headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
+    headerCols: 'id, do_number, do_date, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => present({
+    facts: (h) => ({
+      /* THE DOCUMENT'S OWN DATE. `SalesHeader` is guarded — `var dt =
+         Date(p, "DocDate"); if (dt.HasValue)` (AcSyncService.cs:2424) — so
+         sending nothing does not blank it, it leaves `cmd.AddNew()`'s default,
+         which is TODAY. The delivery order was dated by the operator and the
+         drain runs on a five-minute cron, so "today" is the drain's day and not
+         the delivery's: a DO raised at 23:58 or back-dated after the fact
+         posted under the wrong date in a live account book, every time. */
+      DocDate: str(h.do_date),
       DebtorName: str(h.debtor_name),
       Attention: str(h.debtor_name),
       Ref: str(h.ref),
       Phone1: str(h.phone),
       Note: str(h.note),
+      /* NO Description, AND THAT IS DELIBERATE. `delivery_orders` carries TWO
+         note columns — `note`, which is the one mapped here since /edit was
+         written, and `notes`, which reaches AutoCount nowhere. `SalesHeader`
+         assigns Description unconditionally, so the transferred DO's
+         Description is written "" — but the sales arm builds its target with
+         `AddPartialTransferDetail(..., false)` (AcSyncService.cs:1096), whose
+         third argument is transferMaster, so nothing was copied off the sales
+         order for that "" to destroy. Blank in, blank out.
+         Guessing WHICH of two note columns is the book's Description is exactly
+         the "do not send a key whose value you cannot vouch for" rule, and the
+         purchase side's `notes -> Description` is not evidence about a
+         different table. Left for the owner to say. */
     }),
   },
   GR: {
@@ -144,7 +203,7 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     sourceFk: 'purchase_order_item_id',
     itemQtyCol: 'qty_accepted',
     sourceQtyCol: 'qty',
-    headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
+    headerCols: 'id, grn_number, received_at, warehouse_id, delivery_note_ref, notes, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty_accepted, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
     /* qty_ACCEPTED, not qty_received. AutoCount's GR line quantity is what
@@ -153,9 +212,38 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
        counterpart at all, so sending qty_received would make AutoCount's PO
        outstanding disagree with the ERP's by exactly the rejected quantity. */
     line: (r) => soLine({ ...r, qty: r.qty_accepted }),
-    header: (h) => present({
+    facts: (h, ctx) => ({
+      /* Guarded on the service side (AcSyncService.cs:2448), so an absent key
+         leaves `cmd.AddNew()`'s today rather than the day the goods arrived. */
+      DocDate: str(h.received_at),
       Ref: str(h.delivery_note_ref),
       Description: str(h.notes),
+      /* THE SUPPLIER'S OWN DELIVERY NOTE NUMBER, and the second key the SAME
+         column feeds. `Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"))` is
+         UNCONDITIONAL on the GR arm (AcSyncService.cs:1226) and `Str` of an
+         absent key is "" (:3212), so the ERP's silence has been writing an
+         empty string into the book's field for exactly this number on every
+         goods receipt. AutoCount has a dedicated field for it and
+         `scm.grns.delivery_note_ref` is that number.
+         BOTH KEYS FROM ONE COLUMN on purpose: `Ref` is what /edit has mapped
+         this column to since /edit was written, and the two routes describing
+         the same document differently is the shape this whole file exists to
+         stop. */
+      SupplierDONo: str(h.delivery_note_ref),
+      /* THE RECEIVING WAREHOUSE — AutoCount's own header purchase location.
+         The ERP's model comment on the CREATE side says "a purchase order has
+         no location of its own — the ship-to warehouse is per LINE"
+         (autocount-writeback.ts:1237). That is true of the ERP's PO and it is
+         NOT true of AutoCount, and it was never true of the GRN: `scm.grns`
+         carries `warehouse_id` and the GRN list column it feeds is literally
+         labelled "Purchase Location" (grns.ts:1050).
+         `PurchaseHeader` takes it guarded — ContainsKey AND non-empty
+         (AcSyncService.cs:2446) — because "" is not a row in `dbo.Location` and
+         a blank would be its own foreign key error, so omitting it is safe and
+         a fabricated one would not be. The vendor's own comment names an empty
+         PurchaseLocation as its standing suspect for the GRN partial-transfer
+         `IndexOutOfRangeException: There is no row at position -1` (:2438). */
+      PurchaseLocation: ctx?.locationCode ?? null,
     }),
   },
   IV: {
@@ -166,11 +254,15 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     sourceFk: 'do_item_id',
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty',
-    headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
+    headerCols: 'id, invoice_number, invoice_date, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => present({
+    /* THE SAME FACTS AS THE DELIVERY ORDER, under the same names, off the same
+       columns but this table's own date. Read the DO's notes above for every
+       one of them — including why there is no Description here either. */
+    facts: (h) => ({
+      DocDate: str(h.invoice_date),
       DebtorName: str(h.debtor_name),
       Attention: str(h.debtor_name),
       Ref: str(h.ref),
@@ -186,16 +278,215 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     sourceFk: 'grn_item_id',
     itemQtyCol: 'qty',
     sourceQtyCol: 'qty_accepted',
-    headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
+    headerCols: 'id, invoice_number, invoice_date, supplier_invoice_ref, notes, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => present({
+    facts: (h) => ({
+      DocDate: str(h.invoice_date),
       Ref: str(h.supplier_invoice_ref),
       Description: str(h.notes),
+      /* THE SUPPLIER'S OWN INVOICE NUMBER, and the one that stings most. The PI
+         arm assigns it unconditionally (AcSyncService.cs:1259), so the book's
+         field for the supplier's invoice number has been written EMPTY on every
+         purchase invoice the ERP has ever transferred, while
+         `scm.purchase_invoices.supplier_invoice_ref` held it the whole time.
+         Same one-column-two-keys note as the GRN's SupplierDONo. */
+      SupplierInvoiceNo: str(h.supplier_invoice_ref),
+      /* NO PurchaseLocation, and this is the answer to "if our model genuinely
+         has no header location". `scm.purchase_invoices` has no warehouse
+         column at all (purchase-invoices.ts:61 is the whole header) — a
+         purchase invoice moves money, not stock, and the receipt it follows is
+         where the goods landed. So nothing is fabricated here. The guard on
+         `PurchaseHeader` (:2446) means an absent key leaves the location
+         AutoCount's own transfer put there, which is the GRN's — the right
+         answer, and one the ERP is not entitled to overwrite. */
     }),
   },
 };
+
+/**
+ * The header keys `/edit` will ever apply, straight off its allow-list.
+ *
+ * `Edit()` reflects over a fixed `string[]` and DROPS anything outside it
+ * (AcSyncService.cs:2990-2995) — silently, because the payload is read with
+ * `Str` and a key nobody looks at is not an error. So this is the set a fact
+ * has to be in for `/edit` to carry it, and the contract test asserts it
+ * against that array in the C# source rather than trusting this copy.
+ */
+export const AC_EDIT_HEADER_KEYS: readonly string[] = [
+  'DebtorName', 'CreditorName', 'Attention', 'Agent', 'Ref', 'Description',
+  'SalesLocation', 'Phone1', 'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4',
+  'DeliverAddr1', 'DeliverAddr2', 'DeliverAddr3', 'DeliverAddr4',
+  'DeliverContact', 'DeliverPhone1', 'Remark1', 'Remark2', 'Remark3', 'Remark4',
+  'Note',
+];
+
+/**
+ * The header keys a CONVERSION will ever apply, per target document.
+ *
+ * A STRICTLY NARROWER SET THAN `/edit`'s, and that asymmetry is the finding
+ * behind this whole change. The transfer route does not go through `Edit()`'s
+ * reflection loop at all: it applies `SalesHeader` (AcSyncService.cs:2422-2434)
+ * or `PurchaseHeader` (:2436-2461) and then, on the two purchase arms only, one
+ * further assignment each — `SupplierDONo` on the GRN (:1226) and
+ * `SupplierInvoiceNo` on the purchase invoice (:1259).
+ *
+ * So a key outside this set is NOT "sent and defaulted", it is sent and
+ * DROPPED, and adding it to the payload would have been a third no-op patch of
+ * the kind that left `/so-to-po` broken twice over. `DocNo` and `DisplayTerm`
+ * are in the service's set and not in any spec's facts — the number comes from
+ * the outbox row and the ERP has no payment term — which costs nothing: a
+ * projection is an intersection, so a key the ERP never states is simply never
+ * projected.
+ *
+ * ASSERTED AS A SUBSET of what the C# reads, never as an equality: the vendor
+ * service is free to grow a slot the ERP has nothing to put in (`Agent` on
+ * `PurchaseHeader` is one landing on a sibling branch right now), and a test
+ * that broke on that would be a test that punishes the other half of the fix.
+ * The direction that matters is the dangerous one — the ERP must never send a
+ * key this route silently discards.
+ */
+export const AC_TRANSFER_HEADER_KEYS: Record<'DO' | 'GR' | 'IV' | 'PI', readonly string[]> = {
+  /* SalesHeader, and nothing after it: the DO and IV arms call it BEFORE the
+     transfer and make no trailing assignment (AcSyncService.cs:1097, :1106). */
+  DO: ['DocDate', 'DocNo', 'Ref', 'Description', 'DisplayTerm', 'DebtorName', 'Attention', 'Phone1', 'Note'],
+  IV: ['DocDate', 'DocNo', 'Ref', 'Description', 'DisplayTerm', 'DebtorName', 'Attention', 'Phone1', 'Note'],
+  /* PurchaseHeader plus the GRN arm's own SupplierDONo. */
+  GR: ['DocDate', 'DocNo', 'Ref', 'Description', 'DisplayTerm', 'PurchaseLocation', 'SupplierDONo'],
+  /* PurchaseHeader plus the purchase invoice arm's own SupplierInvoiceNo. */
+  PI: ['DocDate', 'DocNo', 'Ref', 'Description', 'DisplayTerm', 'PurchaseLocation', 'SupplierInvoiceNo'],
+};
+
+/** The master, narrowed to one route's keys and then blank-stripped. */
+const project = (
+  facts: Record<string, string | null>,
+  keys: readonly string[],
+): Record<string, string> => {
+  const allowed = new Set(keys);
+  const narrowed: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(facts)) if (allowed.has(k)) narrowed[k] = v;
+  return present(narrowed);
+};
+
+/** The master projected onto `/edit`. */
+export function downstreamEditHeader(
+  docType: 'DO' | 'GR' | 'IV' | 'PI',
+  h: Record<string, unknown>,
+  ctx?: AcHeaderCtx,
+): Record<string, string> {
+  return project(DOWNSTREAM[docType].facts(h, ctx), AC_EDIT_HEADER_KEYS);
+}
+
+/** The master projected onto the CONVERSION route. */
+export function downstreamTransferHeader(
+  docType: 'DO' | 'GR' | 'IV' | 'PI',
+  h: Record<string, unknown>,
+  ctx?: AcHeaderCtx,
+): Record<string, string> {
+  return project(DOWNSTREAM[docType].facts(h, ctx), AC_TRANSFER_HEADER_KEYS[docType]);
+}
+
+/**
+ * A downstream document's OWN header, in the shape the conversion route wants,
+ * plus what it is going without.
+ *
+ * NEVER THROWS, and that is the contract the caller needs: `enqueueConvert`
+ * runs after the route has already committed the operator's document, so an
+ * unreadable header must cost the transfer its header fields, never the
+ * transfer. A read that fails comes back as `readFailed`, which the caller
+ * turns into a sentence on the outbox row — the difference between "the ERP has
+ * no supplier invoice number" and "the ERP could not look" is exactly the kind
+ * of thing this queue has previously reported as neither.
+ *
+ * The warehouse hop is done HERE rather than in `facts`, which is pure: the ERP
+ * column is a `scm.warehouses` uuid and AutoCount's `dbo.Location` is keyed by
+ * the short code. Same id -> code resolution `withLocations` does for lines, one
+ * row instead of a set, and the same `code ?? name` fallback so a header and a
+ * line on one document can never disagree about the same warehouse.
+ */
+export async function readConvertHeaderFacts(
+  sb: Sb,
+  docType: 'DO' | 'GR' | 'IV' | 'PI',
+  id: string | null,
+): Promise<{ header: Record<string, string>; notCarried: string[]; readFailed: boolean }> {
+  const spec = DOWNSTREAM[docType];
+  if (!id) {
+    return {
+      header: {},
+      notCarried: ['the ERP did not name which document this conversion produced, so none of its header fields could be read'],
+      readFailed: true,
+    };
+  }
+  try {
+    const row = await readOrThrow(`${spec.table} header`,
+      sb.from(spec.table).select(spec.headerCols).eq('id', id).maybeSingle());
+    if (!row) {
+      return {
+        header: {},
+        notCarried: [`the ${spec.table} row for this document was not found, so none of its header fields could be read`],
+        readFailed: true,
+      };
+    }
+    const h = row as unknown as Record<string, unknown>;
+    let locationCode: string | null = null;
+    /* Only the GRN has one. Asked of the ROW rather than of the doc type, so a
+       table that grows a warehouse column is one `facts` line from sending it. */
+    if (typeof h.warehouse_id === 'string' && h.warehouse_id.trim()) {
+      const w = await readOrThrow('warehouses',
+        sb.from('warehouses').select('id, code, name').eq('id', h.warehouse_id).maybeSingle());
+      const rec = w as { code?: string | null; name?: string | null } | null;
+      locationCode = ((rec?.code ?? rec?.name ?? '') as string).trim() || null;
+    }
+    const ctx: AcHeaderCtx = { locationCode };
+    return {
+      header: downstreamTransferHeader(docType, h, ctx),
+      notCarried: downstreamNotCarried(docType, h, ctx),
+      readFailed: false,
+    };
+  } catch (e) {
+    return {
+      header: {},
+      notCarried: [`the ERP could not read this document's own header (${(e as Error)?.message ?? 'read failed'}), so it was transferred with none of its own fields`],
+      readFailed: true,
+    };
+  }
+}
+
+/**
+ * What this document will reach the accounts WITHOUT, in the operator's words.
+ *
+ * TWO DIFFERENT SILENCES, and they are not the same problem, so they do not get
+ * the same sentence:
+ *
+ *   · the ERP HAS NO VALUE — the fact is one this route could carry and the
+ *     column is empty. `present()` omits the key rather than sending a blank
+ *     (a blank is a foreign key error on a master field and a destroyed value
+ *     on a text one), so the book keeps its own. Fixable by the person holding
+ *     the document: fill the field in and it goes on the next edit.
+ *   · THE ROUTE CANNOT CARRY IT — the ERP has the value and `SalesHeader` /
+ *     `PurchaseHeader` have no slot for it. Nobody on the shop floor can fix
+ *     that; it needs a service change. Said out loud anyway, because the owner
+ *     asked why the transferred document did not carry the source's data and
+ *     the honest half of the answer is "this route has nowhere to put it".
+ *
+ * Returned as sentences and not codes because it goes in the outbox row's
+ * reason, which is read by a person.
+ */
+export function downstreamNotCarried(
+  docType: 'DO' | 'GR' | 'IV' | 'PI',
+  h: Record<string, unknown>,
+  ctx?: AcHeaderCtx,
+): string[] {
+  const facts = DOWNSTREAM[docType].facts(h, ctx);
+  const carried = new Set(AC_TRANSFER_HEADER_KEYS[docType]);
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(facts)) {
+    if (!carried.has(k)) out.push(`${k}: this transfer has no field for it (it reaches AutoCount only through an edit)`);
+    else if (!(v ?? '').trim()) out.push(`${k}: the ERP document has none, so AutoCount keeps its own`);
+  }
+  return out;
+}
 
 /** The line table each conversion's TARGET lines live in, for key capture. */
 export const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 'DO' | 'GR' | 'IV' | 'PI'> = {
