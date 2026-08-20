@@ -13,9 +13,10 @@ import { soMirror } from '../src/scm/routes/so-mirror';
  *
  * These assertions are about STATEMENTS, not about a return shape: the whole
  * defect was writes happening at all. The fake records every statement the
- * route issues, and the skip cases assert the write list is EMPTY. A test that
- * only read the JSON body would pass on a route that skipped in its response
- * and wrote anyway.
+ * route issues, and the skip cases assert that NOTHING touched the document
+ * (see orderWrites — the mig-0311 skip ledger is a write, and it belongs on
+ * exactly those paths). A test that only read the JSON body would pass on a
+ * route that answered "skipped" and wrote anyway.
  */
 
 const SECRET = 'test-sync-secret';
@@ -44,6 +45,12 @@ const COLUMNS: Record<string, Array<{ col: string; dtype: string }>> = {
 };
 
 type Stmt = { sql: string; args: unknown[] };
+
+/* Writes that touch the ORDER. The skip ledger (mig 0311) is a write too, and
+   it is supposed to happen on exactly the paths that must not touch the order —
+   so "nothing was written" has to mean "nothing was written to the document",
+   or the ledger would mask the assertion that matters. */
+const orderWrites = (writes: Stmt[]) => writes.filter((w) => !/so_mirror_skips/.test(w.sql));
 
 /** A D1-shaped fake over a set of doc_nos company 2 already holds. `failOn`
  *  makes one statement throw, which is how the half-written first import is
@@ -143,7 +150,7 @@ describe('so-mirror is import-once', () => {
     expect(await res.json()).toMatchObject({
       ok: true, docNo: '2990-SO-2608-099', action: 'skipped_existing', skipped: true,
     });
-    expect(writes).toEqual([]);
+    expect(orderWrites(writes)).toEqual([]);
   });
 
   test('deleted:true on an order Houzs already holds is REFUSED, not applied', async () => {
@@ -155,7 +162,7 @@ describe('so-mirror is import-once', () => {
     expect(await res.json()).toMatchObject({
       ok: true, docNo: '2990-SO-2608-099', action: 'refused_delete', refused: true,
     });
-    expect(writes).toEqual([]);
+    expect(orderWrites(writes)).toEqual([]);
     expect(held.has('2990-SO-2608-099')).toBe(true);
   });
 
@@ -188,6 +195,49 @@ describe('so-mirror is import-once', () => {
 
     expect(res.status).toBe(500);
     expect(writes).toEqual([]);
+  });
+
+  /* The durable half (mig 0311). Without a row here, "the mirror declined this
+     delivery" survives only as a console line nobody was tailing — and with
+     2990's outbox idle, a surviving edit proves nothing on its own. */
+  test('a skipped re-delivery is RECORDED, counting up on the same doc', async () => {
+    const { db, writes } = fakeDatabase(new Set(['2990-SO-2608-099']));
+    await deliver(db, NEW_ORDER);
+
+    const ledger = writes.filter((w) => /scm\."so_mirror_skips"/.test(w.sql));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].args).toEqual([2, '2990-SO-2608-099', 'skipped_existing']);
+    // hits climbs on the existing row rather than appending one per delivery —
+    // the drainer retries every 10s, so append-per-event is unbounded.
+    expect(ledger[0].sql).toMatch(/ON CONFLICT \(company_id, doc_no, action\)/);
+    expect(ledger[0].sql).toMatch(/hits = scm\."so_mirror_skips"\.hits \+ 1/);
+  });
+
+  test('a refused delete is recorded under its own action', async () => {
+    const { db, writes } = fakeDatabase(new Set(['2990-SO-2608-099']));
+    await deliver(db, { docNo: 'SO-2608-099', deleted: true });
+
+    const ledger = writes.filter((w) => /scm\."so_mirror_skips"/.test(w.sql));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].args).toEqual([2, '2990-SO-2608-099', 'refused_delete']);
+  });
+
+  /* An audit must never break the operation it watches. Turning a correct
+     refusal into a 500 would put the outbox row back to PENDING and wedge the
+     queue behind it — the exact failure the 200 exists to avoid. */
+  test('a ledger write that fails does NOT turn the refusal into a 500', async () => {
+    const { db } = fakeDatabase(new Set(['2990-SO-2608-099']), /so_mirror_skips/);
+    const res = await deliver(db, NEW_ORDER);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ action: 'skipped_existing', skipped: true });
+  });
+
+  test('an IMPORT writes no ledger row — the order itself is the evidence', async () => {
+    const { db, writes } = fakeDatabase(new Set());
+    await deliver(db, NEW_ORDER);
+
+    expect(writes.filter((w) => /so_mirror_skips/.test(w.sql))).toEqual([]);
   });
 
   test('the shared-secret wall is untouched', async () => {
