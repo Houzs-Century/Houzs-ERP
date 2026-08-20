@@ -168,9 +168,14 @@ describePg('a GRN cancel, its stock reversal and its allocation request are one 
       item_code: 'MATT-A',
       batch_no: 'PO-2607-009',
       source_doc_no: 'GRN-2608-001',
-      company_id: 1,
     });
+    /* `numeric` and `bigint` come back from postgres.js as STRINGS — it will not
+       silently narrow them through a float. So these two are compared as
+       numbers, not asserted in the object literal above, where `company_id: 1`
+       fails against '1'. (Caught by the first CI run of this file: there is no
+       Postgres on the machine it was written on.) */
     expect(Number(rows[0]!.qty)).toBe(2);
+    expect(Number(rows[0]!.company_id)).toBe(1);
   });
 
   test('ROLLBACK after the enqueue: NEITHER survives — the whole point', async () => {
