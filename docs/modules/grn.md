@@ -796,3 +796,26 @@ inventory: `docs/generated/`.
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

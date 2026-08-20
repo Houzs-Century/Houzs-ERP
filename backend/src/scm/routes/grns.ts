@@ -1957,8 +1957,9 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      FullTransfers the array or groups the named line keys per source document.
      The "one transfer, one source document" limit this used to skip on belongs
      to the primitive's key array, never to the target. */
-  if (poList.length) {
-    await enqueueConvert(sb, {
+  /* The receipt IS in the accounts; these are fields on it that are NOT — the
+     other verdict, on #2499's key and shape. */
+  const ac = poList.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'po_to_gr',
       from: poList.map((po) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: po.id })),
@@ -1967,12 +1968,11 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
       docNo: h.grn_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
-  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
+  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 grns.post('/from-pos', createGrnFromPosHandler);
 
@@ -2339,8 +2339,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
        it names every purchase order it received against. The bucket is grouped
        by supplier, so all its sources share one creditor. */
     const bucketPoIds = bucket.poIds.size ? [...bucket.poIds] : (bucket.primaryPoId ? [bucket.primaryPoId] : []);
-    if (bucketPoIds.length) {
-      await enqueueConvert(sb, {
+    const bucketAc = bucketPoIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'po_to_gr',
         from: bucketPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: id })),
@@ -2349,8 +2348,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
         docNo: h.grn_number,
         docId: h.id,
         createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
+    }) : null;
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
@@ -2362,6 +2360,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       ...(postFailReason ? { postError: postFailReason } : {}),
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),
       ...(bucketRecountError ? { recountError: bucketRecountError } : {}),
+      // PER BUCKET: each bucket IS its own receipt, with its own gaps.
+      ...(bucketAc?.problems.length ? { acNotSent: bucketAc.problems } : {}),
     });
   }
 
