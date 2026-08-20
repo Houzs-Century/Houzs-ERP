@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Bell, RotateCcw } from "lucide-react";
+import { Bell, CheckCheck, RotateCcw } from "lucide-react";
 import { relativeTime } from "../lib/utils";
 import { useNotifications, type NotificationItem } from "../hooks/useNotifications";
 import { Avatar } from "../components/Avatar";
@@ -10,11 +11,41 @@ import { Avatar } from "../components/Avatar";
  * same activity rows the bell popover shows) as a full-screen list, so
  * tapping Inbox opens a real screen instead of a 404.
  *
- * Display-only — the feed polls itself via the provider. Each row links
- * to its project, mirroring the bell popover.
+ * Each row links to its project, mirroring the bell popover.
+ *
+ * NO LONGER DISPLAY-ONLY. "Mark all read" existed only on the phone
+ * (MobileInbox), so the same feed could be cleared from a handset and not from
+ * a desk — the desktop page carried Reload and no write at all. The action is
+ * the SHARED `markAllRead` on the notifications provider, not a second copy of
+ * the mobile loop.
  */
 export function Notifications() {
-  const { feed, totalUnread, loadFailed, reload } = useNotifications();
+  const { feed, totalUnread, loadFailed, reload, markAllRead } = useNotifications();
+  const [marking, setMarking] = useState(false);
+  /* The shared action reports how many projects refused instead of swallowing
+     them; this is the surface that renders it. Silence here would be the exact
+     bug the mobile version had. */
+  const [markError, setMarkError] = useState<string | null>(null);
+
+  const onMarkAll = async () => {
+    if (marking || totalUnread === 0) return;
+    setMarking(true);
+    setMarkError(null);
+    try {
+      const { ok, failed } = await markAllRead();
+      if (failed > 0) {
+        setMarkError(
+          ok > 0
+            ? `Marked ${ok}, but ${failed} couldn't be marked read. Try again.`
+            : "Couldn't mark these read. Try again.",
+        );
+      }
+    } catch (e) {
+      setMarkError(e instanceof Error ? e.message : "Couldn't mark these read.");
+    } finally {
+      setMarking(false);
+    }
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-5">
@@ -36,15 +67,34 @@ export function Notifications() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => reload()}
-          aria-label="Refresh notifications"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-ink-muted transition-colors hover:border-accent/40 hover:text-accent"
-        >
-          <RotateCcw size={15} />
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Desktop parity with the mobile Inbox pill. Disabled — never hidden
+              — at zero unread, so the capability stays discoverable. */}
+          <button
+            type="button"
+            onClick={() => void onMarkAll()}
+            disabled={marking || totalUnread === 0}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[12px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-default disabled:opacity-50 disabled:hover:border-border disabled:hover:text-ink-secondary"
+          >
+            <CheckCheck size={14} />
+            {marking ? "Marking…" : "Mark all read"}
+          </button>
+          <button
+            type="button"
+            onClick={() => reload()}
+            aria-label="Refresh notifications"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-ink-muted transition-colors hover:border-accent/40 hover:text-accent"
+          >
+            <RotateCcw size={15} />
+          </button>
+        </div>
       </header>
+
+      {markError && (
+        <p className="rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-ink">
+          {markError}
+        </p>
+      )}
 
       {feed.length === 0 && loadFailed ? (
         /* An empty feed we FAILED to load is NOT an empty feed. Telling someone
