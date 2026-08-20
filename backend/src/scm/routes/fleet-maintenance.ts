@@ -1,10 +1,5 @@
-/* company-scope-file: these reads are DELIBERATE. migs 0202/0203/0204 state
-   `company_id` on the fleet tables is "STAMPED on insert for provenance but NOT
-   used to scope reads" - a lorry is one physical vehicle whichever book paid for
-   it, and a company predicate here would HIDE it from the people responsible.
-   Not a waiver, a signal separator: 13 of ~20 findings were these every run.
-   If the fleet ever needs per-company reads, delete this header and let the
-   checker fail. docs/MASTER-DATA-SCOPE-RULE.md. */
+/* company-scope-file: DELIBERATE - migs 0202/0203/0204 say company_id here is
+   provenance, NOT a read scope. docs/MASTER-DATA-SCOPE-RULE.md. */
 // ----------------------------------------------------------------------------
 // /api/fleet-maintenance — Fleet Maintenance & Compliance, Phase 1.
 //
