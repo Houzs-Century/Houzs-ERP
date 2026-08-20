@@ -11,6 +11,8 @@ import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
@@ -3423,9 +3425,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-grns.delete('/:id/items/:itemId', async (c) => {
+/* Runs INSIDE runScmPgCommand's transaction — see the route below. `sb` is the
+   transactional client and is a parameter rather than a `c.get('supabase')`
+   read, because that read is what would silently put a write outside the
+   transaction this whole change exists to create. */
+async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
-  const sb = c.get('supabase'); const user = c.get('user');
+  const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
     const { data: own, error: ownErr } = await scopeToCompany(
@@ -3571,11 +3577,18 @@ grns.delete('/:id/items/:itemId', async (c) => {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out → re-walk SO allocation. */
-          try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-delete failed:', e); }
+          /* GRN line delete pulled stock back out -> re-walk SO allocation.
+
+             DURABLE since 2026-08-20: the queue row commits in the SAME
+             transaction as the OUT above, so a Worker that dies here cannot
+             leave the stock moved and the allocation un-recomputed. The old
+             call was `recomputeSoStockAllocation(sb)` in a try/catch - if the
+             Worker died before reaching it, or the sweep threw, nothing
+             retried and SO lines stayed READY/PENDING wrongly until some
+             unrelated mutation happened to sweep. It is also no longer
+             swallowed: a failure to ENQUEUE must fail the delete, because a
+             stock move with no recompute is the exact state being removed. */
+          await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
         }
       } catch { /* best-effort */ }
     }
@@ -3584,4 +3597,18 @@ grns.delete('/:id/items/:itemId', async (c) => {
   await recomputeGrnTotals(sb, grnId);
   await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-});
+}
+
+/* The FIRST GRN route to run inside the PG command transaction. Everything the
+   handler writes - the line delete, the reversing stock OUT, the entity audit,
+   the AutoCount outbox row and the allocation queue row - now commits together
+   or not at all.
+
+   Note what this costs: runScmPgCommand answers 503 `scm_pg_command_required`
+   where DATABASE_URL is absent. That is deliberate and is the honest failure -
+   refusing is better than half-writing a stock reversal.
+
+   The remaining five GRN routes are unchanged and still best-effort; converting
+   them is one PR each, postGrnHandler last. See
+   docs/ALLOCATION-DURABILITY-PLAN.md. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, (sb) => deleteGrnLineCommandHandler(c, sb)));

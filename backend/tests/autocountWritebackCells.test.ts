@@ -130,7 +130,11 @@ describe('the four downstream document types queue an edit on every line and hea
     expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, sb, id)');
     expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId)');
     expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, sb, grnId)');
-    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
+    /* Anchored on the HANDLER, not the route: since 2026-08-20 the GRN line delete
+       runs inside runScmPgCommand, so its body lives in a named command handler
+       above the one-line route. The property is unchanged - the outbox row is
+       still written on this path - only where the text sits moved. */
+    expect(between(GRN, 'async function deleteGrnLineCommandHandler', 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
   });
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {
@@ -331,7 +335,9 @@ describe('every line-DELETE route retires the line in AutoCount', () => {
     ['SO',  SO,  "mfgSalesOrders.delete('/:docNo/items/:itemId',",      'return c.body(null, 204);', 'mfg_sales_order_items'],
     ['PO',  PO,  "mfgPurchaseOrders.delete('/:id/items/:itemId',",      'return c.body(null, 204);', 'purchase_order_items'],
     ['DO',  DO,  "deliveryOrdersMfg.delete('/:id/items/:itemId',",      'return c.json({ ok: true });', 'delivery_order_items'],
-    ['GR',  GRN, "grns.delete('/:id/items/:itemId',",                   'return c.body(null, 204);', 'grn_items'],
+    /* handler, not route - see the note above: the delete body moved when this
+       route became transactional. */
+    ['GR',  GRN, 'async function deleteGrnLineCommandHandler',            'return c.body(null, 204);', 'grn_items'],
     ['IV',  SI,  "salesInvoices.delete('/:id/items/:itemId',",          'return c.json({ ok: true });', 'sales_invoice_items'],
     ['PI',  PI,  "purchaseInvoices.delete('/:id/items/:itemId',",       'return c.body(null, 204);', 'purchase_invoice_items'],
   ];
