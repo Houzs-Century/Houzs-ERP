@@ -118,9 +118,9 @@ const CLEAR = [
   ['scm', 'scan_jobs', 'sales-order'],
   ['scm', 'mfg_sales_orders', 'sales-order'],       // header
   ['scm', 'quotes', 'quotation'],
-  // ── Delivery Order family ──
+  // ── Delivery Order family ── (delivery_legs is cleared in the TMS block above,
+  // before delivery_orders, so it is deliberately NOT repeated here)
   ['scm', 'delivery_order_crew', 'delivery-order'],
-  ['scm', 'delivery_legs', 'delivery-order'],
   ['scm', 'delivery_return_items', 'delivery-order'],
   ['scm', 'delivery_returns', 'delivery-order'],
   ['scm', 'delivery_order_items', 'delivery-order'],
@@ -258,6 +258,17 @@ const KEEP_SAMPLE = [
 ];
 
 const qi = (s) => { if (!ident.test(s)) throw new Error(`unsafe identifier: ${s}`); return s; };
+
+// A duplicate CLEAR entry would double-count in the plan total and then make the
+// apply's `deletedTotal !== total` guard roll the whole wipe back — fail loud now.
+{
+  const seen = new Set();
+  for (const [s, t] of CLEAR) {
+    const k = `${s}.${t}`;
+    if (seen.has(k)) { console.error(`ERROR duplicate CLEAR entry: ${k}`); process.exit(2); }
+    seen.add(k);
+  }
+}
 
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (read-only, nothing is written)'}`);
