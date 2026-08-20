@@ -122,9 +122,14 @@ const NotificationsTickContext = createContext<number>(0);
 // ── Provider ─────────────────────────────────────────────────
 // One poller per app, driven by the signed-in user's session.
 // Backs off when the tab is hidden (Page Visibility API) so
-// background tabs don't burn requests. Polls every 30s by default.
-
-const POLL_INTERVAL_MS = 30_000;
+// background tabs don't burn requests. Polls every 60s by default.
+//
+// 60s, was 30s (2026-08-20): the notification bell is not real-time chat, and
+// GET /api/notifications showed up in the client-error slow-call telemetry.
+// Halving the cadence halves the standing per-tab tax; the payload-signature
+// guard below already suppresses no-op renders, so freshness up to 60s costs
+// nothing a user notices.
+const POLL_INTERVAL_MS = 60_000;
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
