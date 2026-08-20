@@ -22,7 +22,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AcOp, ErpLine } from '../../services/autocount-writeback';
 import { composeDescription2 } from '../../services/autocount-writeback';
 import { readOrThrow } from './autocount-read';
-import type { AcLineTable, AcLinkTable, AcOutboxPayload } from './autocount-outbox';
+import type { AcDocRef, AcLineTable, AcLinkTable, AcOutboxPayload } from './autocount-outbox';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -728,5 +728,98 @@ export async function readConvertTargetLines(
     };
   } catch {
     return undefined;
+  }
+}
+
+
+// ── WHO a conversion is transferring FROM ────────────────────────────────────
+// MOVED HERE FROM autocount-outbox.ts on 2026-08-20, and the reason is the one
+// this file's own header records: that module reached its 2,000-line cap again.
+// This is the seam it wanted. All four of these are derived from, or ask about,
+// `CONVERT_TARGET` — which lives HERE, and `SALES_CONVERSION` is literally a
+// filter over it — so they were reaching across a module boundary to answer a
+// question this module owns.
+//
+// STILL ONE-WAY. They take only TYPES back from autocount-outbox.ts
+// (`AcDocRef`, `AcLinkTable`), and a type import is erased at compile time, so
+// the two cannot form a runtime cycle. autocount-outbox.ts imports the VALUES;
+// nothing here imports a value from it.
+
+/**
+ * The two conversions whose target is a SALES document, and therefore the two
+ * that need a DebtorCode on the payload.
+ *
+ * Derived from CONVERT_TARGET rather than listed again: a fifth conversion
+ * added to that map joins this set on its own if its target is a sales one,
+ * and the alternative — a second hand-written list of ops — is the duplicated
+ * -list bug this repo keeps paying for.
+ */
+export const SALES_CONVERSION = new Set(
+  (Object.keys(CONVERT_TARGET) as Array<keyof typeof CONVERT_TARGET>)
+    .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
+);
+
+/** The complement, and derived the same way so the two can never disagree. */
+export const PURCHASE_CONVERSION = new Set<string>(
+  Object.keys(CONVERT_TARGET).filter((op) => !SALES_CONVERSION.has(op as never)),
+);
+
+/**
+ * The ERP source tables that carry a supplier of their own.
+ *
+ * THIS LIST IS THE CORRECTION. Until 2026-08-17 the purchase half of divergence
+ * D15 was left open on the recorded grounds that "`grns` and `purchase_invoices`
+ * carry no supplier column, so a creditor means a `grn -> purchase_order ->
+ * supplier` join". That is false, and the DDL this repo already vendors says so
+ * in one line each — `scripts/scm-schema/2990s-full-schema.sql`:
+ *
+ *     CREATE TABLE "grns" (...  "supplier_id" uuid NOT NULL, ...)
+ *     CREATE TABLE "purchase_invoices" (... "supplier_id" uuid NOT NULL, ...)
+ *
+ * Both are NOT NULL, both are written on every insert (`grns.ts`,
+ * `purchase-invoices.ts`) and both are selected by the live list and detail
+ * routes. So there is no join: it is one hop to `suppliers.code`, the same hop
+ * `readPoHeader` already makes for `/create-po`, and therefore the same
+ * vocabulary AutoCount has already accepted as a `CreditorCode`.
+ *
+ * Only the SOURCE tables are listed. The target row carries the same supplier —
+ * the GRN is inserted with the PO's, the PI with the GRN's — but the document
+ * being TRANSFERRED is the authority on whose account it moves, and that is the
+ * row the service's own book fallback reads too.
+ */
+export const SUPPLIER_BEARING_SOURCE = new Set<AcLinkTable>(['purchase_orders', 'grns']);
+
+/**
+ * The creditor for a purchase conversion, off the ERP's own source document.
+ *
+ * Returns null on ANY doubt, and null means "say nothing": the body goes out
+ * without an account and the service falls back to reading the creditor off the
+ * source document in the live book. That fallback stays whatever happens here —
+ * it is the only thing that drains a row queued before this existed, and a
+ * lookup that quietly stops being exercised is a lookup someone deletes.
+ */
+export async function readConvertCreditor(
+  sb: Sb,
+  from: AcDocRef,
+): Promise<{ CreditorCode: string; CreditorName?: string } | null> {
+  try {
+    if (!SUPPLIER_BEARING_SOURCE.has(from.table)) return null;
+    const { data, error } = await sb.from(from.table)
+      .select('supplier_id').eq(from.keyCol, from.key).maybeSingle();
+    if (error || !data) return null;
+    const supplierId = (data as Record<string, unknown>).supplier_id;
+    if (!supplierId) return null;
+    const { data: sup, error: supErr } = await sb.from('suppliers')
+      .select('code, name').eq('id', String(supplierId)).maybeSingle();
+    if (supErr) return null;
+    const s = sup as { code?: string | null; name?: string | null } | null;
+    const code = s?.code == null ? '' : String(s.code).trim();
+    /* Trimmed and length-checked because "   " is not an account, and
+       AutoCount's own complaint is "Debtor Code is empty." — the service trims
+       the payload for the same reason (AcSyncService.cs, Convert_). */
+    if (!code) return null;
+    return { CreditorCode: code, ...(s?.name ? { CreditorName: String(s.name) } : {}) };
+  } catch {
+    return null;
   }
 }

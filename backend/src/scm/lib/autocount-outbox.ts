@@ -112,6 +112,11 @@ import {
   readConvertSourceKeys,
   readConvertTargetLines,
   readConvertHeaderFacts,
+  /* Moved into that module 2026-08-20: all four are derived from or ask about
+     CONVERT_TARGET, which lives there, and this file was at its cap again. */
+  SALES_CONVERSION,
+  PURCHASE_CONVERSION,
+  readConvertCreditor,
   downstreamEditHeader,
   downstreamTransferHeader,
   downstreamNotCarried,
@@ -250,16 +255,11 @@ export interface AcOutboxPayload {
      */
     desc2?: Array<string | null>;
   };
-  /**
-   * Header facts this operation did NOT carry to AutoCount, and why — one
-   * sentence each, in the operator's vocabulary, from `downstreamNotCarried`
-   * (two different silences, and they read differently — see it).
-   *
-   * NEVER GOES ON THE WIRE: `dispatchOne` POSTs `payload.body` and this is a
-   * sibling of it. It is the DURABLE half of the report; the row's `last_error`
-   * is the half an operator sees at save time, and the drain clears that on
-   * success while the blank in the book stays true.
-   */
+  /** Header facts this operation did NOT carry, one operator sentence each,
+   *  from `downstreamNotCarried` (two different silences — see it). Never goes
+   *  on the wire: `dispatchOne` POSTs `payload.body` and this is its sibling.
+   *  The DURABLE half of the report; `last_error` is the half seen at save time
+   *  and the drain clears that on success while the blank in the book stays. */
   notCarried?: string[];
 }
 
@@ -472,84 +472,6 @@ async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<stri
 }
 
 
-/**
- * The two conversions whose target is a SALES document, and therefore the two
- * that need a DebtorCode on the payload.
- *
- * Derived from CONVERT_TARGET rather than listed again: a fifth conversion
- * added to that map joins this set on its own if its target is a sales one,
- * and the alternative — a second hand-written list of ops — is the duplicated
- * -list bug this repo keeps paying for.
- */
-const SALES_CONVERSION = new Set(
-  (Object.keys(CONVERT_TARGET) as Array<keyof typeof CONVERT_TARGET>)
-    .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
-);
-
-/** The complement, and derived the same way so the two can never disagree. */
-const PURCHASE_CONVERSION = new Set<string>(
-  Object.keys(CONVERT_TARGET).filter((op) => !SALES_CONVERSION.has(op as never)),
-);
-
-/**
- * The ERP source tables that carry a supplier of their own.
- *
- * THIS LIST IS THE CORRECTION. Until 2026-08-17 the purchase half of divergence
- * D15 was left open on the recorded grounds that "`grns` and `purchase_invoices`
- * carry no supplier column, so a creditor means a `grn -> purchase_order ->
- * supplier` join". That is false, and the DDL this repo already vendors says so
- * in one line each — `scripts/scm-schema/2990s-full-schema.sql`:
- *
- *     CREATE TABLE "grns" (...  "supplier_id" uuid NOT NULL, ...)
- *     CREATE TABLE "purchase_invoices" (... "supplier_id" uuid NOT NULL, ...)
- *
- * Both are NOT NULL, both are written on every insert (`grns.ts`,
- * `purchase-invoices.ts`) and both are selected by the live list and detail
- * routes. So there is no join: it is one hop to `suppliers.code`, the same hop
- * `readPoHeader` already makes for `/create-po`, and therefore the same
- * vocabulary AutoCount has already accepted as a `CreditorCode`.
- *
- * Only the SOURCE tables are listed. The target row carries the same supplier —
- * the GRN is inserted with the PO's, the PI with the GRN's — but the document
- * being TRANSFERRED is the authority on whose account it moves, and that is the
- * row the service's own book fallback reads too.
- */
-const SUPPLIER_BEARING_SOURCE = new Set<AcLinkTable>(['purchase_orders', 'grns']);
-
-/**
- * The creditor for a purchase conversion, off the ERP's own source document.
- *
- * Returns null on ANY doubt, and null means "say nothing": the body goes out
- * without an account and the service falls back to reading the creditor off the
- * source document in the live book. That fallback stays whatever happens here —
- * it is the only thing that drains a row queued before this existed, and a
- * lookup that quietly stops being exercised is a lookup someone deletes.
- */
-async function readConvertCreditor(
-  sb: Sb,
-  from: AcDocRef,
-): Promise<{ CreditorCode: string; CreditorName?: string } | null> {
-  try {
-    if (!SUPPLIER_BEARING_SOURCE.has(from.table)) return null;
-    const { data, error } = await sb.from(from.table)
-      .select('supplier_id').eq(from.keyCol, from.key).maybeSingle();
-    if (error || !data) return null;
-    const supplierId = (data as Record<string, unknown>).supplier_id;
-    if (!supplierId) return null;
-    const { data: sup, error: supErr } = await sb.from('suppliers')
-      .select('code, name').eq('id', String(supplierId)).maybeSingle();
-    if (supErr) return null;
-    const s = sup as { code?: string | null; name?: string | null } | null;
-    const code = s?.code == null ? '' : String(s.code).trim();
-    /* Trimmed and length-checked because "   " is not an account, and
-       AutoCount's own complaint is "Debtor Code is empty." — the service trims
-       the payload for the same reason (AcSyncService.cs, Convert_). */
-    if (!code) return null;
-    return { CreditorCode: code, ...(s?.name ? { CreditorName: String(s.name) } : {}) };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Write a failed compose down instead of dropping it.
@@ -853,20 +775,17 @@ export async function enqueueConvert(
     ref?: string | null;
     createdBy?: number | null;
   },
-  /* RETURNS THE OPERATOR'S SENTENCES, the shape `enqueueSoCreate` /
-     `enqueuePoCreate` already return (#2499). A conversion's problems are a
-     different verdict from a create's — the document IS in the accounts, and
-     some of its fields are not — so they carry `AC_SENT_INCOMPLETE` and never
-     block. The route spreads them into its 201 as `acNotSent`, which is the key
-     the frontend's `acNotSentProblemsOf` already reads. */
+  /* RETURNS THE OPERATOR'S SENTENCES, the shape the two create routes return
+     (#2499) — but the OTHER verdict: the document IS in the accounts and some
+     of its fields are not, so `AC_SENT_INCOMPLETE`, and never a block. */
 ): Promise<AcEnqueueOutcome> {
   /* WHICH SOURCE LINES THIS CONVERSION ACTUALLY TOOK.
      Resolved BEFORE the enqueue so a refusal is recorded instead of a wrong
      transfer being queued. */
   const source = await readConvertSourceKeys(sb, opts.op, opts.docId ?? null);
   if (source.refuse) {
-    /* No problems: a skip is already written down where the operator looks, and
-       the refusal has its own sentence there (classifyAcSkip). */
+    /* No problems: the skip is written where the operator looks and carries its
+       own sentence there (classifyAcSkip). */
     await recordConvertSkipped(sb, {
       companyId: opts.companyId,
       op: opts.op,
@@ -925,24 +844,14 @@ export async function enqueueConvert(
            what tells the two apart. */
         DocNo: opts.docNo ?? null,
         /* ── THE DOCUMENT'S OWN HEADER, AND IT IS NOT A LIST OF FIELDS ───────
-           `AcDownstreamSpec.facts` — every AutoCount-named fact the ERP holds
-           about this delivery order / receipt / invoice — projected onto the
-           keys `SalesHeader` / `PurchaseHeader` actually apply, blanks stripped
-           by `present()`. A fact added to a spec reaches this payload with no
-           edit here, and one no route can carry fails the build by name; the
-           reasoning is in autocount-convert-lines.ts and guide §7c5.
-
-           This block used to build the header itself, and the two keys it had
-           were dead: `DocDate` / `Ref` were spread in behind `if (opts.docDate)`
-           / `if (opts.ref)` and NO caller passes either, all eight verified
-           (delivery-orders-mfg.ts:3576, :4216; grns.ts:1961, :2343;
-           purchase-invoices.ts:1692, :1892; sales-invoices.ts:1394;
-           si-autocount-source.ts:178). So every conversion since the cutover
-           landed under the DRAIN's date with a blanked Ref, and the GRN and
-           purchase invoice threw away the supplier's own document number.
-
-           THE CALLER STILL WINS: `opts` is spread AFTER, and the `if` stays
-           because a present-null is how you blank a live book. */
+           `AcDownstreamSpec.facts` projected onto the keys this route's header
+           applier actually applies. A fact added to a spec reaches this payload
+           with no edit here; one no route can carry fails the build by name.
+           Why, and what the four conversions used to drop: the composer's own
+           notes in autocount-convert-lines.ts, and guide §7c5.
+           THE CALLER STILL WINS — `opts` is spread AFTER, and the `if` stays
+           because a present-null is how you blank a live book. Neither key has
+           ever been passed by a caller (all eight verified, §7c5). */
         ...own.header,
         ...(opts.docDate ? { DocDate: opts.docDate } : {}),
         ...(opts.ref ? { Ref: opts.ref } : {}),
@@ -1005,24 +914,20 @@ export async function enqueueConvert(
          degrades to "no keys stored", which costs a refused edit later and is
          visible, and must never cost the conversion itself. */
       lineWriteback: await readConvertTargetLines(sb, opts.op, opts.docId ?? null),
-      /* WHAT THIS DOCUMENT IS GOING WITHOUT. Kept HERE as well as in the row's
-         reason because the drain clears last_error on success — rightly, a sent
-         row must not read like a failure — while the blank in the book stays
-         true, and one missing supplier invoice number is a different fact from
-         every purchase invoice this month missing one. */
+      /* WHAT THIS DOCUMENT IS GOING WITHOUT, kept here as well as in the row's
+         reason: the drain clears last_error on success and the blank in the
+         book does not go with it. */
       ...(own.notCarried.length ? { notCarried: own.notCarried } : {}),
     },
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
-    /* SAID AT SAVE TIME, ON THE ROW THE OPERATOR ALREADY READS — the channel
-       that exists, not a second one. `acNeedsAttention` branches on STATUS, so
-       a note on a `pending` row reports without crying wolf. */
+    /* `acNeedsAttention` branches on STATUS, so a note on a `pending` row
+       reports without crying wolf. */
     reason: acNotCarriedReason(own.notCarried),
     createdBy: opts.createdBy ?? null,
   });
-  /* NOTHING QUEUED, NOTHING TO SAY. The write-back is off, or the company is
-     unset, or the same intent is already queued — in none of those cases did
-     this save leave a field behind, so warning about one would be a warning
-     about something that did not happen. */
+  /* NOTHING QUEUED, NOTHING TO SAY: flag off, no company, or already queued —
+     none of those left a field behind, and a warning about something that did
+     not happen is how people learn to click through warnings. */
   return { queued, problems: queued ? acNotCarriedProblems(own.notCarried, AC_DOC_KIND[opts.docType]) : [] };
 }
 
