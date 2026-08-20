@@ -44,9 +44,19 @@ The route gate is separate and also title-based: `canAccessServiceCases`
 | **AutoCount mirror** (`sales_orders`) | **anyone holding the HOUZS company grant** — no agent, no subtree, no job title. There is no dependable agent binding on this side, so any agent filter here is guesswork that silently removes access |
 | **ERP's own SO** (`scm.mfg_sales_orders`) | **own + DOWNLINE** — self and the people under you. ERP has a real binding, so a per-person scope is meaningful here |
 
-Rationale in the owner's words: AutoCount has no dependable agent binding, so
-filtering by agent there is guesswork — and guesswork that silently removes
-access. ERP does have one, so ERP-sourced work can be per-person.
+Rationale, in the owner's words and worth keeping verbatim because it is what
+stops someone "improving" this later by adding the filter back:
+
+> "AutoCount 那一边，它的 SysAgent 可能也不准吧，所以也麻烦，所以 AutoCount 就去
+> 开放给每一个人吧"
+
+**The agent data in AutoCount is itself unreliable.** So an agent filter on that
+side is not a weak control — it is a control driven by wrong input, which
+silently removes access from people who should have it. That is what happened:
+a batch of Sales Agents lost their cases and nothing said why.
+
+ERP has a real binding, so ERP-sourced work stays scoped to self + downline.
+The asymmetry is deliberate and is about DATA QUALITY, not about trust.
 
 ## What to change
 
