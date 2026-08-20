@@ -106,6 +106,290 @@ that screen, so it is the owner's call rather than a provable defect. Flagged
 here rather than changed.
 
 **Ref.** PR #2565, 2026-08-20.
+## May a LOADED delivery order be invoiced? Two merged PRs disagree [OWNER DECISION]
+
+<!-- area: Delivery, DO, returns -->
+
+**Not a defect report — an open question, recorded so it is not lost.** Nothing
+here is broken today; two rulings simply point opposite ways and the system is
+currently following both in different places.
+
+- **#2485, owner, 2026-08-19.** *"A Sales Invoice can be raised from every
+  CONFIRMED delivery order"* — anything past DRAFT that is not CANCELLED,
+  `LOADED` included. The desktop still behaves this way:
+  `do-next-step.ts:89` `SI_TRANSFERABLE_DO_STATUSES` opens with `'loaded'`, so a
+  LOADED delivery shows an enabled **Transfer to Sales Invoice** button.
+- **#2557, 2026-08-20.** A LOADED DO is still on the lorry and its inventory OUT
+  has not fired, so *"billing it would be the bug"* — the words are
+  `unbilled-deliveries.ts:39`. Its `DO_NOT_DELIVERED_IN_LIST` now filters the
+  server's SI candidate picker, so a LOADED delivery's lines are not offered.
+
+**What a user sees under each.** Under #2485, an operator can invoice goods that
+are packed on the lorry but have not left, and stock still reads as on hand
+because the OUT fires on dispatch. Under #2557, they must dispatch first, and the
+button the desktop shows them produces an empty line picker.
+
+**#2485 admitted LOADED DELIBERATELY — this is not a rule recorded more broadly
+than it was meant.** Checked against the diff rather than the prose, because the
+tempting reading is that "every confirmed DO" swept LOADED in by accident. It did
+not. #2485 names LOADED four times:
+
+```
+-export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
++export const SI_TRANSFERABLE_DO_STATUSES = ['loaded', 'dispatched', 'in_transit', 'signed', 'delivered'] as const;
+-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
+-    return 'Mark this delivery order signed first — a Sales Invoice can only be raised once it is signed or delivered.';
+```
+
+plus the test updated to `toEqual(['loaded', …])` and a body sentence naming the
+gate it reverses. LOADED was blocked, and #2485 unblocked it on purpose.
+
+**What DOES weaken it, and belongs in the same breath.** #2485's stated
+justification is *"stock was already deducted at dispatch"* — true of DISPATCHED
+and IN_TRANSIT, false of LOADED, where the OUT has not fired. And its stated
+consequence is *"a Sales Invoice can now be raised **before the customer
+signs**"* — the signature step, not the dispatch step. So the reasoning it wrote
+down covers four of the five states it admitted. That is an argument about
+LOADED; it is not evidence that LOADED was included by accident.
+
+**Where it stands (2026-08-20).** `main` is inconsistent with itself: the UI
+offers the transfer and the server picker declines to supply it. The nesting is at
+least the safe way round — the picker offers a strict SUBSET of what the create
+gate accepts — so nothing is advertised that the create path then refuses, and no
+money or stock is wrong either way. **PROVEN not to affect anything today:** the
+production census (`check-do-integrity.mjs` R4, run 32368212535) found **0**
+delivery orders in LOADED in either company, and 0 that the gate would refuse.
+This is a rule being settled, not an incident being cleaned up.
+
+The owner has been asked and his answer is not in yet. Two messages of his are on
+the record and they are being read two ways, which is the whole difficulty:
+*「等送完货了我们才自己convert to invoice啊」* and *「我们自己开啊 manually开的不是
+吗」*. Whether that DESCRIBES what his staff do or MANDATES that the system refuse
+is exactly the open question — and his documented standing philosophy for this
+system (loosen restrictions as far as possible; a hard wall is the last resort)
+points away from enforcement. **No rule has been changed here in either
+direction, deliberately.** Neither list was edited, no pinning test was written,
+and #2557's line is kept byte-for-byte, so whichever way he rules the change is
+still a one-line change and not an unpicking.
+
+## A mirror pin that was refereeing a different pair [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+The DO -> Sales Invoice fix rests on one sentence: the rule has ONE home, and the
+browser's copy is *held byte-identical*. The holder named in the PR body, in
+BUG-HISTORY and in `docs/modules/document-conversion.md` was
+`check-shared-mirrors.mjs --strict`. It was not holding it.
+
+**Measured.** A bogus state added to `frontend/src/vendor/shared/do-shipped-states.ts`
+left `check-shared-mirrors.mjs --strict` reporting **0 DIVERGED, exit 0**, and
+left `doShippedStatesMirror`, `doStatusCaseNormalisation` and
+`oneSystemTwoOrganisations` all green. Nothing in the repository noticed.
+
+**Why.** The script only FAILS a diverging pair it considers unrefereed, and
+`refereed()` (`check-shared-mirrors.mjs:94`) is a heuristic over test SOURCE
+TEXT: a pair counts as refereed when some test file mentions
+`shared/<module>.ts`, contains a cross-tree path fragment, and contains
+`readFileSync` / `toBe(` / `toEqual(`. Three independent string matches, none of
+which has to occur in the same assertion — or even be about this module. The
+file that satisfied all three was `frontend/src/vendor/scm/lib/do-next-step.test.ts`,
+which is about `do-next-step` and compares nothing. The pair was reported as
+`TESTED` and its divergence printed rather than failed.
+
+`doShippedStatesMirror.test.ts` genuinely does referee a pair — the backend `.ts`
+against `backend/scripts/lib/do-shipped-states.mjs`, the hand copy the audit
+scripts read, because a `.mjs` audit cannot import TypeScript. A DIFFERENT pair.
+The frontend twin had no referee at all, which is how a mirror-plus-pin pattern
+ends up with the mirror and without the pin.
+
+**Fix.** `frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`, the
+shape `total-height.canonical.test.ts` and `phone.canonical.test.ts` already use:
+read both files, normalise line endings, assert byte-identity, plus a
+non-vacuity test so the comparison cannot pass on two empty reads. Proven in
+both directions — RED with the corrupted twin naming the file, GREEN once
+restored. The three claim sites are corrected to name the test that actually
+holds the pair.
+
+**NOT fixed here, and it is the wider half:** `refereed()` still passes any pair
+whose module name appears in an unrelated test. Tightening it would reclassify
+other pairs and could turn `--strict` red repo-wide, so it is raised rather than
+changed inside a PR about something else.
+
+**The pin earned itself the same day.** Hours after it was written, #2557 added
+`DO_NOT_DELIVERED_STATES`, `doCountsAsDelivered` and `DO_NOT_DELIVERED_IN_LIST`
+to `backend/src/scm/shared/do-shipped-states.ts` and NOT to the frontend twin.
+`check-shared-mirrors.mjs --strict` passed that divergence, exactly as described
+above. `do-shipped-states.canonical.test.ts` failed on it by name and the twin
+was synced from the backend home. Nothing else in the repository noticed — which
+is the difference between a pin and a paragraph claiming there is one.
+
+## A comment stripper that lost its place at `=> "?"` [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+`check-company-divergence.mjs` reported `backend/src/scm/lib/companyScope.ts:294`
+as an unreviewed per-company branch. Line 294 is not a branch — it is a JSDoc
+line that QUOTES the rule it is explaining: *"THE BASE COMPANY, resolved from
+`companies.code === 'HOUZS'` on context"*. The gate strips comments precisely so
+an explanation is never reported as the offence. It had stopped stripping.
+
+**Ten lines earlier.** `const inList = values.map(() => "?").join(", ");`. The
+stripper decides whether a quote OPENS a string by looking at the previous
+non-space character against a set of "opener" characters. `>` was not in that
+set. So the opening `"` of `"?"` read as ordinary code and was passed through —
+and then the CLOSING `"` was judged by ITS previous character, `?`, which IS an
+opener. The stripper entered string-state at the end of a string literal and
+never left. Every comment from there to the end of the file survived and was
+scanned as source.
+
+The failure is quiet in the direction that matters: string-state emits its
+characters verbatim, so nothing was HIDDEN — the count came out too big, not too
+small. It cost a reader an afternoon deciding whether a doc comment was a
+divergence.
+
+**Both copies had it.** This stripper was lifted from
+`check-empty-state-claims.mjs`, which has been in CI since 2026-08-18 with the
+same missing character. Latent there only because no comment in the tree happens
+to match one of its claim shapes after a desync — not because it is correct.
+
+**Fix.** `>` joins the opener set in both scripts, which also makes the two other
+`>` positions right: a comparison (`a > "b"`) and JSX text after a tag close
+(`<p>"quoted"</p>`) are both string openers too. Each script's startup self-test
+gains the arrow-function probe; both were run with the fix reverted and both exit
+2 with the probe named, so neither can regress silently. The hit list before and
+after the fix differs by exactly one line — companyScope.ts:294 — with nothing
+added and no reviewed entry lost.
+
+## The transfer button one organisation had and the other did not [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**The owner.** *"你统一掉整个 Transfer DO to Sales Invoice 的那一个，为什么两间公司
+看到的东西却是不一样的？"* Same build, same permissions, same screen — and one
+company could raise a Sales Invoice from a delivery and the other could not.
+
+**It was never a company branch.** A repo-wide sweep for `company_id === <n>`,
+`companyCode === '…'`, `isHouzs`, `is2990` returns 27 lines in 11 files, and
+every one is branding, a print entity, a per-company default layout, or a
+`typeof` coercion. Nothing on this chain.
+
+**Two hand-typed status lists.** The system has ONE declaration of "this
+delivery has shipped and is billable" —
+`DO_SHIPPED_STATES = ['DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED']`
+(`backend/src/scm/shared/do-shipped-states.ts`), whose first transition writes
+the inventory OUT. Both desktop entry points gated the transfer on
+`["signed","delivered"]` instead:
+
+- `DeliveryOrderDetailV2.tsx` — `canConvertToSi = rawStatus === "signed" || rawStatus === "delivered"`,
+  **sixteen lines above** a `locked=` prop that spelled the correct five states
+  out to stop a shipped delivery's lines being edited. One file knew a
+  DISPATCHED delivery had shipped and refused to offer its transfer.
+- `MfgDeliveryOrdersListV2.tsx` — an `if / else-if` chain, so a DISPATCHED
+  delivery matched the `Mark signed` arm and **returned**. The transfer was not
+  disabled there; it was never rendered, and the slot it would have taken showed
+  `Mark signed`.
+
+Everything else on the chain was already right: the server picker
+(`resolveCandidateDoIds`, everything except `CANCELLED`/`DRAFT`) and the mobile
+convert wizard both offered those same deliveries. So the operation was never
+blocked — it completed from the Sales Invoice side or from a phone, which is
+what made it read as a phantom rather than a refusal.
+
+**Why it landed on one organisation.** DATA, not code. 2990's source system had
+no "delivered" step on delivery orders, so its imported deliveries sit at
+DISPATCHED; the AutoCount carry-overs on the HOUZS side were inserted with the
+literal `'DELIVERED'` (`create-migrated-documents.mjs`). Same predicate, two
+status histograms. **Identical code is not identical behaviour when the data
+behind it differs** — that is the whole lesson, and it is why the fix is the
+shared constant rather than a data repair. Flipping the statuses was already
+tried: `backfill-2990-delivered-dos.mjs` did it for some of them and the button
+stayed missing on the rest.
+
+**Fix.** `do-shipped-states.ts` gets a byte-identical frontend twin at
+`frontend/src/vendor/shared/`, held there by
+`do-shipped-states.canonical.test.ts` (the repo's existing mirror-plus-pin
+pattern, the same one `total-height.canonical.test.ts` uses). This sentence
+originally credited `check-shared-mirrors.mjs --strict`, and that was wrong —
+see "A mirror pin that was refereeing a different pair" below. Both surfaces import it; the
+detail page's `locked=` prop now uses the same expression it gates the button
+on, so the two cannot disagree again. The list drawer renders `Mark signed`
+(secondary, pre-signed states) and the transfer (primary, shipped states)
+independently — `docs/modules/document-conversion.md` had stated that rule since
+the vocabulary PR and the drawer was the copy that never got it.
+
+### Three more asymmetries fixed in the same pass
+
+- **The AutoCount Sync page told 2990 a false sentence.**
+  `scm.autocount_writeback` is a company ALLOW-LIST and all eight enqueue gates
+  read it as `isWritebackEnabled(sb, companyId)`. Exactly one caller —
+  `routes/autocount-outbox.ts`, the page's status banner — read it bare and
+  published `on: scope !== 'off'`, i.e. *is it on for anybody*. With the switch
+  set to one company, the other organisation's operator was told sending was
+  switched on **for his company** and that saving a document would queue it.
+  His queue is company-scoped, so it stays empty and nothing errors: a false
+  statement with no symptom attached. `on` is now answered per company, `scope`
+  still reports the whole allow-list, and an unresolved company answers `null`
+  rather than guessing "off". The sibling flag built on the same parser
+  (`write-freeze-status.ts`) never had the bug — it prints "company 1, 3", never
+  "this company".
+
+- **A 409 the operator could not read.** A migrated document must be invoiced by
+  the converter, not by hand; `migrated-chain.ts` writes a careful sentence
+  saying so. It is **205 characters** and `authed-fetch.ts` keeps a server
+  message only when `r.length < 200`, with no curated `ERROR_CODE_MESSAGES`
+  entry and no `describeRefusal` shape — all three doors shut, so it fell to the
+  generic *"That clashes with something already in the system. Please refresh
+  and check."* Refreshing changes nothing: the document is migrated and will be
+  refused every time, so the advice was a loop. The code is now curated, which
+  is the house rule `companyScope.ts` already states. This can only ever fire
+  for the organisation that has migrated documents, so a company-neutral refusal
+  was in practice one organisation's experience.
+
+- **The 2990 bulk importer would have imported the wrong Processing Date.**
+  Migration 0286 renamed this side's `internal_expected_dd` to
+  `processing_date`. The 2990 source is a separate repo on its own deploy
+  schedule and carries BOTH names — its LIVE column is `internal_expected_dd`
+  and its `processing_date` is the dead twin migration 0189 dropped here.
+  `migrate-2990-into-houzs.mjs` matches columns BY NAME, so it would have filled
+  the live Processing Date from the source's dead column and dropped the real
+  one into the `[drop:…]` list, where it reads as an ordinary unmapped field.
+  Not cosmetic: the Processing Date gates Proceed, the allocator and MRP, and a
+  wrong one is worse than a missing one because nothing downstream can tell. The
+  live SO mirror already had this alias; the bulk path never did — the same rule
+  at N call sites, present at N-1. `RENAME_COLS` is now **derived from**
+  `lib/so-processing-date.mjs` rather than hand-typed, because
+  `soProcessingDateOneName.test.mjs` forbids typing the retired name in a script
+  and it is right to: eleven scripts once did, every query answered 42703, and
+  because 42703 fails the whole statement those audits returned nothing and read
+  as clean.
+
+Two more were corrected in place without a behaviour change:
+`consignmentWarehouseId` resolved the hidden Consignment (Out) warehouse with no
+company predicate and a discarded `error`, so three failure modes — global
+singleton, wrong company's warehouse, and `.maybeSingle()` erroring on two rows
+— all rendered as one `null` whose documented handling is to skip the stock
+transfer silently. It now takes a required `companyId`, the same medicine
+`defaultWarehouseId` took on 2026-08-03. And `warehouse-mirror.ts` justified
+forcing `is_default = false` by quoting a company-BLIND reader that was fixed on
+that same date; the justification is now marked expired, with the measurement
+the removal needs named rather than the force silently removed.
+
+**The gate.** `check-company-divergence.mjs --strict` (new, in the required
+`backend-typecheck` job): a reviewed allowlist over every line that NAMES a
+company — 78 today, each with a reason **and whose decision it was**, because
+the owner's test for a legitimate per-company difference is whether he set it.
+"Historical" and "legacy" are not people, and the test rejects them. It catches
+shapes the literal grep misses: a rule expressed against `BASE_COMPANY_CODE`,
+or scoped by doc-number PREFIX, which is how the SO-PO edit lock is confined to
+one organisation without naming it. Proven non-vacuous both by hand and in CI
+(`companyDivergenceGate.test.ts` plants a branch, asserts exit 1, removes it,
+asserts exit 0 — twice, once in the shape the grep missed).
+
+**Stated in the gate's own header, and worth repeating here: it would NOT have
+caught this bug.** The predicate that broke had no company term in it. What
+catches that class is one declaration per concept, mirrored and pinned — and a
+gate that let its own limits go unsaid would be the same failure in a new
+costume.
 ## A pre-rule sofa-mix order could not be edited AT ALL from the phone [high]
 
 <!-- area: Sales orders + pricing -->

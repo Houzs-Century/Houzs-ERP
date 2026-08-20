@@ -4,6 +4,10 @@
 // FK checks disabled for the load session so ordering / skipped masters don't block.
 import postgres from "postgres";
 import { createClient } from "@supabase/supabase-js";
+import {
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_LEGACY_COLUMNS,
+} from "./lib/so-processing-date.mjs";
 const SUPA_URL = process.env.SOURCE_SUPABASE_URL, SUPA_KEY = process.env.SOURCE_SERVICE_ROLE_KEY, DST = process.env.DATABASE_URL;
 const APPLY = process.env.APPLY === "1";
 if (!SUPA_URL || !SUPA_KEY || !DST) { console.error("need SOURCE_SUPABASE_URL + SOURCE_SERVICE_ROLE_KEY + DATABASE_URL"); process.exit(2); }
@@ -52,6 +56,53 @@ const prefixDoc = (v) => (v == null || String(v).startsWith("2990-") ? v : `2990
 const NULL_COLS = { mfg_sales_orders: ["venue_id"], delivery_orders: ["venue_id"] };
 // Child tables reference parents by doc-number STRING -> must carry the same 2990- prefix
 const PREFIX_REF_COLS = { mfg_sales_order_items: ["doc_no"], mfg_sales_order_payments: ["so_doc_no"], delivery_orders: ["so_doc_no"], inventory_lots: ["source_doc_no"], inventory_movements: ["source_doc_no"], inventory_lot_consumptions: ["source_doc_no"], mfg_sales_orders: ["cross_category_source_doc_no"], pwp_codes: ["source_doc_no","redeemed_doc_no"] };
+/* RENAMED COLUMNS — source name -> destination name.
+   ---------------------------------------------------------------------------
+   This importer matches columns BY NAME (`shared` below), which is right until
+   the two sides disagree about what a column is called. Then a rename is
+   invisible to it twice over: the source key finds no destination column and is
+   silently dropped, and any destination column that HAPPENS to share a name with
+   something else on the source is filled from that instead.
+
+   THE PROCESSING DATE IS EXACTLY THAT CASE, AND IT IS THE WORST SHAPE OF IT.
+   Migration 0286 renamed the destination's `internal_expected_dd` to
+   `processing_date`. The 2990 source is a SEPARATE repo on its own deploy
+   schedule and still carries BOTH names (scm-schema/2990s-full-schema.sql lists
+   "processing_date" AND "internal_expected_dd" on mfg_sales_orders) — its LIVE
+   column is `internal_expected_dd`, and its `processing_date` is the dead twin
+   that migration 0189 dropped on this side. So without this map the importer
+   would match `processing_date` -> `processing_date` by name, fill the ERP's
+   LIVE Processing Date from the source's DEAD column, and drop the real date
+   into the `[drop:…]` list where it reads as an ordinary unmapped field.
+
+   That is not a cosmetic loss: the Processing Date gates Proceed, the stock
+   allocator and the MRP demand set (shared/so-processing-date.ts), and a wrong
+   one is worse than a missing one because nothing downstream can tell.
+
+   The live SO MIRROR was already given this alias — SO_PROCESSING_DATE_LEGACY_COLUMNS
+   in scripts/lib/so-processing-date.mjs and its TypeScript twin, whose header
+   states the rule and the removal condition. This bulk path never was, which is
+   the same rule expressed at N call sites and present at N-1.
+
+   BOTH NAMES ARE IMPORTED, NEVER TYPED. tests/soProcessingDateOneName.test.mjs
+   walks backend/scripts and fails any script that hand-types the retired name
+   in code, because eleven of them once did and every one of their queries was
+   answered with 42703 — which fails the WHOLE statement, so the audits returned
+   nothing and read as clean. lib/so-processing-date.mjs is the one file
+   entitled to spell it; building the map from that export is what keeps this
+   script correct on the day 2990 finally deploys and the entry is removed
+   there. Doing it by hand here would have re-created the defect this map exists
+   to fix, one layer up.
+
+   A rename entry WINS over a same-named source column: the legacy name supplies
+   `processing_date` and the source's own dead `processing_date` is ignored. */
+const SO_RENAMES = Object.fromEntries(
+  SO_PROCESSING_DATE_LEGACY_COLUMNS.map((legacy) => [legacy, SO_PROCESSING_DATE_COLUMN]),
+);
+const RENAME_COLS = {
+  mfg_sales_orders: { ...SO_RENAMES },
+  consignment_sales_orders: { ...SO_RENAMES },
+};
 // Shared masters WITHOUT company_id: import so historical FK refs (salesperson/created_by)
 // resolve; forced inactive so they never appear in Houzs pickers.
 const NO_CID = { staff: { forceInactive: true } };
@@ -70,10 +121,31 @@ async function main() {
     const noCid=NO_CID[table];
     if (!dcols.includes("company_id")&&!noCid){ console.log(`SKIP ${table}: no company_id`); continue; }
     const dset=new Set(dcols), srcCols=Object.keys(rows[0]);
-    const shared=srcCols.filter(c=>dset.has(c)&&c!=="company_id"), dropped=srcCols.filter(c=>!dset.has(c));
+    /* RENAMES FIRST, and only the ones this destination actually has. An entry
+       naming a destination column that does not exist is a stale map, not a
+       silent no-op — say so rather than dropping the source column on the floor,
+       because "the date never arrived" is precisely the failure mode this map
+       exists to stop. */
+    const renameAll=RENAME_COLS[table]??{};
+    const rename=Object.fromEntries(Object.entries(renameAll).filter(([s,d])=>srcCols.includes(s)&&dset.has(d)));
+    for (const [s,d] of Object.entries(renameAll)) {
+      if (!srcCols.includes(s)) continue;
+      if (!dset.has(d)) console.log(`  WARN rename ${s}->${d}: destination has no '${d}' column; ${s} will be DROPPED`);
+    }
+    const renamedDest=new Set(Object.values(rename));
+    /* A renamed source column supplies its destination, so a same-named source
+       column for that SAME destination must not also be copied — otherwise
+       iteration order decides which of the two wins, silently. The 2990 source
+       carries both `internal_expected_dd` (live) and `processing_date` (dead),
+       and this is the line that makes the live one win. */
+    const shared=srcCols.filter(c=>dset.has(c)&&c!=="company_id"&&!(c in rename)&&!renamedDest.has(c));
+    const dropped=srcCols.filter(c=>!dset.has(c)&&!(c in rename));
+    if (Object.keys(rename).length) console.log(`  rename: ${Object.entries(rename).map(([s,d])=>`${s}->${d}`).join(", ")}`);
+    const supersededBySrc=srcCols.filter(c=>renamedDest.has(c)&&dset.has(c));
+    if (supersededBySrc.length) console.log(`  ignored (superseded by a rename): ${supersededBySrc.join(", ")}`);
     totalSrc+=rows.length; const docCol=DOCNO_COL[table];
     const defs=COLUMN_DEFAULTS[table];
-    const shaped=rows.map(r=>{ const o=noCid?{}:{company_id:cid}; for(const c of shared)o[c]=r[c]; if(docCol&&o[docCol]!=null)o[docCol]=prefixDoc(o[docCol]); const refs=PREFIX_REF_COLS[table]; if(refs)for(const rc of refs)if(o[rc]!=null)o[rc]=prefixDoc(o[rc]); const nulls=NULL_COLS[table]; if(nulls)for(const nc of nulls)if(nc in o)o[nc]=null; if(defs)for(const[k,v]of Object.entries(defs))if(dset.has(k)&&(o[k]==null))o[k]=v; if(noCid?.forceInactive&&dset.has("active"))o.active=false; return o; });
+    const shaped=rows.map(r=>{ const o=noCid?{}:{company_id:cid}; for(const c of shared)o[c]=r[c]; for(const[s,d]of Object.entries(rename))o[d]=r[s]; if(docCol&&o[docCol]!=null)o[docCol]=prefixDoc(o[docCol]); const refs=PREFIX_REF_COLS[table]; if(refs)for(const rc of refs)if(o[rc]!=null)o[rc]=prefixDoc(o[rc]); const nulls=NULL_COLS[table]; if(nulls)for(const nc of nulls)if(nc in o)o[nc]=null; if(defs)for(const[k,v]of Object.entries(defs))if(dset.has(k)&&(o[k]==null))o[k]=v; if(noCid?.forceInactive&&dset.has("active"))o.active=false; return o; });
     console.log(`${table}: ${rows.length}`+(docCol?` (${docCol}->2990-)`:"")+(dropped.length?` [drop:${dropped.join(",")}]`:""));
     let toInsert=shaped;
     const guard=DANGLING_GUARD[table];
