@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage",
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "check:sw": "node scripts/check-service-worker.mjs",
+    "check:raw-fetch": "node scripts/check-raw-fetch-inventory.mjs",
     "check:test-focus": "node scripts/check-test-focus.mjs",
     "test:smoke-script": "node --test scripts/smoke-check.test.mjs",
     "dev:perf-lab": "vite --config perf-lab/vite.config.ts",
