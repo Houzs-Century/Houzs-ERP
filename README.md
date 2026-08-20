@@ -19,7 +19,7 @@ Everything else REPORTS. A red `working-agreement` does not stop anyone.
 
 | You changed | You owe | Enforced by | Blocks a merge? |
 |---|---|---|---|
-| Fixed a bug of any size | one entry at the top of [`BUG-HISTORY.md`](BUG-HISTORY.md): **Symptom → Root cause (traced, not guessed) → Fix → Ref**, with a severity tag | `working-agreement.yml`, when the title, branch or a body heading reads as a fix and code changed | **No** — it reports. Label `no-bug-history-needed` waives it, and the waiver is printed |
+| Fixed a bug of any size | one new file in [`docs/bugs/`](docs/bugs/) — `node scripts/new-bug.mjs "<title>"` — holding **Symptom → Root cause (traced, not guessed) → Fix → Ref**, with a severity tag | `working-agreement.yml`, when the title, branch or a body heading reads as a fix and code changed | **No** — it reports. Label `no-bug-history-needed` waives it, and the waiver is printed |
 | A module's SURFACE — a route, a permission string, a status value, a required-field flip, a lock | the matching [`docs/modules/<module>.md`](docs/modules/), in the SAME PR | `working-agreement.yml` | **No** — reports. Label `no-guide-change` |
 | Anything under `backend/src/db/migrations-pg/` | a `-- REVERSAL:` line in the file, plus `Reversal:` and `Verified against:` lines in the PR body | `working-agreement.yml` rule 3 + `audit:release-discipline` for the file itself | the file's note **YES** (release-discipline is inside `backend-typecheck`); the PR-body lines, no |
 | A route added, moved or re-gated | `docs/generated/route-capability-matrix.csv` — regenerate, never hand-edit | `npm run audit:routes` | **YES** |
@@ -38,7 +38,7 @@ Everything else REPORTS. A red `working-agreement` does not stop anyone.
 
 ### The order that actually works
 
-1. **Before**: read `docs/modules/<module>.md` and the `BUG-HISTORY.md` entries for that subsystem. Both exist so you do not have to read the whole system.
+1. **Before**: read `docs/modules/<module>.md` and the bug-ledger entries for that subsystem — `npm --prefix backend run gen:bug-index` groups `docs/bugs/` by subsystem. Both exist so you do not have to read the whole system.
 2. **While**: pick the migration number at MERGE time by re-listing the tree, not when you branch.
 3. **After the code, before the PR**: the rows above. In the same PR — a follow-up PR is the thing that never comes.
 4. **After merge**: confirm the deploy's `backend` job says **`success`, not `skipped`**. Required checks gate the MERGE; **nothing gates the deploy**. `skipped` on `backend` is a failed deploy, and it has cost this repo two hours once and thirty minutes twice.

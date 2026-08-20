@@ -1598,9 +1598,18 @@ an empty order can never mix.
 **The client check is a SECOND implementation on purpose** — it must refuse
 before a request, and it reads free-text `itemGroup` where the server reads the
 catalogue enum. It has the same two forms: `hasSofaMixConflict` (flat) on the
-New-order surfaces, `sofaMixIntroduced(before, after)` on the Detail pages, both
-in `frontend/src/vendor/shared/so-variant-rule.ts`. A Detail page using the flat
+New-order surfaces, `sofaMixIntroduced(before, after)` on the EDIT surfaces, both
+in `frontend/src/vendor/shared/so-variant-rule.ts`. An EDIT surface using the flat
 form refuses saves the server would accept.
+
+**That is not hypothetical, and the phone was the last one holding it.**
+`frontend/src/mobile/MobileNewSO.tsx` renders new AND edit as one form, and its
+`save()` ran the flat form ABOVE the edit branch, so on an order written before
+the rule existed a rep could not save ANY change from the phone — not a phone
+number — while desktop's `SalesOrderDetail.tsx` had moved to the differential
+form in #2395. Fixed 2026-08-20: mobile now calls
+`sofaMixIntroduced(origItems, edited)`. `origItems` is empty on a create, so on
+that path the differential form IS the flat question and nothing changed there.
 
 **The enumeration is a TEST, not prose**: `backend/tests/mainMixOneHome.test.ts`.
 Its population is every unit in the two routers that runs `validateItemCodes`, so
@@ -2140,7 +2149,21 @@ must not strand).
 **Frontend twins (change together).** Desktop `SoLineCard` marks unmatched
 typed text with a red ring + "Not in the catalog" note (the text stays for
 correction; the parent save guards refuse the line). `SalesOrderNew` + `MobileNewSO` pre-check venue / salesperson on Create, and
-Save-as-draft skips both. **Neither pre-checks variants at CONFIRM** — that
+Save-as-draft skips both.
+
+> **"Is this me?" is ONE module, not one per screen** (2026-08-20). The
+> salesperson pre-check above only fires when the creator was not recognised on
+> the staff roster, and mobile matched email-then-name while desktop had moved to
+> `user_id` first in #2049 — of 140 production `scm.staff` rows 18 carry an email
+> and 102 carry `user_id`, and `user_id` is what the backend joins on
+> (`resolveOwnerStaffId`). So the MAJORITY of salespeople were not recognised as
+> themselves on the phone and could be refused by this very gate. The ladder now
+> lives in `frontend/src/vendor/scm/lib/self-staff.ts` (`resolveSelfStaff`:
+> user_id → bridge staff id → email → name) and both `SalesOrderNew` and
+> `MobileNewSO` call it; the desktop ladder was moved verbatim, so that screen is
+> unchanged. `SalesOrderDetail.tsx` still holds a third copy for the Add-Payment
+> "Collected By" default — knowingly, because switching it would change which
+> people that picker matches. **Neither pre-checks variants at CONFIRM** — that
 sentence used to read "pre-check variants (confirm rule, KIV-exempt)" and was
 wrong three ways: `SalesOrderNew.tsx` has no variant pre-check at all, and
 `MobileNewSO.tsx:1778` calls `missingVariantAxes` — the PROCEED rule, which is
@@ -2855,6 +2878,45 @@ line to RM 0 by editing it but not by adding it at 0 — the same amount accepte
 on one click and silently replaced on another. The amendment path has no
 `zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
 the split above rather than joining this table.
+
+**SO CREATE joined the same table on 2026-08-20, and until then it was not in it
+at all.** `erpLineTrust` was wired into the two LINE writes only; create computed
+one boolean for the whole request (`!(await isPosTabletCaller(c))`) and handed
+the same value to every line's recompute, so `zeroPriceIntended` was never read
+there. A line staff marked FREE on a NEW order was therefore silently re-priced
+to the catalogue figure on **both** surfaces, and the customer was invoiced for
+it; editing the line afterwards fixed it only at the desk.
+
+| | new SO line at RM 0 | existing SO line edited to RM 0 |
+|---|---|---|
+| desktop, before | reverted to catalogue | 0 sticks |
+| mobile, before | reverted to catalogue | reverted to catalogue |
+| both, now | 0 sticks when the operator typed it | 0 sticks |
+
+**The claim is now made from ONE place, and its second argument is the safety.**
+`frontend/src/vendor/scm/lib/zeroPriceClaim.ts` — `zeroPriceClaim(unitPriceSen,
+authored)` — replaces the arrow that lived inside `SalesOrderDetail.tsx` and was
+therefore unavailable to create and to the whole of mobile. `authored` is
+REQUIRED and has no default:
+
+- **true** — the operator typed into the price box on this line, OR the line
+  already exists and its 0 is its PERSISTED price being carried through an edit
+  (a qty-only edit re-sends the price, so withholding the claim there would
+  re-price a free line). A line seeded from a persisted row — desktop
+  copy-to-new-SO, mobile edit-prefill — is authored by construction; the mobile
+  edit-DRAFT road re-CREATES the order, so without that seed a free line would go
+  back to the catalogue.
+- **false** — the client could not resolve a price. An unpriced catalogue SKU,
+  and every sofa build (the server prices those from the Model's module SKUs at
+  save), reaches the wire at 0. **Claiming those would persist RM 0 instead of
+  pricing them**, which is a far worse defect than the one this closes — the
+  trust arm wins over the server's own module arithmetic. That is why a blanket
+  "claim every 0" is wrong and why the signal is threaded from the price INPUT
+  (`priceAuthored`, client-only, never persisted) rather than inferred.
+
+Pinned by `backend/tests/zeroPriceCreatePath.test.ts` (the wiring plus what the
+helper answers) and `frontend/src/vendor/scm/lib/zeroPriceClaimWiring.test.ts`
+(which surface makes which claim, and with which fact).
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after

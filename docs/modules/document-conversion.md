@@ -526,6 +526,42 @@ Three properties, each of which was a real defect before:
   a `Delivered` STATUS while the delivery order offered a `Mark signed` ACTION.
   **Statuses report; buttons act.**
 
+  The rule landed on `DeliveryOrderDetailV2` and NOT on the delivery-order list
+  drawer, where the two buttons stayed mutually exclusive in an `if / else-if`
+  chain until 2026-08-18: a DISPATCHED delivery matched the `Mark signed` arm
+  and returned, so the transfer was not disabled there — it was never rendered.
+  Both surfaces now render them independently, `Mark signed` secondary for the
+  pre-signed states and the transfer primary for every shipped one.
+
+#### Which deliveries may be invoiced — one declaration, five states
+
+`DO_SHIPPED_STATES` (`backend/src/scm/shared/do-shipped-states.ts`, mirrored to
+`frontend/src/vendor/shared/do-shipped-states.ts` and pinned byte-identical by
+`frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`) is the system's
+ONLY definition of "this
+delivery has shipped and is billable": `DISPATCHED`, `IN_TRANSIT`, `SIGNED`,
+`DELIVERED`, `INVOICED`. The first transition into any of them writes the
+inventory OUT, so by then the goods have left. `LOADED` and `DRAFT` are
+deliberately outside it.
+
+Both desktop entry points to `Transfer to Sales Invoice` used to gate on a
+hand-typed `["signed","delivered"]` instead — a third spelling, and the
+narrowest of the three, while the server picker
+(`resolveCandidateDoIds`, which admits everything except `CANCELLED` and
+`DRAFT`), the mobile convert wizard, and `DeliveryOrderDetailV2`'s own line
+edit-lock all used something correct.
+
+**This is worth remembering as a MULTI-ORGANISATION defect, not a status
+defect.** The predicate contains no company term and never did. It fired on one
+organisation only because of DATA: 2990's source system had no "delivered" step
+on delivery orders, so its imported deliveries sit at `DISPATCHED`, while the
+AutoCount carry-overs on the HOUZS side were inserted with the literal
+`'DELIVERED'`. Two organisations, one build, one set of permissions — and one of
+them was told the transfer did not exist. The fix is the shared constant in both
+places; flipping the statuses in the database would only have hidden it, and
+`backfill-2990-delivered-dos.mjs` had already done exactly that for some of them
+without the button appearing for the rest.
+
 #### The 20 labels
 
 | flow | on the source (primary, footer) | on the destination (secondary, header) |

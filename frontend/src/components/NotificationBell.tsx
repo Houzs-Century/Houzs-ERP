@@ -73,8 +73,10 @@ export function NotificationBell({
     queryKey: announcementFeedKey("system"),
     queryFn: () =>
       api.get<BannerResponse>("/api/announcements/banner?scope=system"),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    // 3 min, not 30s: the bell is not real-time chat, and the backend caches the
+    // banner per-user for 5 min, so this lands mostly on hits and cuts call volume.
+    staleTime: 180_000,
+    refetchInterval: 180_000,
     enabled: !!user?.id,
   });
 

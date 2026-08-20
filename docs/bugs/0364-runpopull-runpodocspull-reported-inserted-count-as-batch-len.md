@@ -1,0 +1,7 @@
+## runPOPull/runPODocsPull reported inserted count as batch length despite ON CONFLICT DO NOTHING [low]
+
+Symptom: The AutoCount PO mirror sync reported (and logged) more rows inserted than were actually written — `Pulled X PO lines, inserted Y` showed Y == X even when the wipe-and-reload dropped duplicate lines, hiding that lines were silently discarded.
+
+Root cause traced: In backend/src/services/po.ts, both flush() closures INSERT a multi-row batch with `ON CONFLICT(doc_no, item_code) DO NOTHING` (runPOPull) / `ON CONFLICT(doc_no) DO NOTHING` (runPODocsPull), then did `inserted += rows.length`. After the preceding DELETE, the composite unique keeps only the first of duplicate rows and DO NOTHING drops the rest, so rows.length overcounts by the number dropped. The true count was already available: d1-compat run() appends RETURNING * and exposes it as meta.changes (RETURNING returns only inserted rows under DO NOTHING; real D1 returns native changes() with the same meaning).
+
+Fix: Capture the write result and use `inserted += res.meta.changes` in both flush() functions, so drops are no longer counted as inserts and the fetched-vs-inserted gap surfaces the drop. meta.changes is a non-optional number, so no nullish guard is added (keeps po.ts within its no-unnecessary-condition lint ceiling). Behaviour-preserving otherwise; the log/return count now reflects reality. (date 2026-08-18)

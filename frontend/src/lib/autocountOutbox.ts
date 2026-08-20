@@ -195,7 +195,16 @@ export interface AcOutboxRow {
 }
 
 export interface AcOutboxResponse {
-  writeback: { value: string | null; on: boolean; scope: string };
+  /**
+   * `on` answers "is sending switched on FOR THE COMPANY I AM LOOKING AT", not
+   * "for anybody" — the switch is a company allow-list ('off' / 'all' / a list
+   * of ids) and until 2026-08-18 the server published the second question's
+   * answer under the first question's name. `null` is its own state: the server
+   * could not resolve which company this reader is in, so it declines to answer
+   * rather than guessing "off". `scope` still carries what the switch SAYS, so
+   * an admin can see the whole allow-list.
+   */
+  writeback: { value: string | null; on: boolean | null; scope: string };
   /**
    * DOCUMENTS, not sends, on every one of these — see the route's own comment.
    *
@@ -1629,6 +1638,20 @@ export function acAge(iso: string | null, now: number = Date.now()): string {
  */
 export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: string } {
   if (!d) return { tone: "muted", text: "Reading the list…" };
+  /* NULL IS NOT FALSE. `on` is company-aware and its third state means the
+     server could not resolve this reader's company, so it declined to answer.
+     Folding that into the OFF sentence would state as fact ("queues nothing and
+     sends nothing") the very thing that could not be established — the same
+     shape of over-claim the switched-off/nothing-wrong collapse was corrected
+     for in #2094, one step further back. */
+  if (d.writeback.on === null) {
+    return {
+      tone: "muted",
+      text:
+        "Whether sending to AutoCount is switched on for this company could not be established,"
+        + " so this list cannot say whether a save would queue anything.",
+    };
+  }
   if (!d.writeback.on) {
     return {
       tone: "muted",
@@ -1697,10 +1720,27 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
  * reader nothing he could act on.
  */
 export function acWritebackLine(d: AcOutboxResponse): string {
+  if (d.writeback.on === null) {
+    /* The server could not resolve which company this reader is in, so it
+       declined to answer rather than guess. Saying "off" here would be the same
+       false certainty in the other direction. */
+    return "Sending to AutoCount could not be checked for this company — the switch itself reads as "
+      + `${JSON.stringify(d.writeback.scope)}.`;
+  }
   if (d.writeback.on) {
     return d.writeback.scope === "all"
       ? "Sending to AutoCount is switched on for every company."
       : "Sending to AutoCount is switched on for this company.";
+  }
+  /* OFF FOR THIS COMPANY IS NOT OFF ALTOGETHER, and the difference is the whole
+     reason this branch exists. The switch is a company allow-list, so it can be
+     on for the organisation next door and off here — and the old wording,
+     `The switch is set to "1", which does not read as on`, would have told a
+     reader in company 2 that a perfectly well-formed value was a typo. Name the
+     real situation instead: it is on, just not for you. */
+  if (d.writeback.scope !== "off") {
+    return "Sending to AutoCount is switched off for this company — it is switched on for "
+      + `${d.writeback.scope.includes(",") ? "other companies" : "another company"}, not this one.`;
   }
   return d.writeback.value === null
     ? "Sending to AutoCount is switched off — the switch has never been set."

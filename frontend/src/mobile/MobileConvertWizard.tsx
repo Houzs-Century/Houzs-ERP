@@ -11,6 +11,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
+import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -291,10 +292,15 @@ export function MobileConvertWizard({
   // received / cancelled POs (only open / partially_received can be received).
   const sources = useMemo(() => {
     const data = sourceQuery.data as any;
-    const isProcessible = (status: string | null) => {
-      const s = str(status).toUpperCase();
-      return s !== "DRAFT" && s !== "CANCELLED";
-    };
+    /* ONE DECLARATION, NOT A THIRD OPINION. This was a hand-typed
+       `!== DRAFT && !== CANCELLED` — a fourth spelling of the same rule, kept in
+       step with the other three only by whoever remembered. The desktop, the
+       server gate (siTransferRefusal) and the server's own DO picker all read
+       SI_TRANSFERABLE_DO_STATES; this now does too, so the phone offers exactly
+       what the create path accepts. The set includes LOADED (owner 2026-08-19,
+       #2485) and excludes INVOICED, which nothing ever writes. */
+    const isProcessible = (status: string | null) =>
+      (SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(str(status).toUpperCase());
     const isReceivablePo = (status: string | null) => {
       const s = str(status).toUpperCase();
       return s !== "DRAFT" && s !== "CANCELLED" && s !== "RECEIVED" && s !== "CLOSED";
@@ -1164,9 +1170,11 @@ function humanize(msg: string): string {
     nothing_to_invoice: "No billable lines came back for this Goods Receipt. Open it and check its invoiced balance before treating it as billed in full.",
     nothing_to_return: "No returnable lines came back for this Goods Receipt. Open it and check its returned balance before treating it as returned in full.",
     /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
-       tick lives on the desktop receipt screen, so this says where to go rather
-       than leaving the operator at a code they cannot act on. */
-    zero_cost_receipt: "Some lines would be received at zero cost, but those items have been bought at a real price before. Enter the unit price from the supplier's goods-received document, or open the receipt on desktop and tick \"Received free\" on the line.",
+       tick lives on the RECEIPT screen, which since fix/mobile-rep-blockers
+       exists on the phone too (MobileGrnZeroCost) — this used to end "open the
+       receipt on desktop", which was the only instruction that was true while
+       the phone had no remedy at all. */
+    zero_cost_receipt: "Some lines would be received at zero cost, but those items have been bought at a real price before. Enter the unit price from the supplier's goods-received document, or open the Goods Receipt and tick \"Received free\" on the line.",
     grn_not_posted: "Only a posted Goods Receipt can be converted. Post it first.",
     grn_not_found: "That Goods Receipt no longer exists. Refresh and try again.",
     grn_id_required: "Select a Goods Receipt first.",

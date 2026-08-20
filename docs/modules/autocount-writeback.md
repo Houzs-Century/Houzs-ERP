@@ -87,7 +87,8 @@ be expressed at all.
 > (four) exist. The conclusion above survives the correction — all of them
 > transfer FROM something, so a parentless document is still inexpressible — but
 > the reason given for it was wrong. See **BUG CLASS
-> instrument-blind-spot-as-a-finding** at the top of `BUG-HISTORY.md`. The ERP CAN create all four parentless (a manual
+> instrument-blind-spot-as-a-finding** —
+> `docs/bugs/0267-bug-class-instrument-blind-spot-as-a-finding-the-search-foun.md`. The ERP CAN create all four parentless (a manual
 GRN with no PO is an explicit owner decision), and each such document is
 recorded as a `skipped` outbox row by `recordParentlessCreate` so the
 divergence is written down rather than silently dropped.
@@ -167,6 +168,21 @@ seeded default is `off`. `isWritebackEnabled` never throws.
 
 Checked twice — at enqueue (nothing accumulates while off) and again per row at
 drain (the flag is per company and can flip mid-sweep).
+
+**The STATUS report answers "on for THIS company", not "on for anybody"**
+(2026-08-18). `GET /autocount-outbox` publishes two different facts, because a
+reader needs both: `scope` is what the switch literally says — the whole
+allow-list, which an admin has to be able to see — and `on` is whether that
+list covers the CALLER's active company, which is what governs whether his next
+save queues anything. It used to publish `on: scope !== 'off'`. With the live
+value set to one company id, the other organisation's operator was told on this
+page that sending was switched on for him and that saving would queue a
+document; neither was true, and his company-scoped queue stayed permanently
+empty with nothing erroring. `on` is `null`, rendered as its own sentence, when
+the company cannot be resolved — a report must not claim the switch is off on
+the strength of a company it could not read, which is the opposite of what
+`isWritebackEnabled` does at enqueue (that one refuses, because writing into a
+live account book on a guess is worse).
 
 ---
 

@@ -29,7 +29,26 @@ const jsonOut = process.argv.includes("--json");
 // not a defect. Keep this list short and justified — it is an excuse list.
 // Dated records. An entry describes the tree AS IT WAS; a later rename does not
 // make the entry wrong. Counted and shown, but never a failure.
-const DATED = new Set(["BUG-HISTORY.md"]);
+//
+// A PREDICATE, not a name list, since 2026-08-20: the bug ledger became a
+// directory of one file per entry (docs/bugs/, see its README). Every one of those
+// files is the same dated record BUG-HISTORY.md was, and listing every one of them
+// by name would be a list nobody maintains. Measured on the split: the ledger
+// contributes 10 dead-path citations, every one an entry RECORDING a deletion, and
+// without this they turn from `dated` into `defect` and take `audit:doc-refs
+// --strict` red on a corpus nobody changed.
+//
+// TWO EXACT CARVE-OUTS, because a prefix alone is wrong in both directions:
+//   · docs/bugs/README.md is a CURRENT document that happens to live in the
+//     directory. A dead path in it is a defect, so it is NOT exempt.
+//   · docs/generated/bug-history.md is the combined view RENDERED from those same
+//     entries. It is gitignored, so CI never sees it, but a developer who has run
+//     the generator has a copy — and it would otherwise report the ledger's ten
+//     dated citations a second time, as defects.
+const DATED = new Set(["BUG-HISTORY.md", "docs/generated/bug-history.md"]);
+const DATED_DIR = "docs/bugs/";
+const isDated = (rel) =>
+  DATED.has(rel) || (rel.startsWith(DATED_DIR) && rel !== `${DATED_DIR}README.md`);
 
 // Plans and design proposals. They describe what was INTENDED; where the build
 // went another way the cited file never existed, and that is the document doing
@@ -199,7 +218,7 @@ for (const file of docFiles) {
       checked++;
       perDoc.set(rel, (perDoc.get(rel) ?? 0) + 1);
       if (!resolveRef(p)) {
-        findings.push({ doc: rel, line: i + 1, ref: p, dated: DATED.has(rel) });
+        findings.push({ doc: rel, line: i + 1, ref: p, dated: isDated(rel) });
       }
     }
   });
@@ -220,10 +239,10 @@ if (jsonOut) {
 ` +
       `${live.length} in CURRENT docs point at files that do not exist  <- these are defects
 ` +
-      `${dated.length} in dated ledgers (${[...DATED].join(", ")}) — recorded, not defects`,
+      `${dated.length} in dated ledgers (${[...DATED, DATED_DIR].join(", ")}) — recorded, not defects`,
   );
   for (const [doc, list] of [...byDoc]
-    .filter(([d]) => !DATED.has(d))
+    .filter(([d]) => !isDated(d))
     .sort((a, b) => b[1].length - a[1].length)) {
     console.log(`\n${doc}  (${list.length})`);
     for (const f of list) console.log(`  L${f.line}  ${f.ref}`);

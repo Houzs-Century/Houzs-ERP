@@ -3,7 +3,7 @@
 `Working agreement` in Actions checks these four. Meeting them here is cheaper
 than being told afterwards.
 
-- [ ] **Bug logged.** This PR is not a fix, or it adds a `BUG-HISTORY.md` entry
+- [ ] **Bug logged.** This PR is not a fix, or it adds a new `docs/bugs/` entry
       (Symptom → Root cause → Fix → Ref, newest first, with a severity tag).
       Exception → label `no-bug-history-needed`; the log will print what it waived.
 - [ ] **Module guide read, and updated if the SURFACE moved** — a new route, a
@@ -12,7 +12,7 @@ than being told afterwards.
       No guide for the module yet? Write it, following `docs/modules/sales-order.md`.
 - [ ] **Serious incident?** An outage, data at risk, a fault that recurred, or
       anything that made the system feel unreliable to staff gets a
-      `docs/<subject>-coe.md`, not just a `BUG-HISTORY.md` line.
+      `docs/<subject>-coe.md`, not just a `docs/bugs/` entry.
 - [ ] **Remedy claim proved.** If this PR tells anyone that performing some
       operation repairs something, an `Observed:` line below carries what you
       saw when you did it — a status, a count, a duration, an error, a run URL.
@@ -62,7 +62,7 @@ Leave this section empty if it does not apply.
 - Bug / hardening ID:
 - Failing-before test or written waiver:
 - Passing-after command and result:
-- [ ] `BUG-HISTORY.md` links the regression evidence for a bug fix.
+- [ ] The `docs/bugs/` entry links the regression evidence for a bug fix.
 - [ ] No `.only` / skipped critical proof was introduced.
 
 ## Release safety

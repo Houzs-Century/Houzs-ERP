@@ -1,0 +1,7 @@
+## Typographic inch marks split inventory variant_key buckets [sev: high — silent stock fragmentation]
+
+Symptom: A bedframe/sofa line whose gap/seat/leg/fabric value was typed or pasted with a curly inch mark (e.g. gap `12“` U+201C, common from phone keyboards and Word paste) was tracked in a SEPARATE on-hand bucket from the identical straight-quoted `12"` stock, so the same physical item never pooled — MRP/allocation saw two variants where there is one. Meanwhile the same line priced correctly, masking the split.
+
+Root cause (traced, not guessed): computeVariantKey's `norm` (backend/src/scm/shared/variant-key.ts:82) did only `String(v).trim().toLowerCase()` — no quote folding — so `12“` and `12"` produced different key parts. Pricing's findOption (scm/shared/mfg-pricing.ts:197-205) DOES fall back to normaliseTypographicQuotes, so the two subsystems disagreed. mfg-pricing.ts:183-186 had explicitly kept its normaliser quote-only "because this same string family also composes variant_key" — the anticipated key-side fold was never applied.
+
+Fix: import normaliseTypographicQuotes from ./mfg-pricing and apply it inside `norm` (fold after trim/lowercase — quote-only, so a no-op for every quote-free value). Applied identically to the vendored frontend copy frontend/src/vendor/shared/variant-key.ts so both surfaces key stock the same. Historical curly-keyed movements are not migrated (same stance as the existing POS seat/leg alias note). Added variantKeyQuoteFold.test.ts.

@@ -10,7 +10,8 @@
 //
 // Layout (full page, PurchaseOrderDetail chrome):
 //   1. Header + back link
-//   2. Stats: Total Qty · Warehouses · Last Movement · FIFO Value
+//   2. Stats: Total Qty · Warehouses · Last Movement · Owned Value
+//      (owned = consignment excluded from VALUE, shown as quantity beside it)
 //   3. Warehouse filter pills (when no ?warehouseId param)
 //   4. Per-Warehouse Balance card (All-mode only)
 //   5. Movements ledger w/ running balance (computed client-side)
@@ -27,6 +28,7 @@ import {
   useInventoryLots,
   useInventoryProductBreakdown,
   useWarehouses,
+  buildStockBreakdown,
   type InventoryMovement,
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
@@ -258,9 +260,14 @@ export const StockCard = () => {
   const totalQty = breakdown.reduce((s, b) => s + (b.qty ?? 0), 0);
   const warehouseCount = breakdown.filter((b) => (b.qty ?? 0) !== 0).length;
   const lastMovementAt = movementsDesc[0]?.created_at ?? null;
-  const fifoValue = lots.reduce(
-    (s, l) => s + l.qty_remaining * l.unit_cost_sen, 0,
-  );
+  /* Consignment stock is in our warehouse and is the supplier's until it sells:
+     quantity yes, value never. This stat used to be a raw
+     `qty_remaining x unit_cost_sen` over EVERY lot labelled "FIFO Value", which
+     contradicted the per-warehouse table right below it — that one comes from
+     /breakdown/:itemCode, which has excluded consignment since BUG-HISTORY
+     2026-07-25. Same shared transform mobile's Stock Card uses, so there is one
+     split and one owned-value sum for all three surfaces. */
+  const bd = useMemo(() => buildStockBreakdown(lots), [lots]);
 
   return (
     <div className={chrome.page}>
@@ -305,8 +312,13 @@ export const StockCard = () => {
           <span className={styles.statCaption}>{lastMovementAt ? fmtDateTime(lastMovementAt) : 'No activity yet'}</span>
         </div>
         <div className={styles.statCard}>
-          <span className={styles.statLabel}>FIFO Value</span>
-          <span className={styles.statValue}>{fmtRm(fifoValue)}</span>
+          <span className={styles.statLabel}>Owned Value</span>
+          <span className={styles.statValue}>{fmtRm(bd.ownedValueSen)}</span>
+          <span className={styles.statCaption}>
+            {bd.consignmentQty > 0
+              ? `Consignment (not owned) · ${fmtQty(bd.consignmentQty)} units`
+              : 'FIFO, consignment excluded'}
+          </span>
         </div>
       </div>
 

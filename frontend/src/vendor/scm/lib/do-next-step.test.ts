@@ -7,6 +7,7 @@ import {
 } from './do-next-step';
 // @ts-expect-error — .mjs constants module, no types, deliberately not vendored.
 import { DO_SHIPPED_STATES } from '../../../../../backend/scripts/lib/do-shipped-states.mjs';
+import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 
 /* The status vocabulary is DERIVED, not hand-typed. DO_SHIPPED_STATES is the
    canonical shipped list (backend/src/scm/shared/do-shipped-states.ts, mirrored
@@ -41,6 +42,27 @@ describe('siTransferBlockReason', () => {
     // Every status past DRAFT that is not CANCELLED — the set the server has
     // always permitted an SI to be raised from (only CANCELLED is refused there).
     expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['loaded', 'dispatched', 'in_transit', 'signed', 'delivered']);
+  });
+
+  it('AGREES with the shared declaration — this module only lower-cases it', () => {
+    /* A REFEREE, and it is worth being exact about what it can and cannot see.
+
+       WHAT IT CATCHES: the shared declaration and this module's view of it
+       drifting apart in VALUE — someone edits SI_TRANSFERABLE_DO_STATES and
+       this module keeps answering the old set, or vice versa.
+
+       WHAT IT CANNOT CATCH, measured rather than assumed: re-typing the list
+       here with the same five strings. That was tried while resolving this
+       merge and all 13 tests stayed green, so an assertion of the SHAPE would
+       have been a claim this file cannot support. The structural pin — that
+       do-next-step.ts imports the declaration and does not re-type the status
+       list — is a SOURCE check and it lives in
+       backend/tests/oneSystemTwoOrganisations.test.ts, which reads this file.
+       Re-typed there, that suite goes red (proven, not assumed). It is not
+       repeated here, because a rule with two homes is the defect this whole
+       change is about. */
+    expect([...SI_TRANSFERABLE_DO_STATUSES])
+      .toEqual(SI_TRANSFERABLE_DO_STATES.map((x) => x.toLowerCase()));
   });
 
   it('is case- and whitespace-insensitive, because rows carry raw DB values', () => {

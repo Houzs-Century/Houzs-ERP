@@ -6,6 +6,7 @@ import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation"
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
+import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
@@ -47,6 +48,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -77,7 +79,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
@@ -121,6 +123,9 @@ type LineItem = {
   name: string;
   qty: string;
   price: string; // RM, as typed — display/default only; server recomputes
+  /* Typed into the price box? Tells a deliberate RM 0 from an unpriced SKU.
+     Client-only like overriddenKeys; sent as `zeroPriceIntended`, not stored. */
+  priceAuthored: boolean;
   ddate: string; // per-line delivery date (ISO yyyy-mm-dd)
   remark: string;
   cat: LineCat;
@@ -306,7 +311,7 @@ const FABRIC_SYNC_KEYS: string[] = [
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
-    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "",
+    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "", priceAuthored: false,
     variants: {}, overriddenKeys: [], photoKeys: [], photoFiles: [],
   };
 }
@@ -373,6 +378,8 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -457,6 +464,13 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
        date-less SO landed CONFIRMED (owner hit this on the legacy scan path). */
     asDraft: true,
     emergencyContactPhone: ecPhoneOut,
+    /* Slip + receipt provenance (migrations 0033 / 0034) — the R2 keys
+       /scan-so/extract answered with, so the SO detail can show the slip this
+       order was read from. Desktop sends the same pair; this path sent neither,
+       leaving a phone-scanned order's "Scanned photos" card permanently empty.
+       Omitted rather than "" when absent — the handler stores it verbatim. */
+    ...(prefill.slipImageKey ? { slipImageKey: prefill.slipImageKey } : {}),
+    ...(prefill.receiptImageKey ? { receiptImageKey: prefill.receiptImageKey } : {}),
     items,
   };
 
@@ -488,6 +502,7 @@ function lineFromItem(it: SoItem): LineItem {
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
     price: fromSen(it.unit_price_sen),
+    priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -1163,19 +1178,23 @@ export function MobileNewSO({
 
   /* ── FIX A — Salesperson default (desktop parity) ─────────────────────────
      The creator IS the salesperson: default to the signed-in user. If they have
-     a matching scm.staff row (by id / email / name) seed its canonical id;
-     otherwise seed a UI-only "self" sentinel so their NAME shows (never blank).
-     Only seeds when nothing is picked yet (never stomps an admin's manual pick,
-     or a scan-provided salesperson). Non-admins can't re-pick (gated select). */
-  const selfStaffMatch = useMemo(() => {
-    const email = (currentUser?.email ?? "").trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? "").trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const nm = (currentUser?.name ?? "").trim().toLowerCase();
-    return nm ? staffList.find((s) => (s.name ?? "").trim().toLowerCase() === nm) : undefined;
-  }, [staffList, currentUser?.email, currentUser?.name]);
+     a matching scm.staff row seed its canonical id; otherwise seed a UI-only
+     "self" sentinel so their NAME shows (never blank). Only seeds when nothing
+     is picked yet (never stomps an admin's manual pick, or a scan-provided
+     salesperson). Non-admins can't re-pick (gated select).
+
+     The MATCH is the SHARED `resolveSelfStaff` — user_id first, the key the
+     backend joins on. This file matched email-then-name while the comment above
+     it advertised an id match it never ran; of 140 production scm.staff rows 18
+     carry an email and 102 carry user_id, so most salespeople were not
+     recognised as themselves here and could be blocked by the confirm gate
+     below (#2049). */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id, email: currentUser?.email, name: currentUser?.name,
+    }),
+    [staffList, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
   const selfDisplayName =
     (currentUser?.name ?? "").trim() || (currentUser?.email ?? "").trim() || "Me";
   useEffect(() => {
@@ -1543,6 +1562,8 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
+    ...zeroPriceClaim(toSen(l.price), true),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -1716,10 +1737,16 @@ export function MobileNewSO({
       setError(`Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`);
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    if (hasSofaMixConflict(namedLines.map((l) => l.itemGroup))) {
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       INTRODUCED, not flat (desktop parity, #2395): this asked the flat
+       `hasSofaMixConflict`, which is the CREATE path's question, and the guard
+       sits ABOVE the edit branch so it ran on edits too. The server's line paths
+       refuse only a change that INTRODUCES the mix, so an order written before
+       the rule existed stays editable — while this refused EVERY save on one,
+       not even a phone number, blaming a rule the server grandfathers.
+       `origItems` is empty on a create, so there this IS the flat question. */
+    if (sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup))) {
       setError(SOFA_MIX_MESSAGE);
       return;
     }
@@ -3055,7 +3082,7 @@ function LineCard({
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value })}
+              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>

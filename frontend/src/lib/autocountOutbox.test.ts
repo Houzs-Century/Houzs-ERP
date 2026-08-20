@@ -292,6 +292,42 @@ describe("acWritebackLine — the switch, without the setting it lives in", () =
     expect(acWritebackLine(payload({ writeback: { value: null, on: false, scope: "off" } })))
       .toContain("never been set");
   });
+
+  /* OFF FOR THIS COMPANY IS NOT OFF ALTOGETHER — the switch is a company
+     ALLOW-LIST, and until 2026-08-18 the server published "is it on for
+     anybody" under the name `on`. A reader in the company NOT on the list was
+     told sending was switched on FOR HIS COMPANY, and that saving a document
+     would queue it. Neither was true, his queue is company-scoped and stays
+     empty, and nothing errors. Same screen, same build, two organisations, and
+     one of them was reading a false sentence.
+
+     The old off-branch would have been just as wrong in the other direction: it
+     would have called a perfectly well-formed value a typo that "does not read
+     as on". Name the real situation instead. */
+  it("says on for ANOTHER company, not that the value is a typo", () => {
+    const line = acWritebackLine(payload({ writeback: { value: "1", on: false, scope: "1" } }));
+    expect(line).toContain("switched off for this company");
+    expect(line).toContain("another company");
+    expect(line).not.toContain("does not read as on");
+  });
+
+  it("pluralises when the allow-list names several companies", () => {
+    expect(acWritebackLine(payload({ writeback: { value: "1,3", on: false, scope: "1,3" } })))
+      .toContain("other companies");
+  });
+
+  /* NULL IS ITS OWN STATE. The server could not resolve which company the
+     reader is in, so it declines rather than guessing — and the page must
+     decline too. Rendering that as "switched off" would state as fact the very
+     thing that could not be established. */
+  it("declines to answer when the company could not be resolved", () => {
+    const line = acWritebackLine(payload({ writeback: { value: "1", on: null, scope: "1" } }));
+    expect(line).toContain("could not be checked");
+    expect(line).not.toContain("switched off");
+    const h = acHeadline(payload({ writeback: { value: "1", on: null, scope: "1" } }));
+    expect(h.text).toContain("could not be established");
+    expect(h.text).not.toContain("queues nothing");
+  });
 });
 
 describe("the refusal, in three parts", () => {
