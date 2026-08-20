@@ -186,6 +186,12 @@ jobs:
       # both counts; `--strict` fails on it for anyone who wants that.
       # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
       - run: npm run audit:bug-index
+      # The bug ledger is a DIRECTORY since 2026-08-20 (docs/bugs/, one file per
+      # entry). This gates the same failure the line above does — the generator
+      # dying — plus the invariant that makes the split work: one file is one
+      # entry, named NNNN-slug.md. Neither compares against a committed copy;
+      # there is no committed copy, which is the point.
+      - run: npm run audit:bug-history
       - run: npm run audit:map
       # Transaction-workflow drift tripwire: fails if any transaction document's
       # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).

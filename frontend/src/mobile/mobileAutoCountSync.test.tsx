@@ -42,6 +42,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   remedy: null,
   needs_attention: false,
   can_requeue: false,
+  can_send_now: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -541,5 +542,70 @@ describe("MobileAutoCountSync — one document, one card", () => {
       counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
     }));
     expect(await screen.findByText(/at least this many and possibly more/)).toBeTruthy();
+  });
+});
+
+/* SEND NOW, one surface over. A control on the desktop and not the phone is the
+   recurring bug class this repo names, and the owner uses the phone on the
+   floor — a document that has to go out NOW is exactly the case he is standing
+   in front of when he wants it. */
+describe("MobileAutoCountSync — Send now", () => {
+  /* ITS OWN PAYLOAD, not a row bolted onto `busy`. The shared fixture's counts
+     are asserted verbatim by the filter-strip test one describe up, so adding a
+     row to it fails a test that has nothing to do with this button. A fixture
+     shared by thirty assertions is not a free place to put a thirty-first. */
+  const waiting = payload({
+    counts: { pending: 1, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+    rows: [
+      row({ id: "p", doc_no: "SO-P", doc_type: "SO", status: "pending", state: "pending",
+        attempts: 2, can_send_now: true,
+        reason: "AcSyncService threw: timeout opening the book" }),
+      row({ id: "f", doc_no: "SO-F", doc_type: "SO", status: "failed", state: "failed",
+        attempts: 6, needs_attention: true, can_requeue: true,
+        reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent" }),
+    ],
+  });
+
+  const answer = (over: Record<string, unknown> = {}) => ({
+    accepted: true,
+    code: "sent-now",
+    message: "Sent, and AutoCount took it. It is in the account book now — you did not have to wait for the five-minute sweep.",
+    row_id: "p", doc_type: "SO", doc_no: "SO-P", op: "create_so",
+    new_row_id: null, reason: null,
+    ...over,
+  });
+
+  it("offers it on the same rows the desktop page offers it on", async () => {
+    await mount(waiting);
+    await screen.findByText("SO-P");
+    expect(within(cardOf("SO-P")).getByRole("button", { name: "Send now" })).toBeTruthy();
+    /* And never beside Send again: the two server predicates are disjoint. */
+    expect(within(cardOf("SO-F")).queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(within(cardOf("SO-P")).queryByRole("button", { name: "Send again" })).toBeNull();
+  });
+
+  it("pushes that row and says the account book took it", async () => {
+    apiPost.mockResolvedValue(answer());
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/p/send-now");
+    expect(await screen.findByText(/in the account book now/i)).toBeTruthy();
+  });
+
+  it("prints a refusal rather than letting the press look like nothing", async () => {
+    apiPost.mockResolvedValue(answer({
+      accepted: false, code: "already-in-flight",
+      message: "It is going out right now — either the five-minute sweep picked it up, or somebody else pressed this a moment ago. Nothing was sent twice.",
+    }));
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await screen.findByText(/Nothing was sent twice/i)).toBeTruthy();
+  });
+
+  it("says the call never got through, rather than swallowing the throw", async () => {
+    apiPost.mockRejectedValue(new Error("the worker is unreachable"));
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
   });
 });

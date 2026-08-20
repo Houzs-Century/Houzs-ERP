@@ -202,6 +202,16 @@ const MIG_FILE_REF = /\b(\d{3,4}_[a-z0-9_]+\.sql)\b/g;
 const PERM_REF = /`(scm\.[a-z0-9_.]+|[a-z]+\.[a-z0-9_.]+)`/g;
 const NPM_REF = /\bnpm(?:\s+--prefix\s+\S+)?\s+run\s+([A-Za-z0-9:_-]+)/g;
 
+/* THE MARKERS an author uses to say "absent on purpose", matched against the
+   text immediately AFTER a path reference. Hoisted out of the scan loop so the
+   self-test below can assert it: this is the one pattern in the file that lets a
+   CORRECT doc stay green, so a typo in it does not produce a miss — it produces
+   findings nobody can clear, and then the whole gate gets switched off.
+
+   `-\d+` is tolerated because docs cite RANGES (`foo.ts:16-20`) and the path
+   capture stops at the first number, so the marker sits past the range's tail. */
+const MARKER_RX = /^(?:-\d+)?["'`)\]]?\s*\[(gone|planned|external|generated)\]/;
+
 /* SELF-TEST. A pattern that cannot match reports a clean run, and this repo has
    produced that failure three times in one day. Assert before scanning. */
 {
@@ -217,7 +227,14 @@ const NPM_REF = /\bnpm(?:\s+--prefix\s+\S+)?\s+run\s+([A-Za-z0-9:_-]+)/g;
     one(MIG_REF, "see migration 0284 for the shape")?.[1] === "0284" &&
     one(NPM_REF, "run `npm --prefix frontend run typecheck`")?.[1] === "typecheck" &&
     one(PERM_REF, "gated on `scm.payment_voucher.post` now")?.[1] === "scm.payment_voucher.post" &&
-    one(BARE_LINE_REF, "at sofa-build.ts:503 the round")?.[1] === "sofa-build.ts";
+    one(BARE_LINE_REF, "at sofa-build.ts:503 the round")?.[1] === "sofa-build.ts" &&
+    /* The MARKER alternation, asserted rather than trusted — see MARKER_RX. */
+    MARKER_RX.test("` [gone]") &&
+    MARKER_RX.test("` [planned]") &&
+    MARKER_RX.test("` [external]") &&
+    MARKER_RX.test("` [generated]") &&
+    MARKER_RX.test("-20` [gone]") &&
+    !MARKER_RX.test("` [invented]");
   if (!ok) {
     console.error("check-docs-drift: internal pattern self-test FAILED - not reporting.");
     process.exit(2);
@@ -275,13 +292,13 @@ for (const file of docFiles) {
       // NNNN is matched WITHOUT \b — the placeholder appears as `NNNN_foo.sql`,
       // and `_` is a word character, so \b never fires after it.
       if (p.includes("/.../") || /NNNN/.test(p) || /(^|\/)\.[A-Za-z]/.test(p)) continue;
-      /* THREE MARKERS, for the three honest reasons a doc names a path that is
+      /* FOUR MARKERS, for the four honest reasons a doc names a path that is
          not in the tree. Each one keeps the doc TRUE and tells the reader the
          same thing it tells the checker — which a silent exemption list would
          not:
 
-           [gone]      the doc is RECORDING a deletion. BUG-HISTORY is full of
-                       these by construction: an entry whose whole subject is
+           [gone]      the doc is RECORDING a deletion. The bug ledger is full
+                       of these by construction: an entry whose whole subject is
                        "this file was removed" must name a file that no longer
                        exists, and editing the entry to stop naming it would
                        destroy the record.
@@ -289,13 +306,24 @@ for (const file of docFiles) {
                        says "(no guide exists yet)" in the same sentence.
            [external]  lives in the 2990 source repo this SCM tree was vendored
                        from, not here.
+           [generated] REGENERATED ON DEMAND and deliberately gitignored — absent
+                       in a fresh checkout, present the moment anyone runs its
+                       generator. Added 2026-08-20 with the second such file
+                       (`docs/generated/bug-history.md` joined `bug-index.md`),
+                       and it exists because both alternatives are wrong: [gone]
+                       tells the reader the file was DELETED while the sentence
+                       is telling them to BUILD it, and leaving it unmarked is a
+                       gate that PASSES on the author's machine (where the
+                       generator has been run) and FAILS in CI. Not hypothetical:
+                       that is how this marker was bought, on run 32385565323.
+                       NOT for a TRACKED generated file (`codebase-map-facts.md`,
+                       `route-locator.md`) — those are in the tree and must
+                       resolve.
 
          The path is usually inside backticks, so the marker sits AFTER the
          closing one: `foo.ts` [gone]. Allow the delimiter through. */
       const after = line.slice(m.index + m[0].length, m.index + m[0].length + 20);
-      // `-20` tolerated: docs cite RANGES (`foo.ts:16-20`) and the capture stops
-      // at the first number, so the marker sits past the range's tail.
-      if (/^(?:-\d+)?["'`)\]]?\s*\[(gone|planned|external)\]/.test(after)) continue;
+      if (MARKER_RX.test(after)) continue;
       claimsChecked++;
       const resolved = resolveDocPath(p);
       if (!resolved) { at("missing-file", p); continue; }

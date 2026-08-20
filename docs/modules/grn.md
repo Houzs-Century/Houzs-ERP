@@ -689,8 +689,8 @@ exists. The two must land together or not at all.
 Required rather than optional is deliberate, per `CLAUDE.md`: a parameter that
 DECIDES something is never optional. This one decides which transaction the row
 belongs to, and optional would let a future transactional caller silently keep
-the wrong client with no compile error — the `optional-param-noop` class at the
-top of `BUG-HISTORY.md`.
+the wrong client with no compile error — the `optional-param-noop` class —
+`docs/bugs/0098-bug-class-optional-param-noop-an-optional-argument-that-deci.md`.
 
 Two checks watch this and both have already fired on it:
 `backend/tests/autocountWritebackCells.test.ts` pins the ARGUMENTS of all four

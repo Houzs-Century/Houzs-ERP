@@ -45,6 +45,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
@@ -158,6 +159,7 @@ const AC_ENQUEUE_SILENT: AcEnqueueOutcome = { queued: false, problems: [] };
 /** Past this an operation is surfaced as FAILED instead of retrying forever. */
 export const MAX_ATTEMPTS = 6;
 const DRAIN_BATCH = 20;
+
 
 /** The ERP tables that can carry an AutoCount counterpart number. */
 export type AcLinkTable =
@@ -477,7 +479,6 @@ async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<stri
   const name = ((row as { name?: string | null } | null)?.name ?? '').trim();
   return name || null;
 }
-
 
 
 /**
@@ -1671,7 +1672,13 @@ function b64(buf: ArrayBuffer): string {
 
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
-    .update({ ...patch, updated_at: new Date().toISOString() })
+    /* THE CLAIM COMES OFF HERE, on every outcome, because this is the one place
+       every outcome goes through — `dispatchOne` marks before each of its four
+       returns, so releasing here cannot be forgotten by a future branch the way
+       a release at each return site could. A dispatch that THROWS never reaches
+       this line and leaves the claim standing; that is what the lease is for
+       (AC_CLAIM_LEASE_MS), and it is the only case where a row waits. */
+    .update({ ...patch, claimed_at: null, updated_at: new Date().toISOString() })
     .eq('id', id);
 }
 
@@ -1929,6 +1936,10 @@ export async function drainAutoCountOutbox(
   if (!acServiceConfig(env)) return { skipped: 'ac_service_not_configured', ...zero };
 
   const sb = getSupabaseService(env);
+  /* BEFORE ANYTHING IS SELECTED. A row whose claimant died mid-send would
+     otherwise never be picked up again — the claim outlives the process that
+     took it, and nothing else in the system clears one. */
+  await releaseExpiredClaims(sb);
   const { data, error } = await sb.from('autocount_outbox')
     .select('id, company_id, op, doc_type, doc_no, doc_id, payload, status, attempts, dedupe_key')
     .eq('status', 'pending')
@@ -1949,6 +1960,17 @@ export async function drainAutoCountOutbox(
        may be turned off mid-sweep. Off leaves the row pending — it is not a
        failure, and the work must survive to be drained when it is on again. */
     if (!(await isWritebackEnabled(sb, raw.company_id))) continue;
+    /* CLAIM IT, OR LEAVE IT ALONE. The sweep is no longer the only dispatcher —
+       the AutoCount Sync page's "Send now" reaches `dispatchOne` too — so the
+       row this loop selected a moment ago may already be going out. A lost claim
+       is not an error and not a failure: whoever holds it is sending it, and if
+       they die the lease releases it to the next sweep. It is counted nowhere
+       for that reason, and logged so that a row losing every claim is visible
+       rather than silently never sent. */
+    if (!(await claimOutboxRow(sb, raw.id))) {
+      console.warn(`[ac-writeback] ${raw.doc_type} ${raw.doc_no} already being sent — left for the holder`);
+      continue;
+    }
     summary.processed += 1;
     const outcome = await dispatchOne(env, sb, raw, fetchImpl, hostBuild);
     if (outcome === 'sent') summary.sent += 1;

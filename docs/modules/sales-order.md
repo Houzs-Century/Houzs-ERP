@@ -2259,6 +2259,55 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
   for salespersons on both surfaces.
 
+### Payment methods: THREE choosable, FOUR protected — and one list feeds every picker
+
+Every payment dropdown on both surfaces renders from **`scm.so_dropdown_options`**
+through `useSoDropdownOptions(category)` + `optionsOrFallback(category, data)`
+(`frontend/src/vendor/scm/lib/so-dropdown-options-queries.ts`). Categories:
+`payment_method` -> then one of `payment_merchant` + `installment_plan` (Merchant),
+`online_type` (Online), or nothing (Cash).
+
+**Three is what an operator may CHOOSE. Four is what the API refuses to delete.**
+They are different questions and conflating them has now produced two wrong
+comments and one wrong picker:
+
+| | value |
+|---|---|
+| selectable `payment_method` rows | `Merchant`, `Online`, `Cash` — mig 0037 deactivated the L1 `Installment` row; an EPP receipt is Merchant plus an `installment_plan` tenure |
+| rows `PAYMENT_METHOD_CORE_VALUES` protects | those three **plus `Installment`** — re-locked 2026-08-13 so the deactivated row historical payments point at cannot be deleted (`scm/shared/payment-methods.ts` carries that trace) |
+| `payment_merchant` banks | the twelve mig 0037 seeds, including Pinelabs / AEON / HSBC |
+
+`POST /so-dropdown-options` refuses the `payment_method` category outright;
+`PATCH` refuses a VALUE edit or `active: false` on a protected row; `DELETE`
+refuses a protected row entirely.
+
+**`FALLBACK_OPTIONS` is a hand-written copy of that table and it rots.**
+`optionsOrFallback` returns it whenever the API is loading or answers zero rows,
+so it is what an operator sees on a cold load — on BOTH surfaces. It offered the
+retired `Installment` and held nine of the twelve banks until 2026-08-20. It is
+now pinned against mig 0037 by
+`frontend/src/vendor/scm/lib/so-dropdown-options.fallback.test.ts`, which PARSES
+the migration rather than restating it, so a later migration that changes either
+set fails the test until the fallback moves with it.
+
+**Never re-guard a value against a static list after the catalog has spoken.**
+Two instances, both now removed:
+
+- `MobileNewSO` re-checked a scanned payment method against a `PAY_METHODS` array
+  built from `FALLBACK_OPTIONS`, on top of a value `reconcilePayment`
+  (`vendor/scm/lib/scan-prefill.ts`) had already snapped against the live
+  catalog with `snapValue` — and which returns `null` rather than a bad method.
+  It dropped nothing while the static list happened to be a superset and was one
+  maintenance edit from silently blanking a correct scan. This is the same
+  correction the file's own header records for customer type and building type.
+- `RecordedPayments` (the mobile recorded-payment edit sheet) rendered its
+  **Method** select from a hardcoded `["Cash","Merchant","Online","Installment"]`
+  while the three sub-pickers beside it already read the catalog. Now
+  `withStoredOption(optionsOrFallback("payment_method", ...))` like its siblings —
+  `withStoredOption` grandfathers a stored value back in as an option, which is
+  what stops a controlled `<select>` displaying its FIRST option while state
+  holds the real one.
+
 ### The payment slip is OPTIONAL on every SO path (owner ruling 2026-08-13, SURFACE CHANGE)
 
 > Owner, verbatim: *"其实 SalesOrder 所有的付款都不强制 … 如果我们用 OCR scan

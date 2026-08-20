@@ -11,7 +11,7 @@
 
 ## 1. What is attested
 
-`BUG-HISTORY.md:3422`, in full:
+`BUG-HISTORY.md` line 3422, in full:
 
 > **Mass 500s / "Usage limit exceeded"** — Cloudflare **FREE Workers plan** daily caps hit under real load. Fix: upgrade to Workers Paid. (Also: GitHub Actions budget block on a private repo → made repo public = free/unlimited.)
 
@@ -110,7 +110,7 @@ Those mitigations are load-bearing and pervasive — the "subrequest diet" is de
 
 ## See also
 
-- `BUG-HISTORY.md:3422` — the sole primary source, and its "reconstructed after the fact, dates approximate" caveat at `:3414-3416`.
+- `BUG-HISTORY.md` line 3422 — the sole primary source, and its "reconstructed after the fact, dates approximate" caveat at `:3414-3416`.
 - `backend/wrangler.toml:250-262` (the `[triggers]` clause that retires the free-plan cap in prose — it replaced the comment this document used to cite at `:179`), `:178-186` (the `houzs-scan-ocr` Queues producer/consumer — the Paid-plan upper bound).
 - `backend/src/scm/routes/mfg-sales-orders.ts:1973-1976` — the fully-traced *subrequest*-cap incident, inherited from 2990, which this document is careful **not** to claim as the Houzs incident.
 - `docs/system-foundation-coe.md`, `docs/api-fetch-hardening-coe.md`, `docs/pg-migration-dropped-defaults-coe.md` — the other three producers of "mass 500s".

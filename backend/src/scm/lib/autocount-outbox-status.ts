@@ -421,6 +421,53 @@ export const AC_TRANSFER_OPS = [
  * health check reports the queue and never re-queues, so a copy there would be
  * a second home for a rule with no second reader.
  */
+/**
+ * Is a per-row "Send now" button worth OFFERING on this row?
+ *
+ * THE SIBLING OF `acRowIsRequeueable`, AND NOT A WIDENING OF IT. The two answer
+ * different questions and their answers are disjoint by construction: Send again
+ * asks "may this refusal be tried afresh", which is only ever true of a row that
+ * has STOPPED (failed or skipped); Send now asks "may this row, which is already
+ * going out, go out this instant instead of in five minutes", which is only ever
+ * true of a row that is still WAITING. No row can offer both, and that is the
+ * property that keeps the two buttons from meaning the same thing on screen.
+ *
+ * The owner asked for this by name — 「自动的 可是我要可以manual push」: keep the
+ * automatic sync and let a person push. Until now a waiting row had no control
+ * at all, because `acRowIsRequeueable` refuses `pending` structurally (a
+ * re-queue would INSERT a duplicate create) and so the operator could only wait
+ * for the cron.
+ *
+ * A HINT, NOT THE GATE — the same standing as its sibling. `sendOutboxRowNow`
+ * re-reads the row, re-checks the switch and takes an exclusive claim, and can
+ * still answer no for reasons this pure function cannot see. Nothing on the
+ * write path trusts this; it exists so the page does not offer a button whose
+ * answer is knowably no before it is pressed.
+ *
+ * The two structural noes:
+ *
+ *   not pending      a sent row is in the book, a failed row has given up and
+ *                    wants Send again, a skipped one never left the building.
+ *   attempts spent   the drain selects `attempts < MAX_ATTEMPTS`, so a pending
+ *                    row at the cap is stranded and a push would spend a call
+ *                    on the account book that cannot help it.
+ *
+ * NO OP RESTRICTION, deliberately, and this is where it differs most from its
+ * sibling. `acRowIsRequeueable` has to care which operation it is, because a
+ * re-queue must COMPOSE something and only some ops can be composed again. A
+ * send-now composes nothing — it dispatches the payload already sitting in the
+ * row, which is the same payload the sweep would have sent — so every operation
+ * the drain can dispatch, this can dispatch, including `edit` and `cancel`.
+ */
+export function acRowCanSendNow(
+  status: string,
+  lastError: string | null | undefined,
+  attempts: number,
+): boolean {
+  if (acOutboxState(status, lastError) !== 'pending') return false;
+  return attempts < AC_MAX_ATTEMPTS;
+}
+
 export function acRowIsRequeueable(
   op: string,
   status: string,

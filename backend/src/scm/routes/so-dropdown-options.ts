@@ -37,16 +37,32 @@ export const soDropdownOptions = new Hono<{ Bindings: Env; Variables: Variables 
 
 soDropdownOptions.use("*", supabaseAuth);
 
-/* payment_method is a LOCKED set. The three core rows (Merchant / Online /
-   Cash) drive branch logic end-to-end (POS handover cards, the deposit ledger,
-   the payments cascade). Rename/reorder is fine; add, delete, deactivate, or
-   VALUE edit is refused. ('Installment' is no longer a core L1 method — it is
-   the plan under Merchant — so it is intentionally unprotected and may be
-   deactivated.) This gate is the backstop for direct API calls. */
+/* payment_method is a LOCKED set. The three SELECTABLE rows (Merchant / Online
+   / Cash) drive branch logic end-to-end (POS handover cards, the deposit
+   ledger, the payments cascade). Rename/reorder is fine; add, delete,
+   deactivate, or VALUE edit is refused.
+
+   'Installment' is no longer a selectable L1 method — mig 0037 deactivated it,
+   and an EPP receipt is Merchant plus an installment_plan tenure. It IS still
+   protected: this comment used to say it was "intentionally unprotected and may
+   be deactivated", which stopped being true on 2026-08-13 when
+   PAYMENT_METHOD_CORE_VALUES went back to four so the row historical payments
+   point at cannot be deleted. So: three choosable, four protected.
+
+   This gate is the backstop for direct API calls. */
+/* Says what it ENFORCES. It said "a fixed set of three" while
+   PAYMENT_METHOD_CORE_VALUES — the list this gate actually consults — has held
+   FOUR since 2026-08-13, when Installment was re-locked (payment-methods.ts has
+   that trace). Three is how many an operator can CHOOSE; four is how many rows
+   are protected from deletion, because the deactivated Installment row still
+   backs historical payments. A refusal message that miscounts the thing it is
+   refusing is how the operator learns to distrust the message. */
 const PAYMENT_METHOD_LOCK_REASON =
-  "Payment methods are a fixed set of three — they are wired to order logic " +
-  "(POS handover cards, deposit ledger, payments cascade). Rename or reorder " +
-  "them anytime; they cannot be added to, removed, or turned off.";
+  "Payment methods are a locked set — they are wired to order logic (POS " +
+  "handover cards, deposit ledger, payments cascade). Rename or reorder them " +
+  "anytime; they cannot be added to, removed, or turned off. Four rows are " +
+  "protected: Merchant, Online and Cash, plus the deactivated Installment row " +
+  "that historical payments still point at.";
 
 const CATEGORIES = [
   "customer_type",

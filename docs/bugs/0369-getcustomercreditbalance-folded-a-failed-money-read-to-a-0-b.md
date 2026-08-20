@@ -1,0 +1,7 @@
+## getCustomerCreditBalance folded a failed money read to a 0 balance [low]
+
+Symptom: On a transient DB error (e.g. Hyperdrive cold-start), the SO Detail and New-SO "Customer has RM X credit available" figures silently showed 0, and the legacy credit-apply path treated the customer as having no balance — a money read reading as 0 with no error surfaced anywhere.
+
+Root cause (traced, not guessed): getCustomerCreditBalance in backend/src/scm/lib/customer-credits.ts destructured only `const { data } = await q` — the single read in the file that dropped `error`. supabase-js resolves a failed select to { data: null, error } without throwing, so `data ?? []` became [] and the function returned 0. Every other read in the same file binds `error` and refuses precisely because "a failed money read must not read as 0"; this one was missed. Confirmed by reading the current file (the drop at the sum, against ~15 sibling reads that all bind+refuse) and by tracing all three callers.
+
+Fix: Bind `error` and throw `getCustomerCreditBalance read failed: <msg>` on a real error. The function returns a bare number with no reason channel, so throwing is the equivalent of the siblings' `return { ..., reason }` refusal; the read sits before any write on every path, so throwing strands no partial state. Empty ledger (no history) is unaffected — it resolves error === null with data === [] and still sums to 0. Ref: fix/customer-credit-balance-silent-read, 2026-08-18.
