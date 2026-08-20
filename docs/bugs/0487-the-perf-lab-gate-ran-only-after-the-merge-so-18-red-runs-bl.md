@@ -57,4 +57,11 @@ ways this silently un-fixes itself: `frontend-perf` dropped from the roll-up's
 `merge_group` removed from the triggers; the job removed from `ci.yml`; and the
 `test:perf-local` step dropped. All five exited 1.
 
+**Sibling entry.** `docs/bugs/0485-the-perf-lab-went-stale-against-acoutboxrow-and-postsubmit-f.md`
+fixed the INSTANCE — the two stale fixtures — and deliberately left the CI shape
+alone, because where a gate runs is the owner's decision and not an agent's. It
+counted 14 consecutive failures; by the time this entry was written the same
+streak was 18. This entry is the follow-through the owner chose: the instance was
+the type error, the CLASS is a gate that cannot block.
+
 **Ref.** `ci/perf-lab-gates-presubmit`, 2026-08-21.
