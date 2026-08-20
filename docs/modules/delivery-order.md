@@ -181,11 +181,16 @@ still need `edit` on `scm.sales.delivery`.
   **DISPATCHED** (`:2785`) and stock is deducted immediately (`:2842-2855`). The
   create path also fires `syncSoDeliveredFromDo` and the customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
-- **Header PATCH** (`:3450`). Locked once a DR/SI exists (`:3544`). Strips the
-  three amend fields out of the DO update and mirrors them onto the parent SO
-  instead, writing a separate audit row on the **SO's** timeline
-  (`prepareSoAmendMirrorAudit`, `:221-260`). `delivery_substatus` is whitelisted
-  against `HC_SUBSTATUS_VALUES` (`:209-212`).
+- **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
+  live DR/SI no longer freezes the whole header — only the columns that child
+  snapshots freeze (`DO_IDENTITY_LOCK_COLS` in `lib/do-audit-fields.ts` =
+  `debtor_code` / `debtor_name` / `currency` / `sales_location` / `branding`),
+  via `changedLockedCols` (`shared/header-inherited-lock.ts`) + `doHasDownstream`,
+  409 `do_identity_locked`. The DO's own delivery dates, dispatch/POD, addresses
+  and notes stay editable with a child present. Strips the three amend fields out
+  of the DO update and mirrors them onto the parent SO instead, writing a separate
+  audit row on the **SO's** timeline (`prepareSoAmendMirrorAudit`, `:221-260`).
+  `delivery_substatus` is whitelisted against `HC_SUBSTATUS_VALUES` (`:209-212`).
 - **Line add** (`:3636`). Item-code guard, then `doHasDownstream`. If the DO is
   already shipped, the new line ships immediately via resync, so a stock
   availability check runs first unless the caller passes `confirmShortStock`

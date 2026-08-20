@@ -1,0 +1,71 @@
+name: Go-live wipe — Houzs Century (HC)
+
+# DESTRUCTIVE, but SAFE BY DEFAULT. Wipes Houzs Century's transaction + stock
+# data for a clean production go-live, keeps all master/config data, and never
+# touches 2990. See backend/scripts/golive-wipe-hc.mjs for the full contract.
+#
+# DEFAULT is mode=plan: a read-only dry run that counts what it WOULD delete and
+# writes nothing. mode=apply deletes, and ONLY runs when the confirm input is
+# typed EXACTLY — the workflow passes it to the script's CONFIRM gate, which
+# refuses otherwise.
+#
+# Manual trigger only. Never on a schedule — a scheduled destructive job is how
+# an accident becomes routine.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, read-only) or apply (DELETES HC data)"
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'For apply ONLY, type exactly: WIPE HOUZS-CENTURY TRANSACTIONS'
+        type: string
+        required: false
+        default: ""
+
+# Own concurrency group — NEVER the deploy's. A wipe must not queue behind or
+# displace a release, and two wipes must never overlap.
+concurrency:
+  group: golive-wipe-hc
+  cancel-in-progress: false
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    # Production, because that is where DATABASE_URL lives (secrets.DATABASE_URL
+    # is the only DB credential this repo holds).
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run wipe (${{ github.event.inputs.mode }})
+        run: node scripts/golive-wipe-hc.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          BACKUP_DIR: ${{ github.workspace }}/golive-backup
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the other DB
+          # workflows (soak-gate-check.yml) so the pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      # Only apply writes a backup; upload it so the wipe is recoverable.
+      - name: Upload HC backup (apply only)
+        if: ${{ github.event.inputs.mode == 'apply' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golive-hc-backup
+          path: golive-backup/
+          if-no-files-found: warn
+          retention-days: 90
