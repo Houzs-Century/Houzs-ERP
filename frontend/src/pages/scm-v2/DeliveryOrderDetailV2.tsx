@@ -46,6 +46,7 @@ import { NextStepNote } from "../../components/NextStepNote";
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
+  doCloseWithoutEvidenceWarning,
   siTransferBlockReason,
 } from "../../vendor/scm/lib/do-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -129,6 +130,12 @@ type DoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* Proof of delivery, as stored. Both are on the detail payload already
+     (delivery-orders-mfg.ts:305 selects `pod_r2_key, signature_data`); this
+     page simply never declared them, which is part of why it could close a
+     delivery without noticing there was no evidence on the row. */
+  signature_data?: string | null;
+  pod_r2_key?: string | null;
   lifecycle_state?: DoLifecycle;
   currency: string;
   created_at?: string;
@@ -791,6 +798,11 @@ export function DeliveryOrderDetailV2() {
     if (!deliveryOrder) return;
     const step = doAdvanceStep(deliveryOrder.status);
     if (!step) return;
+    /* NAMED, NOT REFUSED — see doCloseWithoutEvidenceWarning for why the office
+       is still allowed to do this. Until now this control closed a delivery
+       with no signature, no photo and no word about either. */
+    const warning = doCloseWithoutEvidenceWarning(step, deliveryOrder);
+    if (warning && !window.confirm(`${warning}\n\nMark ${deliveryOrder.do_number} delivered anyway?`)) return;
     updateStatus.mutate({ id: deliveryOrder.id, status: step.status });
   };
   const goConvertToSi = () =>

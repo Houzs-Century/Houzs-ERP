@@ -13,7 +13,7 @@ FAIL backend/scripts/lib:
 **vitest only**: `backend`'s `test:coverage:light` + `test:coverage:workers`, and
 `frontend`'s `test:coverage`. Vitest does not execute `node:test` files. This
 repo keeps a whole second suite in that runner — `backend/tests/*.node.mjs`, run
-in CI by `npm run test:scale-contract` and `npm run test:release-discipline` —
+in CI by `npm run test:scale-contract` [gone] and `npm run test:release-discipline` —
 and a third in `vitest.pg.config.ts`, which declares no `coverage` block at all,
 so `npm run test:pg` never emits a report.
 

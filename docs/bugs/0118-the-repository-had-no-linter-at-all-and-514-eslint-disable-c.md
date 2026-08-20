@@ -43,7 +43,7 @@ RAW NUL bytes, at offsets 5023 and 8650, as the separator in its
 `merge-duplicate-fabric-colours.mjs` was fixed for. Git therefore classified it
 binary: `git diff --numstat` answered `-` `-` for it, so the PR that introduces
 this repo's first linter showed **no reviewable diff for the linter**. Caught by
-`backend/tests/noNulBytesInSource.node.mjs`, which is why `backend-typecheck` was
+`backend/tests/noNulBytesInSource.test.mjs` (then `.node.mjs`), which is why `backend-typecheck` was
 red at 132 of 133 rather than for anything about types. Fixed by writing the
 two-character escape `\0`; `` `${rel}\0${rule}` `` is the identical string at
 runtime, and the file is text again.
