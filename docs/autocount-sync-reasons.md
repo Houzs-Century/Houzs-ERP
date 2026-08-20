@@ -149,6 +149,46 @@ being true the moment the service is replaced.
 
 ---
 
+## 1a. What "Send now" answers — the send-now outcome codes
+
+**A different button, on a different row, answering a different question.** *Send
+again* is offered on a row that has STOPPED — refused or held back — and it puts
+a fresh attempt in the queue for the next sweep. *Send now* is offered only on a
+row that is still WAITING, and it dispatches that row immediately, so its answer
+is what the account book said rather than a promise about a sweep five minutes
+away. No row is ever offered both: the two conditions are disjoint by
+construction (`acRowCanSendNow` beside `acRowIsRequeueable`).
+
+The owner asked for it by name — 「自动的 可是我要可以manual push」 — because a
+waiting row previously had no control at all and the only option was to wait.
+
+**It spends an attempt.** A push is a real call on the licensed account book, and
+`attempts` is what the page, the health check and the give-up rule all read as
+"times we asked AutoCount". A manual call that did not count would make all three
+untrue. The cost is visible before the press: the row already says *"Tried 3
+times, will keep trying up to 6"*.
+
+**It cannot send twice.** The row is CLAIMED before it is dispatched (migration
+0315, `claimed_at`). Two operators pressing together, or a press landing inside
+the five-minute sweep, produce one send and one `already-in-flight`. A claim
+whose holder dies is released by a lease so a row can never be stranded.
+
+| code | accepted? | what it means | what the person should DO |
+|---|---|---|---|
+| `sent-now` | **yes** | The document went to AutoCount on the press and the account book **took it**. Stronger than a queue: it has arrived. | Nothing. The row now reads *In AutoCount*. |
+| `send-now-refused` | no | It was sent, AutoCount refused it, and this attempt was the **last** one — the row is now `failed`. `reason` carries the book's own words. | Read `reason` and look it up in §3. Fix that, then use **Send again** — this row is no longer waiting. |
+| `send-now-retrying` | no | It was sent and did not get through, **under** the attempt cap, so the row is still `pending`. Covers two events the return value cannot tell apart: the host unreachable, and the host reached with AutoCount throwing. The copy therefore claims neither — see §3, and note that AcSyncService turns **every** exception into a 500, which `callAcService` calls retryable. | Read `reason`. If it names something on the document, fix it; the sweep keeps trying either way. |
+| `send-now-waiting` | no | Nothing was sent: this document is built by transferring an earlier one that is **not in the account book yet**. | Nothing. It goes across on its own once the parent has. |
+| `not-waiting` | no | The row is not `pending`, so there is nothing to push early. | Use **Send again** if it is refused or held back; a `sent` row is already in the book. |
+| `already-in-flight` | no | Another dispatcher holds the row — the sweep, or another operator a moment earlier. **Nothing was sent twice, which is the point.** | Wait a few seconds and re-read the row; it is going out right now. |
+| `attempts-spent` | no | The row is `pending` but has used all six attempts, so no sweep will select it either. A stranded row. | Fix what AutoCount objected to, then **Send again** — that starts a fresh attempt budget, which a push deliberately does not. |
+
+`row-pending` (§1) is the *Send again* answer for the same row this button
+serves. Both are correct and they do not overlap: a re-queue of a pending row
+would INSERT a second create for one document, which is why it is refused there
+and why this button dispatches the existing row instead of queueing another.
+
+
 ## 2. Why a row is `skipped` — the ERP refused, and nothing was sent
 
 A `skipped` row **never left the building**. Re-composing it is free, which is
@@ -200,6 +240,7 @@ the diagnosis. The ones seen so far:
 | `AutoCount refused to cancel <type> <docNo> (already transferred to a downstream document, or already cancelled)` | `AcSyncService.cs` | The book will not cancel a document it has already transferred — the mirror image of the ERP's own downstream lock. | **No.** | Cancel the downstream document in AutoCount first, or accept the divergence and record why. |
 | `<type> <docNo> not found` | `AcSyncService.cs` | The document the ERP is editing or cancelling is not in the book under that number. | Only once the number is right. | Check `linked_ac_docno` on the ERP row. For a GRN this is very likely the `grn-mislinked` cutover convention in §2. |
 | `DocNo required for <what>` / `FromDocNo required when DtlKeys is not given` / `CreditorCode required for /so-to-po` | `AcSyncService.cs` | The payload is missing a field the route needs. | No — this is a code fault, not a data fault. | Report it. A composer produced an incomplete payload. |
+| `Primary Key Error` | AutoCount SDK | **A document with this number is already in the book.** The ERP numbers its own documents on every type and sends that number as `DocNo`, so a create whose number the book already holds is refused on the header key. OBSERVED in production 2026-08-20 on `HC-SO-2608-001`, `HC-SO-2608-002` and `HC-PO-2608-001` — all three ERP documents raised that same day, all three carrying numbers the book took during the 2026-08-14/17 go-live runs (run 32382073444). | **No, and never by pressing harder.** Every retry asks for the same number and gets the same answer. | Someone with the account book has to look up the number there. If the document in AutoCount **is** this same document, it is already filed and only its `linked_ac_docno` needs recording. If it is a **different** document, this one needs a new number — and the ERP's counter needs moving past what the book already holds. See §5. |
 | `AutoCount login failed` | `AcSyncService.cs` | The service could not log into the book. | **Yes** — transient. It is retried automatically. | Nothing, unless it persists: then the AutoCount host or its licence needs attention. |
 | `masters not opened, document not sent: …` | `autocount-outbox.ts` drain | `/ensure-masters` failed, so the document was never sent. Retried under the attempt cap, then failed. | **Yes**, once the master can be opened. | The message carries what `/ensure-masters` said. Fix that item / salesperson / customer, then Send again. |
 | `Gave up after 6 attempts. Last error: …` | `autocount-outbox.ts` drain | A **retryable** error (a 5xx or a transport failure) that never stopped happening. | **Yes**, if whatever was down is now up. | Read what follows `Last error:` — the real diagnosis is there. Usually the tunnel or the AutoCount host. |

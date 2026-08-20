@@ -2385,6 +2385,51 @@ Two consequences worth knowing:
   only because the shapes differ (`DO-2608-004` against `DO-000021`). A
   collision detector is still open work.
 
+### The collision that DID happen, and it was not the one this section predicted
+
+**2026-08-20. Three documents refused by AutoCount with `Primary Key Error`, and
+the whole queue stuck behind them.** The bullet above watches the wrong pair:
+the ERP's series against AutoCount's own. What collided was the ERP's series
+**against itself** — against numbers the ERP had already put in the book.
+
+What was PROVEN, by extending the read-only health check and dispatching it
+(`.github/workflows/autocount-outbox-health.yml`, runs 32381771391 and
+32382073444):
+
+| fact | reading |
+|---|---|
+| `sentAs="HC-SO-2608-001"` | the payload carries the ERP number VERBATIM. No prefix is stripped anywhere on the outbound path. |
+| `erpRaised=2026-08-20T12:37` | the ERP document was raised **that day** — it is a NEW document, not the original. |
+| `erpLink=null` | it carries no `linked_ac_docno`, so the ERP believes the book does not have it. That belief is why it was enqueued at all. |
+| `sentBefore=0` | the outbox holds no `sent` row for that number either. The queue has no memory of the earlier send. |
+
+Against that: `backend/scripts/data/ac-live-proof.json` records `HC-SO-2608-001`
+and `HC-SO-2608-002` written into `AED_HOUZS` on 2026-08-14, and
+`HC-PO-2608-001` on 2026-08-17 — the latter attested by a `FullTransfer` that
+named it as its source, which cannot name a document the book does not hold.
+
+So the ERP's monthly counter re-issued numbers the account book had already
+taken, and every retry asks the book to create a document number it already has.
+**A prefix is not the protection.** `HC-` distinguishes the ERP's series from
+AutoCount's; it does nothing about the ERP's series meeting its own history,
+which is what happens whenever the ERP's documents are cleared while the book
+keeps theirs.
+
+**UNKNOWN, and only the office host can answer it:** what `AED_HOUZS` holds
+under those numbers right now. The health check prints the statement that
+settles it rather than guessing —
+`SELECT DocNo, Cancelled FROM SO WHERE DocNo IN (…)`. That answer decides the
+remedy and the two remedies are opposites: if the book's document IS this
+document, the fix is to record the link and never send; if it is a DIFFERENT
+document, recording the link would point a new ERP order at somebody else's
+accounting document, and the fix is a number. `check-autocount-outbox-health.mjs`
+prints `erpRaised` for exactly this reason.
+
+**Do not reach for `repair-outbox-sent-by-hand.mjs` here.** That tool is right
+when the ERP's document and the book's document are the same document and only
+the queue is out of step. It is wrong — and expensive — when the numbers merely
+coincide.
+
 The parent travels separately (`payload.fromDoc`, resolved at drain) and must
 never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
 parent's.
@@ -3155,6 +3200,58 @@ failed, and `pending` would hand the drain a row with an empty body) — and its
 `last_error` is prefixed `[re-queued <ISO> -> outbox <new row id>]` with the
 original reason kept whole behind it. The health check reads that prefix and
 reports those rows under RE-QUEUED instead of counting them as backlog.
+
+### Sending a WAITING document NOW — the manual push
+
+The owner asked for it by name: 「自动的 可是我要可以manual push」 — keep the
+automatic sync, and let a person push. A `pending` row previously had no control
+at all, and the only option was to wait up to five minutes for the sweep.
+
+`POST /api/scm/autocount-outbox/:id/send-now` -> `sendOutboxRowNow`
+(`scm/lib/autocount-requeue.ts`). Offered on the page where the server sets
+`can_send_now` (`acRowCanSendNow`), on BOTH surfaces.
+
+**It is not a wider `can_requeue`, and must not become one.** The two predicates
+are disjoint by construction: *Send again* is only ever offered on a row that has
+STOPPED, *Send now* only on one still WAITING. A re-queue INSERTs a fresh row —
+which for a pending row would be a second create of one document, correctly
+refused as `row-pending`. A send-now dispatches THE ROW THAT IS ALREADY THERE,
+through the same `dispatchOne` the cron calls, with the same payload, masters,
+write-back and attempt accounting. What is manual is the TIMING and nothing else.
+
+| decision | answer, and why |
+|---|---|
+| does it spend an attempt? | **Yes, and it must.** An attempt is a real call on a licensed account book, and `attempts` is read by the page, the health check and the give-up rule as "times we asked AutoCount". A manual call that did not count would make all three untrue on a table whose own `COMMENT` calls it an audit trail. The cost is on screen before the press — the row already says *"Tried 3 times, will keep trying up to 6"*. |
+| what stops a double send? | **`claimed_at`, migration 0315.** See below — this is the part that had to be built, not reused. |
+| who may press it? | `scm.autocount.requeue` or `settings.manage` — the SAME keys as Send again, deliberately. Both do the one thing the key is about, and a second key would mean holding the right to send a refused document but not a waiting one. |
+| does the answer reach the operator? | Yes, on the row that was pressed, through the same note path as Send again — accepted, refused, or never answered. `useAcRequeue` gained a `sendNow` that shares its busy flag, notes map and throw branch with `sendAgain`, so the two cannot drift. |
+
+#### The claim, and the hole it closes
+
+`drainAutoCountOutbox` SELECTs pending rows and calls `dispatchOne` on each.
+Nothing between those steps marked a row in-flight: no lock, no lease, no
+conditional update, and `mark()` carries no status predicate. That was safe for
+one reason only — there was exactly ONE dispatcher and a single caller cannot
+race itself. **A button is the second dispatcher**, and it spends that luck.
+
+Migration 0315 adds `claimed_at`, and both dispatchers now take it:
+
+- `claimOutboxRow` is a single `UPDATE … WHERE id AND status='pending' AND
+  claimed_at IS NULL … RETURNING`. One statement, so it is atomic: a second
+  claimant blocks on the row lock and, when let through, re-checks its predicate
+  against the row as it now stands and matches nothing.
+- The sweep claims every row before dispatching it and skips what it cannot take.
+- `mark()` clears the claim on every outcome, which is why it lives there rather
+  than at each of `dispatchOne`'s four returns.
+- `releaseExpiredClaims` runs once per sweep. A Worker can be killed mid-send
+  (`ctx.waitUntil` is not guaranteed to finish) and a claim that outlived its
+  holder would strand the document — queued, visibly waiting, and dead. The lease
+  is `AC_CLAIM_LEASE_MS`, deliberately longer than the cron period so a slow but
+  LIVE send is never stolen from.
+
+It is NOT a status. The row stays `pending` while claimed, because it is still
+pending; 0277's CHECK admits four statuses and a fifth would be a lie to every
+reader of the table.
 
 ### When a SENT document's counterpart has been cancelled by hand
 
