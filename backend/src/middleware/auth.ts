@@ -368,8 +368,10 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   // isSalesUser), with NO matrix grant — is otherwise 403'd from the
   // Sales-Orders backend even though the FE (allowSales) shows it and every SO
   // route scopes them to own+downline (salesScope). Admit such a caller for the
-  // SALES-ORDERS AREA ONLY (the /mfg-sales-orders sub-router). Mirrors how
-  // assr.ts canAccessServiceCases OR-ins isSalesUser. Deliberately TIGHT — the
+  // SALES-ORDERS AREA ONLY (the /mfg-sales-orders sub-router). This used to say
+  // it mirrors how assr.ts canAccessServiceCases OR-ins isSalesUser; that stopped
+  // being true when Service Cases moved to the company grant, so the two gates
+  // now answer "who is a rep" differently ON PURPOSE. Deliberately TIGHT — the
   // path gate keeps procurement / warehouse / finance SCM areas closed to a
   // Sales rep with no explicit grant.
   if (c.req.path.includes("/mfg-sales-orders") && isSalesUser(user)) {
