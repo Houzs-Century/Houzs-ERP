@@ -1,6 +1,6 @@
 ## A comment stripper that lost its place at `=> "?"` [medium]
 
-<!-- area: CI gates, checkers -->
+<!-- area: Repo tooling: tests, ratchets, generators -->
 
 `check-company-divergence.mjs` reported `backend/src/scm/lib/companyScope.ts:294`
 as an unreviewed per-company branch. Line 294 is not a branch — it is a JSDoc
