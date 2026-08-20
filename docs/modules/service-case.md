@@ -122,7 +122,7 @@ at `ServiceCases.tsx:5241-5252`), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts:156-161`) hides one that merely restates
 its stage label.
 
-> `frontend/src/components/ServiceProgressTracker.tsx` **was DELETED** (with its
+> `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
 > anywhere in the tree, and it carried its own 7-stage copy with **no** resolution
 > filter, so wiring it up would have regressed the 7-vs-5 rule. Any future stepper

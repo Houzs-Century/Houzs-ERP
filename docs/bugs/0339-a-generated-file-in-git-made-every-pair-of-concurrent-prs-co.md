@@ -1,7 +1,7 @@
 ## A generated file in git made every pair of concurrent PRs conflict, by construction [medium]
 
 **Symptom.** Merge conflicts on nearly every PR, always in
-`docs/generated/bug-index.md` and usually in nothing else. On 2026-08-18 one
+`docs/generated/bug-index.md` [generated] and usually in nothing else. On 2026-08-18 one
 small PR (#2405) hit it **four times in one afternoon**, and #2352, #2394 and
 #2397 each hit it too. It reads as other people merging carelessly. It is not.
 

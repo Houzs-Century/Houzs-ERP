@@ -9,7 +9,7 @@ HOUZS，反之亦然），这一点没变。
 
 **What changed.** The project row-level ACL (`getProjectScope` / `canSeeProject` /
 `projectAccessLevel` / `isScopedProjectUser`, all in the now-deleted
-`backend/src/services/projectAcl.ts`) filtered a scoped Sales rep to projects on
+`backend/src/services/projectAcl.ts` [gone]) filtered a scoped Sales rep to projects on
 their one-hop PIC line whose brand was in their `user_brands` allow-list, plus a
 30-day grace window. Every read that keyed off it now returns the whole
 company-scoped set instead.
