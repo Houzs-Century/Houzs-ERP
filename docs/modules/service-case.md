@@ -157,6 +157,37 @@ its stage label.
 > so it is inert — but it is the next place the rule would break, and it is not
 > covered by that deletion.
 
+### `issue_category` and `service_category` are two different questions
+
+They are not old and new versions of each other, and reading them that way is
+what put free text into a maintained lookup.
+
+| column | question | shape | where it is edited |
+|---|---|---|---|
+| `issue_category` | WHAT WENT WRONG (damage, defect, wrong item) | one value | intake form on both surfaces; drives the dispatcher breakdown and SLA |
+| `service_category` | WHICH PRODUCT it is about (Mattress, Bedframe, Sofa) | **an ARRAY** — one complaint can be a bedframe AND a mattress | chips on the desktop detail + intake, chips on the phone's Product info accordion |
+
+`backend/src/routes/assr.ts` describes the intake form as having "replaced the
+older service_category-driven flow". **That is about the INTAKE / dashboard role
+only.** `service_category` itself is live and maintained: `assr_product_categories`
+(mig 0112) is the admin-editable lookup, `assr_case_categories` is the join table
+every count and breakdown reads, and the desktop list still filters on it.
+
+**A hand-typed value is lossy in two ways at once**, which is why the phone's
+`type: "text"` binding was a defect and not a style difference.
+`resolveCategories` (`backend/src/services/assr.ts`) keeps an unrecognised token
+in the flat DISPLAY string but writes it **no row** in the join table. So a typed
+"Mattres" becomes its own bucket in desktop's category filter AND leaves the case
+uncategorised for every report. Neither failure says anything.
+
+The rule now lives in one place both surfaces import —
+`frontend/src/lib/assrProductCategories.ts` (the endpoint constant,
+`splitCategories`, `categoryChipList`, `toggleCategory`). The chip MARKUP is
+per-surface: `CategoryChips` in `pages/ServiceCases.tsx`,
+`frontend/src/mobile/MobileAssrCategoryChips.tsx` on the phone. Both send the
+complete ARRAY on every save, because `PATCH /api/assr/:id` rewrites the join
+rows from what it is given — a partial list deletes categories nobody deselected.
+
 ### Required fields at create
 
 Enforced on **both** halves as of 2026-07-21:
@@ -166,6 +197,14 @@ Enforced on **both** halves as of 2026-07-21:
 | `doc_no` (SO) | desktop `ServiceCases.tsx`; mobile `MobileServiceCase.tsx` | `backend/src/routes/assr.ts` → one combined 400 `"doc_no, complaint_issue and issue_category are required"` |
 | `complaint_issue` | same | same 400 |
 | `issue_category` | same (desktop also requires the custom label when "Other…" is picked) | same 400 — `hasCategory` treats whitespace-only as missing |
+
+### Optional at create, and worth capturing there anyway
+
+| Field | Why it belongs on the intake form |
+|---|---|
+| `customer_email` | **This is the satisfaction-survey address.** When a case reaches `completed`, `backend/src/routes/assr.ts` resolves the CSAT recipient as `email_for_survey \|\| customer_email`; a case created without either has nobody to send to, and somebody has to go back and fill it in. Desktop has captured it since it was written; the phone did not send the key on any path until 2026-08-21. |
+| `ref_no` | the customer's own pre-printed reference. Blank falls back to the SO's `Ref`. |
+| `service_category` | the PRODUCT category — see the section below. Optional at intake on the phone (it is set on the detail screen); desktop offers the chips at intake too. |
 
 **`items[]` is NOT required — that changed on owner audit 2026-07-22.** The
 server used to 400 `"At least one item is required"`; it no longer does, and the
@@ -749,7 +788,11 @@ module that means:
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
 | Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups | `MobileServiceCase.tsx` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
 | **Note audience + issue-category fallback** | `ServiceCases.tsx` (add-note form, create panel) | `MobileServiceCase.tsx` (Timeline picker, NoteSheet, intake sheet) | **`vendor/scm/lib/assr/case-fields.ts`** — `ASSR_NOTE_AUDIENCES`, `assrNoteIsCustomerVisible()`, `ASSR_ISSUE_CATEGORIES` |
-| Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list `MobileServiceCase.tsx:1197` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
+| Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list in `MobileServiceCase.tsx` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
+| Product category (`service_category`) | `CategoryChips` in `pages/ServiceCases.tsx` | `mobile/MobileAssrCategoryChips.tsx`, wired as the `chips` field type in `EditableAcc` | **`frontend/src/lib/assrProductCategories.ts`** — the endpoint, the split, which chips exist, what a toggle produces. Markup only is per-surface |
+| Survey address (`customer_email`) | intake form + Customer panel in `pages/ServiceCases.tsx` | intake sheet + Customer accordion in `mobile/MobileServiceCase.tsx` | `email_for_survey \|\| customer_email` in `backend/src/routes/assr.ts` decides who the CSAT mail goes to |
+| Row readers / formatters on the phone | — | **`frontend/src/mobile/assr-case-fields.ts`** — `get`, `caseNo`, `slaText`, `prettyStage`. Extracted from the screen so it stays under its size ceiling AND so they are testable | — |
+| SO typeahead on the phone | `CreatePanel` in `pages/ServiceCases.tsx` | **`frontend/src/mobile/MobileAssrSoField.tsx`** — `useSoSearch` + `SoSearchField`, used by both the create sheet and the detail | `GET /api/assr/search-so` |
 | Attachment upload / thumbs | `ServiceCases.tsx:2472-2498` | `MobileServiceCase.tsx:1890-1905` | `lib/assrAttachmentUpload.ts`, `lib/imagePipeline.ts` |
 | Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx` | backend capabilities (`services/capabilities.ts`) |
 | **The 2026-07-23 rule: a Sales rep may not EDIT a case** | `App.tsx` `SalesRepCaseDetailRoute` redirects `/assr/:id` -> `/my-cases/:id` | `MobileServiceCase.tsx` opens `MobileMyCaseDetail` instead of `CaseDetail` | **`auth/salesAccess.isSalesNonDirector`** — one predicate, imported by both. Pinned on BOTH surfaces by `auth/permissionDivergence.test.ts` |

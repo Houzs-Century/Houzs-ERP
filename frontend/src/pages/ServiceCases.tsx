@@ -125,6 +125,12 @@ import type {
 } from "../types";
 import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import {
+  ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+  categoryChipList,
+  splitCategories,
+  toggleCategory,
+} from "../lib/assrProductCategories";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -2404,12 +2410,13 @@ function CategoryChips({
   onChange: (next: string[]) => void;
   disabled?: boolean;
 }) {
-  const extras = value.filter((v) => !options.includes(v));
-  const toggle = (n: string) =>
-    onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
+  /* Which chips exist, and what a toggle produces, come from the SHARED rule
+     the phone reads too (lib/assrProductCategories.ts). Only the markup below
+     is desktop's. Re-deriving either here is how the phone ended up writing
+     free text into this column. */
   return (
     <div className="flex flex-wrap gap-1.5">
-      {[...options, ...extras].map((n) => {
+      {categoryChipList(options, value).map((n) => {
         const on = value.includes(n);
         return (
           <button
@@ -2417,7 +2424,7 @@ function CategoryChips({
             type="button"
             disabled={disabled}
             aria-pressed={on}
-            onClick={() => toggle(n)}
+            onClick={() => onChange(toggleCategory(value, n))}
             className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
               on
                 ? "border-primary bg-primary/10 text-primary"
@@ -2430,15 +2437,6 @@ function CategoryChips({
       })}
     </div>
   );
-}
-
-/** "Bedframe, Mattress" -> ["Bedframe","Mattress"]. The API keeps sending
- *  the flat string on the case row for every read-only surface. */
-function splitCategories(v: string | null | undefined): string[] {
-  return (v ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 function CreatePanel({
@@ -2519,8 +2517,8 @@ function CreatePanel({
   // Product Category options mirror AutoCount's item groups (Nick
   // 2026-07-14) — admin-maintained in Service Maintenance until the
   // AutoCount reconnect back-fills the authoritative list.
-  const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/product-categories",
-    () => api.get("/api/assr/lookups/product-categories"),
+  const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>(ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+    () => api.get(ASSR_PRODUCT_CATEGORIES_ENDPOINT),
     [],
     LOOKUP_CACHE,
   );
@@ -3273,8 +3271,8 @@ function DetailContent({
     [],
     LOOKUP_CACHE,
   );
-  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/product-categories",
-    () => api.get("/api/assr/lookups/product-categories"),
+  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>(ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+    () => api.get(ASSR_PRODUCT_CATEGORIES_ENDPOINT),
     [],
     LOOKUP_CACHE,
   );

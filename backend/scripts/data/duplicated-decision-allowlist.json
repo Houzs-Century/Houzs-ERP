@@ -87,8 +87,8 @@
     },
     {
       "check": "D1",
-      "key": "FIELD_SERVICE_OWN,FIELD_SERVICE_SUPPLIER,REPLACE_UNIT,RETURN_VISIT,SUPPLIER_REPAIR|backend/src/routes/assr_print.ts frontend/src/components/StatusDot.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: RESOLUTION_LABEL, RESOLUTION_OPTIONS, RESOLUTION_LABELS. Cost of divergence is a blank chip, not a wrong number."
+      "key": "FIELD_SERVICE_OWN,FIELD_SERVICE_SUPPLIER,REPLACE_UNIT,RETURN_VISIT,SUPPLIER_REPAIR|backend/src/routes/assr_print.ts frontend/src/components/StatusDot.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/mobile/assr-case-fields.ts frontend/src/pages/ServiceCases.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: RESOLUTION_LABEL, RESOLUTION_OPTIONS, RESOLUTION_LABELS. Cost of divergence is a blank chip, not a wrong number. The fifth home is NOT a new decision: RESOLUTION_LABELS simply MOVED out of frontend/src/mobile/MobileServiceCase.tsx into frontend/src/mobile/assr-case-fields.ts when that screen hit its size ceiling. The screen still lists RESOLUTION_OPTIONS (the slugs it offers), which is why both mobile paths appear here."
     },
     {
       "check": "D1",
@@ -554,11 +554,6 @@
       "check": "D1",
       "key": "IN_WORKSHOP,OPEN,RESOLVED,TOWING|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: BREAKDOWN_STATUSES, BREAKDOWN_STATUS_LABELS, BREAKDOWN_STATUS_LABEL. Cost of divergence is a blank chip, not a wrong number."
-    },
-    {
-      "check": "D1",
-      "key": "INCORRECT ITEM DELIVERED,INSTALLATION / ASSEMBLY ISSUE,MISSING / SHORT ITEM,PRODUCT DEFECT,WARRANTY / SERVICE REQUEST|frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ISSUE_CATEGORY_OPTIONS, ISSUE_CATEGORIES. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
