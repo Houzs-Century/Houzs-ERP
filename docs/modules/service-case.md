@@ -98,12 +98,34 @@ list unconditionally — a case parked on a filtered-out stage still renders.
 
 **Progress is computed off the filtered list, not the 7-stage table:**
 
-- Desktop detail: `getActiveStages()` (`ServiceCases.tsx:5058-5063`) filters
-  `DETAIL_STAGES` (`:5036`) through the shared `isStageActive`; the result is
-  memoised once per case at `:2906-2909` and threaded into the workflow card,
-  summary bar and stage accordion. The card renders `Step {curIdx + 1} / {n}`
-  where `n = stages.length` (`:5215-5216`, `:5222-5224`) plus a dot rail. There
+- Desktop detail: `getActiveStages()` filters `DETAIL_STAGES` through the shared
+  `isStageActive`; the result is memoised once per case and threaded into the
+  workflow card, summary bar and stage accordion. The card renders
+  `Step {curIdx + 1} / {n}` where `n = stages.length` plus a dot rail. There
   is **no percentage** on desktop.
+
+  > **FIXED 2026-08-21 — the counter and the dropdown used to disagree.** The
+  > "Change to" `<select>` mapped the module-level, UNFILTERED `DETAIL_STAGES`
+  > while the `Step n / N` counter two lines above it read the FILTERED `stages`
+  > prop it had been handed. On an internal-resolution case that read
+  > "Step 2 / 5" beside a list of 7, the two supplier-only stages included.
+  > `docs/bugs/0481-the-desktop-stage-picker-offered-stages-the-case-does-not-ru.md`.
+  >
+  > **`DETAIL_STAGES` no longer holds any stage WORDS.** It is
+  > `ASSR_STAGES.map(...)`. It used to type its own `long` column and four rows
+  > had drifted from the canonical table — desktop printed "Review", "Solution",
+  > "Verification", "Delivery / Service" where mobile, the portal and the printed
+  > report say "Pending Review", "Pending Solution", "Under Verification",
+  > "Pending Delivery / Service". The funnel-dot caption `desc` moved onto
+  > `AssrStageDef` (`stages.ts`), so the whole stage row has one home.
+
+**`voided` is offered on DESKTOP ONLY, and that is an open question, not a
+defect.** The desktop select appends `<option value="voided">` after the mapped
+stages; mobile's picker has never carried it. So a case can be voided from a
+desktop and not from a phone. Left exactly as it shipped when the filtering bug
+above was fixed — whether the phone SHOULD be able to void is a business call
+(the standing philosophy is to loosen rather than restrict), and merging it under
+cover of a drift fix would have made that decision silently.
 - Mobile list card: `activeMStages(...)` per row (`MobileServiceCase.tsx:522-523`),
   showing `idx+1 / rowStages.length` (`:587`) and one mini bar per active stage
   (`:591-596`).
@@ -705,7 +727,8 @@ module that means:
 | Stage pipeline, supplier-only rule, sub-statuses | `pages/ServiceCases.tsx` (`DETAIL_STAGES`, `getActiveStages`) | `mobile/MobileServiceCase.tsx` (`STAGES`, `activeMStages`, `PHASE_DEFS`) | **`vendor/scm/lib/assr/stages.ts`** — put the rule HERE; both surfaces already import it |
 | Stage LABELS (what any reader sees for a stage) | `pages/ServiceCases.tsx`, `pages/MyCases.tsx`, `portal/pages/PortalSupplierCase.tsx` | `mobile/MobileServiceCase.tsx` (`prettyStage`) | **`vendor/scm/lib/assr-stage-labels.ts`** and its byte-identical backend twin — the words had five hand-written homes and the customer-facing one printed a raw slug |
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
-| Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups `:2251-2260`, `:2956-2968` | `MobileServiceCase.tsx:92-118` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` `:215` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
+| Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups | `MobileServiceCase.tsx` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
+| **Note audience + issue-category fallback** | `ServiceCases.tsx` (add-note form, create panel) | `MobileServiceCase.tsx` (Timeline picker, NoteSheet, intake sheet) | **`vendor/scm/lib/assr/case-fields.ts`** — `ASSR_NOTE_AUDIENCES`, `assrNoteIsCustomerVisible()`, `ASSR_ISSUE_CATEGORIES` |
 | Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list `MobileServiceCase.tsx:1197` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
 | Attachment upload / thumbs | `ServiceCases.tsx:2472-2498` | `MobileServiceCase.tsx:1890-1905` | `lib/assrAttachmentUpload.ts`, `lib/imagePipeline.ts` |
 | Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx:340` | backend capabilities (`services/capabilities.ts`) |
@@ -713,6 +736,14 @@ module that means:
 The history is not hypothetical: `stages.ts:1-16` exists because mobile once
 ignored the internal-resolution skip and mis-routed cases into the two
 supplier-only stages with the wrong progress denominator.
+
+Nor is the row above it. The two note-audience copies had ALREADY come apart by
+the time anyone compared them: desktop offered "Customer-visible", mobile offered
+"Customer" — and `customer` is the only bucket the portal shows a customer, so
+the phone's label named the bucket while the desktop's named the consequence.
+One home now, on the explicit wording; the mobile chips wrap 2x2 because
+`.sochip` is `white-space: nowrap` and the longer labels overflow a 375px row
+(measured, `docs/bugs/0482-two-assr-field-lists-were-written-twice-and-the-note-audienc.md`).
 
 ---
 
