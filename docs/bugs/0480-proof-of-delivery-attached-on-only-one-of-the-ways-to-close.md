@@ -1,6 +1,6 @@
 ## Proof of delivery attached on only one of the ways to close a delivery order [high]
 
-<!-- area: Delivery orders -->
+<!-- area: Delivery, DO, returns -->
 
 **Symptom.** The same delivery, closed from a different screen, either carried a
 customer signature and a GPS fix or carried nothing at all — and no screen said

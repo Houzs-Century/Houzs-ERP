@@ -1,6 +1,6 @@
 ## Mark Signed on the mobile shell closes a delivery with no signature [medium]
 
-<!-- area: Delivery orders -->
+<!-- area: Delivery, DO, returns -->
 
 **Symptom.** `MobileModuleDetail`'s delivery-order action bar offers
 `IN_TRANSIT → SIGNED` labelled "Mark Signed". It writes the status and nothing
