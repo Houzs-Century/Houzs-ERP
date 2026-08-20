@@ -77,7 +77,7 @@ anything either), but worth knowing before you tell a user to just cancel it.
 | Surface | File |
 |---|---|
 | Desktop list | `frontend/src/pages/scm-v2/PurchaseConsignmentOrders.tsx` |
-| Desktop detail | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderDetail.tsx` |
+| Desktop detail | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderDetail.tsx` — since 2026-08-20 the detail Edit is FIELD-LEVEL (matches the backend §8 GAP-1 lock): a live PC Receive disables only supplier / currency / purchase location (`identityLocked`), dates + notes stay editable; `hardLocked` = a non-editable status. The PC-Receive detail (`PurchaseConsignmentReceiveDetail.tsx`) splits the same way. |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderNew.tsx` |
 | Query hooks | `frontend/src/vendor/scm/lib/purchase-consignment-order-queries.ts` |
 
