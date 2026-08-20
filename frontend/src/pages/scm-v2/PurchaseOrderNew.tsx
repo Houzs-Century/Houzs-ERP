@@ -39,6 +39,7 @@ import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scm
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
+import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText, sortByNumeric, byText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -606,6 +607,26 @@ export const PurchaseOrderNew = () => {
       return;
     }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    /* PO variant gate (owner 2026-08-20). A supplier cannot make a sofa/bedframe
+       without the spec, so CONFIRMING a PO requires the core variant axes
+       (fabric / gaps / divan+leg+seat height) on every such line; Special Orders
+       stays OPTIONAL. Reuses the SAME missingRequiredVariants rule as the SO
+       proceed-gate so the two surfaces can never drift. A DRAFT skips it. All
+       gaps are collected and shown together (owner: never one-at-a-time). */
+    if (!asDraft) {
+      const variantGaps = validLines
+        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.category, l.variants, l.itemCode) }))
+        .filter((x) => x.miss.length > 0);
+      if (variantGaps.length > 0) {
+        notify({
+          title: 'Complete the product options before confirming this PO:',
+          body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n')
+            + '\n\nThe supplier needs these to know what to make. (Special Orders stay optional.)',
+          tone: 'error',
+        });
+        return;
+      }
+    }
     const items: NewPoItem[] = validLines.map((l) => ({
       materialKind:   l.materialKind,
       itemCode:   l.itemCode,
