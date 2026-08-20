@@ -159,7 +159,7 @@ if (checkOnly) {
      hard for every author by default. */
   if (usable.length < 400) {
     const thin =
-      `BUG LEDGER: only ${usable.length} entries parsed. The split from BUG-HISTORY.md landed 461 on 2026-08-20 ` +
+      `BUG LEDGER: only ${usable.length} entries parsed. The split from BUG-HISTORY.md landed 471 on 2026-08-20 ` +
       `and the ledger only grows, so a collapse is a parser regression rather than a tidy-up.\n` +
       `NOT failing the run: the ledger's size is not this author's to answer for, and a floor here would need ` +
       `maintaining, which is how the next stale number gets written. Pass --strict to fail on it.`;

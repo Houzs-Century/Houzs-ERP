@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build docs/generated/bug-index.md from the bug ledger in docs/bugs/.
 //
-// WHY. The ledger is 461 entries and 23,000+ lines of reverse-chronological
+// WHY. The ledger is 471 entries and 24,000+ lines of reverse-chronological
 // prose with no index, so "have we hit this before?" costs a full scan that
 // nobody performs. The entries are good; they are simply unreachable. This makes
 // them reachable by subsystem without touching the entries themselves.

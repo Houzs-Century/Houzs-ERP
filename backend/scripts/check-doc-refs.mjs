@@ -32,7 +32,7 @@ const jsonOut = process.argv.includes("--json");
 //
 // A PREDICATE, not a name list, since 2026-08-20: the bug ledger became a
 // directory of one file per entry (docs/bugs/, see its README). Every one of those
-// files is the same dated record BUG-HISTORY.md was, and listing 461 of them by
+// files is the same dated record BUG-HISTORY.md was, and listing 471 of them by
 // name would be a list nobody maintains. Measured on the split: the ledger
 // contributes 10 dead-path citations, every one an entry RECORDING a deletion, and
 // without this they turn from `dated` into `defect` and take `audit:doc-refs

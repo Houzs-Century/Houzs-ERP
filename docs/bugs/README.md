@@ -76,24 +76,34 @@ git, ours or GitHub's, to call a conflict.
 
 ## The migration, and its proof
 
-461 entries were split out of `BUG-HISTORY.md` at `162e37f90`. The split is
-reversible and was proved lossless before it landed: rebuilding the combined view
-from these files and comparing it against the original blob gives an identical
-SHA-256 once blank-line runs between entries are normalised, and an identical
-SHA-256 of every non-whitespace byte with no normalisation at all.
+471 entries were split out of `BUG-HISTORY.md`. The split is reversible and was
+proved lossless before it landed — twice: once at `162e37f90` over the 461
+entries that existed then, and again after merging `origin/main` at `95d51b100`,
+which had added ten more. Rebuilding the combined view from these files and
+comparing it against `origin/main`'s blob gives an identical SHA-256 once
+blank-line runs between entries are normalised, and an identical SHA-256 of every
+non-whitespace byte with no normalisation at all.
 
 ```
-sha256 normalise(original)  c3c9972f97bf39f9babe5652a49d55029fc2c73b16c52892924e1c900b64e5e1
-sha256 rebuilt              c3c9972f97bf39f9babe5652a49d55029fc2c73b16c52892924e1c900b64e5e1
+entries in docs/bugs        471
+entries in main's ledger    471
 
-sha256 original, whitespace stripped  55ab3b3db73dc8f2bbf1f61c114d4aa592468775433e979607cb9066c04da2d2
-sha256 rebuilt,  whitespace stripped  55ab3b3db73dc8f2bbf1f61c114d4aa592468775433e979607cb9066c04da2d2
+sha256 normalise(original)  f2e6243da7a40444024db0da6f6e0c8451a2fe8abe172bffc8e18a5fe217f781
+sha256 rebuilt              f2e6243da7a40444024db0da6f6e0c8451a2fe8abe172bffc8e18a5fe217f781
+
+sha256 original, whitespace stripped  37d0cbd664bb5ee8baee3eb76196aed4422756d8290a191e347826ed0416d249
+sha256 rebuilt,  whitespace stripped  37d0cbd664bb5ee8baee3eb76196aed4422756d8290a191e347826ed0416d249
+non-whitespace bytes                  1,230,063
 ```
 
-The one normalisation is whitespace BETWEEN entries and nothing else. Measured
-over the 461 entries: the blank-line run before the next heading was 0 lines in
-145 places, 1 line in 310, 2 in five and 3 in one, and the file ended with a
-dangling heading and no trailing newline. The rebuild writes one blank line
-everywhere and terminates the file. CommonMark renders all four the same.
+**The one normalisation is whitespace BETWEEN entries, and nothing else.**
+Measured over the 471: the blank-line run before the next heading was 0 lines in
+150 places, 1 line in 315, 2 in five and 3 in one, and the file ended on a
+dangling heading with no trailing newline. The rebuild writes one blank line
+everywhere and terminates the file. CommonMark renders all four the same, and the
+second hash — every non-whitespace byte, in order, with no normalisation — is
+what rules out any loss the first could have hidden.
+
 `backend/tests/bugLedgerRoundTrip.test.mjs` keeps the round-trip honest from here
-on.
+on: render these files into one document, split it again, and you must get the
+same entries back in the same order.
