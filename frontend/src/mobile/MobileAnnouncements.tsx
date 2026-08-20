@@ -18,6 +18,13 @@ import { MobileVirtualList } from "./MobileVirtualList";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { formatDate } from "../lib/utils";
+import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";
+import {
+  ANNOUNCEMENT_STATUS_LABEL,
+  announcementStatus,
+} from "../lib/announcementStatus";
 import {
   type AnnouncementTranslations,
   localizeAnnouncement,
@@ -54,6 +61,10 @@ type Announcement = {
   title: string;
   body: string;
   isActive: boolean;
+  /** ISO instant after which the notice stops being served to readers, or NULL
+   *  for "never". The phone COMPOSED without ever sending this until
+   *  2026-08-21, so every notice posted from a phone ran forever. */
+  expiresAt: string | null;
   createdAt: string | null;
   createdBy: number | null;
   createdByName?: string | null;
@@ -147,6 +158,20 @@ function CatChip({ ann }: { ann: Announcement }) {
   );
 }
 
+/* Hidden / Expired badge, from the SHARED rule (lib/announcementStatus.ts) the
+   desktop row imports too — so the two surfaces can never disagree about what
+   "Expired" means. Publisher-only: a reader is never served a hidden or expired
+   notice, so a chip on their card could only ever say "Live". */
+function StatusChip({ ann }: { ann: Announcement }) {
+  const status = announcementStatus(ann);
+  if (status === "live") return null;
+  return (
+    <span className="spill" style={{ background: "#eceee9", color: "#767b6e" }}>
+      {ANNOUNCEMENT_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
 // Company-scope label: empty target (or covering every company) = "Both"/"All";
 // a subset lists the codes. Mirrors the desktop companyScopeLabel.
 function companyScopeLabel(ids: number[] | undefined, companies: Company[]): string {
@@ -169,15 +194,28 @@ function CompanyChip({ ann, companies }: { ann: Announcement; companies: Company
 }
 
 // annReceipts() — publisher-only read receipts from GET /:id/acks. Progress bar
-// + roster (Read / Not read) + a Remind button (POST /:id/remind). Hides itself
-// gracefully if the roster can't be loaded. Never renders NaN.
+// + roster (Read / Not read) + the two Remind actions (POST /:id/remind).
+// Hides itself gracefully if the roster can't be loaded. Never renders NaN.
+//
+// WHY THE REMIND PATH LOOKS LIKE THIS. Until 2026-08-21 it was one line —
+// `api.post(url).catch(() => {}); setReminded(true);` — with no confirm, no
+// body and no error path. A 403 (a Sales Director reminding on someone else's
+// notice) or a 404 produced the words "Reminder sent" on the button and nothing
+// else anywhere: no toast, no console line, no retry. The publisher walked away
+// believing the roster had been re-popped. That is this repo's most expensive
+// defect shape — a refusal that reaches nobody — and it is why every mutation
+// here confirms first and then reports the SERVER's own answer, exactly as the
+// desktop page does (pages/Announcements.tsx remindUnacked / remindAll).
 function Receipts({ ann }: { ann: Announcement }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const notify = useNotify();
   const { data } = useQuery({
     queryKey: ["announcement-acks", ann.id],
     queryFn: () => api.get<AcksResponse>(`/api/announcements/${encodeURIComponent(ann.id)}/acks`),
     staleTime: 15_000,
   });
-  const [reminded, setReminded] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const r = data?.data;
   if (!r) return null;
@@ -190,9 +228,54 @@ function Receipts({ ann }: { ann: Announcement }) {
   ];
   const unread = Math.max(total - read, 0);
 
-  const remind = () => {
-    api.post(`/api/announcements/${encodeURIComponent(ann.id)}/remind`).catch(() => {});
-    setReminded(true);
+  /* One code path for both scopes. `scope` is REQUIRED, never defaulted here:
+     the two actions mean very different things (re-pop for the un-acked vs WIPE
+     every acknowledgement and re-pop for everyone), and a default would let a
+     new caller pick the destructive one by omission. The backend defaults a
+     missing body to "unacked", so sending the key explicitly is also what makes
+     the "all" reset possible at all — the old call sent no body, which is why
+     the phone had no reset. */
+  const remind = async (scope: "unacked" | "all") => {
+    if (busy) return;
+    const ok = await confirm(
+      scope === "all"
+        ? {
+            title: "Reset all read-receipts",
+            body: `Wipe acknowledgements and re-pop for ALL ${total} active user${total === 1 ? "" : "s"}? Everyone, including those who already acknowledged, will see it again.`,
+            confirmLabel: "Reset and remind",
+            danger: true,
+          }
+        : {
+            title: "Send reminder",
+            body: `Re-pop the notice for ${unread} un-acknowledged user${unread === 1 ? "" : "s"}? Anyone who already tapped Got it is unaffected.`,
+            confirmLabel: "Remind",
+          },
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ pendingCount?: number }>(
+        `/api/announcements/${encodeURIComponent(ann.id)}/remind`,
+        { scope },
+      );
+      // Report the SERVER's count, not our own arithmetic: the backend rebuilds
+      // the roster from the active users of the targeted companies, so its
+      // number is the one that is true.
+      const n = res.pendingCount ?? 0;
+      await notify({
+        title: scope === "all" ? "Read-receipts reset" : "Reminder sent",
+        body: `It will re-pop for ${n} user${n === 1 ? "" : "s"}.`,
+      });
+      void qc.invalidateQueries({ queryKey: ["announcement-acks", ann.id] });
+      void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
+    } catch (e) {
+      await notify({
+        title: "Reminder NOT sent",
+        body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
+        tone: "error",
+      });
+    }
+    setBusy(false);
   };
 
   return (
@@ -221,12 +304,22 @@ function Receipts({ ann }: { ann: Announcement }) {
         ))}
         {unread > 0 && (
           <button
-            onClick={remind}
-            disabled={reminded}
+            onClick={() => void remind("unacked")}
+            disabled={busy}
             className="tinybtn"
-            style={{ marginTop: 10, width: "100%", padding: 9, opacity: reminded ? 0.6 : 1, cursor: reminded ? "default" : "pointer" }}
+            style={{ marginTop: 10, width: "100%", padding: 9, opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
           >
-            {reminded ? "Reminder sent" : `Remind ${unread} who haven't read`}
+            {`Remind ${unread} who haven't read`}
+          </button>
+        )}
+        {total > 0 && (
+          <button
+            onClick={() => void remind("all")}
+            disabled={busy}
+            className="tinybtn"
+            style={{ marginTop: 8, width: "100%", padding: 9, color: "var(--red)", opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
+          >
+            Reset all read-receipts and re-pop
           </button>
         )}
       </div>
@@ -280,6 +373,28 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     queryFn: () => api.get<BannerResponse>("/api/announcements/banner?scope=human"),
     staleTime: 30_000,
   });
+  /* PUBLISHER LEDGER — GET /api/announcements, the same endpoint the desktop
+     page reads. Fetched ONLY for publishers, and it is what the list renders
+     for them.
+
+     WHY, and what it changes. The query above is the READER feed
+     (/banner?scope=human), which the backend filters to active AND not-expired
+     (announcements.ts isActiveFlag + notExpired). The phone showed nothing
+     else, so a manager who hid or expired a notice could not see it on their
+     phone at all — no badge, no way back, nothing to press. The nuance worth
+     stating because it is NOT symmetric: the banner feed does return a Sales
+     Director their OWN inactive/expired posts, so an SD saw theirs while a full
+     announcements.write manager saw none of theirs. The ledger removes that
+     split — both cohorts now read the surface that shows the whole picture.
+
+     Deliberately its own query key: ANNOUNCEMENT_FEED_KEY is shared with the
+     pop-up and the unread badge, which must stay READER-scoped. */
+  const ledgerQ = useQuery({
+    queryKey: ["mobile-ann-ledger"],
+    queryFn: () => api.get<BannerResponse>("/api/announcements"),
+    enabled: canCreate,
+    staleTime: 30_000,
+  });
   // System notices (scan / service-case) — the ACTIONABLE per-user notices the
   // list above excludes. Surfaced via the header bell so they still reach phone
   // users (owner 2026-07-20 B2). Same /banner shape + ack model as the list.
@@ -330,8 +445,22 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     companies,
   };
 
-  const list = data?.data ?? [];
+  const readerList = data?.data ?? [];
+  // Publishers read the ledger (everything, incl. hidden + expired); everyone
+  // else reads their own feed. One expression so the two cannot diverge.
+  const list = canCreate ? (ledgerQ.data?.data ?? []) : readerList;
+  const listLoading = canCreate ? ledgerQ.isLoading : isLoading;
+  const listError = canCreate ? ledgerQ.error : error;
   const systemList = systemQ.data?.data ?? [];
+  /* Which ids are in the READER feed. An unread dot is a statement about the
+     signed-in person's own inbox, so it may only be drawn for a notice that is
+     actually being served to them — otherwise every hidden / expired /
+     other-audience row in a publisher's ledger would sprout a green "unread"
+     dot that nobody can ever clear. */
+  const readerIds = useMemo(
+    () => new Set(readerList.map((a) => a.id)),
+    [readerList],
+  );
   // acked ids from BOTH banners; locally-acked ids clear the dot without a refetch.
   const [localAcked, setLocalAcked] = useState<Set<string>>(new Set());
   const ackedIds = useMemo(() => {
@@ -343,6 +472,14 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const systemUnread = systemList.reduce((n, a) => (ackedIds.has(a.id) ? n : n + 1), 0);
 
   const open = [...list, ...systemList].find((a) => a.id === openId) ?? null;
+
+  /* Every write on this screen (publish, hide/show, delete, remind) must bust
+     BOTH surfaces: the publisher ledger it renders from, and the reader feed
+     shared with the pop-up and the unread badge. */
+  const refreshFeeds = () => {
+    void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
+    void qc.invalidateQueries({ queryKey: ["mobile-ann-ledger"] });
+  };
 
   const markAcked = (id: string) => {
     setLocalAcked((prev) => new Set(prev).add(id));
@@ -356,7 +493,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
         salesDirOnly={salesDirOnly}
         onClose={() => setView("list")}
         onPublished={() => {
-          qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
+          refreshFeeds();
           setView("list");
         }}
       />
@@ -375,8 +512,16 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
         // panel hides itself when the roster can't be loaded (e.g. a Sales
         // Director opening a notice they didn't author — the backend 404s).
         canReceipts={canCreate && !open.source}
+        /* Mirrors the desktop row's canManage: a full announcements.write
+           manager may act on any human notice; a Sales-Director-only publisher
+           may act on their OWN posts, which is exactly what the backend's
+           sdBlockedFromRow enforces on PATCH / DELETE / remind. A system
+           (scan / service-case) notice is nobody's to retract. */
+        canManage={canCreate && !open.source && (!salesDirOnly || open.createdBy === (user?.id ?? null))}
         acked={ackedIds.has(open.id)}
         onAcked={() => markAcked(open.id)}
+        onChanged={refreshFeeds}
+        onRemoved={() => { refreshFeeds(); setOpenId(null); setView(openFrom); }}
         onBack={() => setView(openFrom)}
       />
     );
@@ -412,6 +557,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                   <NoticeCard
                     a={a}
                     unread={!ackedIds.has(a.id)}
+                    showStatus={false}
                     lang={lang}
                     companies={companies}
                     onOpen={() => {
@@ -478,9 +624,9 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 12, paddingBottom: 120 }}>
-        {isLoading && <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
-        {error && <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "26px 0" }}>Couldn't load announcements. Pull to retry.</div>}
-        {!isLoading && !error && (
+        {listLoading && <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
+        {listError && <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "26px 0" }}>Couldn't load announcements. Pull to retry.</div>}
+        {!listLoading && !listError && (
           <>
             {list.length > 0 && (
               <MobileVirtualList
@@ -491,7 +637,8 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                 renderItem={(a) => (
                   <NoticeCard
                     a={a}
-                    unread={!ackedIds.has(a.id)}
+                    unread={readerIds.has(a.id) && !ackedIds.has(a.id)}
+                    showStatus={canCreate}
                     lang={lang}
                     companies={companies}
                     onOpen={() => {
@@ -523,12 +670,18 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
 function NoticeCard({
   a,
   unread,
+  showStatus,
   lang,
   companies,
   onOpen,
 }: {
   a: Announcement;
   unread: boolean;
+  /** REQUIRED, not optional: the caller has to say whether this row is being
+   *  shown to a publisher (ledger — badge Hidden/Expired) or to a reader (feed
+   *  — nothing to badge). An optional flag would default the publisher list
+   *  back to unbadged, which is the state this fix exists to end. */
+  showStatus: boolean;
   lang: Parameters<typeof localizeAnnouncement>[1];
   companies: Company[];
   onOpen: () => void;
@@ -550,6 +703,7 @@ function NoticeCard({
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
           <CatChip ann={a} />
+          {showStatus && <StatusChip ann={a} />}
           <CompanyChip ann={a} companies={companies} />
           <span style={{ fontSize: 11, color: "#767b6e" }}>{byLine(a)} · {dm(a.createdAt)}</span>
         </span>
@@ -568,20 +722,84 @@ function Detail({
   ann,
   companies,
   canReceipts,
+  canManage,
   acked,
   onAcked,
+  onChanged,
+  onRemoved,
   onBack,
 }: {
   ann: Announcement;
   companies: Company[];
   canReceipts: boolean;
+  /** May this caller hide / show / delete THIS notice. REQUIRED — a default
+   *  would decide a permission by omission. */
+  canManage: boolean;
   acked: boolean;
   onAcked: () => void;
+  /** A write landed and the row changed: bust both feeds. */
+  onChanged: () => void;
+  /** The notice no longer exists: bust both feeds and leave this screen. */
+  onRemoved: () => void;
   onBack: () => void;
 }) {
   const [localAck, setLocalAck] = useState(acked);
   const [acking, setAcking] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const confirm = useConfirm();
+  const notify = useNotify();
   const isAcked = acked || localAck;
+  const status = announcementStatus(ann);
+
+  /* RETRACTION — hide/show + delete, the two publisher actions the phone did
+     not have at all. Both report the server's refusal: this file's Remind
+     button used to swallow one and claim success, and that shape is the reason
+     these are written out rather than fired and forgotten. */
+  const setActive = async (next: boolean) => {
+    if (managing) return;
+    setManaging(true);
+    try {
+      await api.patch(`/api/announcements/${encodeURIComponent(ann.id)}`, { isActive: next });
+      onChanged();
+      await notify({
+        title: next ? "Announcement shown" : "Announcement hidden",
+        body: next
+          ? "It is being served to its audience again."
+          : "Nobody will be served it until you show it again.",
+      });
+    } catch (e) {
+      await notify({
+        title: next ? "Could not show it" : "Could not hide it",
+        body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
+        tone: "error",
+      });
+    }
+    setManaging(false);
+  };
+
+  const remove = async () => {
+    if (managing) return;
+    const ok = await confirm({
+      title: "Delete announcement",
+      body: `Permanently delete "${ann.title}"? Read-receipts go with it. This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    setManaging(true);
+    try {
+      await api.del(`/api/announcements/${encodeURIComponent(ann.id)}`);
+      onRemoved();
+      await notify({ title: "Announcement deleted", body: `"${ann.title}" is gone.` });
+    } catch (e) {
+      await notify({
+        title: "Could not delete it",
+        body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
+        tone: "error",
+      });
+      setManaging(false);
+    }
+  };
 
   const lang = useMobileLang();
   const t = useT();
@@ -625,11 +843,21 @@ function Detail({
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         <div id="ann-d-meta" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
           <CatChip ann={ann} />
+          {canManage && <StatusChip ann={ann} />}
           <CompanyChip ann={ann} companies={companies} />
           <span style={{ fontSize: 11, color: "#9aa093", alignSelf: "center" }}>{dm(ann.createdAt)}</span>
         </div>
         <div id="ann-d-title" style={{ fontSize: 21, fontWeight: 800, color: "#11140f", lineHeight: 1.25 }}>{shown.title}</div>
         <div id="ann-d-by" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 6 }}>Posted by {byLine(ann)}</div>
+        {/* When it stops showing — stated on the phone as well as the desktop,
+            because "why is this still up" is a question the publisher asks from
+            wherever they happen to be. */}
+        {canManage && ann.expiresAt && (
+          <div style={{ fontSize: 11, color: "#767b6e", marginTop: 3 }}>
+            {status === "expired" ? "Hidden automatically on " : "Hides automatically on "}
+            {dm(ann.expiresAt)}
+          </div>
+        )}
 
         {/* ---- Translation disclosure -------------------------------------
             A machine translation of a WORKPLACE notice must never masquerade
@@ -665,6 +893,29 @@ function Detail({
         <div id="ann-d-atts" style={{ marginTop: 16 }}>
           <Attachments ann={ann} />
         </div>
+        {canManage && (
+          <div id="ann-d-manage" style={{ marginTop: 18 }}>
+            <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Publisher</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => void setActive(!ann.isActive)}
+                disabled={managing}
+                className="tinybtn"
+                style={{ flex: 1, padding: 9, opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+              >
+                {ann.isActive ? "Hide" : "Show"}
+              </button>
+              <button
+                onClick={() => void remove()}
+                disabled={managing}
+                className="tinybtn"
+                style={{ flex: 1, padding: 9, color: "var(--red)", opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
         {canReceipts && (
           <div id="ann-d-receipts" style={{ marginTop: 18 }}>
             <Receipts ann={ann} />
@@ -719,6 +970,11 @@ function Compose({
   const [selUsers, setSelUsers] = useState<Set<number>>(new Set());
   const [userSearch, setUserSearch] = useState("");
   const [body, setBody] = useState("");
+  /* Wall-clock "YYYY-MM-DDTHH:mm" — DateTimeField's own wire shape, shared with
+     the desktop composer. Empty = never expires, which is the backend default
+     and the pre-2026-08-21 mobile behaviour, so leaving the field alone changes
+     nothing for anyone. */
+  const [expiresAt, setExpiresAt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   // Rich-media layout hint (mig 0140). "" photo = auto (derive from count);
   // video defaults to a 1x1 square. Only surfaced when the media is attached.
@@ -809,6 +1065,13 @@ function Compose({
       // Company target: a single company sends [id]; "Both"/ALL omits the field
       // (backend stores NULL = all companies).
       if (companyPick !== "ALL") payload.targetCompanyIds = [companyPick];
+      /* Expiry, sent EXACTLY as the desktop composer sends it
+         (pages/Announcements.tsx): a local wall-clock value converted to an ISO
+         instant, and the key omitted entirely when blank so the row keeps NULL
+         = never. Mobile sent this key on no path at all until 2026-08-21, which
+         is why a notice posted from a phone could not be given an end date and
+         then could not be taken down from the phone either. */
+      if (expiresAt) payload.expiresAt = new Date(expiresAt).toISOString();
       payload.attachments = uploaded;
       // Media layout — only hints for media actually uploaded. Empty photo pick
       // stays absent so the renderer derives a count default.
@@ -968,6 +1231,24 @@ function Compose({
           <span className="fld-l">Body</span>
           <textarea className="fld-i" value={body} onChange={(e) => setBody(e.target.value)} rows={6} style={{ resize: "none" }} placeholder="Write the announcement…" />
         </label>
+
+        {/* Expiry — the same control and the same label as the desktop
+            composer, and the SHARED DateTimeField rather than a native
+            datetime-local, so the date half stays DD/MM/YYYY on a phone whose
+            OS is not day-first. Optional by design: blank = never expires. */}
+        <div className="fld" style={{ marginBottom: 12 }}>
+          <span className="fld-l">Hide automatically after</span>
+          <DateTimeField
+            fullWidth
+            aria-label="Hide automatically after"
+            className="fld-i"
+            value={expiresAt}
+            onChange={setExpiresAt}
+          />
+          <span style={{ fontSize: 10.5, color: "#9aa093", marginTop: 5 }}>
+            Leave empty and it stays up until you hide it.
+          </span>
+        </div>
 
         <div className="fld-l" style={{ margin: "6px 0 7px" }}>Attachments</div>
         <div style={{ display: "flex", gap: 9 }}>

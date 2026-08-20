@@ -513,10 +513,6 @@
       "reads": 0,
       "catches": 1
     },
-    "frontend/src/mobile/MobileAnnouncements.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
     "frontend/src/mobile/MobileNewSO.tsx": {
       "reads": 0,
       "catches": 1
