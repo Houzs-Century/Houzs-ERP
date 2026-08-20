@@ -13,10 +13,12 @@ name: AutoCount write-back — re-queue a refused document (DRY-RUN gated)
 #
 # Access path: DATABASE_URL through lib/pgrest-shim.mjs — the enqueue needs a
 # PostgREST-SHAPED client, not PostgREST credentials. Copy
-# recompute-so-allocation.yml. Do NOT copy recompute-2990-so-allocation.yml:
-# it is three characters away by name and wired to two secrets that do not
-# exist in this repo, at repo level or in any of its three environments. The
-# first dispatch of this workflow failed on exactly that.
+# recompute-so-allocation.yml. The trap that broke this workflow's first
+# dispatch — recompute-2990-so-allocation.yml, three characters away by name
+# and wired to two secrets that exist nowhere in this repo — was DELETED on
+# 2026-08-20 rather than left carrying a warning, because the warning did not
+# stop it being copied. SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are Worker
+# secrets and must never be added to Actions; see CLAUDE.md.
 #
 # Read the result with "AutoCount write-back queue — health (read-only)": a
 # re-queued document is a pending row there, and its old skip is annotated

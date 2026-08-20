@@ -1,22 +1,31 @@
 #!/usr/bin/env node
 /* How many rows does MRP's demand read ACTUALLY get, and what would paging cost?
-   READ-ONLY: every REST call is a GET, every SQL statement is a SELECT.
+   READ-ONLY: every SQL statement is a SELECT.
 
-   Two questions the source cannot answer:
+   THE PAGE CEILING IS NOT MEASURED HERE ANY MORE — and it never was. This
+   script used to open with a REST half that issued the real read and counted
+   the array PostgREST handed back. It needed SUPABASE_URL +
+   SUPABASE_SERVICE_ROLE_KEY, which are WORKER secrets, not GitHub ones, and
+   deliberately so: this repository is public and the service-role key bypasses
+   RLS on a database two tenants share. So the half never ran once — runs
+   31941352447 and 31942066593 both printed "SKIPPED" while the workflow
+   reported success, which is worse than no coverage because it reads as some.
 
-   1. THE PAGE CEILING, measured at the edge rather than quoted from a comment.
-      routes/mrp.ts asks for `.limit(5000)` and then throws if it got 5000 back.
-      lib/paginate-all.ts's header says PostgREST caps a response at 1000 whatever
-      `.limit()` says. If that is right the guard is unreachable and the plan runs
-      on a slice; if it is wrong the guard fires and the page 500s. pg_stat_statements
-      cannot settle it (#2276: the generated LIMIT is normalised to a placeholder and
-      json_agg makes every read return exactly 1 row), so ASK THE REST EDGE: issue the
-      real read and count the array it hands back. Content-Range carries the true total
-      alongside, so the drop is visible in one line.
+   Rewriting it over DATABASE_URL would NOT have fixed it: production genuinely
+   speaks PostgREST (src/db/supabase.ts:66 builds a real createClient and every
+   sb.from(...) in the SCM module is a REST call), so a pg-shim version would
+   have measured Postgres and not the edge in question.
 
-      The exact ceiling also decides whether paginateAll is itself correct: it pages in
-      PAGE=1000 windows and stops on the first short page, so a ceiling BELOW 1000 would
-      make page 1 look short and truncate silently in a second way.
+   The ceiling is measured from the WORKER instead, which already holds those
+   credentials and already issues the exact request:
+
+       GET /api/admin/health/rest-page-ceiling     (gated on `*`, counts only)
+       -> src/routes/systemHealth.ts
+
+   It reports rows-returned vs the Content-Range total at several requested
+   limits, and settles whether paginateAll's PAGE-sized windows sit at or under
+   the real ceiling. What REMAINS here is the part DATABASE_URL can honestly
+   answer:
 
    2. WHAT PAGING COSTS. Paging turns one request into ceil(rows/1000). The reads are
       sequential and computeMrp runs inline on the SO detail page, so the row counts
@@ -34,75 +43,6 @@ const CO = Number(process.env.COMPANY || 1);
 const SO_DONE = ['CANCELLED', 'CLOSED', 'SHIPPED', 'DELIVERED', 'INVOICED', 'DRAFT'];
 const PO_DEAD = ['CANCELLED', 'DRAFT'];
 
-/* ── part 1: the REST edge ─────────────────────────────────────────────────── */
-
-const REST = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-/** GET one PostgREST read against the `scm` schema. Returns rows + content-range. */
-async function rest(path, { count = false } = {}) {
-  const headers = {
-    apikey: KEY,
-    Authorization: `Bearer ${KEY}`,
-    'Accept-Profile': 'scm', // the SCM tables live in scm.*, same as db.schema in getSupabaseService
-  };
-  if (count) headers.Prefer = 'count=exact';
-  const res = await fetch(`${REST}/rest/v1/${path}`, { method: 'GET', headers });
-  const range = res.headers.get('content-range');
-  if (!res.ok) return { rows: null, range, status: res.status, body: (await res.text()).slice(0, 300) };
-  const rows = await res.json();
-  return { rows, range, status: res.status, body: null };
-}
-
-/* The demand read of routes/mrp.ts:466-475, spelled out as the URL supabase-js
-   builds for it. Kept in ONE place so the with-limit and no-limit variants below
-   differ ONLY in the limit — otherwise the comparison proves nothing. */
-const DEMAND_SELECT =
-  'id,doc_no,item_code,description,item_group,variants,qty,warehouse_id,line_delivery_date,line_no,created_at,cancelled,' +
-  'so:mfg_sales_orders!inner(debtor_name,status,so_date,customer_delivery_date,processing_date,customer_state,sales_location)';
-const demandUrl = (extra) =>
-  `mfg_sales_order_items?select=${encodeURIComponent(DEMAND_SELECT)}` +
-  `&cancelled=eq.false&so.status=not.in.${encodeURIComponent(`(${SO_DONE.map((s) => `"${s}"`).join(',')})`)}` +
-  `&company_id=eq.${CO}&order=id${extra}`;
-
-async function restPart() {
-  note('\n=== 1. the page ceiling, measured at the REST edge (GETs only) ===');
-  if (!REST || !KEY) {
-    note('  SKIPPED — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set');
-    return;
-  }
-
-  /* Cheapest possible shape first: one column, no embed, no filters. If a bare
-     read is capped, the cap is the transport's and not something about MRP. */
-  const bare = await rest('mfg_sales_order_items?select=id&limit=5000', { count: true });
-  note(`  bare  select=id&limit=5000        -> ${bare.rows ? `${bare.rows.length} rows` : `HTTP ${bare.status} ${bare.body}`}   content-range: ${bare.range}`);
-
-  const noLimit = await rest('mfg_sales_order_items?select=id', { count: true });
-  note(`  bare  select=id  (no .limit)      -> ${noLimit.rows ? `${noLimit.rows.length} rows` : `HTTP ${noLimit.status}`}   content-range: ${noLimit.range}`);
-
-  /* A window ABOVE the ceiling: if range=0-4999 also returns the ceiling, then
-     paginateAll's PAGE=1000 is at-or-under it and its short-page stop is sound. */
-  const wide = await rest('mfg_sales_order_items?select=id&limit=5000', { count: true });
-  const page0 = await rest('mfg_sales_order_items?select=id&order=id&offset=0&limit=1000');
-  const page1 = await rest('mfg_sales_order_items?select=id&order=id&offset=1000&limit=1000');
-  note(`  paginateAll page 1 (offset 0)     -> ${page0.rows ? page0.rows.length : `HTTP ${page0.status}`} rows`);
-  note(`  paginateAll page 2 (offset 1000)  -> ${page1.rows ? page1.rows.length : `HTTP ${page1.status}`} rows`);
-
-  const dem = await rest(`${demandUrl('&limit=5000')}`, { count: true });
-  note(`\n  THE REAL MRP DEMAND READ (company ${CO}), .limit(5000) exactly as shipped:`);
-  note(`    rows handed to computeMrp: ${dem.rows ? dem.rows.length : `HTTP ${dem.status} ${dem.body}`}`);
-  note(`    content-range (returned/total): ${dem.range}`);
-  if (dem.rows) {
-    const cap = 5000;
-    note(`    guard is \`length >= ${cap}\`  ->  ${dem.rows.length} >= ${cap} is ${dem.rows.length >= cap} ${dem.rows.length >= cap ? '(fires)' : '(CANNOT FIRE — silent slice)'}`);
-    const ceiling = bare.rows ? bare.rows.length : null;
-    if (ceiling != null) {
-      note(`    measured ceiling ${ceiling}; paginateAll PAGE=1000 is ${1000 <= ceiling ? 'at or under it (short-page stop is sound)' : 'ABOVE it (paginateAll would truncate too!)'}`);
-    }
-  }
-  if (wide.range) note(`    (limit=5000 content-range: ${wide.range})`);
-}
-
 /* ── part 2: what the untruncated reads cost ───────────────────────────────── */
 
 const DSN = process.env.DATABASE_URL;
@@ -118,7 +58,7 @@ const reqs = (n) => Math.max(1, Math.ceil(Number(n) / PAGE));
    ceiling BELOW 1000 would make page 1 look short and truncate every paged read
    in the codebase a second way. */
 async function ceilingSetting() {
-  note('\n=== 1b. the configured db-max-rows, from the DB side ===');
+  note('\n=== 1b. the configured db-max-rows, from the DB side (a CROSS-CHECK, not the measurement) ===');
   const roles = await sql`
     SELECT r.rolname, unnest(coalesce(r.rolconfig, '{}'))::text AS cfg
       FROM pg_roles r WHERE r.rolconfig IS NOT NULL`;
@@ -131,7 +71,7 @@ async function ceilingSetting() {
 }
 
 async function sqlPart() {
-  note('\n=== 2. row counts of every read in computeMrp, and the requests paging costs ===');
+  note('\n=== 1. row counts of every read in computeMrp, and the requests paging costs ===');
   if (!sql) { note('  SKIPPED — DATABASE_URL not set'); return; }
   try { await ceilingSetting(); } catch (e) { note(`  (role config unreadable: ${e.message})`); }
 
@@ -235,5 +175,4 @@ async function sqlPart() {
   await sql.end({ timeout: 5 });
 }
 
-await restPart();
 await sqlPart();
