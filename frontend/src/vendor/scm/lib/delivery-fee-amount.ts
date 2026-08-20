@@ -12,6 +12,21 @@
  * pinned by reading the JSX.
  */
 
+/**
+ * Does the amount cell edit this line as a FEE (type the amount to charge), or
+ * as a plain unit price?
+ *
+ * Only once there is a fee to reduce. A delivery-fee line added by hand on a
+ * NEW Sales Order starts at 0, and there the operator is AUTHORING the fee, not
+ * discounting it — reading "250" as a target computed a discount of
+ * max(0 - 250, 0) = 0, never wrote a price, and the box snapped back to RM 0.
+ * That shipped and was reported on a new SO within the hour. You cannot
+ * discount a fee that does not exist yet.
+ */
+export function editsFeeAsDiscount(isFeeCode: boolean, grossSen: number): boolean {
+  return isFeeCode && safe(grossSen) > 0;
+}
+
 /** What the amount cell SHOWS on a fee line: the line net, never below zero. */
 export function feeAmountSen(grossSen: number, discountSen: number): number {
   return Math.max(0, safe(grossSen) - safe(discountSen));
