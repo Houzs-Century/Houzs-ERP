@@ -37,6 +37,7 @@
 // rolling back a GRN/SO post (audit-DLQ pattern matching writeMovements).
 // ----------------------------------------------------------------------------
 
+import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { summariseReadiness } from './so-readiness';
 import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-set-coverage';
@@ -419,16 +420,17 @@ async function runSoStockAllocation(
         sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
       if (doError) throw new Error(`allocation DO load failed: ${doError.message}`);
       for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-        /* LEAK GUARD (DRAFT) — audit D5, 2026-08-01: a DRAFT DO has NOT
-           shipped, so it must not count as delivered here. This inline sum
-           used to exclude only CANCELLED while its source of truth
+        /* LEAK GUARD (PRE-SHIP) — audit D5, 2026-08-01: a DO that has not
+           shipped must not count as delivered here. This inline sum used to
+           exclude only CANCELLED while its source of truth
            (soDeliverableRemaining, delivery-orders-mfg.ts) and the DO->SO
-           delivery sync both exclude CANCELLED + DRAFT — so a draft DO
+           delivery sync both excluded CANCELLED + DRAFT — so a draft DO
            quietly shrank a line's remaining, starved it of allocation, and
            MRP (which uses soDeliverableRemaining) disagreed with this job
-           about the same line. One rule everywhere now. */
-        const st = (d.status ?? '').toUpperCase();
-        if (st !== 'CANCELLED' && st !== 'DRAFT') activeDoIds.add(d.id);
+           about the same line. "One rule everywhere" was true from that day
+           and the rule ITSELF was wrong: LOADED is pre-ship too. It is one
+           PREDICATE everywhere now (2026-08-20), not one hand-typed pair. */
+        if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
       }
     }
     const deliveredBySoItem = new Map<string, number>();

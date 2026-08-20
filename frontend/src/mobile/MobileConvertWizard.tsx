@@ -531,7 +531,21 @@ export function MobileConvertWizard({
         newDocNo = str(res?.doNumber);
         await qc.invalidateQueries({ queryKey: ["mobile-module"] });
       } else if (target === "si") {
-        const body = { picks: picks.map((l) => ({ doItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
+        /* SI — create a DRAFT, never a SENT invoice (owner 2026-08-20:
+           「以电脑为准 —— 手机也先出草稿」). This body carried `picks` alone, and
+           the route lands `status: isDraft ? 'DRAFT' : 'SENT'` with `sent_at` +
+           `confirmed_at` stamped and `invoice_date` forced to today
+           (sales-invoices.ts) — so three taps on a phone ISSUED a
+           customer-facing invoice with no due date, no terms and no review. The
+           desktop cannot reach this endpoint at all: it goes SalesInvoiceFromDo
+           -> SalesInvoiceNew with a full header form, which is the review step
+           the phone had no equivalent of.
+           Same shape and same reasoning as the GRN arm below — post the draft,
+           let the operator confirm it from the document (PATCH /:id/status
+           DRAFT -> SENT, which the mobile detail screen already offers as
+           "Confirm Invoice"). Confirm is the single AR/revenue-writing
+           chokepoint, exactly as /post is for stock. */
+        const body = { asDraft: true, picks: picks.map((l) => ({ doItemId: l.lineId, qty: clampQty(l.qty, l.remaining) })) };
         const res = await authedFetch<{ invoiceNumber?: string }>("/sales-invoices/from-dos",
           idempotentInit(idemKey, {
             method: "POST",

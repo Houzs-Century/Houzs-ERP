@@ -164,3 +164,87 @@ describe('DO status PATCH — unlinked over-delivery guard (route-level)', () =>
     expect(refusal).toBeNull();
   });
 });
+
+/*
+ * A LOADED delivery order can be DISPATCHED.
+ *
+ * `DO_PRESHIP_STATES` is {DRAFT, LOADED} — "no stock has left our hands yet" —
+ * and the confirm gate admits both. But every engine that sums what a Sales
+ * Order has already been delivered skipped only CANCELLED and DRAFT, so a
+ * LOADED DO counted its OWN lines as delivered. The gate then compared this
+ * DO's qty against a remaining figure that had already subtracted it, and
+ * refused whenever 2 x own_qty > ordered_qty — which is every full delivery.
+ *
+ * Goods on the lorry, confirm returns 409. And because the inventory OUT only
+ * fires on ENTRY to a shipped state, the units never leave the books: stock on
+ * hand reads too high, MRP does not reorder, and the same units can be promised
+ * twice. The operator's natural workaround is cancel-and-re-raise, which is the
+ * exact path that minted the DO-005 duplicate delivery this file's first case
+ * exists to refuse.
+ *
+ * `unbilled-deliveries.ts` is the tell: it consumes the same engine and had to
+ * add LOADED to its own exclusion list by hand.
+ */
+describe('DO status PATCH — a LOADED delivery order is not blocked by itself', () => {
+  test('REGRESSION: a LOADED DO delivering exactly what was ordered SHIPS', async () => {
+    // SO-4 orders 2 of NTYR. One LOADED DO carries both, linked. Nothing else
+    // has shipped, so this is an ordinary full delivery.
+    const tables: Record<string, Row[]> = {
+      mfg_sales_orders: [{ doc_no: 'SO-4', debtor_code: 'D4', debtor_name: 'Cust4' }],
+      mfg_sales_order_items: [
+        { id: 'so-item-4', doc_no: 'SO-4', item_code: 'NTYR', item_group: null, qty: 2, cancelled: false },
+      ],
+      delivery_orders: [
+        { id: 'do-loaded', do_number: 'DO-LOADED', company_id: CO, status: 'LOADED', so_doc_no: 'SO-4' },
+      ],
+      delivery_order_items: [
+        { id: 'doi-loaded', delivery_order_id: 'do-loaded', so_item_id: 'so-item-4', item_code: 'NTYR', qty: 2, parent: { status: 'LOADED' } },
+      ],
+      delivery_return_items: [],
+    };
+    const refusal = await overDeliveryRefusal(await confirm(harness(tables), 'do-loaded'));
+    expect(refusal).toBeNull();
+    expect(tables.delivery_orders.find((d) => d.id === 'do-loaded')?.status).toBe('DISPATCHED');
+  });
+
+  test('REGRESSION: the same, with UNLINKED lines — the header-attributed reading', async () => {
+    const tables: Record<string, Row[]> = {
+      mfg_sales_orders: [{ doc_no: 'SO-5', debtor_code: 'D5', debtor_name: 'Cust5' }],
+      mfg_sales_order_items: [
+        { id: 'so-item-5', doc_no: 'SO-5', item_code: 'MATT', item_group: null, qty: 3, cancelled: false },
+      ],
+      delivery_orders: [
+        { id: 'do-loaded-u', do_number: 'DO-LOADED-U', company_id: CO, status: 'LOADED', so_doc_no: 'SO-5' },
+      ],
+      delivery_order_items: [
+        { id: 'doi-loaded-u', delivery_order_id: 'do-loaded-u', so_item_id: null, item_code: 'MATT', qty: 3, parent: { status: 'LOADED' } },
+      ],
+      delivery_return_items: [],
+    };
+    const refusal = await overDeliveryRefusal(await confirm(harness(tables), 'do-loaded-u'));
+    expect(refusal).toBeNull();
+  });
+
+  test('a LOADED DO that really WOULD over-deliver is still refused', async () => {
+    // The guard must lose its blind spot, not its teeth: SO-6 orders 2, a
+    // DISPATCHED DO already shipped both, and the LOADED one carries 2 more.
+    const tables: Record<string, Row[]> = {
+      mfg_sales_orders: [{ doc_no: 'SO-6', debtor_code: 'D6', debtor_name: 'Cust6' }],
+      mfg_sales_order_items: [
+        { id: 'so-item-6', doc_no: 'SO-6', item_code: 'NTYR', item_group: null, qty: 2, cancelled: false },
+      ],
+      delivery_orders: [
+        { id: 'do-6-first', do_number: 'DO-6A', company_id: CO, status: 'DISPATCHED', so_doc_no: 'SO-6' },
+        { id: 'do-6-loaded', do_number: 'DO-6B', company_id: CO, status: 'LOADED', so_doc_no: 'SO-6' },
+      ],
+      delivery_order_items: [
+        { id: 'doi-6-first', delivery_order_id: 'do-6-first', so_item_id: 'so-item-6', item_code: 'NTYR', qty: 2, parent: { status: 'DISPATCHED' } },
+        { id: 'doi-6-loaded', delivery_order_id: 'do-6-loaded', so_item_id: 'so-item-6', item_code: 'NTYR', qty: 2, parent: { status: 'LOADED' } },
+      ],
+      delivery_return_items: [],
+    };
+    const refusal = await overDeliveryRefusal(await confirm(harness(tables), 'do-6-loaded'));
+    expect(refusal).not.toBeNull();
+    expect(tables.delivery_orders.find((d) => d.id === 'do-6-loaded')?.status).toBe('LOADED');
+  });
+});
