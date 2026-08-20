@@ -609,6 +609,30 @@ throughout — it logs and skips, because the primary write already committed.
 
 ---
 
+### The Main Supplier column, and the convert's `missing_bindings`
+
+Both read `supplier_material_bindings` for every code in the picker, and both
+now go through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) rather than their own query —
+`backend/src/scm/routes/mfg-purchase-orders.ts` at the SO->PO picker, the
+convert body and the append-to-PO pricing path, plus `reviseBoundPo` in
+`backend/src/scm/lib/so-revision.ts`.
+
+The two failures are not the same size. On the picker a binding that does not
+arrive is a blank **"— none —"** cell. In the convert body it is a **400**: the
+SKU comes back as `missing_bindings`, i.e. the operator is told a bound SKU
+"isn't bound to a supplier yet" and cannot raise the order at all. The shared
+reader chunks the IN-list by URL bytes, pages past PostgREST's 1,000-row
+response cap, and orders totally (`is_main_supplier DESC, item_code, id`) — the
+last of which is what decides which alternate wins when a code is bound to
+several suppliers.
+
+A supplier's own detail page (`suppliers.get('/:id')`,
+`backend/src/scm/routes/suppliers.ts`) had no `.range()` at all and is now paged
+by `paginateAll` for the same reason: production carries 2,660 bindings across
+43 suppliers, so a large supplier could show a subset of its own SKUs and report
+nothing.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL: `backend/scripts/scm-schema/2990s-full-schema.sql:1150`

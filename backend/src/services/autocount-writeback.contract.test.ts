@@ -456,12 +456,15 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
     tables[table] ??= [];
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
+    let window: [number, number] | null = null;
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
     let columnError: { code: string; message: string } | null = null;
     const rows = () => {
-      const rs = tables[table].filter((r) => filters.every((f) => f(r)));
-      return limitN == null ? rs : rs.slice(0, limitN);
+      let rs = tables[table].filter((r) => filters.every((f) => f(r)));
+      if (limitN != null) rs = rs.slice(0, limitN);
+      if (window) rs = rs.slice(window[0], window[1] + 1);
+      return rs;
     };
     const settle = () => {
       if (columnError) return { data: null, error: columnError };
@@ -497,6 +500,9 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
       order() { return builder; },
       limit(n: number) { limitN = n; return builder; },
+      /* PostgREST's `Range` window — the binding read pages, so a no-op here
+         would hand a paged caller the whole set and never exercise the loop. */
+      range(from: number, to: number) { window = [from, to]; return builder; },
       maybeSingle: async () => (columnError ? { data: null, error: columnError } : { data: rows()[0] ?? null, error: null }),
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
     };
