@@ -9,19 +9,11 @@ import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '..
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
-  await enqueueEdit(c.get('supabase'), {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docId: id,
-    retire,
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
-}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -2871,7 +2863,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
-  await queueAcGrnEdit(c, id);
+  await queueAcGrnEdit(c, sb, id);
   return c.json({ grn: data });
 });
 
@@ -3123,7 +3115,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3421,7 +3413,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ ok: true });
 });
 
@@ -3590,6 +3582,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
-  await queueAcGrnEdit(c, grnId, retire);
+  await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
 });
