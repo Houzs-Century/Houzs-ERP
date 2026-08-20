@@ -103,6 +103,7 @@ import { loadKpiUnitsByDoc } from '../lib/kpi-units';
 import { supabaseAuth } from '../middleware/auth';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
+import { scopeStaffRowsToActiveCompany } from '../lib/staffCompanyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { uplineChainSteps } from '../../services/orgScope';
@@ -721,12 +722,32 @@ hr.get('/pickers', async (c) => {
   if (!co.ok) return co.res;
   const sb = c.get('supabase');
 
-  /* scm.staff is deliberately NOT company-scoped (0089: "Deliberately NOT
-     stamped — staff, currencies, ..."), so the staff picker is unscoped by
-     design; every other picker feeds a company-scoped ref and is scoped. */
+  /* ⚠️ CORRECTED 2026-08-18. This comment used to read: "scm.staff is
+     deliberately NOT company-scoped (0089: 'Deliberately NOT stamped — staff,
+     currencies, ...'), so the staff picker is unscoped by design; every other
+     picker feeds a company-scoped ref and is scoped."
+
+     The premise was true and the conclusion did not follow. scm.staff really
+     has no company_id — but a staff row's company is DERIVED from that person's
+     Team grants, and scm/lib/staffCompanyScope.ts exists to do exactly that
+     derivation; its own header names this leak class. So this picker returned
+     every active staff row PLATFORM-WIDE while the four siblings in this same
+     Promise.all each carried `.eq('company_id', co.companyId)`, and chaining it
+     with GET /staff/by-ids (which returns email and phone, and is deliberately
+     id-bounded rather than scoped) handed over the other company's staff
+     directory.
+
+     Scoped after the fetch rather than in the query because the attribution is
+     not a column — same three-state contract as GET /staff/pickable: no
+     companies master -> degrade to the full roster; master but no active
+     company -> fail closed to []. */
   const [staffRes, showroomRes, productRes, fabricRes, specialRes] = await Promise.all([
-    paginateAll<{ id: string; name: string; staff_code: string; role: string }>((from, to) =>
-      sb.from('staff').select('id, name, staff_code, role, active').eq('active', true).order('name').range(from, to)),
+    /* user_id is selected for the SCOPING, not for the response — it is the
+       link scopeStaffRowsToActiveCompany derives the company from. Omit it and
+       every row reads as UNLINKED, which the rule attributes to the 2990 mirror
+       source: the HOUZS picker would come back empty. */
+    paginateAll<{ id: string; name: string; staff_code: string; role: string; user_id: number | null }>((from, to) =>
+      sb.from('staff').select('id, name, staff_code, role, active, user_id').eq('active', true).order('name').range(from, to)),
     paginateAll<{ id: string; name: string }>((from, to) =>
       sb.from('showrooms').select('id, name').eq('active', true).eq('company_id', co.companyId).order('sort_order').range(from, to)),
     paginateAll<{ code: string; name: string }>((from, to) =>
@@ -739,8 +760,13 @@ hr.get('/pickers', async (c) => {
   const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error;
   if (firstErr) return c.json({ error: 'fetch_failed', reason: firstErr.message }, 500);
 
+  const { scoped: scopedStaff } = await scopeStaffRowsToActiveCompany(
+    c,
+    (staffRes.data ?? []) as unknown as Array<Record<string, unknown>>,
+  );
+
   return c.json({
-    staff: (staffRes.data ?? []).map((s) => ({ id: s.id, name: s.name, staffCode: s.staff_code, role: s.role })),
+    staff: (scopedStaff as unknown as typeof staffRes.data ?? []).map((s) => ({ id: s.id, name: s.name, staffCode: s.staff_code, role: s.role })),
     showrooms: (showroomRes.data ?? []).map((s) => ({ id: s.id, name: s.name })),
     products: (productRes.data ?? []).map((p) => ({ ref: p.code, label: `${p.code} — ${p.name}` })),
     /* Categories are the mfg_product_category ENUM, not a table — there is no

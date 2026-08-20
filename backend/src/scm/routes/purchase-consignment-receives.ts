@@ -36,6 +36,7 @@ import {
 import { writeMovements, defaultWarehouseId, resolveWarehouseLotCosts } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -751,6 +752,8 @@ purchaseConsignmentReceives.post('/', async (c) => {
       acceptedByPcoItem.set(pcoItemId, (acceptedByPcoItem.get(pcoItemId) ?? 0) + accepted);
     }
     if (acceptedByPcoItem.size > 0) {
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_consignment_order_items', [...acceptedByPcoItem.keys()]);
+      if (!xl.ok) return c.json(xl.body, xl.status);
       const { data: pcoItems } = await sb.from('purchase_consignment_order_items')
         .select('id, qty, received_qty').in('id', [...acceptedByPcoItem.keys()]);
       const remByPcoItem = new Map<string, number>(
@@ -1145,6 +1148,8 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
      PC Order line's remaining (qty - received_qty). Manual lines uncapped. */
   const addLinePcoItemId = (it.pcOrderItemId as string) ?? null;
   if (addLinePcoItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_consignment_order_items', [addLinePcoItemId]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_consignment_order_items', id: addLinePcoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],

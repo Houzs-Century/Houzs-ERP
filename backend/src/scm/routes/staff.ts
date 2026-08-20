@@ -18,8 +18,8 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm, hasHouzsPerm } from "../lib/houzs-perms";
-import { activeCompanyId, houzsCompanyId, mirrorCompanyId, scopeToCompany } from "../lib/companyScope";
-import { filterStaffToCompany } from "../lib/staffCompanyScope";
+import { activeCompanyId, scopeToCompany } from "../lib/companyScope";
+import { rowUserId, scopeStaffRowsToActiveCompany } from "../lib/staffCompanyScope";
 import { derivePosRole } from "../lib/pos-staff-role";
 import { isSalesUser } from "../../services/pmsAccess";
 import type { Env, Variables } from "../env";
@@ -33,11 +33,6 @@ staff.use("*", supabaseAuth);
 // PICKERS) so the two can never drift on shape.
 const STAFF_COLUMNS =
   "id, staff_code, name, role, showroom_id, venue_id, showroom_warehouse_id, user_id, initials, color, active, email, phone";
-
-// The seeded super_admin system row (mig 0022 / 0066; the SCM auth bridge pins
-// every caller to it). Same literal as middleware/auth.ts + staff-mirror.ts —
-// it carries user_id NULL but is a HOUZS artifact, not a 2990 mirror row.
-const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 // Dual-read camelCase ?? snake_case — the PostgREST driver may camelCase result
 // columns; cover both so we never read undefined.
@@ -68,55 +63,10 @@ function toStaffRow(r: Record<string, unknown>, positionSlug?: string | null) {
   };
 }
 
-/** The numeric user link off a raw staff row (either casing), or null. */
-function rowUserId(r: Record<string, unknown>): number | null {
-  const raw = r.user_id ?? r.userId;
-  if (raw == null) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
- * Company grants for a set of Houzs users, as user_id -> [company_id, …], read
- * from public.user_companies via the Postgres-backed env.DB shim (the SAME
- * source companyContext resolves the caller's own grants from). An absent map
- * entry means that user has ZERO grant rows. Degrades to an empty map — never
- * throws the picker — when the table is missing (pre-0f) or a read blips; every
- * LINKED row then falls to its 0-grant default (HOUZS base), matching
- * companyContext's own "absent table = no grants" behaviour.
- */
-async function loadGrantsByUserId(
-  env: Env,
-  userIds: number[],
-): Promise<Map<number, number[]>> {
-  const map = new Map<number, number[]>();
-  if (userIds.length === 0) return map;
-  try {
-    const placeholders = userIds.map(() => "?").join(",");
-    const res = await env.DB.prepare(
-      `SELECT user_id, company_id FROM user_companies WHERE user_id IN (${placeholders})`,
-    )
-      .bind(...userIds)
-      .all<{ user_id: number | string; company_id: number | string }>();
-    for (const row of res.results ?? []) {
-      const uid = Number(row.user_id);
-      const cid = Number(row.company_id);
-      if (!Number.isInteger(uid) || !Number.isInteger(cid) || cid <= 0) continue;
-      const arr = map.get(uid);
-      if (arr) arr.push(cid);
-      else map.set(uid, [cid]);
-    }
-  } catch {
-    // user_companies absent (pre-0f) or a transient DB error — keep the empty
-    // map. Never throw: a picker that 500s is worse than one that falls back to
-    // the HOUZS-base default for linked rows.
-  }
-  return map;
-}
-
 /**
  * positions.slug per Houzs user id, for POS-role derivation (pos-staff-role.ts).
- * Same degrade contract as loadGrantsByUserId directly above: an absent table
+ * Same degrade contract as loadGrantsByUserId (now in lib/staffCompanyScope.ts):
+ * an absent table
  * (pre-migration / D1 test mirror) or a read blip yields an EMPTY map — every
  * row then falls back to its stored scm.staff.role, which is exactly the
  * pre-derivation behaviour. Never throws the roster.
@@ -164,36 +114,6 @@ async function toStaffRowsWithDerivedRoles(
     const uid = rowUserId(r);
     return toStaffRow(r, uid == null ? null : slugByUserId.get(uid) ?? null);
   });
-}
-
-// The shared scoping pass: filter a raw staff-row set to the caller's ACTIVE
-// company via Team grants. Extracted so GET / and GET /pickable can't drift on
-// the scope rule — see filterStaffToCompany + the THREE-STATE contract on
-// /pickable below for the full spec.
-async function scopeStaffRowsToActiveCompany(
-  c: any,
-  rows: Array<Record<string, unknown>>,
-): Promise<{ scoped: Array<Record<string, unknown>>; degrade: boolean }> {
-  const companies = c.get("companies") ?? [];
-  // Pre-migration / cold-start: no companies master → single-company Houzs.
-  // Degrade to the full roster (the pre-fix behaviour) — the caller then
-  // renders the full list unchanged.
-  if (companies.length === 0) return { scoped: rows, degrade: true };
-  const active = activeCompanyId(c);
-  // Multi-company context but no resolvable active company → fail closed.
-  if (active == null) return { scoped: [], degrade: false };
-  const linkedIds = Array.from(
-    new Set(rows.map(rowUserId).filter((n): n is number => n != null)),
-  );
-  const grantsByUserId = await loadGrantsByUserId(c.env, linkedIds);
-  const ids = { active, houzs: houzsCompanyId(c), mirror: mirrorCompanyId(c) };
-  const filtered = filterStaffToCompany(
-    rows.map((r) => ({ raw: r, id: String(r.id), user_id: rowUserId(r) })),
-    grantsByUserId,
-    ids,
-    SCM_SYSTEM_STAFF_ID,
-  ).map((s) => s.raw);
-  return { scoped: filtered, degrade: false };
 }
 
 // GET / — list staff rows ordered by staff_code (mirrors 2990's useStaff
@@ -451,8 +371,40 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
      against, and it would resolve to nothing forever with no visible reason —
      the person's orders would just silently carry no venue. Fail loudly here
      instead, where someone is looking at the screen. */
+  /* ⚠️ THE TARGET PERSON, checked BEFORE the warehouse. Added 2026-08-18.
+     `showroom_warehouse_id` is a single column on a SHARED scm.staff row, so
+     "which company may write it" cannot come from a predicate on that table —
+     it comes from whether the PERSON belongs to the caller's company, which is
+     exactly what staffCompanyScope derives. Unchecked, a HOUZS admin holding
+     users.manage could re-park a 2990-only salesperson (and an UNPARK needs no
+     warehouse at all, so the warehouse check below could not stand in for it),
+     silently moving whose venue, fair P&L and commission their orders land in.
+     404 rather than 403: same reasoning as NOT_THIS_COMPANY. */
+  {
+    const { data: target, error: targetErr } = await supabase
+      .from("staff")
+      .select("id, user_id")
+      .eq("user_id", userId);
+    if (targetErr) return c.json({ error: "load_failed", reason: targetErr.message }, 500);
+    const targetRows = ((target ?? []) as Array<Record<string, unknown>>);
+    if (targetRows.length > 0) {
+      const { scoped } = await scopeStaffRowsToActiveCompany(c, targetRows);
+      if (scoped.length === 0) {
+        return c.json({
+          error: "not_found_in_company",
+          message: "That member isn't in the company you're working in.",
+        }, 404);
+      }
+    }
+  }
+
   if (showroomWarehouseId) {
-    /* company-scope: the WAREHOUSE is per-company (mig 0086 added
+    /* COMPANY SCOPE (deliberately NOT written as the checker's opt-out
+       annotation — that spelling on this handler is what hid the unscoped
+       write below from check-company-scope.mjs for as long as it existed. The
+       handler is now judged on its merits like any other.)
+
+       The WAREHOUSE is per-company (mig 0086 added
        warehouses.company_id; 0087 made its code unique per company), so the
        showroom must be one of THIS company's — an id-only check let a
        salesperson be parked under the other company's showroom, and every
@@ -462,9 +414,12 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
        under "shared / per-staff reference data" alongside currencies and
        my_localities, and hr_salesperson_profiles is keyed
        UNIQUE(company_id, staff_id) precisely because ONE staff row holds one
-       profile PER company. So the `.eq('user_id', userId)` update below is
-       correct as written and must NOT be company-filtered. Two tables, two
-       different answers, in one handler. */
+       profile PER company. So the `.eq('user_id', userId)` update below takes
+       no company_id predicate — there is no such column to predicate on. That
+       was the true half of the note this comment used to carry; the false half
+       was reading it as "therefore nothing needs checking", which is what left
+       the write open until the target-person gate above was added. Two tables,
+       two different answers, in one handler. */
     const { data: wh, error: whErr } = await scopeToCompany(supabase
       .from("warehouses")
       .select("id, is_showroom")
