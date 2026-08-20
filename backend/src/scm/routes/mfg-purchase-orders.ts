@@ -34,6 +34,7 @@ import {
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { missingVariantAxes } from '../shared/so-variant-rule';
+import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
@@ -2580,10 +2581,6 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Tier 2 downstream-lock — PO header is read-only once a non-cancelled GRN
-     exists. Convert-to-GRN (partial receiving) is NOT routed here. */
-  const childLock = await poHasDownstream(sb, id);
-  if (childLock) return c.json(childLock, 409);
 
   /* Read BEFORE writing — this row is the from-value of every pair recorded
      below. PO_AUDIT_FIELDS is the same column list the loop writes (PR #77 =
@@ -2597,6 +2594,20 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
     if (body[from] !== undefined) updates[to] = body[from];
+  }
+
+  /* Tier-2 downstream-lock — now FIELD-LEVEL (owner 2026-08-20, §8 GAP-1). The PO
+     header used to freeze WHOLESALE once a non-cancelled GRN existed, so even a
+     supplier remark or a pushed delivery date was refused. Only the columns a GRN
+     inherits (supplier / currency / purchase location) freeze; the PO's own dates
+     + notes stay editable with a GRN present. Pay for the downstream read ONLY
+     when an inherited column actually changes — a dates/notes-only PATCH never
+     queries it. To change an inherited field, cancel the GRN and edit the PO.
+     (Line add/edit/delete stays whole-locked below — a line IS what was ordered.
+     Convert-to-GRN / partial receiving is NOT routed here.) */
+  const lockedChanges = changedPoIdentityLockCols(updates, before);
+  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
+    return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   }
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
