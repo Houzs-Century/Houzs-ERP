@@ -1,6 +1,6 @@
 ## Stock Card valued goods we do not own, and a line marked FREE on a new order was invoiced at full retail [high]
 
-<!-- area: Inventory -->
+<!-- area: Inventory, costing, FIFO -->
 
 **白话.** 两件事，都跟钱有关。
 
