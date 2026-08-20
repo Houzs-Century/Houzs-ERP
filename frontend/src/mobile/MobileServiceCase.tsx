@@ -2733,13 +2733,13 @@ function EditableAcc({
                     value={draft[f.key] ?? ""}
                     onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
                   />
+                ) : f.type === "date" ? (
+                  /* DateField, never a native one (OS-locale bug). Was a DYNAMIC
+                     type={...}, so it escaped the sweep AND its gate. */
+                  <DateField fullWidth className="fld-i" value={draft[f.key] ?? ""} onChange={(iso) => setDraft((d) => ({ ...d, [f.key]: iso }))} />
                 ) : (
-                  <input
-                    type={f.type === "date" ? "date" : "text"}
-                    value={draft[f.key] ?? ""}
-                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                    className="fld-i"
-                  />
+                  <input type="text" className="fld-i" value={draft[f.key] ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))} />
                 )}
               </label>
             ))}

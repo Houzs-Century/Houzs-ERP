@@ -82,10 +82,17 @@ describe("SpecialAddonsTab — the editor is gated on the API's own write rule",
 describe("/assr/:id — the route guard matches requireServiceCaseAccess", () => {
   test("the backend case-detail read really does admit Sales", () => {
     // Verify the premise before trusting it. Two things must hold: the endpoint
-    // uses requireServiceCaseAccess, and that gate ors in isSalesUser.
+    // uses requireServiceCaseAccess, and that gate admits a rank-and-file rep.
+    //
+    // The MECHANISM of that second half changed and the assertion moved with it.
+    // It used to read `isSalesUser(user)` — Sales by job title. A batch of reps
+    // lost every case when a name-shaped signal missed, so the gate now ORs in
+    // the HOUZS COMPANY GRANT instead. The invariant is unchanged and is what is
+    // asserted here: a rep the API would serve is never Forbidden. Only the
+    // thing that makes them a rep is different, so match the grant, not a title.
     const assr = beSrc("routes/assr.ts");
     expect(assr).toMatch(/app\.get\(\s*["']\/:id\{\[0-9\]\+\}["']\s*,\s*requireServiceCaseAccess\(\)/);
-    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}isSalesUser\(user\)/);
+    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holdsHouzsCompanyGrant\(c\)/);
     expect(assr).toMatch(/function requireServiceCaseAccess[\s\S]{0,400}canAccessServiceCases/);
   });
 

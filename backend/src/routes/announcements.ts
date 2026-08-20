@@ -654,7 +654,13 @@ app.get("/banner", async (c) => {
   // ack. Read dual-keyed (pg folds snake -> camel on read).
   const [res, ackRes] = await Promise.all([
     c.env.DB
-      .prepare(`SELECT * FROM announcements ORDER BY created_at DESC`)
+      // WHERE is_active = 1 pushes the active filter to SQL so this uses the
+      // (is_active, created_at DESC) index (mig 0058) as a range scan instead of
+      // reading the WHOLE table on every ~60s cache miss (polled from every page,
+      // measured ~900ms on prod 2026-08-20). Behaviour-identical: the JS
+      // isActiveFlag filter below already drops exactly the is_active<>1 rows the
+      // integer column can hold, so no row that used to be served is lost.
+      .prepare(`SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     c.env.DB
       .prepare(
