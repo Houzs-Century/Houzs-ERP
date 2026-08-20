@@ -28,7 +28,8 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
-import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS } from '../lib/do-audit-fields';
+import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LOCK_COLS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine, type AcEnqueueOutcome } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
@@ -4499,38 +4500,37 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
     return c.json({ ok: true, changed: 0 });
   }
 
-  /* Header is locked once a Sales Invoice / Delivery Return exists — mirrors the
-     line-add / line-edit / cancel guards. Prevents editing a DO that a child
-     document already snapshotted. */
-  const headerLock = await doHasDownstream(sb, id);
-  if (headerLock) return c.json(headerLock, 409);
-
-  /* The header PATCH had no company gate of any kind: `id` comes straight from
-     the path and the SCM client is service-role, so a known id edited another
-     company's delivery order - address, dates, driver, the lot - and mirrored
-     the amend onto that company's SO. Strict flavour, because a DO header edit
-     is a books change: refuse an unresolved company rather than degrade to
-     "every company". */
+  /* The header PATCH had no company gate: `id` comes from the path and the SCM
+     client is service-role, so a known id could edit another company's DO (and
+     mirror the amend onto its SO). The predicate is HERE — the `activeCompanyId(c)`
+     further down is the audit row's companyId fallback, NOT a guard. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* The BEFORE half of every from->to pair recorded after the DO write below.
-     Read after the guards so a rejected PATCH costs nothing. */
-  /* The predicate is HERE. The `activeCompanyId(c)` further down is NOT a guard
-     — it is the fallback for the audit row's companyId field, and reading it as
-     one is how this handler passed a scope check while writing by uuid alone. */
+  /* BEFORE row — audit from-value + what the field-level lock diffs against. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('delivery_orders')
     .select(DO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
-  /* DUAL-WRITE NOTE: Supabase REST has no client-side transaction primitive —
-     the underlying postgrest call is one statement per HTTP request. We order
-     the writes DO-FIRST so a failed DO update never produces a phantom SO
-     amend. The SO mirror is best-effort + logged; an SO failure is surfaced in
-     the response as `so_mirror_error` so the UI can decide whether to retry,
-     but the DO write itself is already committed. This matches how
-     delivery-planning's /fields route handles the inverse split. */
+  /* Header lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1; header-inherited-lock.ts):
+     once a live SI/DR exists only the columns it snapshotted (customer + currency +
+     location + branding) freeze; the DO's own dates / dispatch / addresses / notes
+     stay editable. Downstream read paid only when an inherited column changed. */
+  const doLocked = changedLockedCols(DO_IDENTITY_LOCK_COLS, updates, before);
+  if (doLocked.length > 0 && (await doHasDownstream(sb, id))) {
+    return c.json(identityLockedRefusal({
+      error: 'do_identity_locked', fields: doLocked, labels: DO_IDENTITY_LABELS,
+      what: 'Delivery Order', child: 'Sales Invoice or Delivery Return',
+      ownFields: 'delivery dates, dispatch details, addresses and notes',
+    }), 409);
+  }
+
+  /* DUAL-WRITE NOTE: no client-side transaction — one postgrest statement per
+     request. Order the writes DO-FIRST so a failed DO update never leaves a
+     phantom SO amend. The SO mirror is best-effort + logged; a failure surfaces
+     as `so_mirror_error` while the DO write is already committed (mirrors
+     delivery-planning's /fields route). */
   let writtenSo = false;
   let soMirrorError: string | null = null;
   let mirrorSoDocNo: string | null = null;
