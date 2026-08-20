@@ -1,0 +1,46 @@
+name: Client errors dump (read-only)
+
+# Prints the recent client-side error reports (the same rows the System Health
+# "Client Errors" panel shows) to a workflow run, so the question "what were
+# those errors?" costs no owner interruption and puts the production DSN in
+# front of nobody. Actions already holds secrets.DATABASE_URL for the deploy.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days back to read (1-30)"
+        required: false
+        default: "3"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: client-errors-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-client-errors.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAYS: ${{ github.event.inputs.days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
+          # the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first
