@@ -26,8 +26,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  BUG_HISTORY_PATH,
+  BUG_ENTRY_DIR,
+  BUG_ENTRY_FILE_RX,
   MODULE_GUIDE_DIR,
+  addsBugEntry,
   buildModuleIndex,
   evaluate,
   parseUnifiedDiff,
@@ -72,7 +74,62 @@ if (probe.mentions === 0) {
   );
 }
 
-if (!fs.existsSync(path.join(REPO, BUG_HISTORY_PATH))) die(`${BUG_HISTORY_PATH} is missing at the repo root.`);
+// --------------------------------------------------------------------------
+// THE LEDGER, and the patterns that read it.
+//
+// The ledger is a DIRECTORY since 2026-08-20 (one file per entry), so the two
+// ways this rule can go silent are new: the directory moves, or the filename
+// pattern stops matching. Both produce the same wrong answer — every PR in the
+// repo passes rule 1 without adding anything — and neither is visible in the
+// output. CLAUDE.md: "A checker that cannot match reports a clean run ... Every
+// checker here now self-tests its patterns at startup and refuses to report
+// rather than report from a dead one."
+// --------------------------------------------------------------------------
+const bugDir = path.join(REPO, BUG_ENTRY_DIR);
+if (!fs.existsSync(bugDir)) die(`${BUG_ENTRY_DIR} does not exist at ${REPO}. The bug ledger is a directory since 2026-08-20.`);
+const entryFiles = fs.readdirSync(bugDir).filter((f) => BUG_ENTRY_FILE_RX.test(f));
+if (entryFiles.length === 0)
+  die(
+    `${BUG_ENTRY_DIR} holds ${fs.readdirSync(bugDir).length} file(s) and NOT ONE matches the entry shape ` +
+      `${BUG_ENTRY_FILE_RX}. Either the directory is empty or the pattern is dead; both make every PR ` +
+      `pass rule 1 without writing anything.`,
+  );
+
+/* The RULE ITSELF, exercised on a synthetic diff of each shape, because the
+   check above proves the pattern matches the tree and not that the rule reads a
+   diff correctly. A `git diff` that creates a file emits `new file mode` and
+   `--- /dev/null`; `gh pr diff` has been seen to emit only the latter, so both
+   are asserted. RED and GREEN, in that order: a self-test that only proves the
+   pass is exactly the shape that lets a dead matcher through. */
+{
+  const real = entryFiles[0];
+  const created = (via) =>
+    parseUnifiedDiff(
+      [
+        `diff --git a/${BUG_ENTRY_DIR}0000-probe.md b/${BUG_ENTRY_DIR}0000-probe.md`,
+        ...(via === "mode" ? ["new file mode 100644"] : ["--- /dev/null"]),
+        `+++ b/${BUG_ENTRY_DIR}0000-probe.md`,
+        "@@ -0,0 +1,1 @@",
+        "+## A probe entry [low]",
+      ].join("\n"),
+    );
+  const edited = parseUnifiedDiff(
+    [
+      `diff --git a/${BUG_ENTRY_DIR}${real} b/${BUG_ENTRY_DIR}${real}`,
+      `--- a/${BUG_ENTRY_DIR}${real}`,
+      `+++ b/${BUG_ENTRY_DIR}${real}`,
+      "@@ -1,1 +1,1 @@",
+      "+## Somebody else's entry, reworded [high]",
+    ].join("\n"),
+  );
+  const codeOnly = parseUnifiedDiff(["diff --git a/backend/src/x.ts b/backend/src/x.ts", "+const x = 1;"].join("\n"));
+
+  const green = addsBugEntry(created("mode")).entry && addsBugEntry(created("devnull")).entry;
+  const red = !addsBugEntry(edited).entry && addsBugEntry(edited).touched && !addsBugEntry(codeOnly).touched;
+  if (!green) die("rule 1's own detector does NOT see a newly added entry file. It would pass every PR.");
+  if (!red)
+    die("rule 1's own detector counts an EDIT to an existing entry as a new one, or sees an entry in a code-only diff.");
+}
 if (!fs.existsSync(path.join(REPO, TEMPLATE_PATH)))
   die(`${TEMPLATE_PATH} is missing — body scanning would fire on every PR that uses the template.`);
 const templateBody = fs.readFileSync(path.join(REPO, TEMPLATE_PATH), "utf8");

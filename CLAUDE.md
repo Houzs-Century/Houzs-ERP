@@ -257,9 +257,35 @@ not-yet-set secret as a NO-OP when absent, ship it zero-risk, and let him
 activate it with one action later — the work keeps moving instead of stopping to
 wait for him.
 
-## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
+## ⚠️ Log every bug in the ledger — MANDATORY (owner rule, everyone)
 
-Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
+Every bug you find and fix **must** get an entry in the bug ledger,
+[`docs/bugs/`](./docs/bugs/) — no exceptions. One short entry: **Symptom → Root
+cause (traced, not guessed) → Fix → Ref (PR/date)**, with a severity tag. This is
+how we stop re-introducing the same class of bug: **read it before touching a
+subsystem, and add to it in the same PR that fixes the bug.** This applies to
+every contributor and every agent/session.
+
+**One file per entry**, `docs/bugs/NNNN-slug.md`. Scaffold it — do not hand-pick
+the number:
+
+```sh
+node scripts/new-bug.mjs "The confirm gate accepted a cancelled PO" --severity high
+```
+
+**Reading it has not got harder.** `npm --prefix backend run gen:bug-index` builds
+`docs/generated/bug-index.md` [generated] — every entry, grouped by subsystem, one row —
+and `gen:bug-history` builds the whole ledger newest-first as one document. Both
+are gitignored and rebuilt in under a second.
+
+**Why a directory** (changed 2026-08-20, full trace in `docs/bugs/README.md`):
+the entry is MANDATORY on every code PR, so with one file every open branch
+edited the same first line of it. `.gitattributes` carried
+`BUG-HISTORY.md merge=union`, which hid that from OUR git and not from GitHub's —
+and `main` now runs a merge QUEUE, which stacks entries using GitHub's git.
+Measured on the live queue 2026-08-20: seven entries, six UNMERGEABLE, all seven
+touching `BUG-HISTORY.md`. The repo's own mandatory rule was serialising the
+queue to one PR at a time. Two entry FILES cannot conflict.
 
 ## ⚠️ Read the module guide before you work in a module — MANDATORY (owner rule)
 
@@ -316,7 +342,7 @@ ones that decide MONEY or STOCK and have no test of any kind.
 
 ## ⚠️ A serious incident gets a COE — MANDATORY (owner rule)
 
-**COE = Correction of Error** (the industry term, AWS's). `BUG-HISTORY.md` is the
+**COE = Correction of Error** (the industry term, AWS's). `docs/bugs/` is the
 per-bug ledger; a COE is for the bigger class: an outage, data at risk, a fault that
 recurred, or anything that made the system feel unreliable to staff. Write
 `docs/<subject>-coe.md`, following the ones already written — `ls docs/*-coe.md`,
@@ -338,21 +364,25 @@ DB, not migration files") is worth more than the fix was.
 
 `.github/workflows/working-agreement.yml` runs
 `scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
-directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
+directly above — the bug-ledger entry and the module-guide update — plus
 the migration discipline described under *Migrations* below. It REPORTS: it is
 deliberately not in the `main-protection` required checks (those are
 `backend-typecheck` and `frontend`), so a red run does not block a merge and the
 owner decides. And what it measures is narrower than what these rules say — the
-seven known gaps are pinned in `scripts/lib/working-agreement.escapes.test.mjs`
-and written up in `BUG-HISTORY.md`; read them before trusting a green run. Before it existed
-they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
-as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
-said a word. (The COE rule is not checked: an incident is a judgement call, not
+known gaps are pinned, one executable test each, in
+`scripts/lib/working-agreement.escapes.test.mjs`; read them before trusting a
+green run. There were seven; ESCAPE 3 (rewording somebody else's heading counted
+as writing your own entry) was CLOSED on 2026-08-20 by the ledger becoming a
+directory — an entry is now a path that did not exist — and its test was rewritten
+to assert the closure rather than deleted, so it cannot silently reopen. Before
+the gate existed the rules lived only in prose: on 2026-08-13 ten hand-written
+PRs shipped that read as fixes and changed code, not one added a bug entry, and
+nothing said a word. (The COE rule is not checked: an incident is a judgement call, not
 a diff shape.)
 
 | It fails when | It wants |
 |---|---|
-| the title, the branch name, or a body HEADING reads as a fix, code changed, and `BUG-HISTORY.md` gained no new `## ` entry | the entry, in this PR |
+| the title, the branch name, or a body HEADING reads as a fix, code changed, and `docs/bugs/` gained no NEW entry file | the entry, in this PR (`node scripts/new-bug.mjs "<title>"`) |
 | a changed file under `backend/src` / `frontend/src` adds a route, a permission string, a status value, a required-field flip or a lock, and the module guide that quotes that file is untouched | the guide update, in this PR |
 | `backend/src/db/migrations-pg/` changed and the body does not carry a `Reversal:` line and a `Verified against:` line | both lines, filled in |
 
@@ -394,7 +424,7 @@ so the reader can see how much to trust it.
 
 Never ship a performance change justified by arithmetic alone. Run the probe,
 paste the before/after, and name the tool that produced it — same evidential bar
-`BUG-HISTORY.md` sets for root causes, and the COE section above sets for
+the bug ledger sets for root causes, and the COE section above sets for
 incidents.
 
 The cost of skipping it, from the same incident: `tests/setup.ts` replayed 147
@@ -573,9 +603,18 @@ the STALE-BRANCH mechanism behind the incidents below:
    (`.github/workflows/ci.yml:70` runs `npm run typecheck`), but three merged PRs
    on `main` — #2106, #2112, #2117 — carry "`tsc --noEmit` clean" as their
    frontend evidence, and #2122 repeated the claim after the no-op was known.
-   The same trap is already in `BUG-HISTORY.md:5562` from 2026-07-31; it produced
-   prose instead of a check, so it recurred. **A BUG-HISTORY entry with no test
-   attached is unfixed.**
+   The same trap was recorded in the bug ledger in July and produced prose
+   instead of a check, so it recurred. **A ledger entry with no test attached is
+   unfixed.**
+
+   > This paragraph used to cite `BUG-HISTORY.md` line 5562. That citation was checked
+   > on 2026-08-20 and line 5562 held an unrelated 2026-08-18 entry — a LINE
+   > NUMBER into an append-at-the-top ledger moves every time anyone appends,
+   > which was several times a day. It is dropped rather than repointed because
+   > the entry it meant could not be identified with confidence, and inventing a
+   > target is worse than admitting the reference is lost. **Cite an entry by its
+   > FILENAME now** — `docs/bugs/NNNN-slug.md` is stable, and it is what the bug
+   > index links to.
 5. **A `workflow_dispatch` workflow is not shipped until it has been dispatched
    once and reported success.** *Added 2026-08-14.* #2120's new AutoCount requeue
    workflow failed on its first dispatch (run 31704539182) reaching for
@@ -599,12 +638,14 @@ must BLOCK a merge, it belongs in `backend-typecheck`, not in a shard.
 locally, then push.** Do NOT use GitHub's *Update branch* button and do NOT run
 `gh pr update-branch`.
 
-`.gitattributes` carries `BUG-HISTORY.md merge=union` (PR #2133), because every
-open branch prepends an entry to the same first line of that file and git's
-default calls that a conflict when it is not one. The attribute only works for
-half the ways a branch gets updated:
+**The rule stands; the file it was written about is gone.** `.gitattributes` used
+to carry `BUG-HISTORY.md merge=union` (PR #2133), because every open branch
+prepended an entry to the same first line of that one file. Since 2026-08-20 the
+bug ledger is `docs/bugs/`, one file per entry, so that particular conflict no
+longer exists for anybody, by any route. **What has NOT changed is the mechanism**
+— and this repo still relies on it for the generated docs:
 
-| how the branch is updated | `merge=union` applies |
+| how the branch is updated | this repo's `.gitattributes` applies |
 | --- | --- |
 | `git merge origin/main` locally, then push | **YES** |
 | *Update branch* button / `gh pr update-branch` | **NO** |
@@ -615,10 +656,22 @@ is GitHub's git reading its own configuration, not this repository's. Measured
 origin/main` locally resolved it clean, `gh pr update-branch 1905` answered
 `Cannot update PR branch due to conflicts` — same two commits, opposite answers.
 
-So the button reports **CONFLICTING** on a file this repo's own merge driver
-would have resolved silently. The symptom is the confusing one: **GitHub says
-CONFLICTING while a local merge is clean.** That is not a contradiction to
-resolve, it is this. Merge locally and push, and the conflict never exists.
+**Still live:** `docs/generated/*.md` and `*.csv` carry `merge=regen`, a driver
+you enable per clone (`git config merge.regen.driver "scripts/regen-generated.sh
+%A"`). Six of those files are tracked — `codebase-map-facts.md`,
+`route-locator.md`, `route-capability-matrix.csv`, `route-capability-summary.md`,
+`GLOSSARY.md`, `autocount-coverage.md` — and every backend merge moves the line
+numbers in them. GitHub's git has neither the attribute nor the driver, so the
+button still reports **CONFLICTING** where a local merge is clean. Merge locally
+and push.
+
+**And the deeper lesson, which the ledger split is the receipt for:** a merge
+driver only half the merges honour is not a fix, it is a delay. It hid the
+BUG-HISTORY conflict from us for months, and the bill arrived the day `main` got
+a merge QUEUE — the queue stacks entry 2 on entry 1's result using GitHub's git,
+so every queued PR after the first went UNMERGEABLE on that file. Measured
+2026-08-20: seven queued, six UNMERGEABLE, all seven touching it. **Prefer a
+layout with no shared line over a driver that resolves one.**
 
 **This was not undocumented — and that is the point.** The full trace is in
 `docs/ci-capacity-coe.md`, under *"The half of this that does NOT work"* (PR
@@ -691,9 +744,10 @@ it tells the checker:
 
 | marker | meaning |
 | --- | --- |
-| `` `path` [gone] `` | the doc is RECORDING a deletion — most of `BUG-HISTORY.md` is this by construction |
+| `` `path` [gone] `` | the doc is RECORDING a deletion — much of `docs/bugs/` is this by construction |
 | `` `path` [planned] `` | proposed, not written yet |
 | `` `path` [external] `` | lives in the 2990 source repo this SCM tree was vendored from, not here |
+| `` `path` [generated] `` | REGENERATED on demand and gitignored — `docs/generated/bug-index.md` [generated], `docs/generated/bug-history.md` [generated]. Absent in a fresh checkout, present the moment you run the generator. NOT for a TRACKED generated file: those are in the tree and must resolve |
 
 Do not add a silent exemption list instead. A suppression the reader cannot see
 is a suppression nobody re-checks — which is the whole failure mode here.
@@ -804,7 +858,7 @@ never nullish.
   ceilings DOWN after you fix things; using it to write them up is forging the
   evidence the gate exists to check (same rule as `check-soak-gate.mjs`).
 - **The rule list is `scripts/eslint/houzs-lint-rules.mjs`, and every rule cites
-  the `BUG-HISTORY.md` entry it exists to catch.** Do not add a rule without one.
+  the ledger entry it exists to catch.** Do not add a rule without one.
   That file also records what was considered and left OFF, and why. It is shared
   by both apps deliberately — a lint layer whose own rule list is hand-copied per
   app is the duplicated-list bug wearing a badge.
@@ -828,6 +882,7 @@ never nullish.
   | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
   | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
   | `bug-index.md` | **NOT TRACKED since 2026-08-18** — it is gitignored. `audit:bug-index` regenerates it in memory and gates on the GENERATOR (parse failure, unresolvable area tag, zero entries), which never needed a copy in git. Run `npm --prefix backend run gen:bug-index` to read it locally. |
+  | `bug-history.md` | **NOT TRACKED** — the whole bug ledger rendered newest-first from `docs/bugs/`. Same reasoning as the row above, and the same gate: `audit:bug-history` builds it in memory and refuses a file that is not exactly one entry. `npm --prefix backend run gen:bug-history`. |
   | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
 
   > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two
@@ -1058,7 +1113,8 @@ Not generic narrative.
   then the comment has to say so (precedents: `assertNotMirrored`'s missing
   context leaves the guard active; `scopeToCompanyId` in
   `scm/lib/companyScope.ts` states this rule in full). See **BUG CLASS
-  optional-param-noop** at the top of `BUG-HISTORY.md`.
+  optional-param-noop** —
+  `docs/bugs/0098-bug-class-optional-param-noop-an-optional-argument-that-deci.md`.
 - **If you write "every call site", PROVE it in the PR body.** Claiming a whole
   population — "every desktop + mobile call site", "all four arms",
   "system-wide", "everywhere" — makes
@@ -1073,7 +1129,8 @@ Not generic narrative.
   waives the proof and then prints the wording back and asks you to change it.
   This exists because PR #1763's body said "every desktop + mobile call site"
   and five of its thirteen call sites did not get the argument; see **BUG CLASS
-  unverified-completeness-claim** at the top of `BUG-HISTORY.md`. As of
+  unverified-completeness-claim** —
+  `docs/bugs/0099-bug-class-unverified-completeness-claim-every-call-site-unch.md`. As of
   2026-08-13 the detector fires on 13.6% of merged commit messages — roughly one
   PR in seven makes a claim of this shape; re-measure before quoting that.
   **A `path:NNN:` line number in your pasted output is NORMALISED AWAY before
@@ -1251,7 +1308,9 @@ restores it without depending on GitHub's Restore button.
 - **`docs/KNOWLEDGE-SYSTEM.md`** — the layers, what belongs where, and why
 - **`docs/CODEBASE-MAP.md`** — start here for anything you would otherwise
   go exploring for; `docs/generated/` for the mechanical inventory
-- **`BUG-HISTORY.md`** — read the entries for a subsystem before touching it
+- **`docs/bugs/`** — the bug ledger, one file per entry. Read the entries for a
+  subsystem before touching it; `npm --prefix backend run gen:bug-index` is the
+  way in, and `docs/bugs/README.md` explains the layout
 - **`docs/repo-hygiene.md`** — the branch rules and the file-size ratchet
 - `/sync-wiki` — user-scope slash command for the Obsidian refresh; the
   command file is NOT in this repo, so it exists only where the user has it
