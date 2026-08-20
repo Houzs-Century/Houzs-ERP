@@ -87,7 +87,27 @@ BEGIN
   -- bigint key; the xact lock releases automatically at commit/rollback.
   PERFORM pg_advisory_xact_lock(hashtextextended('scm-so-delivery:' || p_doc_no, 0));
 
-  -- (0. AGREE — the staleness refusal lands in the next commit.)
+  /* 0. AGREE. Everything below derives from fee lines the CALLER read before
+     the lock above existed for it. Re-read the operator-owned half here, under
+     the lock, and refuse rather than overwrite a figure this derivation never
+     saw. NULL means the caller claims no expectation (see the header). */
+  IF p_expect_state IS NOT NULL THEN
+    SELECT COALESCE(jsonb_object_agg(
+             x.id::text,
+             jsonb_build_array(
+               x.item_code,
+               COALESCE(x.qty, 0)::bigint,
+               COALESCE(x.unit_price_sen, 0)::bigint,
+               COALESCE(x.discount_sen, 0)::bigint)), '{}'::jsonb)
+      INTO v_state
+      FROM scm.mfg_sales_order_items x
+     WHERE x.doc_no = p_doc_no
+       AND x.item_code IN ('SVC-DELIVERY', 'SVC-DELIVERY-CROSS', 'SVC-DELIVERY-ADD')
+       AND COALESCE(x.cancelled, false) = false;
+    IF v_state IS DISTINCT FROM p_expect_state THEN
+      RETURN false;
+    END IF;
+  END IF;
 
   SELECT company_id INTO v_company_id
     FROM scm.mfg_sales_orders
