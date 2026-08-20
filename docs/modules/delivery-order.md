@@ -230,6 +230,20 @@ eleven files — and copies of this particular list had already drifted: the
 delivery agent's was missing `COMPLETED`, so its DO pipeline silently omitted
 that bucket.
 
+**The frontend twin, and who actually holds it.** The browser cannot import from
+`backend/src`, so `frontend/src/vendor/shared/do-shipped-states.ts` is a
+byte-identical vendored copy. It is held there by
+`frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`, NOT by
+`check-shared-mirrors.mjs --strict` — that script defers to a text heuristic
+which an unrelated test satisfied, so a corrupted twin passed it at 0 DIVERGED.
+See BUG-HISTORY "A mirror pin that was refereeing a different pair".
+
+**`SI_TRANSFERABLE_DO_STATES`** lives in the same file and is the server's answer
+to "may this delivery be invoiced" — every CONFIRMED delivery, `LOADED`
+included, and the gate is enforced at both Sales-Invoice entry points rather
+than only in the client. `docs/modules/sales-invoice.md` carries the three 409
+codes.
+
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
 excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the
@@ -674,7 +688,7 @@ order's goods and took nothing off its remaining — which is how
 The rule is deliberately narrow: an unlinked line is refused **only when the
 named SO already orders that item code**. A replacement part or a sample riding
 along on the same trip still passes, because it is not bypassing anything.
-| Shipped statuses (frontend) | the line editor renders read-only | `DeliveryOrderDetailV2.tsx:1362` — `["dispatched","in_transit","signed","delivered","invoiced"]` |
+| Shipped statuses (frontend) | the line editor renders read-only | `DeliveryOrderDetailV2.tsx:1376` — `DO_SHIPPED_STATES`, imported from `vendor/shared/do-shipped-states` since 2026-08-18. It used to be a hand-typed `["dispatched","in_transit","signed","delivered","invoiced"]` on this line while the transfer button sixteen lines above gated on a NARROWER hand-typed pair — one file holding two answers to "has this shipped". |
 
 **Amendment path — no, not on the DO itself.** There is no `do_revisions` table
 and no revision counter (verified: no such table is referenced anywhere in
