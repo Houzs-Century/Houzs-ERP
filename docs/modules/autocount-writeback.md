@@ -87,7 +87,8 @@ be expressed at all.
 > (four) exist. The conclusion above survives the correction — all of them
 > transfer FROM something, so a parentless document is still inexpressible — but
 > the reason given for it was wrong. See **BUG CLASS
-> instrument-blind-spot-as-a-finding** at the top of `BUG-HISTORY.md`. The ERP CAN create all four parentless (a manual
+> instrument-blind-spot-as-a-finding** —
+> `docs/bugs/0267-bug-class-instrument-blind-spot-as-a-finding-the-search-foun.md`. The ERP CAN create all four parentless (a manual
 GRN with no PO is an explicit owner decision), and each such document is
 recorded as a `skipped` outbox row by `recordParentlessCreate` so the
 divergence is written down rather than silently dropped.
