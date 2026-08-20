@@ -47,7 +47,7 @@ had the mirror-image gap — the one device with a camera could neither upload n
 even display a photo. Both had the same cause: a rule written into one surface's
 component instead of into a layer both can import.
 Full trace:
-`docs/bugs/0480-a-phone-only-member-could-never-turn-2fa-off-which-is-an-unr.md`.
+`docs/bugs/0484-a-phone-only-member-could-never-turn-2fa-off-which-is-an-unr.md`.
 
 **If you add an account-level capability, it goes in the shared module first and
 gets rendered twice.** A capability that exists on one surface only is the defect
