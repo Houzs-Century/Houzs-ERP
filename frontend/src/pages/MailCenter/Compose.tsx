@@ -19,31 +19,22 @@ import { useToast } from "../../hooks/useToast";
 import { useBranding } from "../../hooks/useBranding";
 import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
+// To / Cc / Bcc parsing + validation, shared with the phone's composer.
+import { parseRecipients, firstInvalid } from "./mail-recipients";
 import {
-  validateMailAttachments,
-  decodedBase64Bytes,
-  isAllowedMailAttachment,
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "./mail-attachments";
+// The pick → read → validate pipeline is shared with the reply composer and the
+// phone. contentBase64 is the RAW base64 (the `data:...;base64,` prefix is
+// stripped on read) so it maps 1:1 onto the backend EmailAttachment shape.
+import {
+  pickMailAttachments,
+  attachmentPayload,
+  humanSize,
+  type OutboundAttachment as ComposeAttachment,
+} from "./mail-attach-files";
 import { Mail, Send, Loader2, X, Save, Paperclip } from "lucide-react";
-
-// One picked file held in memory for the compose POST. contentBase64 is the RAW
-// base64 (the `data:...;base64,` prefix is stripped on read) so it maps 1:1 onto
-// the backend EmailAttachment shape.
-type ComposeAttachment = {
-  name: string;
-  type: string;
-  size: number; // decoded byte count (for the chip label + total cap)
-  contentBase64: string;
-};
-
-// Human-readable file size for the chip label.
-function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 type MailAddress = {
   id: string;
@@ -55,28 +46,6 @@ type MailAddress = {
   assignedUserId?: string | number | null;
 };
 
-// Conservative single-@ shape check — mirrors the backend's EMAIL_RE.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/* A typed recipient field -> a clean list. Mirrors recipientList() in
-   backend/src/services/email.ts: comma or semicolon separated, trimmed,
-   de-duplicated case-insensitively. The backend normalises again — this is for
-   the inline validation, not a trust boundary. */
-const parseRecipients = (raw: string): string[] => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of raw.split(/[,;]/)) {
-    const addr = part.trim();
-    if (!addr) continue;
-    const key = addr.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(addr);
-  }
-  return out;
-};
-const firstInvalid = (raw: string): string | null =>
-  parseRecipients(raw).find((a) => !EMAIL_RE.test(a)) ?? null;
 
 type ComposeResponse = {
   ok?: boolean;
@@ -240,72 +209,17 @@ export function ComposeDialog({
     }
   }
 
-  // Read one file → raw base64 (strip the `data:<mime>;base64,` prefix).
-  function readFileAsBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = typeof reader.result === "string" ? reader.result : "";
-        const comma = result.indexOf(",");
-        resolve(comma >= 0 ? result.slice(comma + 1) : result);
-      };
-      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function handlePickFiles(e: ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (picked.length === 0) return;
     setAttachError(null);
-
-    const rejected = picked.filter((f) => !isAllowedMailAttachment(f.name));
-    if (rejected.length > 0) {
-      setAttachError(
-        `"${rejected[0].name}" is not an allowed type. Only images and PDF files can be attached.`,
-      );
+    const result = await pickMailAttachments(picked, files);
+    if (!result.ok) {
+      setAttachError(result.error);
       return;
     }
-
-    // Pre-check RAW file sizes BEFORE decoding so an oversized file never gets
-    // fully read into memory first (a huge phone photo can hang a low-RAM tab).
-    const existingBytes = files.reduce((sum, f) => sum + f.size, 0);
-    const pickedRawBytes = picked.reduce((sum, f) => sum + f.size, 0);
-    if (existingBytes + pickedRawBytes > MAIL_ATTACH_MAX_TOTAL_BYTES) {
-      setAttachError(
-        `Attachments exceed the ${humanSize(MAIL_ATTACH_MAX_TOTAL_BYTES)} limit.`,
-      );
-      return;
-    }
-
-    let read: ComposeAttachment[];
-    try {
-      read = await Promise.all(
-        picked.map(async (f) => {
-          const contentBase64 = await readFileAsBase64(f);
-          return {
-            name: f.name,
-            type: f.type,
-            size: decodedBase64Bytes(contentBase64),
-            contentBase64,
-          };
-        }),
-      );
-    } catch {
-      setAttachError("Couldn't read one of the files. Please try again.");
-      return;
-    }
-
-    const next = [...files, ...read];
-    const check = validateMailAttachments(
-      next.map((f) => ({ filename: f.name, contentBase64: f.contentBase64 })),
-    );
-    if (!check.ok) {
-      setAttachError(check.error ?? "Invalid attachments.");
-      return;
-    }
-    setFiles(next);
+    setFiles(result.files);
   }
 
   function removeFile(index: number) {
@@ -328,14 +242,7 @@ export function ComposeDialog({
           ...(bccList.length ? { bcc: bccList } : {}),
           subject: subject.trim(),
           text: body,
-          ...(files.length > 0
-            ? {
-                attachments: files.map((f) => ({
-                  filename: f.name,
-                  contentBase64: f.contentBase64,
-                })),
-              }
-            : {}),
+          ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
         },
       );
       if (!payload?.ok) {
