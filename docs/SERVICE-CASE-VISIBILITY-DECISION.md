@@ -151,3 +151,53 @@ of that:
 **The MODULE is separate, so everything hanging off it is separate.** That
 generalises: for a new thing, ask which module owns it and whether that module is
 separate — rather than asking the owner case by case.
+
+
+## SETTLED 2026-08-20 — the axis is DOWNLINE, and 互通 does not mean open
+
+**Direction: DOWN.** "service case 往下看 而不是往上". A salesperson sees their own
+cases and their downline's — the people they manage. Not their manager's. This
+resolves the contradiction recorded above (twice 下线, once 上线); it is now
+answered directly and is not a guess.
+
+**互通 means the DATA IS PRESENTED TOGETHER, not that everyone may see it.**
+
+> "互通的就是它的数据都是呈现在一起的,不会像 Sales Order 这样分开两个。不过,这也得是
+> 自己只能看到自己的 order 而已,除非是 AutoCount 来的单,并且他也得是 houzs-entry 的
+> 员工,才可以 submit 这些 AutoCount 来的单"
+
+One combined list rather than two company tabs — a PRESENTATION property. The
+permission rule underneath is unchanged and NARROW: own + downline, with the
+AutoCount orders as the single exception, and that exception is itself gated on
+being a Houzs-entry employee.
+
+**This corrects an earlier reading in this document.** "Service Case is 互通" was
+taken to mean the read is open to any Houzs grant holder. It does not. Anyone
+implementing from the earlier paragraph alone would ship something too wide —
+which is exactly what happened; see below.
+
+### Why this matters, with the number that shows it
+
+PR #2538 implemented "holds a HOUZS company grant" as the admission test and
+MEASURED the effect against production (run 32351722894): route admittance
+49 -> 77 users, +45,168 user-to-case grants, 0 lost. The 28 who gained are
+Drivers, Warehouse Crew, **Outsource Transporters**, HR and an Operation
+Executive — each able to read 852 AutoCount cases including customer name, phone
+and address.
+
+A Houzs company grant is NOT the same thing as a Houzs-entry employee. The PR is
+correct in structure and too wide in its admission test; it is held unmerged for
+that reason. The census is what made this visible before it shipped — reasoning
+would not have.
+
+### STILL OPEN — one blocker, one small assumption
+
+1. **BLOCKER: what defines a "houzs-entry 员工"?** Not the company grant (proved
+   too wide above), and preferably not a job-title regex — that string test is the
+   root cause of the outage this whole change exists to fix. The recommendation is
+   a PERMISSION the owner grants on the Team screen, so who qualifies is a
+   deliberate click rather than a guessed substring. Awaiting his definition.
+2. For an ERP order, does "own" key off the SO's salesperson or the case's
+   creator? #2538 assumes the salesperson and says so in its body. **Affects 7
+   cases today** (859 non-archived: 7 ERP-sourced, 852 AutoCount-sourced), so it
+   is small and safe to settle later.
