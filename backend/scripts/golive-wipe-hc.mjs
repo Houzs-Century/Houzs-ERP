@@ -42,9 +42,13 @@
      delete + the grand total; the document-number evidence; a KEEP sample with
      HC row counts (proving they survive); and the UNSURE list. WRITES NOTHING.
    MODE=apply: requires CONFIRM="WIPE HOUZS-CENTURY TRANSACTIONS". Dumps backup,
-     deletes children-before-parents in one transaction, then re-reads on a FRESH
-     connection and ASSERTS: every CLEAR table has 0 HC rows; 2990 row counts are
-     UNCHANGED (captured before + after); KEEP-sample tables are UNCHANGED.
+     deletes children-before-parents in one transaction (the six TMS tables FIRST,
+     before the DO/SO deletes, so no ON DELETE SET NULL orphans an HC stop), then
+     — still INSIDE the transaction — re-counts every CLEAR table for 2990 and
+     ROLLS BACK if any 2990 row count moved (a trip_stops->trips CASCADE could
+     otherwise delete a 2990 stop riding on an HC trip). After commit it re-reads
+     on a FRESH connection and ASSERTS: every CLEAR table has 0 HC rows; 2990 row
+     counts UNCHANGED (incl. the TMS tables); KEEP-sample tables UNCHANGED.
 
    RE-RUN: idempotent. A second plan run just re-counts. A second apply run finds
      0 HC rows on the CLEAR tables (already wiped) and is a no-op that still
@@ -82,6 +86,25 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
    delete set and FLAGGED rather than deleted unscoped). Schema is 'scm' unless
    noted. A table absent from the live DB is skipped with a note. */
 const CLEAR = [
+  // ── TMS / delivery-planning — DELETED FIRST, before DO/SO ──────────────────
+  // Ordered ahead of delivery_orders + mfg_sales_orders on purpose: trip_stops
+  // has `do_id -> scm.delivery_orders(id) ON DELETE SET NULL` (mig 0053:99) and a
+  // bare `so_id` with no FK, and delivery_legs has a bare polymorphic `source_id`
+  // — so deleting the DO/SO first would leave HC trip_stops / legs / dp_orders as
+  // orphaned rows with NULL or dangling links. Removing HC's TMS rows first means
+  // no ON DELETE SET NULL ever fires on an HC stop and no HC orphan is created.
+  // Children-before-parent within TMS: trip_stops / trip_locations / delivery_legs
+  // all reference scm.trips (CASCADE / SET NULL) so they go before scm.trips.
+  // (The unavoidable residual — a 2990-owned stop that points at an HC DO getting
+  // its do_id SET NULL when the HC DO is later deleted — is measured by the census
+  // below; it touches no 2990 ROW count, only a column, and the in-transaction
+  // 2990 guard rolls the whole wipe back if any 2990 row count moves.)
+  ['scm', 'trip_stops', 'tms'],           // child of trips; do_id -> DO SET NULL
+  ['scm', 'trip_locations', 'tms'],       // child of trips (CASCADE)
+  ['scm', 'delivery_legs', 'tms'],        // trip_id -> trips SET NULL; source_id bare
+  ['scm', 'dp_orders', 'tms'],            // no FK into DO/SO/trips (company_id nullable)
+  ['scm', 'delivery_day_locks', 'tms'],   // no FK; pure capacity lock
+  ['scm', 'trips', 'tms'],                // TMS parent — last of the TMS block
   // ── Sales Order family ──
   ['scm', 'mfg_so_status_changes', 'sales-order'],
   ['scm', 'mfg_so_price_overrides', 'sales-order'],
@@ -351,6 +374,46 @@ async function main() {
     note(`  2990 rows across the SAME ${resolved.length} CLEAR tables: ${tot2990} (must stay ${tot2990})`);
   }
 
+  // ── 6b. MIXED-TRIP CENSUS (read-only) — the pivotal cross-company safety fact ─
+  // TMS is a cross-company SHARED queue by design (scm/lib/companyScope.ts:16-23):
+  // a trip is created under whichever company you are in, and its stops can point
+  // at the OTHER company's deliveries. Two hazards follow, both measured here:
+  //   • trip_stops.trip_id -> scm.trips(id) ON DELETE CASCADE (mig 0053:96): if a
+  //     2990-owned stop sits on an HC-owned trip, deleting that HC trip would
+  //     CASCADE-DELETE a 2990 row. If this count is > 0, HC-only TMS clearing is
+  //     NOT safe as-is (the in-transaction 2990 guard would roll the wipe back).
+  //   • trip_stops.do_id -> scm.delivery_orders(id) ON DELETE SET NULL (0053:99):
+  //     a 2990-owned stop pointing at an HC delivery gets its do_id NULLed when we
+  //     delete the HC DO — the unavoidable core-wipe side-effect (a column change,
+  //     not a row delete).
+  if (OTHER_ID !== null && liveSet.has('scm.trip_stops') && liveSet.has('scm.trips')) {
+    note(`\n=== MIXED-TRIP CENSUS (read-only) — HC=${HC_ID}, 2990=${OTHER_ID} ===`);
+
+    const cross = await sql`
+      SELECT ts.company_id::text AS stop_co, t.company_id::text AS trip_co, count(*)::int AS n
+        FROM scm.trip_stops ts JOIN scm.trips t ON t.id = ts.trip_id
+       WHERE ts.company_id <> t.company_id
+       GROUP BY ts.company_id, t.company_id ORDER BY 1, 2`;
+    const crossN = (sc, tc) => Number(cross.find((r) => Number(r.stop_co) === sc && Number(r.trip_co) === tc)?.n ?? 0);
+    note(`  (a) HC stops sitting on a 2990 trip   (ts.company_id=${HC_ID} on trip.company_id=${OTHER_ID}): ${crossN(HC_ID, OTHER_ID)}`);
+    note(`  (a) 2990 stops sitting on an HC trip  (ts.company_id=${OTHER_ID} on trip.company_id=${HC_ID}): ${crossN(OTHER_ID, HC_ID)}   <- these would CASCADE-DELETE if we delete HC trips`);
+
+    const [{ n: mixedTrips }] = await sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT ts.trip_id FROM scm.trip_stops ts
+         GROUP BY ts.trip_id HAVING count(DISTINCT ts.company_id) > 1
+      ) x`;
+    note(`  (b) DISTINCT trips carrying stops from BOTH companies (genuinely shared): ${mixedTrips}`);
+
+    const sideEffect = await sql`
+      SELECT count(DISTINCT do_.id)::int AS hc_dos, count(*)::int AS stops
+        FROM scm.delivery_orders do_
+        JOIN scm.trip_stops ts ON ts.do_id = do_.id
+       WHERE do_.company_id = ${HC_ID} AND ts.company_id = ${OTHER_ID}`;
+    note(`  (c) HC delivery_orders referenced by a 2990-owned stop's do_id: ${sideEffect[0].hc_dos} HC DOs via ${sideEffect[0].stops} 2990 stops`);
+    note(`      -> those ${sideEffect[0].stops} 2990 stop(s) get do_id SET NULL when HC DOs are deleted (unavoidable; row count unchanged).`);
+  }
+
   // ── 7. UNSURE — every live scm/public table on NEITHER list (left alone) ──
   const clearKeys = new Set(CLEAR.map(([s, t]) => `${s}.${t}`));
   const unsure = [...liveSet].filter((k) => !clearKeys.has(k) && !KEEP.has(k)).sort();
@@ -395,6 +458,26 @@ async function main() {
       // The plan counted `total`; a mismatch means the world moved under us.
       // Roll the whole wipe back rather than commit a partial one.
       throw new Error(`expected to delete ${total}, deleted ${deletedTotal} — rolling back the entire wipe`);
+    }
+
+    // ── IN-TRANSACTION 2990 GUARD — the cascade safety net ─────────────────
+    // trip_stops.trip_id -> trips ON DELETE CASCADE means deleting an HC trip can
+    // cascade-delete a 2990-owned stop that rides on it. That is a 2990 ROW
+    // deletion, and it must NEVER commit. Re-count every CLEAR table for 2990
+    // INSIDE this transaction; if any moved from the captured baseline, THROW so
+    // the whole wipe rolls back BEFORE commit (the fresh-connection check below
+    // is post-commit and cannot undo). Row-count based: a do_id SET NULL on a
+    // surviving 2990 stop changes a column, not the count, and is allowed.
+    if (OTHER_ID !== null) {
+      for (const r of resolved) {
+        const key = `${r.schema}.${r.table}`;
+        const [{ n }] = await tx`SELECT count(*)::int AS n FROM ${tx(qi(r.schema))}.${tx(qi(r.table))} WHERE company_id = ${OTHER_ID}`;
+        const was = otherBefore.get(key) ?? 0;
+        if (n !== was) {
+          throw new Error(`2990 row count MOVED on ${key} (was ${was}, now ${n}) — a cross-company cascade would delete 2990 data; rolling back the entire wipe`);
+        }
+      }
+      note(`  in-transaction guard: all ${resolved.length} 2990 CLEAR-table counts unchanged — safe to commit.`);
     }
   }).catch((e) => { if (e !== ROLLBACK) throw e; });
 
