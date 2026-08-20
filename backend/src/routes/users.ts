@@ -916,15 +916,15 @@ app.get("/:id/profile-pic", async (c) => {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
 
-  // Measured 2026-08-01: /team fetches one of these per member (43 of them,
-  // ~1s each behind the connection limit), and at a flat max-age=300 every
-  // visit past five minutes re-fetched all of them. Avatar.tsx already sends
-  // the R2 key as ?k=, so a matching url can safely be pinned — see
-  // lib/avatar-cache.ts for why the equality check is load-bearing.
+  // Measured 2026-08-01: /team fetches one per member (43, ~1s each behind the
+  // connection limit); a flat max-age=300 re-fetched all past 5 min. Avatar.tsx
+  // sends the R2 key as ?k= so a matching url pins — see lib/avatar-cache.ts.
   headers.set(
     "cache-control",
     avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
   );
+  // nosniff: block MIME-sniffing the server content-type into html/svg (parity: mail-center INLINE_SAFE).
+  headers.set("X-Content-Type-Options", "nosniff");
   return new Response(obj.body, { headers });
 });
 
