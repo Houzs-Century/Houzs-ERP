@@ -125,6 +125,141 @@ caught this bug.** The predicate that broke had no company term in it. What
 catches that class is one declaration per concept, mirrored and pinned — and a
 gate that let its own limits go unsaid would be the same failure in a new
 costume.
+## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
+
+<!-- area: Database + schema -->
+
+**白话.** 全系统 52 个档案读资料时都靠 `paginateAll` 一页一页拿，每页 1000 行，拿到
+不足 1000 行就当作「读完了」。问题是：PostgREST 到底一次最多给几行？程式码注解写死
+「1000」，但**从来没有人真的量过**。如果真实上限低于 1000，第一页就会看起来「不足」，
+整个回圈立刻停掉 —— 全部读取都只拿到一小截，而且不会报错。本周两个生产 bug 就是
+「读取悄悄只回传一部分」造成的。本来写来量这个数字的脚本，那一半**一次都没跑过**
+(GitHub 没有那两个密钥)。现在把量测搬到 Worker(密钥在那里)，并附上测试证明它两种
+答案都讲得出来。**但数字目前还是 UNKNOWN** —— 我没有连上生产环境，不敢用推理充数。
+
+**Symptom.** `backend/src/scm/lib/paginate-all.ts`'s header stated PostgREST caps a
+response at 1000 rows as settled fact. Nothing had ever observed it. That number is
+load-bearing twice over: `paginateAll` pages in `PAGE = 1000` windows and stops on
+the first page shorter than `PAGE`, so a real ceiling **below** `PAGE` makes page one
+look final and truncates every paged read in the tree — silently, in exactly the
+shape `paginateAll` exists to prevent. 52 files import it. Two production bugs this
+week traced to a read quietly returning a subset.
+
+**Root cause (traced).** The instrument written to settle it could never run.
+`backend/scripts/probe-mrp-read-ceiling.mjs`'s REST half needed `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY`; runs `31941352447` and `31942066593` both printed
+`SKIPPED — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set` and the workflow
+reported **success** both times. Verified today: `gh secret list` holds neither at
+repo level, and `--env Production` holds only `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_API_TOKEN`, `VITE_API_URL` — so the `environment: Production` line added
+to fix it fixed nothing. The credentials are real but are **Worker** secrets
+(`wrangler secret list --name autocount-sync-api` lists both), and they must stay
+that way: the repo is public, non-admin collaborators can read repository secrets,
+and the service-role key bypasses RLS on the single database both tenants share.
+Rewriting the probe over `DATABASE_URL` would have measured **Postgres**, not the
+REST edge — `backend/src/db/supabase.ts:66` builds a real `createClient`, and every
+`sb.from(...)` in the SCM module is a PostgREST call, so the edge is the thing under
+test.
+
+**Fix.** The measurement moved to where the credentials already are, as a read-only
+diagnostic on the existing System Health surface rather than a new one:
+`GET /api/admin/health/rest-page-ceiling` (`backend/src/routes/systemHealth.ts`),
+gated on `*` — the existing admin capability (`services/permissions.ts:7`) this file
+already uses for its other heavy admin routes, because an unauthenticated heavy read
+is a DoS lever. It counts the candidate tables head-only, runs a `.limit()` ladder
+(500 / 1000 / 1001 / 5000) against the largest, and reports rows-returned against the
+`Content-Range` total at each rung; a rung whose total is `<=` its limit is marked
+`inconclusive` and excluded, because a read that ran out of *table* says nothing
+about a *ceiling*. It also issues `paginateAll`'s own `.range(0, PAGE-1)` window and
+imports the real `PAGE` (now exported) rather than restating `1000`, so the verdict
+cannot agree with itself by construction. **Counts only** — no row, id, doc_no or
+name reaches the payload.
+
+**The number is UNKNOWN and is deliberately not guessed.** Production could not be
+reached from here: the endpoint is not deployed yet, and calling it needs an
+authenticated production session. Staging was tried and is dead — its remote preview
+answers Cloudflare `error code: 1105` on every route, consistent with staging deploys
+being paused since 2026-07-31 with a revoked token. The one adjacent reading
+available (`no *max-rows* GUC set on any role`, run `31942066593`) is **not** the
+measurement: Supabase sets PostgREST's `db-max-rows` in PostgREST's own config, so an
+absent role GUC does not prove the default applies. To get the number: deploy, then
+call the endpoint as an owner. If it returns `TRUNCATES_SILENTLY`, `paginateAll` is
+wrong and that is a separate finding, not a fix to fold in here.
+
+**The trap is retired, not annotated.** The workflow
+recompute-2990-so-allocation.yml was DELETED, together with the
+now-unreachable recompute-2990-so-allocation.mjs it was the only caller of.
+(Both are named without backticks on purpose — they no longer exist, and
+`check-docs-drift.mjs --strict` correctly fails a doc that cites a missing
+file.) Evidence it is dead: `gh run list` shows **zero runs ever**; its capability is already
+covered by `recompute-so-allocation.yml`, which runs the same canonical global function
+over `DATABASE_URL` + `pgrest-shim.mjs`, prints `GLOBAL (both companies)`, and has five
+successful runs. A header comment did not stop it being copied on 2026-08-13, so the
+file is gone. Surviving citations were repointed to the working sibling.
+`probe-mrp-read-ceiling.yml` lost the half that could never run — a permanently-SKIPPED
+step reads as coverage that does not exist — and now points at the Worker endpoint.
+`CLAUDE.md` said these secrets "do not exist here", which is true of GitHub and FALSE
+of the Worker; that half-truth is what sent two authors down this path, and it now
+states both halves plus the prohibition.
+
+**Pinned by** `backend/src/routes/systemHealthRestCeiling.test.ts` (6 cases): a
+1000-cap edge reports ceiling 1000 / `CORRECT`; a **500**-cap edge reports
+`TRUNCATES_SILENTLY` off `paginateAll`'s own short first window; an uncapped
+small-table edge reports `ceiling: null` / `UNKNOWN` rather than inventing one; the
+largest table is chosen so a small one cannot mask the cap; a non-`*` caller gets 403;
+and no row content reaches the payload. Proven not vacuous by mutation — forcing the
+verdict to `CORRECT`, treating inconclusive rungs as evidence, and dropping the gate
+each turn exactly one case red.
+## Mobile PMS: "Stock In Transfer Record" stayed pinned full-width after the Defect List split, stranding "Dismantle Image" alone in its row [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版专案的「Setup & Dismantle documents」是两栏排的图砖。之前砖是 7 块，
+单数，最后一块「Stock In Transfer Record」落单，所以老板 7 月 23 号叫把它拉成整行。
+7 月 29 号「Defect List」被拆成 Setup 和 Dismantle 两块，砖变成 8 块——双数了，
+但那条整行的设定没跟着改，结果换成倒数第二块「Dismantle Image」自己占半行、旁边空一格。
+现在把整行设定拿掉，8 块刚好排成四行两栏。
+
+**Symptom.** In the mobile project detail's `Setup & Dismantle documents` card
+(a `gridTemplateColumns: "1fr 1fr"` grid), `Dismantle Image` sat alone in its row
+with an empty half-row gap beside it, and `Stock In Transfer Record` sat below it
+as a full-width tile.
+
+**Root cause (traced by counting the array on `origin/main`, not guessed).**
+The `mgmtSdTiles` array in `frontend/src/mobile/MobilePMS.tsx` carried
+`fullWidth: true, mediaH: 108` on its last entry. That flag was correct when it
+was added, and the comment above it said why: *"Owner 2026-07-23: full-width
+('make it big') — the odd 7th tile was dangling half-width at the bottom of the
+grid."* At that point the array held **7** tiles. The owner's 2026-07-29 Defect
+List split (`Defect List` -> `Defect Item Setup` + `Defect Item Dismantle`) added
+an eighth. `fullWidth` renders as `gridColumn: "1 / -1"`, so against an EVEN
+count it stops curing the dangle and starts causing one — the 7th tile is now the
+one left alone. The flag outlived the condition it was written for, and nothing
+tied the two changes together.
+
+**Fix.** Drop `fullWidth` / `mediaH` from the `Stock In Transfer Record` entry so
+the 8 tiles lay out as four clean rows of two, and replace the stale 2026-07-23
+comment with one recording why the earlier decision no longer applies — so the
+next reader does not re-add the flag on the strength of a comment describing a
+7-tile grid that no longer exists.
+
+**Desktop twin: none needed, checked.** Tile width is not a concept the desktop
+surface expresses. `frontend/src/pages/Projects.tsx` renders each checklist
+document as one uniform row of its `DocumentTable`. Grepped over
+`frontend/src`, the identifiers this change depends on — `DocTile` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. `fullWidth` does
+occur in `Projects.tsx`, but as the design-system `Button` / `DateField` prop:
+same word, unrelated concept. "Stock In Transfer Record" reaches desktop only as
+a `REVIEWABLE_TITLES` member and a `PROJECT_STAGES` title, neither carrying
+layout.
+
+**Lesson.** A layout flag whose justification is a COUNT is a fact with an expiry
+date, exactly as CLAUDE.md says of a number in a comment. It should have been
+derived from the array length rather than pinned by hand; left pinned, it
+inverted its own purpose the day the count changed.
+
+**Ref.** `fix/pair-stockin-tile`, PR #2347, 2026-08-20.
+
 ## Two authors could not pick a migration number without racing each other [medium]
 
 <!-- area: Deploy, CI, migrations -->

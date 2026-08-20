@@ -28,7 +28,7 @@ name: census-autocount-party-codes
 # wrong "correction" books the documents to a third company.
 #
 # Copied from census-fabric-colour.yml, which HAS run successfully
-# (2026-08-13). NOT from recompute-2990-so-allocation.yml, which reaches for
+# (2026-08-13). NOT from recompute-2990-so-allocation.yml (DELETED 2026-08-20), which reached for
 # SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, secrets that do not exist in this
 # repo, and has therefore never run — see CLAUDE.md.
 #
