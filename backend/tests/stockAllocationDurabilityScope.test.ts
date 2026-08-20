@@ -59,9 +59,20 @@ import stockTransfers from '../src/scm/routes/stock-transfers.ts?raw';
    (grns 6, mfg-sales-orders 7), each with its own move to `runScmPgCommand`.
    ══════════════════════════════════════════════════════════════════════════ */
 
-const INLINE = 'await recomputeSoStockAllocation(sb';
+/* THE NEEDLES COUNT THE CALL, NOT ITS ARGUMENT NAME. Until 2026-08-20 two of
+   them ended `(sb` / `(c, sb`, so they counted a call site by what the caller
+   happened to have named its client. `stock-transfers.ts` renamed `sb` to `db`
+   when it moved to scopedDb, and this ledger silently read 2 inline call sites
+   as 0 — a durability ratchet reporting that two best-effort recomputes had
+   become safe, when nothing about them had moved. That is the failure this file
+   exists to prevent, in its own matcher.
+   Both were broadened and the counts verified UNCHANGED against an untouched
+   origin/main checkout (16/16 green with the new needles, before any conversion
+   was applied), so the population they count is identical — only the ways it can
+   be silently lost are fewer. */
+const INLINE = 'await recomputeSoStockAllocation(';
 const DURABLE = 'await scheduleStockAllocationAfterCommand(';
-const DEFERRED = 'deferAllocationRecompute(c, sb';
+const DEFERRED = 'deferAllocationRecompute(';
 
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
