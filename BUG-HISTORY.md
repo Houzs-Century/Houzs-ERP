@@ -35,6 +35,15 @@ a stale file — so a `regen` merge driver takes either side and rebuilds from
 source, which is the only correct answer.
 
 Ref: 2026-08-18.
+## Four dead customer-PO columns + an orphaned trigram index carried on every SO header [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** `scm.mfg_sales_orders` carried `po_doc_no`, `customer_po`, `customer_po_id`, `customer_po_date` — four columns no surface has written since PR #140 dropped the Customer PO card (owner ruling #2429 made `ref` the canonical customer reference). A GIN/trgm search index `trgm_mfg_so_po_doc_no` was still maintained on the always-empty `po_doc_no`, and `/api/search` still ran an ILIKE against it, on every SO search.
+
+**Root cause (traced, census-verified — not guessed).** Read-only production census (run 32280818981, 2026-08-19, PR #2508): all four columns are filled = 0 across all 2830 SO rows. Exactly one view (`mfg_sales_orders_with_payment_totals`) projected them and one index (`trgm_mfg_so_po_doc_no`) was on `po_doc_no`; no constraint, function or policy referenced them. They were dead weight — projected by the SO list view, selected by the SO/reports/search/AutoCount-outbox routes, and frozen in the SO identity lock — but never carrying a value.
+
+**Fix.** Migration 0310 drops the index, drops the four columns, and recreates the payment-totals view without them, restoring the view's owner + grants via the 0191 self-adapting copy from `scm.suppliers_with_derived_category` (the 0189 grant-loss hazard). Every backend read of them on `mfg_sales_orders` was removed first — the SO HEADER select / insert / PATCH map (`mfg-sales-orders.ts`), the reports embed (`reports.ts`), the `/api/search` ILIKE (`search.ts`), the AutoCount outbox `SO_HEADER_COLS` + `ErpSoHeader` + `soCustomerRef` (`autocount-outbox.ts`, `autocount-writeback.ts`), the SO identity lock (`so-identity-lock.ts`) and the scale contract (`scale-pg-real-schema.mjs`). Sibling tables (`sales_invoices`, `delivery_orders`, consignment) keep their own `po_doc_no` snapshots — untouched. **Ref:** migration 0310 / 2026-08-19 (STAGED, awaiting review).
 ## A document AutoCount refused was still reported to the operator as saved [high]
 
 <!-- area: AutoCount sync + write-back -->
@@ -152,6 +161,60 @@ which is how progress here is recorded — it FAILS if a count drifts silently.
 
 **Ref.** `feat/grn-line-delete-in-transaction`, 2026-08-20.
 
+## #2516 turned the delivery-fee cell into a dead input on the SO create page [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 昨天那个「运费格可以直接打要收多少」的改动，把新建销售单那边弄坏了。手动加一
+行运费，打 250，一离开格子就变回 0.00，怎么打都没用。原因是新单上那一行运费本来就是 0，
+系统把 250 当成「我要收 250」，於是去算折扣 = 0 − 250，负数被夹成 0，单价一次都没写进
+去。而 Houzs 这边自己开的单，运费从来都是人手打单价的 —— 会叫伺服器自己算运费的那个
+旗标只有 POS 交单才会送 —— 所以那一刻起，新单根本放不了运费。现在改成：那一行还没有价
+钱的时候，格子就还是单价格；已经有价钱了，才是「要收多少」。
+
+**Symptom.** New Sales Order, add a `Delivery fee` line by hand, type 250, press
+Enter or click away: the cell reads `0.00`. Every retry does the same. Reported
+by the owner with a screenshot within the hour of #2516 deploying.
+
+**Root cause (traced).** #2516 routes fee lines through
+`feeDiscountForAmount(feeGrossSen, typed)` with
+`feeGrossSen = qty * unitPriceSen`. A hand-added fee line starts at
+`unitPriceSen: 0` (`emptySoLine`), so the gross is 0 and:
+
+    feeDiscountForAmount(0, 25000) = min(max(0 - 25000, 0), 0) = 0
+
+The clamp is correct — a figure at or above the gross is not a reduction — but
+the case is wrong. `unitPriceSen` was never written, and the blur handler
+reformats from `feeAmountSen(0, 0)` = 0. Typing any figure at all is a no-op.
+
+**Why it is worse than it looks.** `applyDeliveryFee` — the create flag that
+makes the server derive a fee — is sent ONLY by the POS handover;
+`git grep applyDeliveryFee -- frontend/src` returns nothing, and the route says
+so at `mfg-sales-orders.ts:4477`. So a Houzs-authored SO has ALWAYS had its fee
+typed in as a unit price, and #2516 removed the only way to do that. This was
+not a cosmetic edge: between deploy and this fix, a new Houzs order could not
+carry a delivery fee at all.
+
+**Fix.** The discount reading applies only once there is a fee to reduce.
+`editsFeeAsDiscount(isFeeCode, grossSen)` returns false at gross 0, so the cell
+goes back to writing `unitPriceSen` — that is the initial fee entry, not a
+reduction. An existing 250 fee still books 250 → 125 as a discount, untouched.
+
+The GROSS decides, not the net, so a fee waived to zero keeps fee semantics —
+otherwise waiving one would flip the cell's meaning and the next keystroke would
+do something different from the last.
+
+**What I got wrong, and the shape of it.** I assumed a fee line always carries a
+server-derived gross. True on the detail page, false while authoring. The tests
+in #2516 were all written against an existing 250 fee, so the whole suite passed
+green over a case that could not work — the arithmetic was right and the
+question of WHEN to apply it was never asked. `editsFeeAsDiscount` exists so
+that question now has an executable answer rather than living inline in the JSX.
+
+Five cases added, including the regression itself (`gross 0 -> not a fee edit`).
+
+**Ref.** fix/delivery-fee-line-can-be-priced-when-new, 2026-08-20. Fixes #2516,
+same day.
 ## company-scope: round2's stricter checker DEFERRED, leak fixes land on main's #2484 ratchet [minor]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->

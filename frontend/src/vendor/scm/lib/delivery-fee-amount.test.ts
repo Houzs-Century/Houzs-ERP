@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { feeAmountSen, feeDiscountForAmount } from './delivery-fee-amount';
+import { editsFeeAsDiscount, feeAmountSen, feeDiscountForAmount } from './delivery-fee-amount';
 
 describe('the delivery fee amount cell', () => {
   test('the owner case: a RM250 fee typed down to RM125 books a RM125 discount', () => {
@@ -57,5 +57,37 @@ describe('the delivery fee amount cell', () => {
       expect(d).toBeGreaterThanOrEqual(0);
       expect(d).toBeLessThanOrEqual(gross);
     }
+  });
+});
+
+describe('which lines edit as a fee at all', () => {
+  test('REGRESSION: a fee line being authored on a NEW SO is a plain price', () => {
+    // The shipped bug. A hand-added "Delivery fee" line starts at 0, so
+    // reading a typed 250 as "charge 250" booked a discount of 0, never wrote
+    // a price, and the cell snapped back to RM 0 on blur.
+    expect(editsFeeAsDiscount(true, 0)).toBe(false);
+    expect(feeAmountSen(0, 0)).toBe(0);
+  });
+
+  test('a fee that HAS been derived edits as an amount to charge', () => {
+    expect(editsFeeAsDiscount(true, 25000)).toBe(true);
+  });
+
+  test('a fee discounted all the way to zero still edits as a fee', () => {
+    // The GROSS is what decides, not the net — otherwise waiving a fee would
+    // flip the cell back to price-editing and the next keystroke would mean
+    // something different from the last one.
+    expect(editsFeeAsDiscount(true, 25000)).toBe(true);
+    expect(feeAmountSen(25000, 25000)).toBe(0);
+  });
+
+  test('a product line is never a fee, priced or not', () => {
+    expect(editsFeeAsDiscount(false, 0)).toBe(false);
+    expect(editsFeeAsDiscount(false, 25000)).toBe(false);
+  });
+
+  test('a nonsense gross does not turn a line into a fee', () => {
+    expect(editsFeeAsDiscount(true, Number.NaN)).toBe(false);
+    expect(editsFeeAsDiscount(true, -100)).toBe(false);
   });
 });
