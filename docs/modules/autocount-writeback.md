@@ -2975,6 +2975,27 @@ unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
 
+**It also splits the queue by OPERATION, and that is a different question.**
+*Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
+nothing about whether an `edit` has ever changed a document in the account book,
+and `edit` is the operation the ERP performs most once it is master. The check
+groups `scm.autocount_outbox` by `op` as well, printing per operation the row
+count, the `sent` / `failed` / `skipped` / `pending` split, the last `sent_at`,
+and the newest `host_built_at` behind it — that column exists since migration
+`0304`, and it is there because an operation whose last success ran under a host
+build nobody runs any more has not been proven against the one that is running.
+
+**An operation with NO row of any status is printed, as `NEVER ENQUEUED`.** That
+is the load-bearing part: an operation the queue has never held is the strongest
+form of "never proven", and a table that simply omits it reads like a clean bill
+of health. The gap is not hypothetical — `docs/generated/autocount-coverage.md`
+records that no `edit` has been demonstrated to CHANGE a document in the book,
+while ERP call sites across the mfg route files enqueue it. The script carries its own list of the operations it expects
+(`ALL_OPS` in `backend/scripts/check-autocount-outbox-health.mjs` — read it there,
+not here), and any `op` present in the table but absent from that list is printed
+too, so a newly added operation cannot be invisible to one of that table's two
+readers.
+
 An empty queue is reported as EMPTY, not as healthy: the table is append-only,
 so zero rows means nothing was ever enqueued. **What that MEANS depends on the
 switch**, and the script says which — it reads
