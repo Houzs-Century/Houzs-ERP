@@ -66,6 +66,27 @@ tier emits no predicate, that the `sales_agent` LIKE is absent, that a NULL
 exists in exactly one file. Both guards were proved RED by reintroducing a
 `sales_agent LIKE` arm and a second copy of the id clause before being trusted.
 
+**A second bug, found by the MERGE QUEUE and invisible on this branch.**
+`frontend/src/auth/permissionDivergence.test.ts` is a FRONTEND test that reads
+BACKEND source and asserted `canAccessServiceCases` ORs in `isSalesUser(user)`.
+Replacing the job title with the company grant is the whole point of this fix, so
+that mirror went stale the moment the gate changed — it now asserts
+`holdsHouzsCompanyGrant(c)`, which is the same invariant (a rep the API would
+serve is never Forbidden) against the mechanism that actually decides it. The
+stale comment it mirrored, `backend/src/middleware/auth.ts` on the
+`/mfg-sales-orders` arm, said the two gates agree; they now differ on purpose and
+it says so.
+
+Worth more than the fix: **this branch's own CI could not catch it.** The PR is
+backend-only, so `changes` path-filtered every frontend job to `skipping` — the
+suite holding the assertion never ran. The merge queue builds against a different
+base, the filter matched, `frontend-checks` ran `npm run test:coverage` for the
+first time, and it failed there. A cross-tree mirror test is exactly the shape a
+path filter cannot reason about: it lives in the tree that did NOT change and
+asserts on the tree that DID. This is CLAUDE.md's *"the check that is not
+running"* trap wearing a path filter — green on the branch meant "never
+executed", not "passed".
+
 **Ref.** `fix/service-case-visibility-by-company`, 2026-08-20. Census merged
 separately as #2534.
 ## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
