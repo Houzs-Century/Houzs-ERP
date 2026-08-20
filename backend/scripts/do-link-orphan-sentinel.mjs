@@ -82,13 +82,13 @@ try {
          theory predicts these rows are DELIVERY-CHARGE lines. If they are beds
          and mattresses, it is wrong — which is the point of printing them. */
   const orphanRows = await pg`
-    SELECT d.doc_no AS do_doc_no, d.so_doc_no, di.item_code, di.qty
+    SELECT d.do_number AS do_doc_no, d.so_doc_no, di.item_code, di.qty
       FROM scm.delivery_orders d
       JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
      WHERE d.so_doc_no IS NOT NULL
        AND d.status::text <> 'CANCELLED'
        AND di.so_item_id IS NULL
-     ORDER BY d.doc_no, di.item_code
+     ORDER BY d.do_number, di.item_code
      LIMIT 50`;
 
   /* 2. The shape the fallback CANNOT see: no per-line link AND no so_doc_no on
