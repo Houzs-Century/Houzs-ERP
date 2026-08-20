@@ -88,7 +88,7 @@ describe('doLineRemaining fails CLOSED — no read may report an empty ledger', 
   test('the ledger is readable when nothing fails: 10 delivered, 7 invoiced, 3 returned, 0 open', async () => {
     /* The control. Without it every assertion below could be passing because the
        fixture never produced a ledger at all. */
-    const r = await doLineRemaining(fakeSb(FULLY_CONSUMED()), ['do-1']);
+    const r = await doLineRemaining(fakeSb(FULLY_CONSUMED()), ['do-1'], 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.lines.get('dl-1')?.delivered).toBe(10);
@@ -106,7 +106,7 @@ describe('doLineRemaining fails CLOSED — no read may report an empty ledger', 
     'delivery_returns',
   ]) {
     test(`a failed ${table} read refuses instead of reporting the line as available`, async () => {
-      const r = await doLineRemaining(fakeSb(FULLY_CONSUMED(), [table]), ['do-1']);
+      const r = await doLineRemaining(fakeSb(FULLY_CONSUMED(), [table]), ['do-1'], 'invoiceable');
       expect(r.ok).toBe(false);
       if (r.ok) {
         // The fail-open regression, named: a ledger that says 10 are still open
@@ -118,7 +118,7 @@ describe('doLineRemaining fails CLOSED — no read may report an empty ledger', 
   }
 
   test('the reason names the failure, so the 503 body is not a shrug', async () => {
-    const r = await doLineRemaining(fakeSb(FULLY_CONSUMED(), ['sales_invoice_items']), ['do-1']);
+    const r = await doLineRemaining(fakeSb(FULLY_CONSUMED(), ['sales_invoice_items']), ['do-1'], 'invoiceable');
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain('connection terminated');
@@ -130,19 +130,19 @@ describe('doRemainingByItemId fails CLOSED', () => {
     /* The distinction that matters: a MISSING line is honestly 0 and must stay
        0, or every caller would start refusing legitimate work. Only an
        unreadable line becomes a refusal. */
-    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED()), ['ghost']);
+    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED()), ['ghost'], 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.remaining.get('ghost')).toBe(0);
   });
 
   test('its own delivery_order_items resolve failing is a refusal, not a cap of 0', async () => {
-    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED(), ['delivery_order_items']), ['dl-1']);
+    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED(), ['delivery_order_items']), ['dl-1'], 'invoiceable');
     expect(r.ok).toBe(false);
   });
 
   test('a failure inside the ledger propagates rather than flattening to 0', async () => {
-    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED(), ['sales_invoice_items']), ['dl-1']);
+    const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED(), ['sales_invoice_items']), ['dl-1'], 'invoiceable');
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain('sales_invoice_items');
@@ -151,7 +151,7 @@ describe('doRemainingByItemId fails CLOSED', () => {
 
 describe('resolveCandidateDoIds fails CLOSED — an empty picker is a completion claim', () => {
   test('the sweep lists shipped DOs when it can run', async () => {
-    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED()), undefined, 1);
+    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED()), undefined, 1, 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.doIds).toEqual(['do-1']);
@@ -160,12 +160,12 @@ describe('resolveCandidateDoIds fails CLOSED — an empty picker is a completion
   test('a failed sweep refuses instead of answering "no deliveries"', async () => {
     /* Both pickers turn this list into `{ lines: [] }`, which on screen reads
        "there is nothing left to invoice / return from any delivery". */
-    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED(), ['delivery_orders']), undefined, 1);
+    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED(), ['delivery_orders']), undefined, 1, 'invoiceable');
     expect(r.ok).toBe(false);
   });
 
   test('an EXPLICIT ?doIds= list needs no read and still answers', async () => {
-    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED(), ['delivery_orders']), 'do-1, do-2', 1);
+    const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED(), ['delivery_orders']), 'do-1, do-2', 1, 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.doIds).toEqual(['do-1', 'do-2']);

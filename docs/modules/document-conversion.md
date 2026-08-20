@@ -877,6 +877,16 @@ line** and are the subject of this section. Two are deliberately not:
 For the rest, the mechanism is a **per-line quantity ceiling**, and
 `backend/src/scm/lib/convert-ceilings.test.ts` states the invariant in one line:
 
+> **Which source rows are IN the pool is a separate question from the ceiling
+> over them** (2026-08-20). `do-line-remaining.ts` takes a REQUIRED
+> `DoPendingBasis` — `'invoiceable'` for the DO→SI chain, `'delivered'` for
+> DO→DR and the unbilled-money report — because a LOADED delivery may be
+> invoiced but has not delivered anything. The ceiling test passes
+> `'invoiceable'`. The write-path cap (`checkSiOverRemaining`) pins the same
+> basis internally: a cap measuring a narrower pool than the gate offers would
+> refuse `over_remaining` on an invoice that had just passed
+> `siTransferRefusal`. See `docs/bugs/0480`.
+
 > Σ(converted so far) + this conversion ≤ source qty
 
 That file also records why a boolean "already converted" flag would have been

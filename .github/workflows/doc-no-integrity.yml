@@ -1,0 +1,47 @@
+name: Document numbers — integrity (read-only)
+
+# Answers "do two ERP documents share a document number, and has the monthly
+# counter ever re-issued one" without anyone opening a SQL console.
+#
+# Document numbers are minted max(suffix)+1 over the rows that still exist for
+# the month (backend/src/scm/lib/doc-no.ts), so deleting the NEWEST document of
+# a month hands its number back to the next create — and nothing in the ERP
+# records that the number was already used. On 2026-08-20 that re-issued three
+# numbers the AED_HOUZS account book already held and AutoCount refused them
+# with `Primary Key Error`. See docs/doc-number-reissue-coe.md.
+#
+# Manual trigger only. A production DB read on a schedule turns a real question
+# into CI noise nobody reads — the standing rule in CLAUDE.md. When this needs
+# to become an ALARM rather than a report, that is a different mechanism
+# (somewhere a human actually looks), not a cron on this workflow.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: doc-no-integrity
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-doc-no-reissue.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
