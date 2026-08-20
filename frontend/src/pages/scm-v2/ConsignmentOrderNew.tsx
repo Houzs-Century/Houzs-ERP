@@ -57,7 +57,7 @@ import {
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -71,7 +71,7 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const ConsignmentOrderNew = () => {
   const navigate = useNavigate();
@@ -191,9 +191,9 @@ export const ConsignmentOrderNew = () => {
         description:    it.description ?? '',
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
-        unitPriceCenti: it.unit_price_centi ?? 0,
-        discountCenti:  it.discount_centi ?? 0,
-        unitCostCenti:  it.unit_cost_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
+        discountSen:  it.discount_sen ?? 0,
+        unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
         remark:         it.remark ?? '',
       })));
@@ -284,9 +284,9 @@ export const ConsignmentOrderNew = () => {
     if (didUpdate) setLines(next);
   }, [lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen),
       0,
     ),
     [lines],
@@ -415,14 +415,14 @@ export const ConsignmentOrderNew = () => {
   const flushPaymentDrafts = async (docNo: string): Promise<{ failed: number }> => {
     if (paymentDrafts.length === 0) return { failed: 0 };
     const tasks = paymentDrafts
-      .filter((d) => d.amountCenti > 0)
+      .filter((d) => d.amountSen > 0)
       .map(async (d) => {
         const { method } = labelToApi(d.methodLabel);
         const body: { docNo: string } & Record<string, unknown> = {
           docNo,
           paidAt:       d.paidAt,
           method,
-          amountCenti:  d.amountCenti,
+          amountSen:  d.amountSen,
           accountSheet: d.accountSheet || null,
           approvalCode: d.approvalCode || null,
           collectedBy:  d.collectedBy  || null,
@@ -532,9 +532,9 @@ export const ConsignmentOrderNew = () => {
           description:    l.description,
           uom:            l.uom,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti:  l.discountCenti,
-          unitCostCenti:  l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen:  l.discountSen,
+          unitCostSen:  l.unitCostSen,
           variants:       l.variants,
           remark:         l.remark,
           lineDeliveryDate:           l.lineDeliveryDate ?? null,
@@ -1021,7 +1021,7 @@ export const ConsignmentOrderNew = () => {
             fontWeight: 800,
             color: 'var(--c-burnt)',
           }}>
-            Subtotal: {fmtRm(subtotalCenti)}
+            Subtotal: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>

@@ -7,6 +7,15 @@ import type { Env } from "./env";
 // can call them with just an /api/scm prefix.
 import { products } from "./routes/products";
 import { categoriesApi, publicCategoriesApi } from "./routes/categories";
+// ── Routes with NO screen in this repo — see EXTERNAL CLIENT note below ──────
+import { deliveryFees } from "./routes/delivery-fees";
+import { fabricTierAddonConfig } from "./routes/fabric-tier-addon";
+import { posPools } from "./routes/pos-pools";
+import { sofaQuickPicks } from "./routes/sofa-quick-picks";
+import { modelFreeGifts } from "./routes/model-free-gifts";
+import { posCart } from "./routes/pos-cart";
+import { personalQuickPicks } from "./routes/personal-quick-picks";
+import { salesAnalysis } from "./routes/sales-analysis";
 import { pwpRules } from "./routes/pwp-rules";
 import { pwpCodes } from "./routes/pwp-codes";
 import { specialAddons } from "./routes/special-addons";
@@ -19,13 +28,17 @@ import { sofaCombos } from "./routes/sofa-combos";
 import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
+import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
 import { grns } from "./routes/grns";
+import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
+import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
+import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
@@ -160,7 +173,9 @@ scm.route("/categories", publicCategoriesApi);
 // staff role can read" in-file. Writes stay double-gated (area `edit` here +
 // scm.config.write inside each route).
 scm.use("/delivery-fees/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
+scm.route("/delivery-fees", deliveryFees);
 scm.use("/fabric-tier-addon/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
+scm.route("/fabric-tier-addon", fabricTierAddonConfig);
 // openRead (2026-07-20, POS cutover) — PWP (换购) is an in-cart SALE-flow read:
 // the POS reads eligibility rules + the seller's reserved codes for every
 // salesperson, same class as the SO-FLOW REFERENCE READS above. No cost/margin
@@ -198,6 +213,7 @@ scm.route("/product-models", productModels);
 // pools here. openRead so any authenticated salesperson past the coarse umbrella
 // can GET; the handlers select SELLING-only columns (#625). company-scoped.
 scm.use("/pos-pools/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
+scm.route("/pos-pools", posPools);
 // Houzs → 2990 option-list push. NO openRead — DELIBERATE: the dry-run report
 // echoes 2990's master config, which carries sellingPriceSen / costSen, i.e.
 // 2990's retail AND cost sides. Opening it would hand that to any scoped
@@ -225,6 +241,7 @@ scm.route("/sofa-combos", sofaCombos);
 // (see sofa-quick-picks.ts header); the engine prices the card. Curation writes
 // stay double-gated (area `edit` + scm.config.write in-route).
 scm.use("/sofa-quick-picks/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
+scm.route("/sofa-quick-picks", sofaQuickPicks);
 scm.use("/fabric-tracking/*", scmAreaGuard("scm.procurement.products"));
 scm.route("/fabric-tracking", fabricTracking);
 // Ported 2026-07-11 — three SO/pricing admin-config CRUD surfaces (backing
@@ -238,7 +255,11 @@ scm.route("/so-settings", soSettings);
 scm.use("/free-item-campaigns/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
 scm.route("/free-item-campaigns", freeItemCampaigns);
 scm.use("/model-free-gifts/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
+scm.route("/model-free-gifts", modelFreeGifts);
 // ── POS endpoints ported from 2990 (cutover P2), company_2 scoped ────────────
+scm.route("/pos-cart", posCart);
+scm.route("/personal-quick-picks", personalQuickPicks);
+scm.route("/sales-analysis", salesAnalysis);
 scm.use("/quotes/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/quotes", quotes);
 // ── Suppliers (scm.procurement.suppliers) ───────────────────────────────────
@@ -246,6 +267,11 @@ scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
 scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
+// Deferred list enrichment — the MRP-derived PO-list columns (Assigned SO /
+// Delivered) the list no longer computes on its critical path. Mounted BEFORE
+// the main router so its static `/list-mrp-enrichment` path resolves ahead of
+// `/:id`. Shares the guard above via the path prefix.
+scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 // PO amendment / revision workflow — PO-centric, so it rides the same L2 area
 // guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
@@ -253,11 +279,26 @@ scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 scm.use("/po-amendments/*", scmAreaGuard("scm.procurement.po"));
 scm.route("/po-amendments", poAmendments);
 scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
+// Deferred list enrichment — the MRP-derived GRN-list columns (Assigned SO /
+// Delivered) the list no longer computes on its critical path. Mounted BEFORE
+// the main router so its static `/list-mrp-enrichment` path resolves ahead of
+// `/:id`. Shares the guard above via the path prefix.
+scm.route("/grns", grnsListEnrichment);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
+// Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
+// Delivered) the list no longer computes on its critical path. Mounted BEFORE
+// the main router so its static `/list-mrp-enrichment` path resolves ahead of
+// `/:id`. Shares the guard above via the path prefix.
+scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+// Deferred list enrichment — the MRP-derived SO-list fields the list no longer
+// computes on its critical path (READY source-PO chips + readiness/planning
+// verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
+// path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
+scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
@@ -577,7 +618,7 @@ scm.route("/venues", venues);
 // four 404'd. Read-only nested-join reads over mfg_sales_order_items /
 // delivery_order_items / sales_invoice_items / delivery_return_items (+ headers
 // + mfg_sales_order_payments + staff). All referenced tables exist in the scm
-// schema. paid_centi on mfg_sales_orders does NOT exist in Houzs (dropped on
+// schema. paid_sen on mfg_sales_orders does NOT exist in Houzs (dropped on
 // port) — paid totals derive from the payments ledger.
 // reports: read-only cross-area detail listings — left on the coarse gate (see
 // SHARED READ HELPERS note above).

@@ -127,7 +127,7 @@ export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | n
     retry: retryUnlessClientError,
   });
 
-/* Build a per-SKU lookup (material_code → assignments) from the response, so a
+/* Build a per-SKU lookup (item_code → assignments) from the response, so a
    line table can resolve each row's Assigned SO by its code. Null-safe. */
 export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, OriginAssignment[]> => {
   const m = new Map<string, OriginAssignment[]>();
@@ -137,7 +137,7 @@ export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, O
   return m;
 };
 
-/* Per-SKU lookup (material_code → stored-origin "bought for" SOs) — the
+/* Per-SKU lookup (item_code → stored-origin "bought for" SOs) — the
    provenance twin of originsByCode. Null-safe; empty map on an older backend
    without the field, so every consumer degrades to today's rendering. */
 export const provenanceByCode = (resp: PoSoCoverageResp | undefined): Map<string, OriginAssignment[]> => {
@@ -148,7 +148,7 @@ export const provenanceByCode = (resp: PoSoCoverageResp | undefined): Map<string
   return m;
 };
 
-/* Build a per-SKU lookup (material_code → delivered DOs) from the response, so a
+/* Build a per-SKU lookup (item_code → delivered DOs) from the response, so a
    drill-down line can resolve its Delivered cell by item code. Null-safe. */
 export const deliveredByCode = (resp: PoSoCoverageResp | undefined): Map<string, DeliveredDo[]> => {
   const m = new Map<string, DeliveredDo[]>();
@@ -223,7 +223,7 @@ export const buildFloatingOverlay = (
 };
 
 /* Advisory candidate POs for an SO with NO linked purchase leg (pre-MRP orders,
-   see the backend route). Read-only: matched by material_code, never a stored
+   see the backend route). Read-only: matched by item_code, never a stored
    link. Pass a null docNo to disable — the map only asks when its PO node is
    empty, so a normal linked SO never fires this request. */
 export type CandidatePo = { id: string; poNumber: string; status: string | null; poDate: string | null };

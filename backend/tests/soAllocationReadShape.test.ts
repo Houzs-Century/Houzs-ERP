@@ -124,7 +124,7 @@ function fixture() {
     /* Pooled mattress stock for everyone; no bedframe and no sofa stock, so the
        only bedframe that can go READY is the bound one. */
     inventory_balances: [
-      { warehouse_id: 'WH1', product_code: 'MAT', variant_key: null, qty: 500 },
+      { warehouse_id: 'WH1', item_code: 'MAT', variant_key: null, qty: 500 },
     ],
     v_inventory_lots_open: [],
     stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],

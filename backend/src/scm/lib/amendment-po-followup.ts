@@ -113,12 +113,12 @@ export async function raisePoFollowUps(
 
   type PoItem = {
     id: string; purchase_order_id: string | null; so_item_id: string | null;
-    material_code: string | null; material_name: string | null;
+    item_code: string | null; material_name: string | null;
   };
   let livePoItems: PoItem[] = [];
   if (soItemIds.length > 0) {
     const { data: poItemRows, error: poItemErr } = await sb.from('purchase_order_items')
-      .select('id, purchase_order_id, so_item_id, material_code, material_name')
+      .select('id, purchase_order_id, so_item_id, item_code, material_name')
       .in('so_item_id', soItemIds);
     if (poItemErr) throw new Error(`raisePoFollowUps: PO items load failed: ${poItemErr.message}`);
     livePoItems = (poItemRows ?? []) as PoItem[];
@@ -130,7 +130,7 @@ export async function raisePoFollowUps(
   let orphanItems: PoItem[] = [];
   if (orphanPoItemIds.length > 0) {
     const { data: oRows, error: oErr } = await sb.from('purchase_order_items')
-      .select('id, purchase_order_id, so_item_id, material_code, material_name')
+      .select('id, purchase_order_id, so_item_id, item_code, material_name')
       .in('id', orphanPoItemIds);
     if (oErr) throw new Error(`raisePoFollowUps: orphan PO lines load failed: ${oErr.message}`);
     orphanItems = (oRows ?? []) as PoItem[];
@@ -223,7 +223,7 @@ export async function raisePoFollowUps(
             amendment_id: amendmentId,
             purchase_order_item_id: null,
             change_type: 'ADD',
-            new_material_code: l.new_item_code,
+            new_item_code: l.new_item_code,
             new_variants: l.new_variants ?? null,
             new_qty: l.new_qty,
             old_snapshot: { preview: true, source_so_amendment_no: args.soAmendmentNo },
@@ -242,7 +242,7 @@ export async function raisePoFollowUps(
             change_type: 'REMOVE',
             old_snapshot: {
               preview: true, source_so_amendment_no: args.soAmendmentNo,
-              material_code: item.material_code, material_name: item.material_name,
+              item_code: item.item_code, material_name: item.material_name,
             },
           });
         }
@@ -255,12 +255,12 @@ export async function raisePoFollowUps(
         amendment_id: amendmentId,
         purchase_order_item_id: item.id,
         change_type: t === 'QTY' ? 'QTY' : 'SPEC',
-        new_material_code: l.new_item_code,
+        new_item_code: l.new_item_code,
         new_variants: l.new_variants ?? null,
         new_qty: l.new_qty,
         old_snapshot: {
           preview: true, source_so_amendment_no: args.soAmendmentNo,
-          material_code: item.material_code, material_name: item.material_name,
+          item_code: item.item_code, material_name: item.material_name,
         },
       });
     }

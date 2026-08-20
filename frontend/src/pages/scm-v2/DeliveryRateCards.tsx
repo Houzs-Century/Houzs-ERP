@@ -49,7 +49,7 @@ const AGGREGATION_HINT: Record<RateAggregation, string> = {
 };
 
 const centiToRM = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
-const rmToCenti = (v: string): number | null => {
+const rmToSen = (v: string): number | null => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
 };
@@ -343,7 +343,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
                 : 'Our own cost structure, so a 3PL drop and an own-fleet drop compare.'}
             </span>
           </label>
-          <RMField label="Cap (RM)" value={centiToRM(card.capCenti)} onCommit={(v) => patch({ capCenti: v === '' ? null : rmToCenti(v) })} />
+          <RMField label="Cap (RM)" value={centiToRM(card.capSen)} onCommit={(v) => patch({ capSen: v === '' ? null : rmToSen(v) })} />
           <SelectField label="Rounding" value={card.rounding} onChange={(v) => patch({ rounding: v })}
             options={[['NONE', 'None'], ['NEAREST_10C', 'Nearest 10 sen'], ['NEAREST_RM', 'Nearest RM']]} />
           <label className={styles.field} style={{ alignSelf: 'end' }}>
@@ -372,9 +372,9 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
 
   const addRule = () => {
-    const amountCenti = rmToCenti(form.amountRM);
-    if (amountCenti == null) { notify({ title: 'Amount required', body: 'Enter a non-negative RM amount.', tone: 'error' }); return; }
-    const body: Parameters<typeof create.mutate>[0] = { ruleType: form.ruleType, amountCenti };
+    const amountSen = rmToSen(form.amountRM);
+    if (amountSen == null) { notify({ title: 'Amount required', body: 'Enter a non-negative RM amount.', tone: 'error' }); return; }
+    const body: Parameters<typeof create.mutate>[0] = { ruleType: form.ruleType, amountSen };
     if (form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE') {
       const n = Number(form.tierPosition);
       if (!Number.isInteger(n) || n < 1) { notify({ title: 'Invalid position', body: form.ruleType === 'OVERAGE' ? 'Cap N must be >= 1.' : 'Tier position must be >= 1.', tone: 'error' }); return; }
@@ -452,7 +452,7 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
             <tr key={r.id} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
               <td style={{ padding: '6px 8px' }}>{RULE_LABEL[r.ruleType]}</td>
               <td style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>{describe(r)}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{centiToRM(r.amountCenti)}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{centiToRM(r.amountSen)}</td>
               <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                 <button type="button" className={styles.iconBtn} disabled={del.isPending}
                   onClick={() => del.mutate(r.id, { onError: (e) => notify({ title: 'Delete failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) })}
@@ -587,13 +587,13 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
             <tbody>
               {breakdown.lines.map((l, i) => (
                 <tr key={i}>
-                  <td style={{ padding: '3px 8px', color: l.amountCenti < 0 ? 'var(--fg-muted)' : undefined }}>{l.label}</td>
-                  <td style={{ padding: '3px 8px', textAlign: 'right' }}>{l.amountCenti < 0 ? '−' : ''}RM {centiToRM(Math.abs(l.amountCenti))}</td>
+                  <td style={{ padding: '3px 8px', color: l.amountSen < 0 ? 'var(--fg-muted)' : undefined }}>{l.label}</td>
+                  <td style={{ padding: '3px 8px', textAlign: 'right' }}>{l.amountSen < 0 ? '−' : ''}RM {centiToRM(Math.abs(l.amountSen))}</td>
                 </tr>
               ))}
               <tr style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.2))', fontWeight: 700 }}>
                 <td style={{ padding: '6px 8px' }}>Total</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(breakdown.totalCenti)}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(breakdown.totalSen)}</td>
               </tr>
             </tbody>
           </table>
@@ -640,10 +640,10 @@ const ReconcileView = () => {
               <td style={{ padding: '6px 8px' }}>{r.matched ? r.cardName : <span style={{ color: 'var(--fg-muted)' }}>no card</span>}</td>
               <td style={{ padding: '6px 8px' }}>{r.dropCount}</td>
               <td style={{ padding: '6px 8px' }}>{r.derivedZone ?? '—'}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.expectedCenti == null ? '—' : `RM ${centiToRM(r.expectedCenti)}`}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(r.billedCenti)}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.expectedSen == null ? '—' : `RM ${centiToRM(r.expectedSen)}`}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(r.billedSen)}</td>
               <td style={{ padding: '6px 8px', textAlign: 'right', color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
-                {r.deltaCenti == null ? '—' : `${r.deltaCenti > 0 ? '+' : r.deltaCenti < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaCenti))}`}
+                {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaSen))}`}
               </td>
               <td style={{ padding: '6px 8px' }}>
                 {!r.matched ? <span style={{ color: 'var(--fg-muted)' }}>unmatched</span>

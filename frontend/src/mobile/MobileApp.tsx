@@ -788,7 +788,7 @@ function MobileAppInner() {
   else if (screen.t === "module-detail" && screen.key === "inventory") {
     // Inventory row → the richer per-SKU stock card (replaces the generic detail).
     overlay = <MobileStockCard
-      productCode={screen.row?.product_code ?? ""}
+      itemCode={screen.row?.item_code ?? ""}
       productName={screen.row?.product_name ?? null}
       canTransfer={allowed("/scm/stock-transfers")}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}

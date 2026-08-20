@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import { PAYMENT_METHOD_CODES } from '../payment-methods';
+
 const cellSchema = z.object({
   moduleId: z.string(),
   x: z.number().int().min(0),
@@ -84,7 +86,7 @@ export const orderPostSchema = z.object({
     tbd: z.boolean(),
     notes: z.string().optional(),
   }),
-  paymentMethod: z.enum(['credit', 'debit', 'installment', 'transfer']),
+  paymentMethod: z.enum(PAYMENT_METHOD_CODES),
   approvalCode: z.string().optional(),
   slipKey: z.string().optional(),
   uploadSessionId: z.string().optional(),

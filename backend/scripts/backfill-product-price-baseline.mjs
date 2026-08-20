@@ -25,7 +25,7 @@
 // Baseline-date rule: product.created_at::date (MYT), falling back to the fixed
 // anchor 2024-01-01 when created_at is null.
 //
-// NON-CLOBBERING + IDEMPOTENT: any (company_id, product_code) that already has
+// NON-CLOBBERING + IDEMPOTENT: any (company_id, item_code) that already has
 // rows in mfg_product_price_history is SKIPPED whole — a re-run adds nothing, and
 // the write path's own rows are never overwritten. Append-only.
 //
@@ -132,7 +132,7 @@ async function backfillCompany(cid, code) {
     // NON-CLOBBERING: any product that already has a timeline is left alone.
     const existing = await dst`
       SELECT 1 FROM scm.mfg_product_price_history
-       WHERE company_id = ${cid} AND product_code = ${p.code} LIMIT 1`;
+       WHERE company_id = ${cid} AND item_code = ${p.code} LIMIT 1`;
     if (existing.length > 0) { skippedExisting++; continue; }
 
     const audit = await dst`
@@ -140,7 +140,7 @@ async function backfillCompany(cid, code) {
              to_char((changed_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date, 'YYYY-MM-DD') AS eff,
              changed_at
         FROM scm.master_price_history
-       WHERE company_id = ${cid} AND product_code = ${p.code} AND field = 'sell_price_sen'
+       WHERE company_id = ${cid} AND item_code = ${p.code} AND field = 'sell_price_sen'
        ORDER BY changed_at ASC`;
 
     const { rows, kind } = planProduct(p, audit);
@@ -156,7 +156,7 @@ async function backfillCompany(cid, code) {
       for (const r of rows) {
         await dst`
           INSERT INTO scm.mfg_product_price_history
-            (company_id, product_code, sell_price_sen, effective_from, notes, created_by, created_at)
+            (company_id, item_code, sell_price_sen, effective_from, notes, created_by, created_at)
           VALUES (${cid}, ${p.code}, ${r.sell_price_sen}, ${r.effective_from}, ${r.notes}, ${"backfill"}, ${r.created_at})`;
       }
     }
@@ -167,7 +167,7 @@ async function backfillCompany(cid, code) {
   log(`  products ${APPLY ? "backfilled" : "to backfill"}: ${productsPlanned} (${reconstructed} reconstructed from audit, ${productsPlanned - reconstructed} single baseline)`);
   log(`  history rows ${APPLY ? "INSERTED" : "planned"}: ${planned}`);
   if (sample.length) {
-    log(`  sample (product_code · effective_from · RM):`);
+    log(`  sample (item_code · effective_from · RM):`);
     for (const s of sample) log(`    ${s}`);
   }
   return { planned, productsPlanned };

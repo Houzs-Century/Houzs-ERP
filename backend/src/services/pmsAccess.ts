@@ -1,10 +1,11 @@
 // Project-detail (PMS) section-level access — port of the reference repo's
 // src/lib/pms-access.ts, adapted to the production AuthUser + projects model.
 //
-// This layers ON TOP of two existing gates:
+// This layers ON TOP of the remaining gates:
 //   1. the page matrix (projects.list) — can you open the project area at all
-//   2. getProjectScope() (projectAcl.ts) — PIC + brand row filter on WHICH
-//      projects you can see
+//   2. company scope — a project is only visible within its own company
+// (The old PIC + brand row-level ACL was removed 2026-08-19: within a company,
+//  any projects-permitted user sees every project.)
 // pmsAccess then decides WHICH SECTIONS of a project's detail page render, and
 // crucially hides the financial snapshot + rental amount from everyone except
 // directors/finance. See docs/PERMISSION-MATRIX.md (PMS section table).

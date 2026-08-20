@@ -117,6 +117,13 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
         return { data: false, error: null };
       },
     } as never);
+    /* The header PATCH is a STRICT company write now, like the sibling status
+       handler: an unresolved company is REFUSED rather than defaulted. mig 0164
+       resolves a NULL p_company_id with COALESCE(p_company_id, (SELECT id FROM
+       public.companies WHERE code='HOUZS')), so "unresolved" silently meant
+       "Houzs" on the customer upsert. The fixture carries the company its own
+       row already belongs to (company_id: 1 above). */
+    c.set('companyId' as never, 1 as never);
     c.set('user' as never, { id: 'actor-1', user_metadata: { name: 'Test User' } } as never);
     c.set('houzsUser' as never, {
       id: 1,

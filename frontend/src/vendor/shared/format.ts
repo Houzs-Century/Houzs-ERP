@@ -11,8 +11,8 @@ export const fmtRM = (n: number): string => `RM ${fmtMoney(n)}`;
 /** ERP/centi money → "RM 2,990.00" (2dp). The centi-layer counterpart to
  *  {@link fmtRM} for cost/GL/document totals. Null-safe AND non-finite-safe
  *  ("—"). NOTE: assumes MYR — for documents that carry their own `currency`
- *  field, use {@link fmtMoneyCenti} instead of hardcoding the RM prefix. */
-export const fmtCenti = (centi: number | null | undefined): string => {
+ *  field, use {@link fmtMoneySen} instead of hardcoding the RM prefix. */
+export const fmtSen = (centi: number | null | undefined): string => {
   const n = Number(centi);
   if (centi == null || !Number.isFinite(n)) return '—';
   return `RM ${(n / 100).toLocaleString('en-MY', {
@@ -21,8 +21,8 @@ export const fmtCenti = (centi: number | null | undefined): string => {
   })}`;
 };
 
-/** Centi money with the document's OWN currency → "MYR 2,990.00" (2dp).
- *  The currency-carrying counterpart to {@link fmtCenti}, and the ONE home for
+/** Sen money with the document's OWN currency → "MYR 2,990.00" (2dp).
+ *  The currency-carrying counterpart to {@link fmtSen}, and the ONE home for
  *  the `${currency} ${centi/100}` shape that was hand-copied into 16 page-local
  *  `fmtMoney` helpers (SO/DO/DR/SI detail + the purchase-side pages).
  *
@@ -32,7 +32,7 @@ export const fmtCenti = (centi: number | null | undefined): string => {
  *  straight at the user — a number the ERP does not have must read as blank, not
  *  as a broken one. Mobile's MobileModuleDetail.money() already had this guard;
  *  the desktop copies never got it. */
-export const fmtMoneyCenti = (
+export const fmtMoneySen = (
   centi: number | null | undefined,
   currency = 'MYR',
 ): string => {

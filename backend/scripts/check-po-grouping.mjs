@@ -6,7 +6,7 @@
 //
 // For every non-cancelled PO it computes, from the PO's mfg_product lines:
 //   - distinct source SOs   (line.so_item_id -> mfg_sales_order_items.doc_no)
-//   - distinct categories    (line.material_code -> mfg_products.category)
+//   - distinct categories    (line.item_code -> mfg_products.category)
 // then asks, per category, among POs that CONTAIN a line of that category:
 //   - single-SO vs pooled-multi-SO   (is a PO raised per one SO, or pooled?)
 //   - pure-category vs mixed          (does mattress/accessory ride its own PO?)
@@ -38,12 +38,12 @@ try {
 
   // 2. mfg_product PO lines (skip fabric/raw — they are components, not the sellable grouping).
   const items = await pg`
-    SELECT purchase_order_id, so_item_id, material_code
+    SELECT purchase_order_id, so_item_id, item_code
     FROM scm.purchase_order_items
     WHERE material_kind::text = 'mfg_product'`;
 
-  // 3. category per material_code, 4. doc_no per so_item_id — batched.
-  const codes = [...new Set(items.map((i) => i.material_code).filter(Boolean))];
+  // 3. category per item_code, 4. doc_no per so_item_id — batched.
+  const codes = [...new Set(items.map((i) => i.item_code).filter(Boolean))];
   const soIds = [...new Set(items.map((i) => i.so_item_id).filter(Boolean))];
   const catRows = codes.length ? await pg`SELECT code, upper(coalesce(category::text, 'OTHER')) AS category FROM scm.mfg_products WHERE code = ANY(${codes})` : [];
   const catOfCode = new Map(catRows.map((r) => [r.code, CATS.includes(r.category) ? r.category : "OTHER"]));
@@ -56,7 +56,7 @@ try {
     const po = poById.get(it.purchase_order_id);
     if (!po) continue;
     po.lines += 1;
-    po.cats.add(catOfCode.get(it.material_code) ?? "OTHER");
+    po.cats.add(catOfCode.get(it.item_code) ?? "OTHER");
     if (it.so_item_id) { soLinkedLines += 1; const d = docOfSoItem.get(it.so_item_id); if (d) po.sos.add(d); }
   }
 

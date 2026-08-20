@@ -25,6 +25,7 @@
 import { api } from "../api/client";
 import { getActiveCompanyId } from "./activeCompany";
 import {
+  isSharedDataGridStorageKey,
   readDataGridLayout,
   writeDataGridLayout,
 } from "../vendor/scm/components/dataGridLayoutStorage";
@@ -158,8 +159,12 @@ export function layoutIdKey(baseIdKey: string, companyId: number | null): string
 }
 
 /** The vendored DataGrid's own rule (see its `scopedStorageKey`) — a different
- *  shape from DataTable's, which is exactly why the family prefix exists. */
+ *  shape from DataTable's, which is exactly why the family prefix exists.
+ *  The cross-company SHARED queue boards (isSharedDataGridStorageKey) stay
+ *  UNscoped: one queue, one layout, whatever company the window is on — the
+ *  marker key below follows automatically, so hydration and pushes agree. */
 export function dataGridIdKey(storageKey: string, companyId: number | null): string {
+  if (isSharedDataGridStorageKey(storageKey)) return storageKey;
   return companyId != null ? `${storageKey}::c${companyId}` : storageKey;
 }
 

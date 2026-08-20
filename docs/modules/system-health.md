@@ -1,0 +1,146 @@
+# System health — the admin refresh and diagnostic surface
+
+`backend/src/routes/systemHealth.ts`, mounted at `/api/admin/health`. Every route
+here is gated `requirePermission("*")` — owner / IT-admin only.
+
+This guide exists because the working-agreement check asked for it: the file had
+no guide at all, so a route could be added to it and nothing would say what the
+surface is for.
+
+---
+
+## What this module is FOR
+
+Two jobs, and keeping them apart matters:
+
+1. **Report** what the integrations are doing — read-only.
+2. **Re-run** an integration on demand, when waiting will not fix it.
+
+The second is the whole reason the module exists. The AutoCount mirrors are
+pulled on a schedule, and a schedule cannot repair every kind of gap.
+
+---
+
+## The AutoCount refresh routes
+
+| route | what it refreshes |
+| --- | --- |
+| `POST /autocount/po-pull` | both PO mirrors — docs first, then lines, so Finance's read gets the fresher data if the second call fails |
+| `POST /autocount/so-pull?mode=filtered\|all` | the sales-order mirror |
+| `POST /autocount/snapshot` | the unfiltered staging snapshot; writes only `ac_snapshot_*`, so it is the safe one to re-run for a fresh denominator |
+
+### `so-pull` and why `mode` decides whether it can help you
+
+**`filtered` (the default) cannot collect an old order, ever.** It asks AutoCount
+`getSince(pull_checkpoint)`. An order whose LAST MODIFIED date precedes the
+mirror's earliest checkpoint is never in that answer, so the five-minute pull can
+run forever and that row will never arrive. Waiting is not a remedy for this
+class — it is the thing that makes it look permanent.
+
+**`all` DOES NOT WORK on this book, and that was measured rather than reasoned.**
+Dispatched against production 2026-08-19: 39 seconds, then HTTP 503
+`Worker exceeded resource limits`. `getAll()` over ~13,000 orders cannot fetch and
+upsert inside one Cloudflare Worker request. The same route with `filtered`
+returned 200 in the same session, so the route, the auth and the AutoCount
+connection are all fine — only the full refresh is impossible.
+
+**`?since=YYYY-MM-DD` is the backfill that works.** It asks
+`getSince(<that date>)` instead of `getSince(checkpoint)`, so the backlog is
+collected in WINDOWS small enough to finish. On that path the checkpoint is
+neither read nor advanced — deliberately: a backfill reaches BACKWARDS, and
+writing its window forward would skip everything between. Re-running is safe: the
+INSERT is `ON CONFLICT(doc_no) DO UPDATE`, so rows refresh rather than duplicate.
+
+Work backwards a month at a time from the oldest `doc_no` the health check
+reports, and stop when a window returns `fetched: 0`.
+
+**Worked example, 2026-08-19.** A salesperson could not raise a Service Case
+against `SO-005263`. The order exists in AutoCount. The read-only check reported
+`pull_checkpoint` CURRENT, 3281 rows in the mirror, newest `SO-013275` — and zero
+rows for that number *or* its bare digits. Nothing was broken. That order had
+simply never been collected, and a windowed `?since=` backfill is what brings it in.
+
+---
+
+## Reading the state before you re-run anything
+
+`.github/workflows/autocount-pull-health.yml` → **AutoCount pull health
+(read-only)**. It prints the three numbers that separate *running* from
+*working*:
+
+| | what it tells you |
+| --- | --- |
+| `pull_checkpoint` + how stale | stale means a run is still failing at least one row — the advance is guarded by `failed === 0`, so **one** bad row freezes it |
+| newest `doc_no` / `doc_date`, and the doc_no RANGE | the range is what distinguishes "the pull is dead" from "the history was never collected" |
+| rows touched in 7 / 30 days | zero here with a healthy checkpoint is the shape that hid for months |
+
+**Read it before re-running.** A stale checkpoint means some row is failing, and
+a backfill would paper over it rather than fix it — find the failing row first.
+
+---
+
+## The sentinel — the half that does not wait to be asked
+
+`.github/workflows/autocount-pull-sentinel.yml` -> **AutoCount pull sentinel
+(read-only)**, every six hours. It reads the same three numbers as the health
+check and then, unlike the health check, it **exits non-zero on an alarm** so the
+job fails and the standard failed-workflow email goes out. That email is the only
+notifier this repo has, and it is the same channel `do-link-sentinel.yml` and
+`mirror-sentinel.yml` use.
+
+**Why both exist.** The health check above is a DIAGNOSTIC: manual dispatch,
+always exit 0, answering a question somebody already thought to ask. The cutover
+failure was invisible precisely because nobody knew to ask — the pull ran every
+five minutes for months, reported healthy runs, and moved nothing. A diagnostic
+cannot find that. A sentinel can.
+
+| exit | meaning |
+| --- | --- |
+| 0 | checkpoint current, rows arriving |
+| 1 | ALARM — checkpoint stale past 2 days, or nothing arrived in 30 days, or the checkpoint is missing/unparseable/in the future |
+| 2 | CANNOT ANSWER — no database, the query failed, or the mirror holds no timestamped rows at all |
+
+**Exit 2 fails the job on purpose.** A sentinel that cannot see must not report
+green; that is the `audit:map`-crashing-for-three-weeks shape. And an EMPTY
+mirror is refused rather than answered: zero rows makes "nothing arrived in 30
+days" trivially true, and reporting that as a stalled pull would send the next
+reader at the wrong system.
+
+The thresholds live in `backend/scripts/lib/autocount-pull-rules.mjs` as a pure
+function with `backend/scripts/lib/autocount-pull-rules.test.mjs` beside it, and
+the workflow runs that test before the sentinel. The 2-day staleness limit is
+taken from the health check rather than invented, so the two cannot drift apart.
+The 30-day arrival limit is deliberately far looser than any plausible quiet
+period and has NOT been calibrated against this book's live arrival distribution
+— the query to calibrate it is in the script's header.
+
+**`pull_checkpoint` carries no timezone**, and the first live dispatch is how
+that was learned: it printed `-1d behind`, because the stored
+`2026-08-19T20:35:34` was read as UTC while it is MYT — 7.5 hours "ahead" for a
+checkpoint half an hour old. The zone is NOT hardcoded from that one sample.
+Instead the comparison tolerates any real UTC offset (-12..+14), so up to 14h of
+slop rides on the 2-day limit, which really fires between ~1.4 and ~2.6 days. A
+checkpoint further ahead than any offset explains is a separate alarm, because
+the next `getSince()` would ask for a window starting in the future and skip
+everything before it.
+
+**What the sentinel cannot see:** whether the HISTORY is complete. The
+incremental pull asks `getSince(checkpoint)`, so an order last modified before
+the mirror's earliest checkpoint was never offered. That gap is invisible to
+every alarm here and is what the `?since=` windows above are for.
+
+---
+
+## The trap this module was built around
+
+At the Postgres cutover the INSERT in `services/pull.ts` named seven columns the
+Postgres table does not have. Postgres refuses the whole statement on an unknown
+column, so **every** sales-order row failed — and because the checkpoint only
+advances on `failed === 0`, it froze at the cutover date and the same window was
+refetched forever. Every per-row failure is caught and counted, so the job kept
+reporting normal-looking runs while the mirror took nothing.
+
+The INSERT is fixed. What has **not** been built is anything that watches for the
+shape: *the pull ran, reported success, and moved nothing.* Until that exists,
+this class is found the way it was found this time — by a person who cannot do
+their job. See `BUG-HISTORY.md`, 2026-08-19.

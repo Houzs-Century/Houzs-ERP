@@ -184,13 +184,13 @@ async function runCompany(CO) {
 
   // ── stock (mrp.ts:605-612) ────────────────────────────────────────────────
   const bal = await sql`
-    SELECT product_code, warehouse_id::text AS warehouse_id,
+    SELECT item_code, warehouse_id::text AS warehouse_id,
            coalesce(variant_key,'') AS variant_key, qty::numeric AS qty
       FROM scm.inventory_balances
      WHERE company_id = ${CO}::bigint`;
   const stockByKey = new Map();
   for (const b of bal) {
-    const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? "");
+    const k = composite(b.warehouse_id ?? null, b.item_code, b.variant_key ?? "");
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + n(b.qty));
   }
 
@@ -198,7 +198,7 @@ async function runCompany(CO) {
   const poRaw = await sql`
     SELECT p.po_number, p.status::text AS status,
            p.purchase_location_id::text AS purchase_location_id,
-           i.material_code, i.item_group, i.variants AS variants,
+           i.item_code, i.item_group, i.variants AS variants,
            i.qty::numeric AS qty, coalesce(i.received_qty,0)::numeric AS received_qty,
            i.warehouse_id::text AS warehouse_id
       FROM scm.purchase_order_items i
@@ -222,12 +222,12 @@ async function runCompany(CO) {
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.purchase_location_id ?? null;
     const vkey = computeVariantKey(r.item_group, r.variants ?? null);
-    const k = composite(poWh, r.material_code, vkey);
+    const k = composite(poWh, r.item_code, vkey);
     openPoLines += 1; openPoUnits += left;
-    const poCat = catByCode.get(r.material_code) ?? catFromGroup(r.item_group);
+    const poCat = catByCode.get(r.item_code) ?? catFromGroup(r.item_group);
     if (vkey === "") {
       emptyKeyPoLines += 1; emptyKeyPoUnits += left;
-      const m = emptyPoMeta.get(k) ?? { whId: poWh, code: r.material_code, units: 0, cats: new Set(), variantBearing: 0 };
+      const m = emptyPoMeta.get(k) ?? { whId: poWh, code: r.item_code, units: 0, cats: new Set(), variantBearing: 0 };
       m.units += left;
       m.cats.add(poCat ?? "(uncatalogued)");
       if (VARIANT_BEARING.has(poCat ?? "")) {

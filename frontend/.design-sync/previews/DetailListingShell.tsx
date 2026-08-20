@@ -21,38 +21,38 @@ import * as DS from "autocount-sync-frontend";
 const NotifyProvider = (DS as any).NotifyProvider;
 
 // ── Canned rows: DO Detail Listing (one row per line, doc header
-//    denormalised on) — balance_centi is the DOC-level balance repeated per
+//    denormalised on) — balance_sen is the DOC-level balance repeated per
 //    row, matching the server flatten step. ─────────────────────────────────
 const ROWS = [
   {
     id: "r1", doc_no: "DO-2606-0114", line_date: "2026-06-18",
     debtor_code: "300-S0022", debtor_name: "Sunway Geo Residences — Tower B",
     item_code: "PAN-CSPU24XKH", description: "Panasonic 2.5HP X-Premium Inverter — indoor unit",
-    qty: 4, unit_price_centi: 319000, total_centi: 1276000, balance_centi: 0, status: "Transferred",
+    qty: 4, unit_price_sen: 319000, total_sen: 1276000, balance_sen: 0, status: "Transferred",
   },
   {
     id: "r2", doc_no: "DO-2606-0114", line_date: "2026-06-18",
     debtor_code: "300-S0022", debtor_name: "Sunway Geo Residences — Tower B",
     item_code: "PAN-CUPU24XKH", description: "Panasonic 2.5HP X-Premium Inverter — outdoor unit",
-    qty: 4, unit_price_centi: 214000, total_centi: 856000, balance_centi: 0, status: "Transferred",
+    qty: 4, unit_price_sen: 214000, total_sen: 856000, balance_sen: 0, status: "Transferred",
   },
   {
     id: "r3", doc_no: "DO-2606-0117", line_date: "2026-06-21",
     debtor_code: "300-K0105", debtor_name: "Kiara Designer Suites Mgmt",
     item_code: "COP-16MM", description: "Copper piping 16mm insulated (per metre)",
-    qty: 60, unit_price_centi: 3850, total_centi: 231000, balance_centi: 489000, status: "Partial",
+    qty: 60, unit_price_sen: 3850, total_sen: 231000, balance_sen: 489000, status: "Partial",
   },
   {
     id: "r4", doc_no: "DO-2606-0117", line_date: "2026-06-21",
     debtor_code: "300-K0105", debtor_name: "Kiara Designer Suites Mgmt",
     item_code: "PAN-CSU10XKH", description: "Panasonic 1.0HP Standard Inverter",
-    qty: 2, unit_price_centi: 129000, total_centi: 258000, balance_centi: 489000, status: "Partial",
+    qty: 2, unit_price_sen: 129000, total_sen: 258000, balance_sen: 489000, status: "Partial",
   },
   {
     id: "r5", doc_no: "DO-2606-0121", line_date: "2026-06-24",
     debtor_code: "300-H0031", debtor_name: "Houzs Century — Ampang Showroom",
     item_code: "WM-BRKT-24", description: "Wall mount bracket set, 24k BTU",
-    qty: 6, unit_price_centi: 8500, total_centi: 51000, balance_centi: 0, status: "Transferred",
+    qty: 6, unit_price_sen: 8500, total_sen: 51000, balance_sen: 0, status: "Transferred",
   },
 ];
 
@@ -93,9 +93,9 @@ const buildColumns = (state: {
     { key: "item_code", label: "Item Code", width: 130, accessor: (r: any) => <span className="font-mono">{r.item_code}</span> },
     { key: "description", label: "Description", width: 280, accessor: (r: any) => r.description },
     { key: "qty", label: "Qty", width: 60, align: "right" as const, accessor: (r: any) => r.qty },
-    { key: "unit_price", label: "U/Price", width: 96, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.unit_price_centi)}</span> },
-    { key: "total", label: "Total (RM)", width: 110, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.total_centi)}</span> },
-    { key: "balance", label: "Balance (RM)", width: 110, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.balance_centi)}</span> },
+    { key: "unit_price", label: "U/Price", width: 96, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.unit_price_sen)}</span> },
+    { key: "total", label: "Total (RM)", width: 110, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.total_sen)}</span> },
+    { key: "balance", label: "Balance (RM)", width: 110, align: "right" as const, accessor: (r: any) => <span className="font-money">{rm(r.balance_sen)}</span> },
     { key: "status", label: "Status", width: 100, accessor: (r: any) => r.status },
   ] as any[];
 

@@ -81,6 +81,7 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -535,9 +536,25 @@ export default {
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
       );
-      // Durable SO allocation projection: every source-data mutation first
-      // queues the singleton invalidation in its own DB transaction. This sweep
-      // is the crash/network backstop for the low-latency after-commit attempt.
+      /* SO allocation projection sweep.
+
+         This comment used to read "every source-data mutation first queues the
+         singleton invalidation in its own DB transaction", which is FALSE and
+         reads as a durability guarantee the system does not give. Counted
+         2026-08-19: `scheduleStockAllocationAfterCommand` (the durable path,
+         enqueues inside the caller's transaction) has FOUR call sites, while
+         `recomputeSoStockAllocation` has 42. The other ~34 triggers — GRN
+         post/cancel, DO ship/cancel, returns, stock takes, transfers,
+         adjustments, consignment — are best-effort: they call the recompute and
+         hope. See the SCOPE header of scm/lib/stock-allocation-job.ts, which
+         says so plainly, and docs/modules/sales-order.md.
+
+         So this sweep is NOT merely a backstop for a rare crash. Since
+         2026-08-17 the recompute enqueues its own retry row when a sweep it
+         entered did not finish, which makes this a real repair loop for all ~38
+         triggers. What is still uncovered: a Worker that dies BEFORE reaching
+         the recompute leaves no row and no retry, and that gap closes only by
+         moving each route onto `runScmPgCommand`. */
       ctx.waitUntil(
         drainStockAllocationRecompute(env)
           .then((r) => {
@@ -549,6 +566,15 @@ export default {
             else if (r.processed || r.reason) console.log(`[cron so-allocation] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron so-allocation]", e))
+      );
+    } else if (event.cron === "*/15 * * * *") {
+      // MRP stored-planning snapshot refresh (option B, 2026-08-19): recompute
+      // each company's default-view MRP and save it, so the MRP page opens
+      // instantly from a fresh plan. Best-effort + fire-and-forget — a slow or
+      // failed run logs and never stalls the slot.
+      ctx.waitUntil(
+        refreshAllMrpSnapshots(env, new Date().toISOString())
+          .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).

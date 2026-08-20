@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   CONFIG_CACHE_TTL_SECONDS,
   configCacheKeyUrl,
@@ -102,10 +103,32 @@ app.get("/", async (c) => {
     role_name: string | null; last_seen_at: string | null; last_path?: string | null;
   };
 
+  /* Owner decision 2026-08-19: presence is scoped by the same thing everything
+     else is — the companies this caller is GRANTED, not the one their switcher
+     happens to sit on. */
+  const presenceCos = allowedCompanyIds(c);
+  /* Interpolating INTEGERS that came from the session, never from the request.
+     An empty grant set matches nobody, which is correct: a caller granted no
+     company has no colleagues to see. `undefined` means the company context could
+     not be read at all — degrade rather than empty the page. */
+  const presenceCoSql =
+    presenceCos === undefined
+      ? ""
+      : ` AND EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = u.id AND uc.company_id IN (${
+          presenceCos.length ? presenceCos.map((n) => Number(n)).join(",") : "-1"
+        }))`;
+  /* THE CACHE KEY CARRIES THE SET, and that is not a detail: it used to be the
+     literal "scope=all" — ONE entry shared by every caller — so scoping the query
+     alone would still have served the other company's list out of cache. Sorted,
+     so {1,2} and {2,1} are one entry rather than two. */
+  const scopeKey =
+    presenceCos === undefined
+      ? "scope=all"
+      : `scope=co:${[...presenceCos].sort((a, b) => a - b).join(",")}`;
   const cacheKeyUrl = configCacheKeyUrl(
     new URL(c.req.url).origin,
     "presence",
-    "scope=all",
+    scopeKey,
     1, // no version bump: the 15s TTL is the only freshness lever presence needs
   );
 
@@ -125,7 +148,7 @@ app.get("/", async (c) => {
        JOIN roles r ON r.id = u.role_id
        WHERE u.last_seen_at IS NOT NULL
          AND u.last_seen_at >= ?
-         AND u.status = 'active'
+         AND u.status = 'active'${presenceCoSql}
        ORDER BY u.last_seen_at DESC`
     )
       .bind(awayCutoff)

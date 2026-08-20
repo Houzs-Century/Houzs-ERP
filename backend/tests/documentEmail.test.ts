@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { documentEmailHtml, sendEmail } from "../src/services/email";
+import { documentEmailHtml, inviteEmailHtml, resetEmailHtml, sendEmail } from "../src/services/email";
 import { buildDeliveryOrderEmail, type DoEmailRow } from "../src/scm/lib/do-email";
 import {
   base64DecodedBytes,
@@ -94,6 +94,40 @@ describe("document email template", () => {
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&amp;");
     expect(html).toContain("&quot;");
+  });
+});
+
+describe("account email templates (invite / reset)", () => {
+  // These carry user-controlled display text — a user's own name, the role
+  // name, the requester's name — into HTML. Raw interpolation let a name set to
+  // markup render in the recipient's inbox. Every such field is now escapeHtml'd.
+  test("invite: inviter name, role name and link are escaped, not interpolated raw", () => {
+    const html = inviteEmailHtml({
+      link: "https://erp.example/accept?token=abc&x=1",
+      roleName: "<script>alert(1)</script>",
+      inviterName: 'Eve "<b>boss</b>"',
+      expiresIn: "48 hours",
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<b>boss</b>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&lt;b&gt;boss&lt;/b&gt;");
+    // The link still works — its & becomes the HTML-correct &amp; in the href.
+    expect(html).toContain("token=abc&amp;x=1");
+  });
+
+  test("reset: name and requestedBy are escaped, not interpolated raw", () => {
+    const html = resetEmailHtml({
+      name: "<img src=x onerror=alert(1)>",
+      link: "https://erp.example/reset?token=abc&x=1",
+      expiresIn: "1 hour",
+      requestedBy: "<script>steal()</script>",
+    });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("&lt;script&gt;steal()&lt;/script&gt;");
+    expect(html).toContain("token=abc&amp;x=1");
   });
 });
 
@@ -198,7 +232,7 @@ const poRow = (over: Partial<PoEmailRow> = {}): PoEmailRow => ({
   id: "22222222-2222-2222-2222-222222222222",
   po_number: "PO-2607-014",
   status: "SUBMITTED",
-  total_centi: 1234500,
+  total_sen: 1234500,
   currency: "MYR",
   po_date: "2026-07-19T00:00:00.000Z",
   supplier: { name: "Kilang Kayu Sdn Bhd", email: "sales@kilangkayu.com" },

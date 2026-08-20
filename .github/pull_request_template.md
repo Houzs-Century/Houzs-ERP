@@ -1,6 +1,6 @@
 ## Working agreement (CLAUDE.md — MANDATORY, checked by CI)
 
-`Working agreement` in Actions checks these three. Meeting them here is cheaper
+`Working agreement` in Actions checks these four. Meeting them here is cheaper
 than being told afterwards.
 
 - [ ] **Bug logged.** This PR is not a fix, or it adds a `BUG-HISTORY.md` entry
@@ -13,6 +13,13 @@ than being told afterwards.
 - [ ] **Serious incident?** An outage, data at risk, a fault that recurred, or
       anything that made the system feel unreliable to staff gets a
       `docs/<subject>-coe.md`, not just a `BUG-HISTORY.md` line.
+- [ ] **Remedy claim proved.** If this PR tells anyone that performing some
+      operation repairs something, an `Observed:` line below carries what you
+      saw when you did it — a status, a count, a duration, an error, a run URL.
+      Never done it? Put the word `UNTESTED` in the sentence, or label
+      `remedy-untested`. Reading the source is not evidence about production.
+
+- Observed:
 
 ### Migration (required when `backend/src/db/migrations-pg/` changes)
 

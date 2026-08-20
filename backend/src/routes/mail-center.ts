@@ -31,7 +31,7 @@ import { recipientList, sendEmail } from "../services/email";
 import { getBranding, getBrandingForCompany } from "../services/branding";
 import { validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
-import { activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
+import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -1135,6 +1135,7 @@ function outboxSnippet(text: string | null, html: string | null): string {
   return t.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
+const OUTBOX_COLS = "id, to_address, subject, status, attempts, last_error, sent_at, created_at, body_text, body_html";
 const OUTBOX_STATUSES = ["pending", "sent", "failed"];
 
 // GET /api/mail-center/outbox?status=&q=&limit=&offset= — the auto-sent log
@@ -1153,6 +1154,8 @@ app.get("/outbox", async (c) => {
   try {
     const where: string[] = [];
     const binds: (string | number)[] = [];
+    const outboxCo = activeCompanyCodePred(c);
+    if (outboxCo.sql) { where.push(outboxCo.sql.replace(/^ AND /, "")); binds.push(...outboxCo.binds); }
     if (status && OUTBOX_STATUSES.includes(status)) {
       where.push("status = ?");
       binds.push(status);
@@ -1165,9 +1168,7 @@ app.get("/outbox", async (c) => {
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const res = await c.env.DB.prepare(
-      `SELECT id, to_address, subject, status, attempts, last_error,
-              sent_at, created_at, body_text, body_html
-         FROM email_outbox ${whereSql}
+      `SELECT ${OUTBOX_COLS} FROM email_outbox ${whereSql}
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?`,
     )
@@ -1187,11 +1188,11 @@ app.get("/outbox", async (c) => {
       attachmentNames: [] as string[],
     }));
 
-    // Status roll-up over the WHOLE log so the header can flag failures.
+    // Roll-up FOR THIS COMPANY: unscoped it shows the other tenant's failures.
     const counts = { sent: 0, failed: 0, pending: 0 };
     const countRes = await c.env.DB.prepare(
-      `SELECT status, COUNT(*) AS n FROM email_outbox GROUP BY status`,
-    ).all<{ status: string; n: number | string }>();
+      `SELECT status, COUNT(*) AS n FROM email_outbox WHERE 1=1${outboxCo.sql} GROUP BY status`,
+    ).bind(...outboxCo.binds).all<{ status: string; n: number | string }>();
     for (const row of countRes.results ?? []) {
       const s = String(row.status || "").toLowerCase();
       const n = Number(row.n ?? 0);
@@ -1216,12 +1217,11 @@ app.get("/outbox/:id", async (c) => {
   }
   const id = c.req.param("id");
   try {
+    const outboxCo = activeCompanyCodePred(c); // scopes the body_html read
     const r = await c.env.DB.prepare(
-      `SELECT id, to_address, subject, status, attempts, last_error,
-              sent_at, created_at, body_text, body_html
-         FROM email_outbox WHERE id = ? LIMIT 1`,
+      `SELECT ${OUTBOX_COLS} FROM email_outbox WHERE id = ?${outboxCo.sql} LIMIT 1`,
     )
-      .bind(id)
+      .bind(id, ...outboxCo.binds)
       .first<OutboxRow>();
     if (!r) return c.json({ error: "not found" }, 404);
     return c.json({

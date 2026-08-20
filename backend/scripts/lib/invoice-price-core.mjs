@@ -79,7 +79,7 @@ export function buildPriceIndex(rows, acToErp) {
 /**
  * Resolve one ERP purchase line to a single invoice price.
  * Returns one of:
- *   { status: "RESOLVED",   priceCenti, piNo, piDate, grNo, acItem, desc2 }
+ *   { status: "RESOLVED",   priceSen, piNo, piDate, grNo, acItem, desc2 }
  *   { status: "AMBIGUOUS",  prices: [centi...], sources: [{centi, piNo}...] }
  *   { status: "NO_INVOICE_PRICE" }
  */
@@ -95,7 +95,7 @@ export function resolvePrice(idx, acPoNo, erpCode) {
     };
   }
   const [centi, meta] = [...e.prices.entries()][0];
-  return { status: "RESOLVED", priceCenti: centi, ...meta };
+  return { status: "RESOLVED", priceSen: centi, ...meta };
 }
 
 /**
@@ -148,15 +148,15 @@ export function measureLayerCostability(layers, grIdx) {
 }
 
 /**
- * Decide what to do with one ERP line. `currentCenti` is what the line carries
+ * Decide what to do with one ERP line. `currentSen` is what the line carries
  * today. This is the single place the never-overwrite and idempotency rules
  * live, so a test can pin them without a database.
  */
-export function planWrite(currentCenti, resolution) {
-  const cur = Number(currentCenti ?? 0);
+export function planWrite(currentSen, resolution) {
+  const cur = Number(currentSen ?? 0);
   if (cur > 0) return { action: "SKIP", reason: "SKIP_ALREADY_PRICED" };
   if (resolution.status === "AMBIGUOUS") return { action: "SKIP", reason: "SKIP_AMBIGUOUS" };
   if (resolution.status !== "RESOLVED") return { action: "SKIP", reason: "SKIP_NO_INVOICE_PRICE" };
-  if (!(resolution.priceCenti > 0)) return { action: "SKIP", reason: "SKIP_ZERO_PRICE" };
-  return { action: "WRITE", priceCenti: resolution.priceCenti, piNo: resolution.piNo };
+  if (!(resolution.priceSen > 0)) return { action: "SKIP", reason: "SKIP_ZERO_PRICE" };
+  return { action: "WRITE", priceSen: resolution.priceSen, piNo: resolution.piNo };
 }

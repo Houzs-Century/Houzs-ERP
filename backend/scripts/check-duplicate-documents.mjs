@@ -130,8 +130,8 @@ try {
      WHERE UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'`;
   const poIds = poHdrs.map((p) => p.id);
   const poLines = poIds.length ? await pg`
-    SELECT purchase_order_id::text AS doc_id, material_code, item_group, variants,
-           qty, received_qty, unit_price_centi, warehouse_id::text AS warehouse_id
+    SELECT purchase_order_id::text AS doc_id, item_code, item_group, variants,
+           qty, received_qty, unit_price_sen, warehouse_id::text AS warehouse_id
       FROM scm.purchase_order_items WHERE purchase_order_id::text = ANY(${poIds})` : [];
   const poGrns = poIds.length ? await pg`
     SELECT purchase_order_id::text AS doc_id, grn_number
@@ -187,10 +187,10 @@ try {
       executed: grns.length > 0 || dels.length > 0,
       exec: `status=${p.status} | GRNs: ${listOr(grns)} | delivered: ${listOr(dels)} | allocations: ${al ? `${al.n} (${al.n_so} SO-linked)` : "0"}`,
       lines: (linesByPo.get(p.id) ?? []).map((l) => ({
-        itemCode: l.material_code,
+        itemCode: l.item_code,
         variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
         qty: Number(l.qty ?? 0),
-        unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+        unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
       })),
     };
   });
@@ -215,13 +215,13 @@ try {
       log(`PRIME SUSPECT 2990-PO-2606-023 vs -024: ${!s023 ? "-023 NOT FOUND. " : ""}${!s024 ? "-024 NOT FOUND." : ""}`);
     } else {
       const susLines = await pg`
-        SELECT purchase_order_id::text AS doc_id, material_code, item_group, variants, qty, unit_price_centi
+        SELECT purchase_order_id::text AS doc_id, item_code, item_group, variants, qty, unit_price_sen
           FROM scm.purchase_order_items WHERE purchase_order_id::text IN (${s023.id}, ${s024.id})`;
       const keyOf = (docId) => docLineMultisetKey(susLines.filter((l) => l.doc_id === docId).map((l) => ({
-        itemCode: l.material_code,
+        itemCode: l.item_code,
         variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
         qty: Number(l.qty ?? 0),
-        unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+        unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
       })));
       const multisetMatch = keyOf(s023.id) === keyOf(s024.id);
       const alloc023 = await pg`
@@ -247,8 +247,8 @@ try {
      WHERE UPPER(COALESCE(g.status::text,'')) <> 'CANCELLED'`;
   const grnIds = grnHdrs.map((g) => g.id);
   const grnLines = grnIds.length ? await pg`
-    SELECT grn_id::text AS doc_id, material_code, item_group, variants,
-           qty_accepted AS qty, unit_price_centi
+    SELECT grn_id::text AS doc_id, item_code, item_group, variants,
+           qty_accepted AS qty, unit_price_sen
       FROM scm.grn_items WHERE grn_id::text = ANY(${grnIds})` : [];
   const grnMoves = grnIds.length ? await pg`
     SELECT source_doc_id::text AS doc_id, COUNT(*)::int AS n
@@ -284,10 +284,10 @@ try {
     executed: (grnMovesBy.get(g.id) ?? 0) > 0 || (grnPisBy.get(g.id) ?? []).length > 0,
     exec: `status=${g.status} | posted movements: ${grnMovesBy.get(g.id) ?? 0} | PIs: ${listOr(grnPisBy.get(g.id) ?? [])}`,
     lines: (grnLinesBy.get(g.id) ?? []).map((l) => ({
-      itemCode: l.material_code,
+      itemCode: l.item_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })),
   }));
   reportPairs("GRN pairs (same PO, else same supplier — double-receipt candidates)", grnDocs,
@@ -301,7 +301,7 @@ try {
      WHERE UPPER(COALESCE(s.status::text,'')) <> 'CANCELLED'`;
   const soDocNos = soHdrs.map((s) => s.doc_no);
   const soLines = soDocNos.length ? await pg`
-    SELECT doc_no AS doc_id, item_code, item_group, variants, qty, unit_price_centi
+    SELECT doc_no AS doc_id, item_code, item_group, variants, qty, unit_price_sen
       FROM scm.mfg_sales_order_items
      WHERE doc_no = ANY(${soDocNos}) AND cancelled = false` : [];
   const soDos = soDocNos.length ? await pg`
@@ -342,7 +342,7 @@ try {
       itemCode: l.item_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })),
   }));
   reportPairs("SO pairs (same company + customer)", soDocs, (d) => `${d.companyId}::${d.partyId}`);
@@ -356,7 +356,7 @@ try {
      WHERE UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`;
   const doIds = doHdrs.map((d) => d.id);
   const doLines = doIds.length ? await pg`
-    SELECT delivery_order_id::text AS doc_id, item_code, item_group, variants, qty, unit_price_centi
+    SELECT delivery_order_id::text AS doc_id, item_code, item_group, variants, qty, unit_price_sen
       FROM scm.delivery_order_items WHERE delivery_order_id::text = ANY(${doIds})` : [];
   const doMoves = doIds.length ? await pg`
     SELECT source_doc_id::text AS doc_id, COUNT(*)::int AS n
@@ -394,7 +394,7 @@ try {
       itemCode: l.item_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })),
   }));
   reportPairs("DO pairs (same SO, else same customer — double-shipment candidates)", doDocs,
@@ -403,13 +403,13 @@ try {
   // ══ SI ═══════════════════════════════════════════════════════════════════
   const siHdrs = await pg`
     SELECT s.id::text AS id, s.invoice_number, s.company_id, s.debtor_code, s.debtor_name,
-           s.invoice_date::text AS invoice_date, s.total_centi,
+           s.invoice_date::text AS invoice_date, s.total_sen,
            UPPER(COALESCE(s.status::text,'')) AS status
       FROM scm.sales_invoices s
      WHERE UPPER(COALESCE(s.status::text,'')) <> 'CANCELLED'`;
   const siIds = siHdrs.map((s) => s.id);
   const siLines = siIds.length ? await pg`
-    SELECT sales_invoice_id::text AS doc_id, item_code, item_group, variants, qty, unit_price_centi
+    SELECT sales_invoice_id::text AS doc_id, item_code, item_group, variants, qty, unit_price_sen
       FROM scm.sales_invoice_items WHERE sales_invoice_id::text = ANY(${siIds})` : [];
   const siLinesBy = new Map();
   for (const l of siLines) {
@@ -426,12 +426,12 @@ try {
     partyId: (s.debtor_code ?? s.debtor_name ?? "").trim().toUpperCase(),
     status: s.status,
     executed: ["POSTED", "PARTIALLY_PAID", "PAID"].includes(s.status),
-    exec: `status=${s.status} | total=RM${(Number(s.total_centi ?? 0) / 100).toFixed(2)}`,
+    exec: `status=${s.status} | total=RM${(Number(s.total_sen ?? 0) / 100).toFixed(2)}`,
     lines: (siLinesBy.get(s.id) ?? []).map((l) => ({
       itemCode: l.item_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })),
   }));
   reportPairs("SI pairs (same company + customer — double-billing candidates)", siDocs,
@@ -440,13 +440,13 @@ try {
   // ══ PI ═══════════════════════════════════════════════════════════════════
   const piHdrs = await pg`
     SELECT p.id::text AS id, p.invoice_number, p.company_id, p.supplier_id::text AS supplier_id,
-           p.grn_id::text AS grn_id, p.invoice_date::text AS invoice_date, p.total_centi,
+           p.grn_id::text AS grn_id, p.invoice_date::text AS invoice_date, p.total_sen,
            UPPER(COALESCE(p.status::text,'')) AS status
       FROM scm.purchase_invoices p
      WHERE UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'`;
   const piIds = piHdrs.map((p) => p.id);
   const piLines = piIds.length ? await pg`
-    SELECT purchase_invoice_id::text AS doc_id, material_code, item_group, qty, unit_price_centi
+    SELECT purchase_invoice_id::text AS doc_id, item_code, item_group, qty, unit_price_sen
       FROM scm.purchase_invoice_items WHERE purchase_invoice_id::text = ANY(${piIds})` : [];
   const piLinesBy = new Map();
   for (const l of piLines) {
@@ -463,13 +463,13 @@ try {
     partyId: p.grn_id ? `grn:${p.grn_id}` : `sup:${p.supplier_id ?? ""}`,
     status: p.status,
     executed: ["POSTED", "PARTIALLY_PAID", "PAID"].includes(p.status),
-    exec: `status=${p.status} | total=RM${(Number(p.total_centi ?? 0) / 100).toFixed(2)}`,
+    exec: `status=${p.status} | total=RM${(Number(p.total_sen ?? 0) / 100).toFixed(2)}`,
     lines: (piLinesBy.get(p.id) ?? []).map((l) => ({
-      itemCode: l.material_code,
+      itemCode: l.item_code,
       // purchase_invoice_items carries no variants blob — '' is honest.
       variantKey: "",
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })),
   }));
   reportPairs("PI pairs (same GRN, else same supplier — double-billing candidates)", piDocs,
@@ -482,8 +482,8 @@ try {
     const hdr = poHdrs.find((p) => p.po_number === poNo);
     if (!hdr) { log(`  ${poNo}: NOT FOUND (or cancelled) — skipped.`); continue; }
     const lines = linesByPo.get(hdr.id) ?? [];
-    const codes = [...new Set(lines.map((l) => l.material_code).filter(Boolean))];
-    log(`  ${poNo} (company ${co(hdr.company_id)}, status ${hdr.status}) lines: ${lines.map((l) => `${l.material_code} x${l.qty}`).join(", ")}`);
+    const codes = [...new Set(lines.map((l) => l.item_code).filter(Boolean))];
+    log(`  ${poNo} (company ${co(hdr.company_id)}, status ${hdr.status}) lines: ${lines.map((l) => `${l.item_code} x${l.qty}`).join(", ")}`);
     if (codes.length === 0) continue;
     const demand = await pg`
       SELECT i.doc_no, i.item_code, i.qty, UPPER(COALESCE(s.status::text,'')) AS so_status,
@@ -537,7 +537,7 @@ try {
     const sLines = linesByPo.get(hdr.id) ?? [];
     const buckets = [];
     for (const l of sLines) {
-      const code = l.material_code;
+      const code = l.item_code;
       if (!code) continue;
       const vk = variantKeyMirror(l.item_group, l.variants ?? null);
       const suspectOpen = Math.max(0, Number(l.qty ?? 0) - Number(l.received_qty ?? 0));
@@ -547,11 +547,11 @@ try {
         pg`SELECT COALESCE(SUM(GREATEST(0, i.qty - COALESCE(i.received_qty,0))),0)::int AS n
              FROM scm.purchase_order_items i
              JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-            WHERE p.company_id = ${hdr.company_id} AND i.material_code = ${code}
+            WHERE p.company_id = ${hdr.company_id} AND i.item_code = ${code}
               AND UPPER(COALESCE(p.status::text,'')) NOT IN ('CANCELLED','DRAFT')`,
         pg`SELECT COALESCE(SUM(qty_remaining),0)::int AS n
              FROM scm.inventory_lots
-            WHERE company_id = ${hdr.company_id} AND product_code = ${code} AND qty_remaining > 0`,
+            WHERE company_id = ${hdr.company_id} AND item_code = ${code} AND qty_remaining > 0`,
         pg`SELECT COALESCE(SUM(GREATEST(0, i.qty - COALESCE((SELECT SUM(di.qty) FROM scm.delivery_order_items di
                     JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
                    WHERE di.so_item_id = i.id AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'),0))),0)::int AS n

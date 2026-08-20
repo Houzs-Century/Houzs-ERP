@@ -26,7 +26,7 @@
 //      `.in('code', …)` with NO company predicate and NO ORDER BY, then keys a
 //      Map by code — so with more than one row per code it keeps whichever
 //      Postgres returned last. 0187's own header already asserts the natural
-//      key is (company_id, product_code) "the key the SO pricing path already
+//      key is (company_id, item_code) "the key the SO pricing path already
 //      resolves by" — it doesn't. Fix = scope the loader, NOT a backfill.
 //
 // THE POS ALREADY POINTS AT H2. Configurator.tsx runs the SAME rule client-side

@@ -46,7 +46,7 @@ beforeEach(() => resetWritebackFlagCache());
 describe('a partial conversion transfers only the lines it actually took', () => {
   const soLines = (keys: Array<number | null>) => keys.map((k, i) => ({
     id: `so-item-${i + 1}`, doc_no: 'HC-SO-9', item_code: `SKU-${i + 1}`,
-    qty: 1, unit_price_centi: 100, linked_ac_dtlkey: k, cancelled: false,
+    qty: 1, unit_price_sen: 100, linked_ac_dtlkey: k, cancelled: false,
   }));
 
   const convertDo = (sb: unknown) => enqueueConvert(sb as never, {
@@ -67,7 +67,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
       ],
     });
-    expect(await convertDo(sb)).toBe(true);
+    expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
@@ -85,7 +85,11 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
       ],
     });
-    expect(await convertDo(sb)).toBe(true);
+    /* NOTHING WAS QUEUED, and `queued` says so — the same word the two create
+       routes use for a refusal that files a `skipped` row and sends nothing
+       (enqueueSoCreate's catch, autocount-outbox.ts:703). The row below is the
+       assertion that matters; this one only says the transfer did not go. */
+    expect((await convertDo(sb)).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('cannot name the subset');
@@ -101,7 +105,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
       ],
     });
-    expect(await convertDo(sb)).toBe(true);
+    expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     /* "All outstanding" and "the lines we took" are the same set here, and the
@@ -115,7 +119,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         ...soLines([9001, 9002]),
         {
           id: 'so-item-3', doc_no: 'HC-SO-9', item_code: 'SKU-3', qty: 1,
-          unit_price_centi: 100, linked_ac_dtlkey: null, cancelled: true,
+          unit_price_sen: 100, linked_ac_dtlkey: null, cancelled: true,
         },
       ],
       delivery_order_items: [
@@ -123,7 +127,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
       ],
     });
-    expect(await convertDo(sb)).toBe(true);
+    expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
   });
@@ -144,11 +148,11 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   test('a MERGE that leaves one parent line behind is partial, and an unnameable subset is REFUSED', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [
-        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
-        { id: 'a-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9002, cancelled: false },
+        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'a-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9002, cancelled: false },
         /* Never keyed — this is what forces the question to be asked at all. */
-        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: null, cancelled: false },
-        { id: 'b-2', doc_no: 'HC-SO-10', item_code: 'SKU-4', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9004, cancelled: false },
+        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: null, cancelled: false },
+        { id: 'b-2', doc_no: 'HC-SO-10', item_code: 'SKU-4', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9004, cancelled: false },
       ],
       /* Both of SO-9, one of SO-10. b-2 stays behind. */
       delivery_order_items: [
@@ -157,7 +161,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-3', delivery_order_id: 'do-1', so_item_id: 'b-1', item_code: 'SKU-3' },
       ],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: [
@@ -168,7 +172,9 @@ describe('a partial conversion transfers only the lines it actually took', () =>
       docType: 'DO',
       docNo: 'HC-DO-1',
       docId: 'do-1',
-    })).toBe(true);
+    /* queued FALSE: this merge was REFUSED, and nothing went. Same word the
+       create routes use for a refusal that files a skipped row (:703). */
+    })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('cannot name the subset');
@@ -180,15 +186,15 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   test('a merge that takes EVERY line of every parent still sends the keys it named', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [
-        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
-        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9003, cancelled: false },
+        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9003, cancelled: false },
       ],
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'a-1', item_code: 'SKU-1' },
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'b-1', item_code: 'SKU-3' },
       ],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: [
@@ -199,7 +205,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
       docType: 'DO',
       docNo: 'HC-DO-1',
       docId: 'do-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     expect(row.payload.body.DtlKeys).toEqual([9001, 9003]);
@@ -215,19 +221,19 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   test('a DO shipping 2 of a 5-unit line names the QUANTITY, not just the line', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [
-        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
       ],
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 2 },
       ],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
       to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
       docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     expect(row.payload.body.DtlKeys).toEqual([9001]);
@@ -242,19 +248,19 @@ describe('a partial conversion transfers only the lines it actually took', () =>
        46,318 lines that ever moved were whole. */
     const sb = withFlag('1', {
       mfg_sales_order_items: [
-        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
       ],
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 5 },
       ],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
       to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
       docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.DtlKeys).toEqual([9001]);
     expect(row.payload.body.Details).toBeUndefined();
@@ -267,21 +273,21 @@ describe('a partial conversion transfers only the lines it actually took', () =>
        document, and this pins that it does not. */
     const sb = withFlag('1', {
       mfg_sales_order_items: [
-        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
-        { id: 'so-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 3, unit_price_centi: 100, linked_ac_dtlkey: 9002, cancelled: false },
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'so-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 3, unit_price_sen: 100, linked_ac_dtlkey: 9002, cancelled: false },
       ],
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 2 },
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'SKU-2', qty: 3 },
       ],
     });
-    expect(await enqueueConvert(sb as never, {
+    expect((await enqueueConvert(sb as never, {
       companyId: 1,
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
       to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
       docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
-    })).toBe(true);
+    })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.Details).toEqual([
       { DtlKey: 9001, Qty: 2 },
@@ -297,7 +303,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: null, item_code: 'ADHOC' },
       ],
     });
-    expect(await convertDo(sb)).toBe(true);
+    expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     expect(row.payload.body.DtlKeys).toBeUndefined();

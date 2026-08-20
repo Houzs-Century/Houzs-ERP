@@ -22,7 +22,7 @@
 //
 //     ANSWERED 2026-08-11, run 31417585775: it DOES. uq_inv_mov_do_source is
 //     live, partial on source_doc_type='DO', keyed (source_doc_type,
-//     source_doc_id, product_code, variant_key). Migration 0230's comment
+//     source_doc_id, item_code, variant_key). Migration 0230's comment
 //     enumerating this table's indexes lists only the four non-unique ones and
 //     is what makes the tree read as if none existed. This block stays so the
 //     answer is re-checkable rather than remembered.
@@ -113,10 +113,10 @@ try {
 
   // ── Q2 — duplicates in the natural DO bucket ────────────────────────────────
   // The bucket key is exactly what deductInventoryForDo collapses lines into:
-  // (source_doc_type, source_doc_id, movement_type, warehouse_id, product_code,
+  // (source_doc_type, source_doc_id, movement_type, warehouse_id, item_code,
   //  variant_key, batch_no). Anything with count > 1 blocks a unique index there.
   const dupDo = await pg`
-    SELECT source_doc_id, movement_type, warehouse_id, product_code,
+    SELECT source_doc_id, movement_type, warehouse_id, item_code,
            COALESCE(variant_key, '') AS variant_key,
            COALESCE(batch_no, '')    AS batch_no,
            count(*)                  AS rows_in_bucket,
@@ -137,7 +137,7 @@ try {
         SELECT count(*) - 1 AS extra
           FROM scm.inventory_movements
          WHERE source_doc_type = 'DO'
-         GROUP BY source_doc_id, movement_type, warehouse_id, product_code,
+         GROUP BY source_doc_id, movement_type, warehouse_id, item_code,
                   COALESCE(variant_key, ''), COALESCE(batch_no, '')
         HAVING count(*) > 1
       ) q`;
@@ -150,7 +150,7 @@ try {
         SELECT count(*) - 1 AS extra
           FROM scm.inventory_movements
          GROUP BY COALESCE(source_doc_type, ''), COALESCE(source_doc_id::text, ''),
-                  movement_type, warehouse_id, product_code,
+                  movement_type, warehouse_id, item_code,
                   COALESCE(variant_key, ''), COALESCE(batch_no, '')
         HAVING count(*) > 1
       ) q`;
@@ -169,7 +169,7 @@ try {
     line("  top DO buckets (resync_rows = rows explained by resyncInventoryForDo deltas):");
     for (const r of dupDo) {
       line(
-        `    do=${r.source_doc_id} ${r.movement_type} wh=${r.warehouse_id} sku=${r.product_code} ` +
+        `    do=${r.source_doc_id} ${r.movement_type} wh=${r.warehouse_id} sku=${r.item_code} ` +
           `vk='${r.variant_key}' batch='${r.batch_no}' rows=${r.rows_in_bucket} resync=${r.resync_rows} ` +
           `qty=${r.total_qty} first=${r.first_at} last=${r.last_at}`,
       );
@@ -183,7 +183,7 @@ try {
 
   // ── Q2b — did a DO resync delta EVER land? ──────────────────────────────────
   // The live index uq_inv_mov_do_source is keyed (source_doc_type, source_doc_id,
-  // product_code, variant_key) and is partial on source_doc_type='DO' - it does
+  // item_code, variant_key) and is partial on source_doc_type='DO' - it does
   // NOT include movement_type, warehouse_id or batch_no. So ANY second row for a
   // (DO, product, variant) bucket is rejected, which is precisely what
   // resyncInventoryForDo tries to write when an operator edits a line qty on an

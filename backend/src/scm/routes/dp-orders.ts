@@ -28,6 +28,7 @@ import {
   snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
   snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
+import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { dpLorryBlockReason } from '../lib/dp-lorry-block';
@@ -330,6 +331,42 @@ dpOrders.get('/', async (c) => {
   // is returned untouched (fail-open — see the module header).
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const rows = (data ?? []) as Array<Record<string, unknown> & DpRowLike>;
+
+  /* Sales context off the source SO (owner 2026-08-19, parity with the planning
+     board's Salesperson / Venue / Processing Date / Total Amount columns): an
+     SO-sourced job answers them from its SO, batch-read once by doc_no (TEXT PK,
+     ≤500 rows so one .in() is bounded). Manual / supplier / project / case rows
+     have no SO → the so_* fields stay null and the list renders a dash. A failed
+     SO read degrades to null rather than 500ing the registry. */
+  {
+    const docNos = [...new Set(rows
+      .map((r) => ((r.soDocNo ?? r.so_doc_no) as string | null) ?? null)
+      .filter((x): x is string => !!x))];
+    const soByDoc = new Map<string, Record<string, unknown>>();
+    if (docNos.length > 0) {
+      const { data: soRows, error: soErr } = await sb.from('mfg_sales_orders')
+        .select('doc_no, agent, salesperson_id, venue, processing_date, local_total_sen')
+        .in('doc_no', docNos);
+      if (soErr) {
+        // Decoration only — the registry must not 500 over its garnish. With
+        // the error NAMED and logged, "every so_* renders a dash" is a decision
+        // the log can explain, not a failure dressed up as no-SO rows.
+        console.error('[dp-orders] sales-context SO read failed; so_* fields degrade to null:', soErr.message);
+      }
+      for (const s of (soRows ?? []) as Array<Record<string, unknown>>) {
+        const doc = String(s.docNo ?? s.doc_no ?? '');
+        if (doc) soByDoc.set(doc, s);
+      }
+    }
+    for (const r of rows) {
+      const s = soByDoc.get(String((r.soDocNo ?? r.so_doc_no) ?? ''));
+      r.so_agent = (s?.agent as string | null) ?? null;
+      r.so_salesperson_id = ((s?.salespersonId ?? s?.salesperson_id) as string | null) ?? null;
+      r.so_venue = (s?.venue as string | null) ?? null;
+      r.so_processing_date = ((s?.processingDate ?? s?.processing_date) as string | null) ?? null;
+      r.so_total_sen = s ? Number((s.localTotalSen ?? s.local_total_sen) ?? 0) : null;
+    }
+  }
   if (scope.mode === 'all') return c.json({ dpOrders: rows });
   const tripCrew = await tripCrewByIds(sb, rows.map((r) => (r.trip_id ?? r.tripId) ?? null));
   return c.json({ dpOrders: filterDpOrdersByScope(scope, rows, tripCrew) });
@@ -495,6 +532,17 @@ dpOrders.post('/:id/schedule', async (c) => {
   const denied = await denyIfNotOwnDpJob(c, sb, id);
   if (denied) return denied;
 
+  /* THE TRIP IS A BODY FIELD. The dp_order itself is proved ours above, but
+     `p.tripId` was used unchecked to read the trip's stops and then to INSERT a
+     trip_stop stamped with OUR company_id — putting our job on the other
+     company's driver route, as a row their own scoped reads cannot explain.
+     Trips are the cross-company shared queue, so the predicate is the caller's
+     ALLOWED set, not the active company (trips.ts:423 reads them the same way).
+     See lib/ref-in-company.ts. Before the dp_no is minted, so a bad trip id
+     never burns a number. */
+  const tripCheck = await assertTripInAllowedCompanies(sb, p.tripId ?? null, c);
+  if (!tripCheck.ok) return c.json(tripCheck.body, tripCheck.status);
+
   const plate = await plateForLorry(sb, p.lorryId);
   if (!plate) return c.json({ error: 'lorry_not_found' }, 404);
 
@@ -545,7 +593,7 @@ dpOrders.post('/:id/schedule', async (c) => {
         stop_type: d.job_type,
         customer_name: (d.party_name as string | null) ?? null,
         address,
-        revenue_centi: 0,
+        revenue_sen: 0,
         /* The SAME number the order header carries — a mirror, not a second
            identity. Writing it here is also what keeps trip_stops the complete
            registry the minter scans. */

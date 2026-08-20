@@ -146,7 +146,7 @@ async function main() {
     log(`  ac_docno=${soLines[0].ac}  lines=${soLines.length}`);
 
     const poLines = await sql`
-      SELECT pi.id::text AS id, pi.so_item_id::text AS so_item_id, pi.material_code AS code,
+      SELECT pi.id::text AS id, pi.so_item_id::text AS so_item_id, pi.item_code AS code,
              pi.item_group, pi.linked_ac_dtlkey, pi.description2 AS d2, pi.variants, pi.qty,
              p.po_number, p.linked_ac_docno AS ac
         FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
@@ -299,7 +299,7 @@ async function main() {
   log("################ SECTION C - fabric-code truncation across linked SO/PO pairs ################");
   const pairs = await sql`
     SELECT s.doc_no AS so_doc, s.item_code AS so_code, s.variants AS so_v, s.item_group AS grp,
-           p.po_number AS po_doc, pi.material_code AS po_code, pi.variants AS po_v
+           p.po_number AS po_doc, pi.item_code AS po_code, pi.variants AS po_v
       FROM scm.purchase_order_items pi
       JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
       JOIN scm.mfg_sales_order_items s ON s.id = pi.so_item_id
@@ -388,7 +388,7 @@ async function main() {
   log("");
   log("  GRN variant heights on the documents named in the audit:");
   const grn = await sql`
-    SELECT g.grn_number, gi.material_code AS code, gi.variants, p.po_number
+    SELECT g.grn_number, gi.item_code AS code, gi.variants, p.po_number
       FROM scm.grn_items gi
       JOIN scm.grns g ON g.id = gi.grn_id
       JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
@@ -424,7 +424,7 @@ async function main() {
     .filter((x) => typeof x === "string").join(" ").match(/\d+/g) ?? []).map(Number));
 
   const grnAll = await sql`
-    SELECT g.grn_number, g.migrated_no_stock AS mig, gi.id::text AS id, gi.material_code AS code,
+    SELECT g.grn_number, g.migrated_no_stock AS mig, gi.id::text AS id, gi.item_code AS code,
            gi.item_group AS grp, gi.variants AS gv,
            pi.id::text AS po_item_id, pi.variants AS pv, pi.description2 AS pd2,
            pi.linked_ac_dtlkey AS pdtl, p.po_number
@@ -505,7 +505,7 @@ async function main() {
     ["SO", await sql`SELECT i.doc_no AS doc, i.item_code AS code, i.variants AS v
                        FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                       WHERE h.company_id = ${1} AND jsonb_typeof(i.variants) = 'object'`],
-    ["PO", await sql`SELECT p.po_number AS doc, pi.material_code AS code, pi.variants AS v
+    ["PO", await sql`SELECT p.po_number AS doc, pi.item_code AS code, pi.variants AS v
                        FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
                       WHERE p.company_id = ${1} AND jsonb_typeof(pi.variants) = 'object'`],
   ]) {

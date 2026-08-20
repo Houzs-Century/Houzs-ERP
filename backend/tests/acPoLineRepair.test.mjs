@@ -197,7 +197,7 @@ test("codes fold on case and space before being called a different product", () 
 // ── which ERP row descends from which AutoCount line ────────────────────────
 
 const erp = (id, sku, code, over = {}) => ({
-  id, supplier_sku: sku, material_code: code, qty: 1, description2: "", ...over,
+  id, supplier_sku: sku, item_code: code, qty: 1, description2: "", ...over,
 });
 
 test("one AutoCount sofa line owns every compartment row it fanned out into", () => {

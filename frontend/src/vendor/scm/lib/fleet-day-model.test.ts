@@ -6,14 +6,14 @@ import type { FleetDayTrip, FleetDayStop } from './fleet-day-queries';
 const stop = (over: Partial<FleetDayStop> & { id: string }): FleetDayStop => ({
   stop_no: 1, stop_type: 'DELIVERY', customer_name: null, address: null, phone: null,
   house_type: null, earliest_time: null, latest_time: null, access_note: null,
-  eta_offset_s: null, leg_distance_m: null, revenue_centi: 0, lat: null, lng: null, geocoded: false,
+  eta_offset_s: null, leg_distance_m: null, revenue_sen: 0, lat: null, lng: null, geocoded: false,
   ...over,
 });
 
 const trip = (over: Partial<FleetDayTrip> & { id: string }): FleetDayTrip => ({
   trip_no: over.id, trip_date: '2026-07-26', status: 'PLANNED', is_outsourced: false,
   total_distance_km: null, lorry: null, driver: null, helpers: [], warehouse: null,
-  depot: null, total_revenue_centi: 0, total_drops: 0, stops: [], ...over,
+  depot: null, total_revenue_sen: 0, total_drops: 0, stops: [], ...over,
 });
 
 describe('buildMapRoutes', () => {

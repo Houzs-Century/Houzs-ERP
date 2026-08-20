@@ -53,13 +53,7 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
-import {
-  getProjectScope,
-  projectAccessLevel,
-  canSeeProject,
-  isScopedProjectUser,
-} from "../services/projectAcl";
-import { getPmsAccess, getPmsRole, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
+import { getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval } from "../services/permissions";
@@ -74,6 +68,7 @@ import {
 } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
+import { refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -87,11 +82,21 @@ const app = new Hono<{ Bindings: Env }>();
 // and creates stamp company_id, CONDITIONALLY (skipped when the companies
 // master is unresolved: pre-migration, the D1 test mirror, or a DB
 // cold-start) so single-company Houzs keeps serving unchanged. This is the
-// same raw-SQL idiom as routes/sales.ts. Child tables (checklist / sections /
-// attachments / activity / finance) are always read through their parent
-// project_id, so the project row is the single source of company truth;
-// their own company_id (added by 0093) is a schema-parity backstop filled by
-// the PG DEFAULT.
+// same raw-SQL idiom as routes/sales.ts.
+//
+// ⚠️ CORRECTED 2026-08-18. This paragraph used to assert that child tables
+// "are ALWAYS read through their parent project_id". That was FALSE, and it was
+// load-bearing false: it is the sentence that made ~30 handlers look safe
+// without anyone re-reading them, and migration 0292 repeated it back. It holds
+// only where the URL CARRIES the parent. A large family addresses the CHILD by
+// its own id — /finance/lines/:lineId, /checklist/:itemId, /sections/:sectionId,
+// /defects/:defectId, /team/:teamId, /attachments/:attId, /stock-transfers/:tid
+// — and no middleware supplies a project_id, so each was a bare `WHERE id = ?`
+// against a service-role client: one tenant editing the other's P&L, checklist
+// and defect list by uuid. THE RULE NOW, enforced by lib/project-company-gate.ts
+// rather than by this comment: a handler taking a CHILD id proves that child is
+// in the active company BEFORE anything else, and a handler taking a PARENT id
+// and creating under it proves the parent.
 
 /**
  * Server-side finance/payment gate (Sales-department visibility, rules 3 & 5).
@@ -1001,7 +1006,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   const fromParam = c.req.query("from");
   const toParam = c.req.query("to");
   const user = c.get("user");
-  const scope = getProjectScope(user);
   // "My pending tasks" filter — map the caller's role to the task scope
   // they own. Owner / IT Admin / unmapped roles -> no filter (full list).
   let pendingLabel: string | undefined;
@@ -1149,13 +1153,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     include_archived: c.req.query("include_archived") === "1",
     sort_by: c.req.query("sort_by") || undefined,
     sort_dir: (c.req.query("sort_dir") || "").toLowerCase() === "asc" ? "asc" : "desc",
-    pic_scope: scope?.pic_ids,
-    brand_scope: scope?.brands,
-    // Attendee arm — only for a scoped rep (scope != null). OR-in projects
-    // where they're on the Sales Attending list, mirroring /calendar/events
-    // so the list and the calendar agree. Admins/directors/unscoped roles
-    // have scope === null and never carry this (they see all, unchanged).
-    attendee_user_id: scope ? user?.id : undefined,
     // "Assigned to me" (owner 2026-07-16): drivers/helpers can pull just the
     // events they're crewed on (FK cols or crew JSON name match).
     // Owner 2026-07-21: for helpers/storekeepers this is FORCED — they only
@@ -1357,10 +1354,19 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
 
   let showroomVenues: VenueOut[] = [];
   try {
+    /* Company-scoped, same rule as the project_venues half above. scm.warehouses
+       carries company_id (mig 0086; 0087 made its code unique per company), and
+       without the predicate a HOUZS user raising a project or an SO saw 2990's
+       showrooms in the venue picker. Owner 2026-08-19: "客人开单不能看到 2990 的
+       展厅啊。分开的公司都不一样啊，收入单也不一样。venue 都不一样啊" and "我们的
+       Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着看到自己公司的".
+       GET /staff/showrooms (scm/routes/staff.ts) already scoped its copy of this
+       same list; this one was the half that was missed. */
     const shRows = await c.env.DB.prepare(
       `SELECT id, code, name, venue_name FROM scm.warehouses
         WHERE is_showroom = true AND is_active = true
           AND venue_name IS NOT NULL AND btrim(venue_name) <> ''
+          ${activeCompanySql(c, "company_id")}
         ORDER BY venue_name`
     ).all();
     /* DEDUPE against the project venues by case-insensitive name. A showroom
@@ -2243,43 +2249,27 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   // from a nonexistent id). Predicate skipped when the context is unresolved.
   const detail = await getProjectDetail(c.env, id, activeCompanyId(c));
   if (!detail) return c.json({ error: "Not found" }, 404);
-  // Row-level ACL. canSeeProject covers the PIC line + brand + grace (the same
-  // predicate as the list's PIC arm). A scoped rep on the project's Sales
-  // Attending list also has visibility — the list's attendee arm surfaces the
-  // row, so opening it must not 404. Mirror that arm here using the already-
-  // loaded sales_attendees (rep_user_id; pg driver camelCases → dual-read).
-  // Attendee access is read-only: the write gate (PATCH below) still uses
-  // canSeeProject alone, so attendees can view but not edit a project.
-  const isDetailAttendee =
-    !!user?.id &&
-    (detail.sales_attendees ?? []).some(
-      (a: any) => (a.rep_user_id ?? a.repUserId) === user.id
-    );
-  if (!canSeeProject(user, detail.project) && !isDetailAttendee) {
-    return c.json({ error: "Not found" }, 404);
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): any
+  // user with projects page access sees any project in their active company
+  // (the getProjectDetail load above is company-scoped). Crew scoping below is
+  // a separate axis and stays.
   // Owner 2026-07-21: helpers/storekeepers open ONLY events they're crewed on
   // (same 404-shape as the other row-ACL misses so ids aren't probeable).
   if (isCrewScopedUser(user)) {
     const phases = await getUserPhasesOnProject(c.env, id, user?.id ?? 0, user?.name);
     if (phases.length === 0) return c.json({ error: "Not found" }, 404);
   }
-  // Tell the frontend which panels to hide for this user/project.
-  // `level` keeps the legacy 'full' | 'limited' vocabulary for current
-  // callsites; `level_v2` emits the new 'full' | 'partial' vocabulary
-  // used by the page-access model (mig 073). Both reflect the same
-  // row-level decision — PIC vs non-PIC for this specific project.
-  // Phase 2 (Projects migration) drops the legacy `level` field.
-  const rowLevel = projectAccessLevel(user, detail.project);
-  // Section-level (PMS) access for this user × project. Drives which detail
-  // panels render AND lets us strip the financial snapshot server-side so it
-  // never leaves the Worker for a role that shouldn't see money.
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
+  // every viewer now gets the full row-level view of the project. `level` /
+  // `level_v2` / `scoped` are kept for frontend compatibility but are now
+  // constant. Section-level (PMS) access below still strips money / sensitive
+  // panels by position — a separate, finer axis that is unaffected.
   const pms = getPmsAccess(user, detail.project);
   const access = {
-    level: rowLevel,
-    level_v2: rowLevel === "limited" ? "partial" : rowLevel,
+    level: "full" as const,
+    level_v2: "full" as const,
     is_pic: detail.project.pic_id === user.id,
-    scoped: isScopedProjectUser(user),
+    scoped: false,
     pms,
   };
   // Defense in depth: hide finance (rental / cost / profit / ledger lines /
@@ -2362,48 +2352,6 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   return c.json({ ...payload, _access: access });
 });
 
-/**
- * Brand-on-person gate for PIC assignment. Returns true when the
- * picked user has the project's brand in their user_brands row set
- * (mig 049, replaces the prior dept-level join in mig 048).
- *
- * Brand-relaxed for Sales (owner: Option A). Any member of the Sales
- * department may be assigned PIC regardless of brand coverage — the
- * PIC picker lists all Sales-dept members ignoring brand, so the save
- * gate must accept them too. Non-Sales users still need a matching
- * user_brands row.
- *
- * A project with no brand can never have a PIC assigned: there's no
- * brand to match against, and unbranded projects are deliberately
- * invisible to scoped users anyway.
- */
-async function canPicProjectBrand(
-  env: Env,
-  picUserId: number,
-  brand: string | null | undefined
-): Promise<boolean> {
-  if (!brand) return false;
-  // env.DB (not getDb): this gate must also work on the D1 fallback used by
-  // the test suite and the rollback path, where no DATABASE_URL is bound.
-  // Brand-relaxed: a Sales-department member is always an eligible PIC.
-  const sales = await env.DB.prepare(
-    `SELECT 1 AS one
-       FROM users u
-       JOIN departments d ON d.id = u.department_id
-      WHERE u.id = ? AND LOWER(d.name) LIKE '%sales%'
-      LIMIT 1`
-  )
-    .bind(picUserId)
-    .first();
-  if (sales !== null) return true;
-  const row = await env.DB.prepare(
-    `SELECT 1 AS one FROM user_brands WHERE user_id = ? AND brand = ? LIMIT 1`
-  )
-    .bind(picUserId, brand)
-    .first();
-  return row !== null;
-}
-
 // ── Create ────────────────────────────────────────────────────
 
 // Event (project) creation is restricted to BD staff, the Owner account, and
@@ -2440,37 +2388,11 @@ app.post("/", requirePermission("projects.write"), async (c) => {
   if (!body.name || !body.name.trim()) {
     return c.json({ error: "name is required" }, 400);
   }
-  // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
-  // assign the project PIC at create (as well as PATCH + Sales Attending below),
-  // like everyone else holding projects.write. The scope + brand gates below
-  // still apply to the picked user.
-  // Scoped users (sales reps) can only create projects where they or
-  // their manager is the PIC. Ignore any other pic_id they submit.
-  let picId = body.pic_id ?? null;
-  // isScopedProjectUser (not the raw scope_to_pic flag): a non-director Sales
-  // user whose role lacks scope_to_pic is still row-scoped (owner 2026-07-15),
-  // so they can only PIC themselves / their manager here too.
-  if (isScopedProjectUser(user)) {
-    const allowed = [user.id, user.manager_id].filter(Boolean);
-    if (picId == null || !allowed.includes(picId)) {
-      picId = user.id;
-    }
-  }
-  // Brand gate: when assigning a PIC at create time, the picked user's
-  // department must cover the project's brand. Skip when picId is null
-  // (unassigned project — admin will pic it later).
-  if (picId != null) {
-    const ok = await canPicProjectBrand(c.env, picId, body.brand ?? null);
-    if (!ok) {
-      return c.json(
-        {
-          error:
-            "Picked user's department does not cover this brand. Assign a brand first or pick a user whose department includes it.",
-        },
-        403
-      );
-    }
-  }
+  // Project creation is gated by projects.write + canCreateEvent (BD / owner)
+  // above. The PIC/brand row-level ACL was removed (owner decision 2026-08-19),
+  // so any submitted pic_id is honoured and there is no per-brand PIC gate — the
+  // picker offers whoever it offers.
+  const picId = body.pic_id ?? null;
   // `deriveProjectCode` throws when state/venue/brand are missing —
   // surface that as a clean 400 so the toast says exactly which field
   // is missing instead of "Internal server error".
@@ -2509,19 +2431,14 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
 
-  // Always need brand + pic_id + created_by for the brand gate below
-  // (and for the scoped-user can-see check).
   // Multi-company: the pre-patch fetch is company-scoped, so a cross-company
-  // id 404s before any write.
+  // id 404s before any write. This is the only remaining row-level gate on the
+  // patch (the PIC/brand ACL was removed 2026-08-19).
   const existing = await c.env.DB.prepare(
-    `SELECT pic_id, created_by, brand FROM projects WHERE id = ?${activeCompanySql(c)}`
+    `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
   )
     .bind(id)
-    .first<{
-      pic_id: number | null;
-      created_by: number | null;
-      brand: string | null;
-    }>();
+    .first<{ id: number }>();
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   // Logistics crew is READ-ONLY for Sales (owner 2026-07): a Sales user — incl.
@@ -2537,41 +2454,10 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
     delete body.service_crew;
   }
 
-  // Gate: scoped users can only patch projects they can see. And
-  // they cannot reassign pic_id away from themselves/their manager.
-  // isScopedProjectUser covers the code-keyed Sales cohort (owner 2026-07-15),
-  // not just roles carrying the scope_to_pic flag.
-  if (isScopedProjectUser(user)) {
-    if (!canSeeProject(user, existing)) return c.json({ error: "Not found" }, 404);
-    if ("pic_id" in body) {
-      const allowed = [user.id, user.manager_id].filter(Boolean);
-      if (body.pic_id != null && !allowed.includes(body.pic_id)) {
-        delete body.pic_id;
-      }
-    }
-  }
-
-  // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
-  // (re)assign the PIC in this PATCH, like everyone else holding projects.write.
-  // The brand gate below still validates the picked user.
-
-  // Brand gate for any PIC assignment (admin or scoped). Validates
-  // against the post-patch brand, so changing brand + pic together is
-  // checked atomically.
-  if ("pic_id" in body && body.pic_id != null) {
-    const effectiveBrand =
-      "brand" in body ? (body.brand as string | null) : existing.brand;
-    const ok = await canPicProjectBrand(c.env, body.pic_id, effectiveBrand);
-    if (!ok) {
-      return c.json(
-        {
-          error:
-            "Picked user's department does not cover this brand.",
-        },
-        403
-      );
-    }
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): a
+  // projects.write holder may patch any project in their active company (the
+  // pre-patch fetch above is company-scoped and 404s a cross-company id) and may
+  // (re)assign the PIC to anyone, with no per-brand PIC gate.
 
   const result = await patchProject(c.env, id, body, user?.id ?? 0);
   if (!result.ok) return c.json({ error: "No changes" }, 400);
@@ -2591,6 +2477,7 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
 app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ note: string }>();
   if (!body.note?.trim()) return c.json({ error: "note is required" }, 400);
@@ -2711,27 +2598,16 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
-  // Only the PIC (or an unscoped role) can write finance for a project.
-  // isScopedProjectUser also covers non-director Sales users whose role lacks
-  // the scope_to_pic flag (owner 2026-07-15).
-  //
-  // Company scope (owner audit 2026-07-22): the PIC check + patchFinance
-  // both loaded by id alone, so a user granted BOTH companies could — while
-  // active on A — be PIC on a B project and edit B's finance from within A.
-  //
-  // 2026-08-14: this load used to sit INSIDE the isScopedProjectUser branch, so
-  // for a caller who is NOT scope-to-PIC no company predicate was evaluated at
-  // all — and patchFinance CREATES the row when missing, so a cross-company id
-  // got a snapshot written and recomputeAutoCostLines ran on it. Resolved in the
-  // active company FIRST, for everyone; the PIC rule applies to THAT row.
+  // Company scope (owner audit 2026-07-22): the project is resolved in the
+  // ACTIVE company FIRST, so a cross-company id 404s before patchFinance (which
+  // CREATES the snapshot row when missing) can run. The PIC/brand row-level ACL
+  // that used to further restrict finance writes was removed (owner decision
+  // 2026-08-19); company scope + the projects.write + finance gates remain.
   {
     const row = await c.env.DB.prepare(
-      `SELECT pic_id, created_by FROM projects WHERE id = ?${activeCompanySql(c)}`
-    ).bind(id).first<{ pic_id: number | null; created_by: number | null }>();
+      `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
+    ).bind(id).first<{ id: number }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    if (isScopedProjectUser(user) && (row.pic_id ?? row.created_by ?? null) !== user.id) {
-      return c.json({ error: "You don't have permission to view this project's financial information." }, 403);
-    }
   }
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchFinance(c.env, id, body, user?.id ?? 0);
@@ -2770,14 +2646,9 @@ app.get("/finance/categories", (c) => {
 // filter the project itself.
 app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
-  const user = c.get("user");
-  // Finance tab is PIC-only. Scoped reps (who aren't themselves a PIC
-  // on any project) get zero rows — finance is in the "limited view"
-  // restricted panel list.
-  const picScope = user?.scope_to_pic ? [user.id].filter(Boolean) : null;
-  if (picScope && picScope.length === 0) {
-    return c.json({ data: [], total: 0, totals: { total_income: 0, total_cost: 0 } });
-  }
+  // PIC/brand row-level ACL removed (owner decision 2026-08-19): the Finance
+  // tab is gated by the projects.finances page-access + the denyFinance role
+  // check above, and scoped to the active company below. No per-PIC row filter.
   const dateFrom = c.req.query("date_from") || "";
   const dateTo = c.req.query("date_to") || "";
   const brand = c.req.query("brand") || "";
@@ -2823,11 +2694,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
     const like = `%${search}%`;
     projConds.push(
       sql`(p.code ILIKE ${like} OR p.name ILIKE ${like} OR p.venue ILIKE ${like} OR p.organizer ILIKE ${like})`
-    );
-  }
-  if (picScope) {
-    projConds.push(
-      sql`COALESCE(p.pic_id, p.created_by) IN (${sql.join(picScope.map((id) => sql`${id}`), sql`, `)})`
     );
   }
   const whereClause = projConds.length
@@ -2990,12 +2856,9 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 // as /finance/by-project plus kind + category.
 app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
-  const user = c.get("user");
-  // PIC-only panel — scoped reps see no finance lines.
-  const finPicScope = user?.scope_to_pic ? [user.id].filter(Boolean) : null;
-  if (finPicScope && finPicScope.length === 0) {
-    return c.json({ data: [], total: 0, page: 1, per_page: 50 });
-  }
+  // PIC/brand row-level ACL removed (owner decision 2026-08-19): finance lines
+  // are gated by projects.finances + denyFinance and scoped to the active
+  // company below; no per-PIC row filter.
   const dateFrom = c.req.query("date_from") || "";
   const dateTo = c.req.query("date_to") || "";
   const kindParam = (c.req.query("kind") || "all").toLowerCase();
@@ -3032,11 +2895,6 @@ app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
     const like = `%${search}%`;
     conds.push(
       sql`(l.description ILIKE ${like} OR l.notes ILIKE ${like} OR p.code ILIKE ${like} OR p.name ILIKE ${like})`
-    );
-  }
-  if (finPicScope) {
-    conds.push(
-      sql`COALESCE(p.pic_id, p.created_by) IN (${sql.join(finPicScope.map((id) => sql`${id}`), sql`, `)})`
     );
   }
 
@@ -3108,6 +2966,7 @@ app.post("/:id/finance/lines", requirePermission("projects.write"), async (c) =>
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     kind?: string;
@@ -3158,6 +3017,7 @@ app.patch("/finance/lines/:lineId", requirePermission("projects.write"), async (
   const denied = denyFinance(c); if (denied) return denied;
   const lineId = parseInt(c.req.param("lineId"), 10);
   if (isNaN(lineId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_finance_lines", lineId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchLedgerLine(c.env, lineId, body, user?.id ?? 0);
@@ -3169,6 +3029,7 @@ app.delete("/finance/lines/:lineId", requirePermission("projects.write"), async 
   const denied = denyFinance(c); if (denied) return denied;
   const lineId = parseInt(c.req.param("lineId"), 10);
   if (isNaN(lineId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_finance_lines", lineId); if (foreign) return foreign; }
   const user = c.get("user");
   const ok = await archiveLedgerLine(c.env, lineId, user?.id ?? 0);
   if (!ok) return c.json({ error: "Not found" }, 404);
@@ -3485,6 +3346,7 @@ app.put("/:id/payment/proof", requirePermission("projects.write"), async (c) => 
 app.post("/:id/stock-transfers", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     direction?: string;
@@ -3536,6 +3398,7 @@ app.put("/:id/stock-transfers/upload", requirePermission("projects.write"), asyn
 app.post("/stock-transfers/:tid/confirm", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   const user = c.get("user");
   // Resolve project_id + direction before confirming so the activity
   // entry survives even if the transfer is then deleted.
@@ -3563,6 +3426,7 @@ app.post("/stock-transfers/:tid/confirm", requirePermission("projects.write"), a
 app.post("/stock-transfers/:tid/unconfirm", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   const user = c.get("user");
   const xfer = await c.env.DB.prepare(
     `SELECT project_id, direction FROM project_stock_transfers WHERE id = ?`
@@ -3587,6 +3451,7 @@ app.post("/stock-transfers/:tid/unconfirm", requirePermission("projects.write"),
 app.delete("/stock-transfers/:tid", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   await archiveStockTransfer(c.env, tid);
   return c.json({ ok: true });
 });
@@ -3596,6 +3461,7 @@ app.delete("/stock-transfers/:tid", requirePermission("projects.write"), async (
 app.post("/:id/checklist", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     title?: string;
@@ -3629,6 +3495,7 @@ app.post("/:id/checklist", requirePermission("projects.write"), async (c) => {
 app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   // Notes-only edits (the mobile item remark box on Deco/Coffee Table &
@@ -3656,6 +3523,7 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
 app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ status?: string }>();
   const status = body.status as "pending" | "done" | "na" | "blocked";
@@ -3730,6 +3598,7 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
 app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ action?: string; reason?: string; note?: string }>();
   const action = body.action as "submit" | "reject" | "amend" | "approve" | "comment";
@@ -3820,6 +3689,7 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
 app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ name?: string; sort_order?: number }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
@@ -3846,6 +3716,7 @@ app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
 app.patch("/sections/:sectionId", requirePermission("projects.write"), async (c) => {
   const sectionId = parseInt(c.req.param("sectionId"), 10);
   if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist_sections", sectionId); if (foreign) return foreign; }
   const body = await c.req.json<{
     name?: string;
     sort_order?: number;
@@ -3881,6 +3752,7 @@ app.patch("/sections/:sectionId", requirePermission("projects.write"), async (c)
 app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c) => {
   const sectionId = parseInt(c.req.param("sectionId"), 10);
   if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist_sections", sectionId); if (foreign) return foreign; }
   // project_checklist.section_id was ON DELETE SET NULL, but the D1->PG load
   // dropped it to NO ACTION — so a bare delete throws once the section still has
   // tasks. Null them first so tasks fall back to "Uncategorised".
@@ -3898,6 +3770,7 @@ app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c
 app.put("/:id/sections/reorder", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ ids?: unknown }>();
   if (!Array.isArray(body.ids) || !body.ids.every((n) => Number.isInteger(n))) {
     return c.json({ error: "ids must be an array of integers" }, 400);
@@ -3940,6 +3813,7 @@ app.put(
   async (c) => {
     const itemId = parseInt(c.req.param("itemId"), 10);
     if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const item = await c.env.DB.prepare(
@@ -4065,6 +3939,7 @@ app.delete(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     if (!hasPermission(granted, "projects.write")) {
@@ -4122,6 +3997,7 @@ app.patch(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const body = await c.req.json<{ caption?: string | null }>();
@@ -4174,6 +4050,7 @@ app.post(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const role = (user?.role_name ?? "").toLowerCase();
@@ -4394,6 +4271,7 @@ app.put(
 app.post("/:id/defects", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     phase?: string;
@@ -4430,6 +4308,7 @@ app.post("/:id/defects", requirePermission("projects.write"), async (c) => {
 app.patch("/defects/:defectId", requirePermission("projects.write"), async (c) => {
   const defectId = parseInt(c.req.param("defectId"), 10);
   if (isNaN(defectId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_defects", defectId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchDefect(c.env, defectId, body, user?.id ?? 0);
@@ -4440,6 +4319,7 @@ app.patch("/defects/:defectId", requirePermission("projects.write"), async (c) =
 app.delete("/defects/:defectId", requirePermission("projects.write"), async (c) => {
   const defectId = parseInt(c.req.param("defectId"), 10);
   if (isNaN(defectId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_defects", defectId); if (foreign) return foreign; }
   await archiveDefect(c.env, defectId);
   return c.json({ ok: true });
 });
@@ -4466,6 +4346,7 @@ app.put("/:id/defects/photo", requirePermission("projects.write"), async (c) => 
 app.post("/:id/sales-reports", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     title?: string;
@@ -4498,6 +4379,7 @@ app.post("/:id/sales-reports", requirePermission("projects.write"), async (c) =>
 app.delete("/sales-reports/:reportId", requirePermission("projects.write"), async (c) => {
   const reportId = parseInt(c.req.param("reportId"), 10);
   if (isNaN(reportId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_sales_reports", reportId); if (foreign) return foreign; }
   await archiveSalesReport(c.env, reportId, true);
   return c.json({ ok: true });
 });
@@ -4531,6 +4413,7 @@ app.post("/:id/sales-reports/resync", requirePermission("projects.write"), async
 app.delete("/checklist/:itemId", requirePermission("projects.write"), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const ok = await deleteChecklistItem(c.env, itemId, user?.id ?? 0);
   if (!ok) return c.json({ error: "Not found" }, 404);
@@ -4542,6 +4425,7 @@ app.delete("/checklist/:itemId", requirePermission("projects.write"), async (c) 
 app.post("/:id/team", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ user_id?: number; role?: string }>();
   if (!body.user_id) return c.json({ error: "Please choose a team member." }, 400);
   try {
@@ -4561,6 +4445,7 @@ app.post("/:id/team", requirePermission("projects.write"), async (c) => {
 app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
   const teamId = parseInt(c.req.param("teamId"), 10);
   if (isNaN(teamId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_team", teamId); if (foreign) return foreign; }
   await c.env.DB.prepare(`DELETE FROM project_team WHERE id = ?`).bind(teamId).run();
   return c.json({ ok: true });
 });
@@ -4576,6 +4461,7 @@ app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
 app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
   // change Sales Attending, like everyone else holding projects.write.
@@ -4617,6 +4503,7 @@ app.delete(
     const id = parseInt(c.req.param("id"), 10);
     const repId = parseInt(c.req.param("repId"), 10);
     if (isNaN(id) || isNaN(repId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
     const user = c.get("user");
     // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
     // remove Sales Attending too, like everyone else holding projects.write.
@@ -4663,6 +4550,7 @@ const PROJECT_ATTACH_ROLES = new Set(["sales", "driver", "design", "office"]);
 app.put("/:id/attachments", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const category = (c.req.query("category") || "other").toLowerCase();
   const ext = (c.req.query("ext") || "").toLowerCase();
@@ -4713,6 +4601,9 @@ app.get("/attachments/:key{.+}", async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      // Block MIME-sniffing the server-derived content-type back into
+      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });
@@ -4721,6 +4612,7 @@ app.get("/attachments/:key{.+}", async (c) => {
 app.post("/attachments/:attId/archive", requirePermission("projects.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_attachments", attId); if (foreign) return foreign; }
   await c.env.DB.prepare(
     `UPDATE project_attachments SET archived_at = datetime('now') WHERE id = ?`
   )
@@ -4735,6 +4627,7 @@ app.post("/attachments/:attId/archive", requirePermission("projects.write"), asy
 app.patch("/attachments/:attId", requirePermission("projects.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_attachments", attId); if (foreign) return foreign; }
   const body = await c.req.json<{
     file_name?: string | null;
     category?: string | null;
@@ -4794,19 +4687,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
      venue events; that lane is now assignment-scoped too. */
   const granted = user?.permissions_set ?? user?.permissions ?? [];
   const isAdmin = !!user && hasPermission(granted, "*");
-  /* Owner 2026-07-05 — a DIRECTOR-level user (Owner/IT via `*`, Super Admin,
-     Sales Director, Finance Manager — see pmsAccess getPmsRole) sees the WHOLE
-     calendar, not just their assigned venues. Reuses the existing PMS role
-     classification so it stays position-driven (toggle via the position name /
-     `*`), not a hardcoded string here. The DIRECTOR branch of getPmsRole is
-     project-independent, so a throwaway project shape is fine. */
-  const scope = getProjectScope(user);
-  /* Owner 2026-07-06 — unscoped non-admin staff (logistics, drivers, ops,
-     purchasing, etc.) see the WHOLE event calendar again, as they did before
-     the 2026-07-05 assignment-scoping. `scope === null` means the role isn't
-     scope_to_pic, so getProjectScope already treats them as unfiltered
-     everywhere else; the calendar now matches. Only scope_to_pic roles
-     (sales reps) stay filtered to their own assigned events. */
+  /* PIC/brand row-level visibility ACL removed (owner decision 2026-08-19):
+     every non-crew caller now sees the WHOLE (company-scoped) calendar. The
+     only remaining scoped lane is CREW (helpers / storekeepers / drivers), who
+     still see just the events they are crewed on. */
   /* Owner 2026-07-21: helpers/storekeepers are crew-scoped — their calendar
      shows only events they're crewed on, so they drop out of the unscoped
      see-all lane and get a crew-assignment arm instead. */
@@ -4822,10 +4706,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
     ((user.position_name ?? "").trim().toLowerCase() === "driver" ||
       /^drivers?$/i.test(((user as { role_name?: string | null }).role_name ?? "").trim()));
   const crewScoped = isCrewScopedUser(user) || isScopedDriver;
-  const seeAll =
-    !!user &&
-    !crewScoped &&
-    (isAdmin || getPmsRole(user, { pic_id: null }) === "DIRECTOR" || scope === null);
+  // Every authenticated non-crew caller sees the whole company calendar now
+  // (PIC/brand ACL removed 2026-08-19). Only crew stay scoped, to the events
+  // they are crewed on (OR their sales-attendee arm).
+  const seeAll = !!user && !crewScoped;
   const assignArms: string[] = [];
   const scopeBinds: any[] = [];
   if (!seeAll) {
@@ -4845,24 +4729,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
         scopeBinds.push(`%"${nm}"%`, `%"${nm}"%`);
       }
       assignArms.push(`(${arm})`);
-    } else if (scope) {
-      // Existing scoped-role behavior, verbatim (one-hop PIC + brand gate) —
-      // just OR-extended with the attendee arm below so an attending rep
-      // also sees venues where they aren't the PIC.
-      if (scope.pic_ids.length > 0 && scope.brands.length > 0) {
-        assignArms.push(
-          `(COALESCE(p.pic_id, p.created_by) IN (${scope.pic_ids.map(() => "?").join(",")})` +
-          ` AND p.brand IS NOT NULL AND p.brand IN (${scope.brands.map(() => "?").join(",")}))`
-        );
-        scopeBinds.push(...scope.pic_ids, ...scope.brands);
-      }
-    } else if (user?.id) {
-      // Non-scoped non-admin (NEW lane): PIC-self only, no brand gate —
-      // being the project's PIC is already an explicit assignment.
-      assignArms.push(`COALESCE(p.pic_id, p.created_by) = ?`);
-      scopeBinds.push(user.id);
     }
     if (user?.id) {
+      // A crew member who is also on a project's Sales Attending list still
+      // sees that event (attendee arm, mig 087).
       assignArms.push(
         `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
         ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +
@@ -4953,6 +4823,7 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
 // Unknown columns are ignored. Missing name → row skipped.
 
 app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
+  // company-scope: the two UPDATEs at :5066 and :5081 key on result.id, and result comes from createProject at :5038 — services/projects.ts INSERTs only (no upsert, no ON CONFLICT), so that row was created BY THIS REQUEST and stamped with activeCompanyId at :5050. A row you just minted needs no predicate to prove it is yours. Verified 2026-08-19.
   const user = c.get("user");
   const text = await c.req.text();
   const parsed = parseCsv(text);

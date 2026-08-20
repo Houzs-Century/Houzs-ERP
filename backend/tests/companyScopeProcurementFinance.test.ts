@@ -141,8 +141,8 @@ const jsonPost = (app: Hono, url: string, body: Row) =>
    scoped. */
 describe('purchase invoice cancel (reverses the AP/GL entry + releases the GRN)', () => {
   const pis = (): Row[] => [
-    { id: 'pi-a', invoice_number: 'HC-PI-2608-001', company_id: CO_A, status: 'POSTED', paid_centi: 0, total_centi: 100 },
-    { id: 'pi-b', invoice_number: '2990-PI-2608-001', company_id: CO_B, status: 'POSTED', paid_centi: 0, total_centi: 900 },
+    { id: 'pi-a', invoice_number: 'HC-PI-2608-001', company_id: CO_A, status: 'POSTED', paid_sen: 0, total_sen: 100 },
+    { id: 'pi-b', invoice_number: '2990-PI-2608-001', company_id: CO_B, status: 'POSTED', paid_sen: 0, total_sen: 900 },
   ];
 
   test("A cannot cancel B's invoice — it stays POSTED and no GL reversal is written", async () => {
@@ -167,7 +167,7 @@ describe('purchase invoice cancel (reverses the AP/GL entry + releases the GRN)'
   test("A cannot cancel B's DRAFT invoice either (the plain-status-flip branch)", async () => {
     const t: Record<string, Row[]> = {
       purchase_invoices: [
-        { id: 'pi-b', invoice_number: '2990-PI-2608-002', company_id: CO_B, status: 'DRAFT', paid_centi: 0, total_centi: 900 },
+        { id: 'pi-b', invoice_number: '2990-PI-2608-002', company_id: CO_B, status: 'DRAFT', paid_sen: 0, total_sen: 900 },
       ],
     };
     const res = await jsonPatch(harness(t, CO_A).app, '/purchase-invoices/pi-b/cancel');
@@ -198,21 +198,21 @@ describe('purchase invoice cancel (reverses the AP/GL entry + releases the GRN)'
 /* ── PV → PI allocations — the pi_id is caller-supplied ───────────────────────
    A payment voucher's allocation rows are stamped with the ACTIVE company, but
    the invoice each one names arrives in the request body. Posting the voucher
-   then moves that invoice's paid_centi and status by id alone, so an allocation
+   then moves that invoice's paid_sen and status by id alone, so an allocation
    naming the OTHER company's invoice settled it — and could go on to rewrite its
    exchange_rate and re-cost the GRN behind it. Refused where the id enters, so
    nothing has been written when the refusal happens. */
 describe('payment voucher allocations (settle a purchase invoice at post time)', () => {
   const pis = (): Row[] => [
-    { id: 'pi-a', invoice_number: 'HC-PI-2608-010', company_id: CO_A, status: 'POSTED', paid_centi: 0, total_centi: 5000 },
-    { id: 'pi-b', invoice_number: '2990-PI-2608-010', company_id: CO_B, status: 'POSTED', paid_centi: 0, total_centi: 5000 },
+    { id: 'pi-a', invoice_number: 'HC-PI-2608-010', company_id: CO_A, status: 'POSTED', paid_sen: 0, total_sen: 5000 },
+    { id: 'pi-b', invoice_number: '2990-PI-2608-010', company_id: CO_B, status: 'POSTED', paid_sen: 0, total_sen: 5000 },
   ];
   const body = (piId: string) => ({
     payeeName: 'Freight Co',
     creditAccountCode: '1000',
     purpose: 'SUPPLIER_PAYMENT',
-    lines: [{ description: 'payment', debitAccountCode: '2000', amountCenti: 5000 }],
-    allocations: [{ piId, amountCenti: 5000 }],
+    lines: [{ description: 'payment', debitAccountCode: '2000', amountSen: 5000 }],
+    allocations: [{ piId, amountSen: 5000 }],
   });
 
   test("A cannot raise a voucher applied to B's invoice, and no voucher is created", async () => {
@@ -309,12 +309,12 @@ describe('GRN -> purchase invoice, picked lines', () => {
   const grnItems = (): Row[] => [
     {
       id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
-      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', discount_centi: 0, unit_price_centi: 100,
+      item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
       grn: { id: 'grn-a', grn_number: 'HC-GRN-2608-001', supplier_id: 's1', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_A },
     },
     {
       id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
-      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', discount_centi: 0, unit_price_centi: 100,
+      item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
       grn: { id: 'grn-b', grn_number: '2990-GRN-2608-001', supplier_id: 's9', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_B },
     },
   ];
@@ -366,8 +366,8 @@ describe('GRN -> purchase return (draws stock back out and consumes the GRN line
      to return" rule the moment the source becomes visible. That stop is the
      marker the source WAS found — the half a scope sweep breaks silently. */
   const grnItems = (): Row[] => [
-    { id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
-    { id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
   ];
   const tables = (): Record<string, Row[]> => ({
     grns: grns(),
@@ -475,12 +475,12 @@ describe('PO -> GRN, picked lines', () => {
   const poItems = (): Row[] => [
     {
       id: 'poi-a', purchase_order_id: 'po-a', company_id: CO_A, qty: 5, received_qty: 0,
-      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', unit_price_centi: 100,
+      item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
       po: { id: 'po-a', po_number: 'HC-PO-2608-001', supplier_id: 's1', status: 'SUBMITTED', purchase_location_id: 'wh1', currency: 'MYR' },
     },
     {
       id: 'poi-b', purchase_order_id: 'po-b', company_id: CO_B, qty: 5, received_qty: 0,
-      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', unit_price_centi: 100,
+      item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
       po: { id: 'po-b', po_number: '2990-PO-2608-001', supplier_id: 's9', status: 'SUBMITTED', purchase_location_id: 'wh9', currency: 'MYR' },
     },
   ];
@@ -560,8 +560,8 @@ describe('PC Receive -> PC Return', () => {
   /* qty_rejected 0 and qty_accepted fully returned, so BOTH converters stop on
      their own "nothing left to return" rule once the source is visible. */
   const receiveItems = (): Row[] => [
-    { id: 'pcri-a', pc_receive_id: 'pcr-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
-    { id: 'pcri-b', pc_receive_id: 'pcr-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'pcri-a', pc_receive_id: 'pcr-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'pcri-b', pc_receive_id: 'pcr-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
   ];
   const tables = (): Record<string, Row[]> => ({
     purchase_consignment_receives: receives(),
@@ -628,13 +628,13 @@ describe('SO -> PO (convertSosToPosCore, shared by the picker and the agent)', (
   const soItems = (): Row[] => [
     {
       id: 'soi-a', doc_no: 'HC-SO-2608-001', company_id: CO_A, item_code: 'M1', description: null,
-      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_centi: 100,
+      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_sen: 100,
       line_delivery_date: null, warehouse_id: null, photo_urls: null, cancelled: false,
       so: { sales_location: null, customer_delivery_date: null },
     },
     {
       id: 'soi-b', doc_no: '2990-SO-2608-001', company_id: CO_B, item_code: 'M9', description: null,
-      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_centi: 100,
+      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_sen: 100,
       line_delivery_date: null, warehouse_id: null, photo_urls: null, cancelled: false,
       so: { sales_location: null, customer_delivery_date: null },
     },

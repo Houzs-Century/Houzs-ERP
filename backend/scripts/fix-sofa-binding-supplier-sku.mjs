@@ -6,7 +6,7 @@
 // a PO line for 9050-1A(RHF) showed just "AMN-SF9050 SOFA".
 //
 // Fix: supplier_sku := "<current> <COMP>" for every HOUZS mfg_product
-// binding whose material_code is a sofa compartment SKU ({MODEL}-{COMP})
+// binding whose item_code is a sofa compartment SKU ({MODEL}-{COMP})
 // and whose supplier_sku does not already mention the compartment. The
 // AutoCount prefix stays intact for cross-referencing.
 //
@@ -28,25 +28,25 @@ const COMP_RE = /^(?:[123](?:S|NA|A|B)(?:\((?:P|R)\))?(?:\((?:LHF|RHF)\))?|L\((?
 try {
   const [co] = await sql`SELECT id FROM public.companies WHERE code = 'HOUZS'`;
   const rows = await sql`
-    SELECT b.id, b.material_code, b.supplier_sku, s.code AS sup_code
+    SELECT b.id, b.item_code, b.supplier_sku, s.code AS sup_code
     FROM scm.supplier_material_bindings b
     JOIN scm.suppliers s ON s.id = b.supplier_id
-    JOIN scm.mfg_products p ON p.code = b.material_code AND p.company_id = b.company_id
+    JOIN scm.mfg_products p ON p.code = b.item_code AND p.company_id = b.company_id
     WHERE b.company_id = ${co.id} AND b.material_kind = 'mfg_product' AND p.category = 'SOFA'`;
   let fix = 0, ok = 0, skip = 0;
   const samples = [];
   await sql.begin(async (tx) => {
     const now = new Date().toISOString();
     for (const r of rows) {
-      const dash = r.material_code.indexOf("-");
+      const dash = r.item_code.indexOf("-");
       if (dash < 1) { skip++; continue; }
-      const comp = r.material_code.slice(dash + 1);
+      const comp = r.item_code.slice(dash + 1);
       if (!COMP_RE.test(comp)) { skip++; continue; }
       const cur = r.supplier_sku || "";
       if (cur.includes(comp)) { ok++; continue; }
       const next = `${cur} ${comp}`.trim();
       fix++;
-      if (samples.length < 8) samples.push(`${r.sup_code} ${r.material_code}: "${cur}" -> "${next}"`);
+      if (samples.length < 8) samples.push(`${r.sup_code} ${r.item_code}: "${cur}" -> "${next}"`);
       if (APPLY) await tx`UPDATE scm.supplier_material_bindings
         SET supplier_sku = ${next}, updated_at = ${now} WHERE id = ${r.id}`;
     }

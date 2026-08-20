@@ -278,7 +278,7 @@ async function main() {
   const singles = [
     ["demand page 0", () => demandPage(0)],
     ["mfg_products category walk", () => sql`SELECT category FROM scm.mfg_products WHERE company_id = ${CO} ORDER BY id LIMIT ${PAGE}`],
-    ["inventory_balances page 0", () => sql`SELECT product_code, warehouse_id, variant_key, qty FROM scm.inventory_balances WHERE company_id = ${CO} ORDER BY product_code, warehouse_id, variant_key, company_id LIMIT ${PAGE}`],
+    ["inventory_balances page 0", () => sql`SELECT item_code, warehouse_id, variant_key, qty FROM scm.inventory_balances WHERE company_id = ${CO} ORDER BY item_code, warehouse_id, variant_key, company_id LIMIT ${PAGE}`],
     ["warehouses", () => sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO} AND is_active = true ORDER BY code`],
     ["state_warehouse_mappings", () => sql`SELECT state, warehouse_id FROM scm.state_warehouse_mappings WHERE company_id = ${CO}`],
   ];

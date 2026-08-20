@@ -7,9 +7,9 @@
 //
 //   1. The camelCase half of each tuple is LOAD-BEARING and needs a test to say
 //      so. AUDIT_FINANCE_FIELDS (lib/finance-keys) is keyed on those exact
-//      spellings — 'unitCostCenti', 'lineCostCenti', 'lineMarginCenti' — and
+//      spellings — 'unitCostSen', 'lineCostSen', 'lineMarginSen' — and
 //      stripAuditFinance matches them literally. A line recorded as
-//      'unit_cost_centi' or 'unitCost' sails straight past the strip and hands
+//      'unit_cost_sen' or 'unitCost' sails straight past the strip and hands
 //      the cost basis to every reader who can see the document, which is the
 //      #600/#625/#632 shape one endpoint over. Importing a ROUTE file into a
 //      test drags in Hono, the auth middleware and the whole scm env; importing
@@ -33,20 +33,20 @@
 export type AuditFieldMap = Array<[camel: string, snake: string]>;
 
 /* ── GRN line ──────────────────────────────────────────────────────────────
-   unit_price_centi is the SUPPLIER's price on a receipt and is deliberately NOT
+   unit_price_sen is the SUPPLIER's price on a receipt and is deliberately NOT
    a finance-gated key — the same call the already-shipped GRN POST row makes
-   when it records totalCenti ungated. unit_cost_centi IS gated, and is spelled
+   when it records totalSen ungated. unit_cost_sen IS gated, and is spelled
    to match AUDIT_FINANCE_FIELDS. */
 export const GRN_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qtyReceived', 'qty_received'],
   ['qtyAccepted', 'qty_accepted'],
   ['qtyRejected', 'qty_rejected'],
   ['rejectionReason', 'rejection_reason'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
-  ['materialCode', 'material_code'],
+  ['unitPriceSen', 'unit_price_sen'],
+  ['discountSen', 'discount_sen'],
+  ['unitCostSen', 'unit_cost_sen'],
+  ['lineTotalSen', 'line_total_sen'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['supplierSku', 'supplier_sku'],
   ['itemGroup', 'item_group'],
@@ -58,23 +58,23 @@ export const GRN_LINE_AUDIT_FIELDS: AuditFieldMap = [
 ];
 
 export const GRN_LINE_AUDIT_SELECT =
-  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_centi, ' +
-  'discount_centi, unit_cost_centi, line_total_centi, material_code, material_name, ' +
+  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, ' +
+  'discount_sen, unit_cost_sen, line_total_sen, item_code, material_name, ' +
   'supplier_sku, item_group, description, uom, notes, delivery_date, rack_id';
 
 /* ── Sales Invoice line ────────────────────────────────────────────────────
-   unitCostCenti / lineCostCenti / lineMarginCenti are the three keys
-   AUDIT_FINANCE_FIELDS strips. lineTotalCenti (what the customer is charged) is
+   unitCostSen / lineCostSen / lineMarginSen are the three keys
+   AUDIT_FINANCE_FIELDS strips. lineTotalSen (what the customer is charged) is
    NOT one of them — that is the line #625 drew and this keeps. */
 export const SI_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qty', 'qty'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['taxCenti', 'tax_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
-  ['lineCostCenti', 'line_cost_centi'],
-  ['lineMarginCenti', 'line_margin_centi'],
+  ['unitPriceSen', 'unit_price_sen'],
+  ['discountSen', 'discount_sen'],
+  ['taxSen', 'tax_sen'],
+  ['unitCostSen', 'unit_cost_sen'],
+  ['lineTotalSen', 'line_total_sen'],
+  ['lineCostSen', 'line_cost_sen'],
+  ['lineMarginSen', 'line_margin_sen'],
   ['itemCode', 'item_code'],
   ['itemGroup', 'item_group'],
   ['description', 'description'],
@@ -83,20 +83,20 @@ export const SI_LINE_AUDIT_FIELDS: AuditFieldMap = [
 ];
 
 export const SI_LINE_AUDIT_SELECT =
-  'qty, unit_price_centi, discount_centi, tax_centi, unit_cost_centi, ' +
-  'line_total_centi, line_cost_centi, line_margin_centi, item_code, item_group, ' +
+  'qty, unit_price_sen, discount_sen, tax_sen, unit_cost_sen, ' +
+  'line_total_sen, line_cost_sen, line_margin_sen, item_code, item_group, ' +
   'description, uom, notes';
 
 /* ── Purchase Order line ───────────────────────────────────────────────────
-   A PO line's unit_price_centi is what we agree to PAY, and unit_cost_centi is
+   A PO line's unit_price_sen is what we agree to PAY, and unit_cost_sen is
    the cost snapshot — the latter keeps the gated spelling. */
 export const PO_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qty', 'qty'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
-  ['materialCode', 'material_code'],
+  ['unitPriceSen', 'unit_price_sen'],
+  ['discountSen', 'discount_sen'],
+  ['unitCostSen', 'unit_cost_sen'],
+  ['lineTotalSen', 'line_total_sen'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['supplierSku', 'supplier_sku'],
   ['itemGroup', 'item_group'],
@@ -111,21 +111,21 @@ export const PO_LINE_AUDIT_FIELDS: AuditFieldMap = [
 ];
 
 export const PO_LINE_AUDIT_SELECT =
-  'qty, unit_price_centi, discount_centi, unit_cost_centi, line_total_centi, ' +
-  'material_code, material_name, supplier_sku, item_group, description, uom, notes, ' +
+  'qty, unit_price_sen, discount_sen, unit_cost_sen, line_total_sen, ' +
+  'item_code, material_name, supplier_sku, item_group, description, uom, notes, ' +
   'delivery_date, warehouse_id, supplier_delivery_date_2, supplier_delivery_date_3, ' +
   'supplier_delivery_date_4';
 
 /* ── Purchase Invoice line ─────────────────────────────────────────────────
-   The PI is what the supplier bills, so unit_price_centi is the billed price.
-   unit_cost_centi keeps the gated spelling for the same reason as the PO. */
+   The PI is what the supplier bills, so unit_price_sen is the billed price.
+   unit_cost_sen keeps the gated spelling for the same reason as the PO. */
 export const PI_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qty', 'qty'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
-  ['materialCode', 'material_code'],
+  ['unitPriceSen', 'unit_price_sen'],
+  ['discountSen', 'discount_sen'],
+  ['unitCostSen', 'unit_cost_sen'],
+  ['lineTotalSen', 'line_total_sen'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['itemGroup', 'item_group'],
   ['description', 'description'],
@@ -134,8 +134,8 @@ export const PI_LINE_AUDIT_FIELDS: AuditFieldMap = [
 ];
 
 export const PI_LINE_AUDIT_SELECT =
-  'qty, unit_price_centi, discount_centi, unit_cost_centi, line_total_centi, ' +
-  'material_code, material_name, item_group, description, uom, notes';
+  'qty, unit_price_sen, discount_sen, unit_cost_sen, line_total_sen, ' +
+  'item_code, material_name, item_group, description, uom, notes';
 
 /**
  * Which audited columns are MISSING from a select string — empty means covered.

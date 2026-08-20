@@ -631,7 +631,7 @@ function ClientErrorsPanel({ q }: { q: QueryState<ClientErrorsSummary> }) {
 
 // Eyebrow = bare metric name (per shared pattern); plain-language read goes in
 // the sub-label so the row reads at a glance.
-const PERCENTILE_SLOTS: Array<{
+const PERSENLE_SLOTS: Array<{
   label: string;
   sub: string;
   bar: string;
@@ -676,7 +676,7 @@ function PerformancePhase2({ onOpenSetup }: { onOpenSetup: () => void }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-hidden>
-        {PERCENTILE_SLOTS.map((s) => (
+        {PERSENLE_SLOTS.map((s) => (
           <div
             key={s.label}
             className="relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-3 opacity-60 shadow-stone"

@@ -780,7 +780,7 @@ export async function requeueOneRow(
       + `${raw.op} row and annotate this skip.`);
   }
 
-  const queued = await enqueue(sb);
+  const { queued } = await enqueue(sb);
   if (!queued) {
     /* The probe accepted it and the real run did not, which is two things and
        both are safe: another run queued it first and lost the race to 0277's

@@ -161,6 +161,42 @@ to collide on.
 The desktop comment at `ServiceCases.tsx` saying *"server still accepts a null
 category"* is **stale** — the server `hasCategory` guard is the authority now.
 
+### The SO picker: a refusal used to render as "no results"
+
+*Create Service Case* stays disabled until a Sales Order is linked, so **the SO
+picker is the gate on the whole form**. When it finds nothing, the button is grey
+and the person is stuck — and until 2026-08-19 the screen could not say why.
+
+`useSoSearch` destructured only `{ data, isFetching }` from its `useQuery` and
+returned `data?.results ?? []`. **The error was dropped**, so a refusal rendered
+byte-identical to an honest empty answer. That matters because `GET
+/api/assr/search-so` can come back empty for three unrelated reasons:
+
+| | cause | fix |
+| --- | --- | --- |
+| 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
+| 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+
+The hook now returns `error` and the picker renders it **instead of** the
+not-found line. `check-silent-mutations` enforces this for `useMutation`, not
+`useQuery`, which is how it survived.
+
+**The gate is TEXT, and that is the part nobody thinks to check.**
+`canAccessServiceCases` (`assr.ts:98-106`) admits the `service_cases.read` holder
+**or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
+(`services/pmsAccess.ts:146-152`) tests `position_name` against `/^sales/i` and
+`department_name` for the substring "sales". So a real salesperson whose position
+or department field is blank, or spelled another way ("Executive Sales" fails
+`/^sales/i`), is refused — and their permission list looks perfectly fine.
+
+**Worked example, 2026-08-19.** A salesperson could not raise a case against
+`SO-005263`. Two hypotheses were raised and both were guesses, because the screen
+carried nothing that separated them. The read-only diagnostic
+(`Actions -> Why can this person not find this SO`) settled it: he held HOUZS,
+his position read "Sales Executive" and his department "Sales Department", so the
+gate admitted him — the order was simply never collected into the mirror. Cause 3.
+
 ### Complaint date is automatic and locked
 
 - Server stamps it: `createAssrCase` accepts an explicit `complained_date`
@@ -229,6 +265,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
+| GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
 | PUT/POST/PATCH/DELETE | `/settings`, `/lookups/:kind*` | `service_cases.manage` `:321-475` | Admin config (read is `:296` / `:371`) |
 | POST | `/bulk/archive`, `/bulk/unarchive`, `/bulk/assign`, `/run-escalation` | `service_cases.manage` `:1025`, `:1042`, `:1058`, `:2057` | Bulk + manual SLA sweep |
@@ -570,3 +607,21 @@ supplier-only stages with the wrong progress denominator.
   `do_date` or own-team `inspection_visit_at` also surface as fleet jobs on the
   delivery board.
 - `BUG-HISTORY.md` — read the Service Case entries before touching this module.
+
+## The pre-auth intake endpoints are scoped to their SECRET's company (2026-08-18)
+
+`GET /api/assr-form-intake/status-export` and `POST /api/assr-form-intake/delivery-dates`
+are pre-auth by design — Google's servers call them, there is no session and no
+`X-Company-Id`, so `companyContext` never runs. That is why neither could be
+given a caller's predicate, and why both ran unscoped across BOTH companies: the
+export returned `customer_name`, `phone`, `addr1-4` and `complaint_issue` for
+every non-archived case, and `/delivery-dates` resolved a case by `assr_no` —
+which is not unique across companies — and UPDATEd it.
+
+The rule now: **each shared secret carries its own company.** `FORM_INTAKE_KEY`
+and `SHEET_SYNC_KEY` are both Houzs Century artifacts (the staff service-request
+form and the HC Delivery sheet), so both map to `HOUZS` in
+`INTAKE_KEY_COMPANY` (`backend/src/routes/assrFormIntake.ts`). A future 2990
+sheet gets its OWN key and its own row there; it must never be handed one of
+these two. A readable companies master with no row for the code is a
+MISCONFIGURATION and answers 503 — it does not fall back to "no predicate".
