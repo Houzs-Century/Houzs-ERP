@@ -83,6 +83,263 @@ fails on exactly that line, with a startup self-test and a FATAL on a missing or
 empty list so a verdict computed over nothing can never read as a pass.
 
 **Ref.** feat/scoped-db-pilot, 2026-08-20.
+## The allocation gate quotes the owner's Processing-Date rule and then reads a different column [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** An order shows a Processing Date on screen, is locked for editing,
+sits on the Delivery Planning board and has been pushed to AutoCount as `PDate` —
+and never reaches READY_TO_SHIP. Every line stays PENDING with the stock
+physically on the floor. No error, no log line, nothing on screen says why. The
+module guide has been calling this "the single most common 'why is my order not
+READY'" and labelling it **intended**.
+
+**Root cause (traced, read-only, on `origin/main` `12322f31b`).**
+`backend/src/scm/lib/so-stock-allocation.ts:211-218` carries a comment titled
+*"Processing-date allocation gate"* quoting the owner verbatim (2026-08-10:
+*"有 processing date 才来分配"*). The predicate underneath it, at `:219`, is
+`orders.filter((o) => !o.proceeded_at)` — and the `.select()` at `:190` never
+fetches `processing_date`. Two different columns.
+
+They diverge on the ORDINARY path. Every surface that sets a Processing Date
+writes `processing_date` and leaves `proceeded_at` NULL: the SO Detail screen,
+both mobile surfaces, the amendment approve, the 2990 mirror. `proceeded_at` has
+exactly two writers left — create-time auto-proceed
+(`routes/mfg-sales-orders.ts:4984`) and `PATCH /:docNo/status` → IN_PRODUCTION
+(`:5838`) — and **no shipped client reaches either after create**:
+`grep -rn "proceededAt" frontend/` returns 0, and nothing in `frontend/src` POSTs
+`IN_PRODUCTION` (14 hits, all labels and constants). So an order created without a
+Processing Date — which is every AutoCount-imported order, since
+`backend/scripts/import-ac-outstanding-so.mjs` writes neither a processing nor a
+delivery date — and then given one on the detail screen is proceeded by the
+owner's rule, locked by `soProcessingLocked`, on the board, and invisible to
+allocation.
+
+This is the unfinished half of the 2026-08-13 unification, and the repo already
+said so: `backend/scripts/unify-processing-date.mjs` states in its own header that
+`so-stock-allocation.ts` gates on `proceeded_at`, that it does not touch or drop
+that column, and that **"the reader flip must wait until this reports zero
+remaining on EVERY company"**. Both companies reported zero on 2026-08-13; mig
+`0286` then renamed `internal_expected_dd` → `processing_date`. The reader flip
+was never done, and nothing re-manufactures the split as loudly as the ordinary
+UI path now does.
+
+Two more things kept it invisible. `backend/tests/soAllocationReadShape.test.ts`
+sets `proceeded_at` non-null in its fixture, so the gate never fires in test — it
+pins the read shape, not the rule. And no migration under
+`backend/src/db/migrations-pg` ever back-fills `proceeded_at` from
+`processing_date` (13 SQL hits on the name, all DDL, no `UPDATE`).
+
+**Fix.** NOT in this PR — this is a docs-only change and other workflows own the
+source files right now. The fix is one line plus one column: read
+`processing_date` at `:219` and add it to the select at `:190`. It is independent
+of every rename in `docs/modules/dates.md` and should land first and alone.
+Retiring `proceeded_at` afterwards must go the long way — stop accepting
+`['proceededAt','proceeded_at']` in the header PATCH map, keep stamping for one
+release, then stop reading, then drop the column in a LATER deploy, never the
+same one, for the reason mig `0189` records (migrations run before
+`wrangler deploy`, so the old Worker meets the new schema).
+
+**Doc corrections shipped with this entry.** `docs/modules/sales-order.md` §0.2
+no longer calls the current reading "intended"; the same file's claims that POS
+Proceed "never writes `processing_date`" (it does — `:5821`), that the allocator
+"sorts by" `proceeded_at` (it gates on it), and that *every* server write path
+runs the pair rule (`routes/so-mirror.ts` deliberately does not) are corrected in
+place, and a stale three-row table that had been left standing above its own
+corrections is deleted rather than appended to. The full census is the new
+`docs/modules/dates.md`.
+## Mobile PMS Floor Plans: the Display floor plan was a black banner with no preview, and every stock-transfer record showed a file name with no picture [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版「Floor Plans」卡里，Display 楼面图跟其他图不一样：它是一条黑色横幅，
+只写「几个档」，看不到图本身；3D、2D、Unfilled、Filled 四张都有缩图，就它没有。
+下面「Stock transfer record」那一排也一样，只有档名。现在 Display 变成一张正常的图砖
+（跨满一行、自带预览），顺序改成 Display -> 3D + 2D -> Unfilled + Filled，库存转移纪录
+每一列也加了可点的缩图。
+
+**Symptom.** In the mobile Floor Plans card, the Display floor plan alone showed
+no preview of what had been uploaded. It rendered as a dark full-width row
+(`background: "#15161a"`) carrying an icon, a title and the text
+`N files - tap to view / download`, while the four sibling tiles (Unfilled,
+Filled, 3D Design, 2D Design) each rendered an 80px `R2Thumb` of the actual file.
+The Display document is the one staff look at most, and it was the only one you
+had to open to see. The `Stock transfer record` rows below had the same gap:
+badge + file name + a View button, no image.
+
+**Root cause (traced in source, not guessed).** Not a regression — three
+independently-grown renderers inside `FloorPlans` in
+`frontend/src/mobile/MobilePMS.tsx`. Display was written as a standalone
+list-row (the banner) with its own `ReviewBadge` / `ReviewButtons` block beneath
+it, before the tile grid existed; the tile grid arrived later for
+Unfilled/Filled and gained the 3D/2D tiles on 2026-07-23. Nothing ever moved
+Display into the grid, so it never inherited the grid's preview. `stockOutAtts`
+is a third renderer again and never had one.
+
+**Fix.** Display becomes a normal tile in the same grid, spanning
+`gridColumn: "1 / -1"` with a 140px preview so the 3D + 2D pair keeps its own
+row; order is Display -> 3D + 2D -> Unfilled + Filled. The standalone banner and
+its separate review block are gone — Display now takes the same `ReviewBadge` /
+`checklistReviewVisible` -> `ReviewButtons` path the 3D/2D tiles already used.
+That fold is behaviour-preserving, and it was verified by reading both guards
+rather than assumed: `checklistReviewVisible` opens with
+`if (!item || !hasFiles) return false`, and `ReviewBadge` returns `null` when
+`review_status` is empty and `hasFiles` is false. Those are exactly the cases the
+old outer guard `displayItem && (displayItem.review_status ||
+displayPlanFiles.length > 0)` excluded, so neither badge nor button can appear
+anywhere it did not before. Each `stockOutAtts` row gains a 54x44 tappable
+thumbnail opening the same viewer as its View button; non-images keep the hatched
+placeholder.
+
+**Desktop twin: none needed, checked.** `frontend/src/pages/Projects.tsx` has no
+floor-plan card and no tile grid — it renders each checklist document as one
+uniform row of its `DocumentTable`. Grepped over `frontend/src`, the identifiers
+this change depends on — `R2Thumb`, `FloorPlans`, `stockOutAtts` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. "Display Floor
+Plan", "3D Design" and "2D Design" reach desktop only as `REVIEWABLE_TITLES`
+members. Tile width, tile order and previews are concepts the desktop surface
+does not express, so this is presentation-only and one-sided by construction,
+not by omission.
+
+**Also in this PR.** Two comments this change made false — the ones deciding
+`hideFilledPlan` and `hidePlanTiles` — still called Display a "banner" after the
+banner was deleted. Corrected in the same diff.
+
+**Ref.** `fix/floorplan-card`, PR #2349, 2026-08-20.
+## The PostgREST page ceiling was asserted for weeks and never once observed — it is now measurable from the Worker, and the number is still UNKNOWN [medium]
+
+<!-- area: Database + schema -->
+
+**白话.** 全系统 52 个档案读资料时都靠 `paginateAll` 一页一页拿，每页 1000 行，拿到
+不足 1000 行就当作「读完了」。问题是：PostgREST 到底一次最多给几行？程式码注解写死
+「1000」，但**从来没有人真的量过**。如果真实上限低于 1000，第一页就会看起来「不足」，
+整个回圈立刻停掉 —— 全部读取都只拿到一小截，而且不会报错。本周两个生产 bug 就是
+「读取悄悄只回传一部分」造成的。本来写来量这个数字的脚本，那一半**一次都没跑过**
+(GitHub 没有那两个密钥)。现在把量测搬到 Worker(密钥在那里)，并附上测试证明它两种
+答案都讲得出来。**但数字目前还是 UNKNOWN** —— 我没有连上生产环境，不敢用推理充数。
+
+**Symptom.** `backend/src/scm/lib/paginate-all.ts`'s header stated PostgREST caps a
+response at 1000 rows as settled fact. Nothing had ever observed it. That number is
+load-bearing twice over: `paginateAll` pages in `PAGE = 1000` windows and stops on
+the first page shorter than `PAGE`, so a real ceiling **below** `PAGE` makes page one
+look final and truncates every paged read in the tree — silently, in exactly the
+shape `paginateAll` exists to prevent. 52 files import it. Two production bugs this
+week traced to a read quietly returning a subset.
+
+**Root cause (traced).** The instrument written to settle it could never run.
+`backend/scripts/probe-mrp-read-ceiling.mjs`'s REST half needed `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY`; runs `31941352447` and `31942066593` both printed
+`SKIPPED — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set` and the workflow
+reported **success** both times. Verified today: `gh secret list` holds neither at
+repo level, and `--env Production` holds only `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_API_TOKEN`, `VITE_API_URL` — so the `environment: Production` line added
+to fix it fixed nothing. The credentials are real but are **Worker** secrets
+(`wrangler secret list --name autocount-sync-api` lists both), and they must stay
+that way: the repo is public, non-admin collaborators can read repository secrets,
+and the service-role key bypasses RLS on the single database both tenants share.
+Rewriting the probe over `DATABASE_URL` would have measured **Postgres**, not the
+REST edge — `backend/src/db/supabase.ts:66` builds a real `createClient`, and every
+`sb.from(...)` in the SCM module is a PostgREST call, so the edge is the thing under
+test.
+
+**Fix.** The measurement moved to where the credentials already are, as a read-only
+diagnostic on the existing System Health surface rather than a new one:
+`GET /api/admin/health/rest-page-ceiling` (`backend/src/routes/systemHealth.ts`),
+gated on `*` — the existing admin capability (`services/permissions.ts:7`) this file
+already uses for its other heavy admin routes, because an unauthenticated heavy read
+is a DoS lever. It counts the candidate tables head-only, runs a `.limit()` ladder
+(500 / 1000 / 1001 / 5000) against the largest, and reports rows-returned against the
+`Content-Range` total at each rung; a rung whose total is `<=` its limit is marked
+`inconclusive` and excluded, because a read that ran out of *table* says nothing
+about a *ceiling*. It also issues `paginateAll`'s own `.range(0, PAGE-1)` window and
+imports the real `PAGE` (now exported) rather than restating `1000`, so the verdict
+cannot agree with itself by construction. **Counts only** — no row, id, doc_no or
+name reaches the payload.
+
+**The number is UNKNOWN and is deliberately not guessed.** Production could not be
+reached from here: the endpoint is not deployed yet, and calling it needs an
+authenticated production session. Staging was tried and is dead — its remote preview
+answers Cloudflare `error code: 1105` on every route, consistent with staging deploys
+being paused since 2026-07-31 with a revoked token. The one adjacent reading
+available (`no *max-rows* GUC set on any role`, run `31942066593`) is **not** the
+measurement: Supabase sets PostgREST's `db-max-rows` in PostgREST's own config, so an
+absent role GUC does not prove the default applies. To get the number: deploy, then
+call the endpoint as an owner. If it returns `TRUNCATES_SILENTLY`, `paginateAll` is
+wrong and that is a separate finding, not a fix to fold in here.
+
+**The trap is retired, not annotated.** The workflow
+recompute-2990-so-allocation.yml was DELETED, together with the
+now-unreachable recompute-2990-so-allocation.mjs it was the only caller of.
+(Both are named without backticks on purpose — they no longer exist, and
+`check-docs-drift.mjs --strict` correctly fails a doc that cites a missing
+file.) Evidence it is dead: `gh run list` shows **zero runs ever**; its capability is already
+covered by `recompute-so-allocation.yml`, which runs the same canonical global function
+over `DATABASE_URL` + `pgrest-shim.mjs`, prints `GLOBAL (both companies)`, and has five
+successful runs. A header comment did not stop it being copied on 2026-08-13, so the
+file is gone. Surviving citations were repointed to the working sibling.
+`probe-mrp-read-ceiling.yml` lost the half that could never run — a permanently-SKIPPED
+step reads as coverage that does not exist — and now points at the Worker endpoint.
+`CLAUDE.md` said these secrets "do not exist here", which is true of GitHub and FALSE
+of the Worker; that half-truth is what sent two authors down this path, and it now
+states both halves plus the prohibition.
+
+**Pinned by** `backend/src/routes/systemHealthRestCeiling.test.ts` (6 cases): a
+1000-cap edge reports ceiling 1000 / `CORRECT`; a **500**-cap edge reports
+`TRUNCATES_SILENTLY` off `paginateAll`'s own short first window; an uncapped
+small-table edge reports `ceiling: null` / `UNKNOWN` rather than inventing one; the
+largest table is chosen so a small one cannot mask the cap; a non-`*` caller gets 403;
+and no row content reaches the payload. Proven not vacuous by mutation — forcing the
+verdict to `CORRECT`, treating inconclusive rungs as evidence, and dropping the gate
+each turn exactly one case red.
+## Mobile PMS: "Stock In Transfer Record" stayed pinned full-width after the Defect List split, stranding "Dismantle Image" alone in its row [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**白话.** 手机版专案的「Setup & Dismantle documents」是两栏排的图砖。之前砖是 7 块，
+单数，最后一块「Stock In Transfer Record」落单，所以老板 7 月 23 号叫把它拉成整行。
+7 月 29 号「Defect List」被拆成 Setup 和 Dismantle 两块，砖变成 8 块——双数了，
+但那条整行的设定没跟着改，结果换成倒数第二块「Dismantle Image」自己占半行、旁边空一格。
+现在把整行设定拿掉，8 块刚好排成四行两栏。
+
+**Symptom.** In the mobile project detail's `Setup & Dismantle documents` card
+(a `gridTemplateColumns: "1fr 1fr"` grid), `Dismantle Image` sat alone in its row
+with an empty half-row gap beside it, and `Stock In Transfer Record` sat below it
+as a full-width tile.
+
+**Root cause (traced by counting the array on `origin/main`, not guessed).**
+The `mgmtSdTiles` array in `frontend/src/mobile/MobilePMS.tsx` carried
+`fullWidth: true, mediaH: 108` on its last entry. That flag was correct when it
+was added, and the comment above it said why: *"Owner 2026-07-23: full-width
+('make it big') — the odd 7th tile was dangling half-width at the bottom of the
+grid."* At that point the array held **7** tiles. The owner's 2026-07-29 Defect
+List split (`Defect List` -> `Defect Item Setup` + `Defect Item Dismantle`) added
+an eighth. `fullWidth` renders as `gridColumn: "1 / -1"`, so against an EVEN
+count it stops curing the dangle and starts causing one — the 7th tile is now the
+one left alone. The flag outlived the condition it was written for, and nothing
+tied the two changes together.
+
+**Fix.** Drop `fullWidth` / `mediaH` from the `Stock In Transfer Record` entry so
+the 8 tiles lay out as four clean rows of two, and replace the stale 2026-07-23
+comment with one recording why the earlier decision no longer applies — so the
+next reader does not re-add the flag on the strength of a comment describing a
+7-tile grid that no longer exists.
+
+**Desktop twin: none needed, checked.** Tile width is not a concept the desktop
+surface expresses. `frontend/src/pages/Projects.tsx` renders each checklist
+document as one uniform row of its `DocumentTable`. Grepped over
+`frontend/src`, the identifiers this change depends on — `DocTile` and `mediaH` —
+resolve to a single file, `frontend/src/mobile/MobilePMS.tsx`. `fullWidth` does
+occur in `Projects.tsx`, but as the design-system `Button` / `DateField` prop:
+same word, unrelated concept. "Stock In Transfer Record" reaches desktop only as
+a `REVIEWABLE_TITLES` member and a `PROJECT_STAGES` title, neither carrying
+layout.
+
+**Lesson.** A layout flag whose justification is a COUNT is a fact with an expiry
+date, exactly as CLAUDE.md says of a number in a comment. It should have been
+derived from the array length rather than pinned by hand; left pinned, it
+inverted its own purpose the day the count changed.
+
+**Ref.** `fix/pair-stockin-tile`, PR #2347, 2026-08-20.
 
 ## Two authors could not pick a migration number without racing each other [medium]
 
