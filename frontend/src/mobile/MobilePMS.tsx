@@ -982,12 +982,12 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   };
   const visibleChecklist = (data?.checklist ?? []).filter((it) => !itemHidden(it));
   // Owner 2026-07-21 (re-reversed): the Filled floorplan tile is hidden from
-  // crew again — their Floor Plans card keeps Display (banner), Unfilled
+  // crew again — their Floor Plans card keeps Display (tile), Unfilled
   // (view/download) and the stock-transfer records (view/download).
   const hideFilledPlan = isDriverCrew || isStorekeeper;
   // Owner 2026-07-23: the Unfilled/Filled floorplan tiles are for sales,
   // sales director, management and BD only — the ops/office cohort keeps the
-  // card (display banner, 3D/2D design, stock records) without them.
+  // card (Display tile, 3D/2D design, stock records) without them.
   const hidePlanTiles = cohortOps || isPurchaserView;
 
   // ── Owner 2026-07-23 card respec — tile sets for the two new cohorts ──
