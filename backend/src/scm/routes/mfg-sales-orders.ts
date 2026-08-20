@@ -5550,11 +5550,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      NOT for a DRAFT. A draft is the scan job's guess awaiting an operator's
      verdict; it may be rewritten or thrown away, and neither belongs in a live
      account book. The DRAFT -> live transition below queues it instead. */
-  if ((body as { asDraft?: unknown }).asDraft !== true) {
-    await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null });
-  }
+  /* AND THE REFUSAL COMES BACK OUT — never as a 422 (the order is committed by
+     now); lib/ac-preflight.ts holds the block-or-warn ruling for every cause. */
+  const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
+    : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
 
-  return c.json({ docNo }, 201);
+  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
