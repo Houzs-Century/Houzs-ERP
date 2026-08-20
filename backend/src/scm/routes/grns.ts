@@ -35,7 +35,7 @@ import {
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
-import { grnInheritedFieldChanges, grnInheritedLockedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
+import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -2643,24 +2643,27 @@ grns.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
-  /* Multi-company: the service-role client bypasses RLS, so an app-level
-     predicate is the ONLY isolation. The GET at :1382 was scoped by the
-     2026-08-10 audit; this PATCH — the write — was not, on either its read or
-     its UPDATE, so a GRN id from the other company could be loaded here and
-     edited. Reads were hardened then and writes were left, which is the
-     systemic half of that audit. */
+  /* Multi-company: the service-role client bypasses RLS, so the app-level
+     predicate is the ONLY isolation. This PATCH's read + UPDATE were unscoped
+     until the 2026-08-10 audit hardened them (the GET was done first). */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
-  /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
-     also the BEFORE half of every from->to pair recorded at the end of the
-     handler. An audit entry carrying only the new value does not answer "what
-     changed". One read serves both — the relocation block below reads its
-     warehouse / status / rate out of the same row it always did. */
+  /* GRN_AUDIT_SELECT (not just the relocation's columns): this row is also the
+     BEFORE half of every audit from->to pair, and the relocation reads its
+     warehouse / status / rate out of the same row. One read serves all three. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
     .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+
+  /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1; grn-inherited-lock.ts):
+     supplier + costing basis freeze once a live PI/PR exists. Runs before the
+     relocation block so a locked edit writes nothing. */
+  const grnHeaderLocked = grnHeaderInheritedChanges(body, before, GRN_AUDIT_FIELDS);
+  if (grnHeaderLocked.length > 0 && (await grnHasDownstream(sb, id))) {
+    return refuseWithoutWriting(c, grnHeaderInheritedRefusal(grnHeaderLocked), 409);
+  }
 
   /* Before the relocation block below, which writes inventory movements — those
      are a real stock change, so the last honest refusal point is above them, not
@@ -2671,14 +2674,11 @@ grns.patch('/:id', async (c) => {
   });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  /* Warehouse relocation — a posted GRN already pushed its IN stock into the OLD
-     warehouse. If the operator changes the warehouse, just rewriting the header
-     field would strand the stock in the old warehouse while the header claims the
-     new one. So physically move it: OUT of the old warehouse + IN to the new one,
-     carrying the same cost + source-PO batch. Same downstream-consumption guard as
-     cancel — if the old-warehouse stock was already shipped/used, block (can't
-     relocate phantom qty). Best-effort allocation re-walk after, since per-
-     warehouse buckets changed. */
+  /* Warehouse relocation — a posted GRN pushed its IN stock into the OLD
+     warehouse, so a warehouse change must physically move it: OUT of old + IN to
+     new, same cost + source-PO batch. Same downstream-consumption guard as cancel
+     (block if the old-warehouse stock was already shipped); best-effort alloc
+     re-walk after. */
   if (body.warehouseId !== undefined) {
     const c0 = (beforeRow ?? null) as unknown as { grn_number: string; status: string | null; warehouse_id: string | null; exchange_rate?: string | number | null } | null;
     const oldWh = c0?.warehouse_id ?? null;
