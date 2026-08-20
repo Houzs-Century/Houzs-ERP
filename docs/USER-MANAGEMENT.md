@@ -117,7 +117,7 @@ requires a sales-side position (routes/pos.ts).
 - `backend/src/services/auth.ts` — hydrateAuthUser (position → page_access)
 - `backend/src/routes/positions.ts` — positions CRUD + matrix read/write
 - `backend/src/services/pmsAccess.ts` — project-detail section gating
-- ~~`backend/src/services/projectAcl.ts`~~ — REMOVED 2026-08-19 (project PIC/brand row-level ACL deleted; visibility is company-scope only)
+- ~~`backend/src/services/projectAcl.ts` [gone]~~ — REMOVED 2026-08-19 (project PIC/brand row-level ACL deleted; visibility is company-scope only)
 - `backend/src/routes/users.ts` — invite/PATCH/list carry dept/position/manager
 - `frontend/src/auth/PageGuard.tsx`, `App.tsx`, `components/Sidebar.tsx` — FE enforcement
 - `frontend/src/pages/Team.tsx`, `Positions.tsx` — the UI

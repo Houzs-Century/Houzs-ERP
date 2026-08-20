@@ -437,7 +437,7 @@ Related routes elsewhere:
   permission still needs a bell). Scoped by COMPANY only
   (`allowedCompanyIds`); the former `getProjectScope` PIC/brand filter was
   removed 2026-08-19 (Axis 2).
-- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+- `backend/src/routes/events.ts` [gone] — **deleted on main** (`45d73689`: no frontend,
   ungrantable permissions, PMS covers it). It was the manual setup/dismantle
   calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
   calendar. Kept here because the absence is the fact worth knowing.
@@ -669,7 +669,7 @@ in this change — exported `getProjectScope` / `canSeeProject` /
 Sales rep to projects where they (or their manager) were the PIC AND whose brand
 sat in their `user_brands` list.
 
-That whole file (`backend/src/services/projectAcl.ts`) and every predicate that
+That whole file (`backend/src/services/projectAcl.ts` [gone]) and every predicate that
 keyed off it were **deleted / removed**. Within a company, **any user with the
 projects page permission now sees EVERY one of that company's projects**,
 regardless of PIC or brand. Row visibility is governed only by:
@@ -1062,6 +1062,35 @@ is a strict subset: it excludes the granular `projects.finance.view` holders
 | Maintenance masters (brands, event types, organizers, venues) | `pages/ProjectMaintenance.tsx` | **no mobile counterpart** |
 | Venue resolution | — | — shared server-side in `backend/src/scm/lib/venue-binding.ts`; neither client re-implements it |
 | Director / sales cohort names | `backend/src/services/pmsAccess.ts` | `frontend/src/auth/salesAccess.ts` — must stay in lockstep, test-pinned |
+| P&L category labels | — | — shared in `vendor/scm/lib/pms-ledger-categories.ts`; neither surface labels a category itself |
+| Which checklist rows carry Approve/Reject | — | — shared in `vendor/scm/lib/pms-reviewable-titles.ts` |
+| Project STATUS values + payment-pill labels | — | — shared in `vendor/scm/lib/pms-project-status.ts`; each surface keeps only its own palette |
+
+#### The shared PMS vocabularies, and why they are shared
+
+`pms-status.ts` (workflow STAGE) was the first of these; three more joined it on
+2026-08-21 after a desktop-vs-mobile audit found each one hand-written twice:
+
+| Module | Owns | What the duplication had already cost |
+|---|---|---|
+| `pms-ledger-categories.ts` | the P&L picker lists + `ledgerCategoryLabel` | desktop mapped the slugs, mobile ran a generic `humanize()` — one P&L row read "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone |
+| `pms-reviewable-titles.ts` | `isReviewableTitle` | desktop tested a Set of seven EXACT titles, mobile a PREFIX regex claiming to mirror it — "3D Design (Revision 2)" got the approve/reject workflow on the phone and none on the PC |
+| `pms-project-status.ts` | status values/labels + payment-pill labels | values agreed, but the `fully_paid` pill read "Fully paid" on desktop and "Paid" on mobile |
+
+**The rule for all four is the same:** only the value→label contract is shared.
+Each surface keeps its OWN visual map — desktop Tailwind chip/ring classes and a
+calendar hex, mobile inline styles — so the two can never disagree about WHICH
+values exist or what they are called, while neither dictates the other's palette.
+
+**`isReviewableTitle` is a PREFIX rule, and that was a choice.** The prefix
+matcher is a strict SUPERSET of the old exact set (proved in
+`pms-vocabulary.test.ts`: every one of the seven matches its own prefix), so
+adopting it removed review controls from nobody. What changed is that DESKTOP now
+shows submit/approve/reject on suffixed rows — "3D Design (Revision 2)",
+"Agreement — signed copy" — which mobile already did. Chosen because staff type
+these titles by hand and the owner's standing philosophy for this system is to
+loosen rather than restrict. **Flagged for the owner**; if he wants exactness
+instead, the matcher changes in one place and both surfaces follow.
 
 ---
 

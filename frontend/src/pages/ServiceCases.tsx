@@ -112,7 +112,8 @@ import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
-import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
+import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
   Paginated,
@@ -2506,7 +2507,7 @@ function CreatePanel({
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   // Mig 065 — pull issue categories from the lookup endpoint so the
   // intake form mirrors what admins maintain in Service Maintenance.
-  // Fall back to the legacy ISSUE_CATEGORIES constant if the call
+  // Fall back to the shared ASSR_ISSUE_CATEGORIES list if the call
   // hasn't returned yet.
   const issueCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
@@ -3052,7 +3053,7 @@ function CreatePanel({
             className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             <option value="">— select —</option>
-            {(issueCatOptions.length ? issueCatOptions : [...ISSUE_CATEGORIES]).map((c) => (
+            {(issueCatOptions.length ? issueCatOptions : [...ASSR_ISSUE_CATEGORIES]).map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -3311,9 +3312,7 @@ function DetailContent({
   // inputs open — add an Edit button"); toggling exposes the InlineEdit
   // fields, incl. the SO-No mirror re-match.
   const [custEditing, setCustEditing] = useState(false);
-  const [noteCategory, setNoteCategory] = useState<"service" | "customer" | "supplier" | "sales">(
-    "service",
-  );
+  const [noteCategory, setNoteCategory] = useState<AssrNoteAudience>("service");
   // Activity timeline filter. 'all' = show everything; the others
   // narrow to one stored category (four buckets + system since mig
   // 0108): service / customer / supplier / sales cover authored notes
@@ -3731,7 +3730,7 @@ function DetailContent({
               onSave={(v) => patch({ issue_category: v })}
               dialog={dialog}
               categories={
-                issueOptions.length ? issueOptions : [...ISSUE_CATEGORIES]
+                issueOptions.length ? issueOptions : [...ASSR_ISSUE_CATEGORIES]
               }
             />
             <InlineEdit
@@ -4870,19 +4869,20 @@ function DetailContent({
                 <div className="mb-2 flex items-center gap-2">
                   <select
                     value={noteCategory}
-                    onChange={(e) =>
-                      setNoteCategory(e.target.value as "service" | "customer" | "supplier" | "sales")
-                    }
+                    onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
                     className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
                     title="Where this note is visible"
                   >
-                    <option value="service">Service (internal)</option>
-                    <option value="customer">Customer-visible</option>
-                    <option value="supplier">Supplier (internal)</option>
-                    <option value="sales">Sales (internal)</option>
+                    {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
+                        two lists had already drifted on the one label that
+                        matters: this side promised "Customer-visible", the phone
+                        said only "Customer". */}
+                    {ASSR_NOTE_AUDIENCES.map((a) => (
+                      <option key={a.value} value={a.value}>{a.label}</option>
+                    ))}
                   </select>
                   <span className="text-[10px] text-ink-muted">
-                    {noteCategory === "customer"
+                    {assrNoteIsCustomerVisible(noteCategory)
                       ? "The customer will see this note on the portal."
                       : "Internal only — hidden from the customer."}
                   </span>
@@ -4894,7 +4894,7 @@ function DetailContent({
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
                   }}
                   placeholder={
-                    noteCategory === "customer"
+                    assrNoteIsCustomerVisible(noteCategory)
                       ? "Write a note for the customer…"
                       : "Internal note…"
                   }
@@ -5335,14 +5335,10 @@ type CustomerHistoryRow = {
 // label. Stored as plain text on the case so existing free-text
 // values still display; selecting "Other" lets ops capture niche
 // cases without locking them into the standard set.
-
-const ISSUE_CATEGORIES = [
-  "Product defect",
-  "Incorrect item delivered",
-  "Missing / short item",
-  "Warranty / service request",
-  "Installation / assembly issue",
-] as const;
+//
+// The five live in vendor/scm/lib/assr/case-fields — mobile carried an
+// identical second copy, which is what the note-audience labels looked like
+// the day before THEY drifted.
 
 const OTHER_SENTINEL = "__other__";
 
@@ -5516,17 +5512,16 @@ const VERIFICATION_OPTIONS = [
 // 5-cell status summary bar. The full accordion + resolution-driven flow
 // filtering land in later PRs; this PR only refreshes the header strip.
 
-// desc — one-line caption under each funnel dot (Nick 2026-07-23:
-// 在 stage funnel 每个 stage 加上 description).
-const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] = [
-  { id: "pending_review",              short: "Review",       long: "Review",                  desc: "New case — first review" },
-  { id: "pending_solution",            short: "Solution",     long: "Solution",                desc: "Decide fix & assign supplier" },
-  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
-  { id: "pending_supplier_pickup",     short: "Supplier",     long: "Supplier Pickup / Return", desc: "Item with supplier for repair" },
-  { id: "pending_item_ready",          short: "Pending Item Ready", long: "Pending Item Ready", desc: "Repair done — QC check" },
-  { id: "pending_delivery_service",    short: "Delivery",     long: "Delivery / Service",      desc: "Schedule return delivery" },
-  { id: "completed",                   short: "Completed",    long: "Completed",               desc: "Closed & rated" },
-];
+// READ from the canonical table, never retyped. This WAS a sixth hand-written
+// copy of the stage vocabulary and four of its rows had drifted: it printed
+// "Review" / "Solution" / "Verification" / "Delivery / Service" where the shared
+// table — and therefore the phone, the portal and the printed report — says
+// "Pending Review" / "Pending Solution" / "Under Verification" / "Pending
+// Delivery / Service". One stage, two names, decided by which device the reader
+// picked up. `id` is this page's own name for the stage key; everything else,
+// including the funnel-dot caption, now comes from stages.ts.
+const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] =
+  ASSR_STAGES.map((s) => ({ id: s.key as AssrStage, short: s.short, long: s.long, desc: s.desc }));
 
 // `resolutionRoute` — which side of the flow a resolution method routes to —
 // now lives in the shared vendor/scm/lib/assr/stages module (imported above)
@@ -5723,7 +5718,13 @@ function WorkflowCard({
                 className="h-8 rounded-md border border-border bg-bg px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary disabled:opacity-60"
                 title="Move this case to any stage"
               >
-                {DETAIL_STAGES.map((s) => (
+                {/* The FILTERED prop, not the module table. This mapped
+                    DETAIL_STAGES while the counter two lines up read `stages` —
+                    so an internal-resolution case said "Step 2 / 5" and then
+                    offered all 7, the two supplier-only stages included. That is
+                    the exact drift vendor/scm/lib/assr/stages.ts exists to stop,
+                    and mobile (activeAssrStages) never had it. */}
+                {stages.map((s) => (
                   <option key={s.id} value={s.id}>{s.long}</option>
                 ))}
                 {/* Terminal alt-outcome — not a pipeline step, offered as
@@ -7185,7 +7186,7 @@ function IssueCategoryField({
   dialog: ReturnType<typeof useDialog>;
   // Mig 065 — passed in from the parent so the picker reflects what
   // admins added in Service Maintenance. Falls back to the legacy
-  // ISSUE_CATEGORIES constant inside the parent if the API hasn't
+  // shared ASSR_ISSUE_CATEGORIES list if the API hasn't
   // returned yet.
   categories: readonly string[];
 }) {

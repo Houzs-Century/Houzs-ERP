@@ -192,6 +192,42 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
 }
 
 /**
+ * The sentence to show an operator who is about to close a delivery that
+ * carries NO proof of delivery — `null` when there is nothing to say.
+ *
+ * WHY A SENTENCE AND NOT A REFUSAL. Three measured reasons, all pointing the
+ * same way:
+ *
+ *   · The office legitimately closes deliveries it did not attend. 2990's
+ *     imported deliveries have no POD at all, and the HOUZS AutoCount
+ *     carry-overs were inserted as literal 'DELIVERED'. A hard gate would make
+ *     a whole tenant's backlog unclosable.
+ *   · The SERVER already decided this. `patchDeliveryOrderStatusHandler` DROPS
+ *     an out-of-range GPS fix rather than 409-ing it, in as many words: "a bad
+ *     sensor reading must never be the reason a driver cannot close a
+ *     delivery". A client stricter than its own server is a bug.
+ *   · The owner's standing rule for this system is to loosen rather than
+ *     restrict, and to prefer a default or a prompt over a wall.
+ *
+ * What was actually wrong was never the permissiveness — it was the SILENCE.
+ * The same delivery closed from a different screen either had a signature or
+ * had nothing, and no screen said which you were about to do. That is the same
+ * rule this module already applies to the Sales-Invoice transfer: the thing may
+ * be unavailable, but it may not be silent.
+ *
+ * Scope: only the step that CLOSES the delivery is warned about. A
+ * DRAFT→DISPATCHED confirm is not a delivery and must not nag.
+ */
+export function doCloseWithoutEvidenceWarning(
+  step: DoAdvanceStep | null,
+  pod: { signature_data?: string | null; pod_r2_key?: string | null } | null | undefined,
+): string | null {
+  if (step?.status !== 'DELIVERED') return null;
+  if (pod?.signature_data || pod?.pod_r2_key) return null;
+  return 'This delivery order has no customer signature and no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen in the mobile app.';
+}
+
+/**
  * `null` when {@link doAdvanceStep} has a step to offer. Otherwise the sentence
  * for the disabled control.
  */
