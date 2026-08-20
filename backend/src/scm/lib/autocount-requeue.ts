@@ -118,10 +118,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import type { AcDocType, AcOp } from '../../services/autocount-writeback';
 import {
-  claimOutboxRow, dispatchOne, enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
+  dispatchOne, enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
   MAX_ATTEMPTS,
   type AcDocRef, type AcOutboxPayload, type AcOutboxRow,
 } from './autocount-outbox';
+import { claimOutboxRow } from './autocount-claim';
 import { AC_TRANSFER_OPS, REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 

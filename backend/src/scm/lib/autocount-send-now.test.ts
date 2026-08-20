@@ -15,12 +15,8 @@
 // The second is the one worth writing tests for: the first fails loudly the day
 // it breaks, and the second fails silently into an accounting system.
 import { describe, expect, test, beforeEach, vi } from 'vitest';
-import {
-  claimOutboxRow,
-  releaseExpiredClaims,
-  AC_CLAIM_LEASE_MS,
-  MAX_ATTEMPTS,
-} from './autocount-outbox';
+import { MAX_ATTEMPTS } from './autocount-outbox';
+import { claimOutboxRow, releaseExpiredClaims, AC_CLAIM_LEASE_MS } from './autocount-claim';
 import { acRequeueAccepted, sendOutboxRowNow } from './autocount-requeue';
 import { acRowCanSendNow, acRowIsRequeueable } from './autocount-outbox-status';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
