@@ -17,14 +17,14 @@ describe('collectProcessingGateProblems', () => {
       delivDate: '2099-02-10',
       todayMY: '2026-07-18',
       variantOffenders: [],
-      deposit: { paidSen: 100_00, totalSen: 100_00 },
     });
     expect(ps).toEqual([]);
   });
 
-  it('collects EVERY failing gate in one pass (variants + deposit + past + after-delivery)', () => {
-    // proc in the past AND after the (also-past) delivery date, deposit short,
-    // two lines each missing a required axis.
+  it('collects EVERY failing gate in one pass (variants + past + after-delivery)', () => {
+    /* proc in the past AND after the (also-past) delivery date, two lines each
+       missing a required axis. There is no deposit term any more — the owner
+       removed that condition on 2026-08-20 (「以电脑为准 —— 两边都不查」). */
     const ps = collectProcessingGateProblems({
       procDate: '2020-05-10',
       delivDate: '2020-05-01', // proc > deliv → after-delivery; both < today → past
@@ -33,14 +33,12 @@ describe('collectProcessingGateProblems', () => {
         { itemCode: 'FENRIR-5FT', group: 'bedframe', missing: ['legHeight'] },
         { itemCode: 'TELLUC-2S', group: 'sofa', missing: ['fabricCode'] },
       ],
-      deposit: { paidSen: 0, totalSen: 300_00 }, // 0% < 30%
     });
-    // 2 variant + 1 deposit + proc-past + deliv-past + after-delivery = 6 problems.
-    expect(ps).toHaveLength(6);
+    // 2 variant + proc-past + deliv-past + after-delivery = 5 problems.
+    expect(ps).toHaveLength(5);
     expect(codes(ps)).toEqual([
       'variants_incomplete',
       'variants_incomplete',
-      'processing_date_unpaid',
       'processing_date_past',
       'delivery_date_past',
       'processing_after_delivery',
@@ -64,20 +62,6 @@ describe('collectProcessingGateProblems', () => {
     expect(ps[1]!.message).toBe('FENRIR-5FT — Gap is required');
   });
 
-  it('deposit problem carries the concrete amount + threshold', () => {
-    const ps = collectProcessingGateProblems({
-      procDate: '2099-01-10',
-      delivDate: '2099-02-10',
-      todayMY: '2026-07-18',
-      deposit: { paidSen: 50_00, totalSen: 1000_00 }, // RM50 paid, need RM300 (30%)
-    });
-    expect(ps).toHaveLength(1);
-    expect(ps[0]!.code).toBe('processing_date_unpaid');
-    expect(ps[0]!.message).toContain('RM 50');
-    expect(ps[0]!.message).toContain('RM 300');
-    expect(ps[0]!.message).toContain('30%');
-  });
-
   it('grandfathers an unchanged already-past date (edit path)', () => {
     const ps = collectProcessingGateProblems({
       procDate: '2020-01-01',
@@ -99,16 +83,6 @@ describe('collectProcessingGateProblems', () => {
       origDelivDate: '2020-04-01',
     });
     expect(codes(ps)).toContain('processing_date_past');
-  });
-
-  it('does not report a deposit shortfall when no processing date is being set', () => {
-    const ps = collectProcessingGateProblems({
-      procDate: null,
-      delivDate: null,
-      todayMY: '2026-07-18',
-      deposit: { paidSen: 0, totalSen: 100_00 },
-    });
-    expect(ps).toEqual([]);
   });
 
   /* Colour-KIV gate (owner rule 2026-07-24, after an SO was released for
@@ -241,15 +215,6 @@ describe('collectProcessingGateProblems', () => {
     });
   });
 
-  it('treats a total <= 0 order as deposit-satisfied (free order)', () => {
-    const ps = collectProcessingGateProblems({
-      procDate: '2099-01-10',
-      delivDate: '2099-02-10',
-      todayMY: '2026-07-18',
-      deposit: { paidSen: 0, totalSen: 0 },
-    });
-    expect(ps).toEqual([]);
-  });
 });
 
 describe('validationFailedBody', () => {
@@ -272,59 +237,18 @@ describe('validationFailedBody', () => {
   });
 });
 
-/* Per-company deposit threshold (owner 2026-07-31: Houzs 30%, 2990 50%).
-   Before this, both constants applied to every company and a 2990 order was
-   gated at the Houzs 30% — the refusal the owner hit on a 2990 SO. */
-describe('deposit threshold is per company', () => {
-  const facts = (companyCode: string | null, paidSen: number) => ({
-    procDate: '2026-12-01',
-    delivDate: '2026-12-20',
-    todayMY: '2026-07-31',
-    companyCode,
-    deposit: { paidSen, totalSen: 1000_00 },
-  });
-  const unpaid = (f: Parameters<typeof collectProcessingGateProblems>[0]) =>
-    collectProcessingGateProblems(f).filter((p) => p.code === 'processing_date_unpaid');
+/* THE PER-COMPANY DEPOSIT THRESHOLD IS NO LONGER A CONDITION OF THIS GATE.
+   A `describe('deposit threshold is per company')` block stood here — Houzs
+   30%, 2990 50%, the fallback to the looser 30% for an unknown company, and a
+   sweep asserting this report agreed with meetsDepositGate on every input. The
+   owner removed the condition on 2026-08-20 (「以电脑为准 —— 两边都不查」), so
+   those tests described a rule the collector no longer has; they were deleted
+   rather than adjusted, because there is nothing left for them to be about.
 
-  it('HOUZS clears at 30%', () => {
-    expect(unpaid(facts('HOUZS', 300_00))).toHaveLength(0);
-  });
-
-  it('2990 does NOT clear at 30% — its rule is 50%', () => {
-    const [p] = unpaid(facts('2990', 300_00));
-    expect(p).toBeDefined();
-    /* The MESSAGE must carry 50%, not the 30% a hard-coded constant would
-       print: a 2990 operator told "30%" while being refused at 50% cannot act
-       on it. */
-    expect(p.message).toContain('50%');
-    expect(p.message).toContain('RM 500');
-  });
-
-  it('2990 clears at 50%', () => {
-    expect(unpaid(facts('2990', 500_00))).toHaveLength(0);
-  });
-
-  it('an unknown or absent company falls back to the LOOSER 30%, never the stricter', () => {
-    expect(unpaid(facts(null, 300_00))).toHaveLength(0);
-    expect(unpaid(facts('SOMETHING-NEW', 300_00))).toHaveLength(0);
-  });
-
-  it('company code is matched case-insensitively and trimmed', () => {
-    expect(unpaid(facts(' 2990 ', 300_00))).toHaveLength(1);
-  });
-
-  /* This report and the Proceed gate must never disagree about whether the
-     deposit is in — they describe the same act (a Processing Date IS Proceed),
-     so they read the same predicate. Reporting is all they may differ on. */
-  it('reports the shortfall exactly when meetsDepositGate refuses', () => {
-    for (const companyCode of ['HOUZS', '2990', null, 'FUTURE-CO']) {
-      for (const paidSen of [0, 299_99, 300_00, 499_99, 500_00, 1000_00]) {
-        expect(unpaid(facts(companyCode, paidSen)).length === 0)
-          .toBe(meetsDepositGate(paidSen, 1000_00, companyCode));
-      }
-    }
-  });
-});
+   `meetsDepositGate` and `processingDateThresholdFor` still exist and are still
+   correct — the PROCEED refusal below renders them, and that path is an orphan
+   today. The behaviour this gate has now is pinned in
+   deposit-not-a-save-gate.test.ts. */
 
 /* ONE gate (owner 2026-07-31: "不要又 Processing Date,又 Proceed... Processing
    Date 就是当天 Proceed 的意思"). Completeness now gates the Processing Date the
@@ -336,8 +260,6 @@ describe('unified Processing-Date gate: completeness', () => {
     procDate: '2026-12-01',
     delivDate: '2026-12-20',
     todayMY: '2026-07-31',
-    companyCode: 'HOUZS',
-    deposit: { paidSen: 1000_00, totalSen: 1000_00 },
   };
   const complete = { hasCustomerName: true, hasAddress: true, hasPostcode: true };
   const codes = (f: Parameters<typeof collectProcessingGateProblems>[0]) =>
@@ -375,13 +297,16 @@ describe('unified Processing-Date gate: completeness', () => {
     expect(codes({ ...base })).toHaveLength(0);
   });
 
-  it('completeness and the deposit shortfall are reported TOGETHER, in one response', () => {
+  /* Was 'completeness and the deposit shortfall are reported TOGETHER'. The
+     deposit half is gone (owner 2026-08-20), so what this pins now is that a
+     completeness failure is still reported as its own fixable problem and is
+     the ONLY thing reported — no money sentence rides along. */
+  it('a completeness failure is reported alone — no deposit sentence rides along', () => {
     const all = collectProcessingGateProblems({
       ...base,
-      deposit: { paidSen: 0, totalSen: 1000_00 },
       completeness: { hasCustomerName: true, hasAddress: false, hasPostcode: true },
     });
-    expect(all.map((p) => p.code).sort()).toEqual(['processing_date_incomplete', 'processing_date_unpaid']);
+    expect(all.map((p) => p.code)).toEqual(['processing_date_incomplete']);
   });
 });
 

@@ -20,10 +20,14 @@ import grnsSrc from '../routes/grns.ts?raw';
 import purchaseReturnsSrc from '../routes/purchase-returns.ts?raw';
 import deliveryReturnsSrc from '../routes/delivery-returns.ts?raw';
 import salesInvoicesSrc from '../routes/sales-invoices.ts?raw';
+import consignmentReturnsSrc from '../routes/consignment-returns.ts?raw';
+import purchaseConsignmentReturnsSrc from '../routes/purchase-consignment-returns.ts?raw';
 
 const PO_ID = 'po-1';
 const GRN_ID = 'grn-1';
 const DO_ID = 'do-1';
+const CN_ID = 'cn-1';   // Consignment Note (parent of a Consignment Delivery Return)
+const PCR_ID = 'pcr-1'; // PC Receive (parent of a Purchase Consignment Return)
 
 /** A PO carrying the given materials — the GRN chain's parent. */
 const poWith = (materials: string[]) =>
@@ -46,6 +50,24 @@ const doWith = (items: string[]) =>
   fakeSb({
     delivery_order_items: items.map((m, i) => ({
       id: `doi-${i}`, delivery_order_id: DO_ID, item_code: m,
+    })),
+  });
+
+/** A Consignment Note carrying the given items — the consignment-return chain's
+ *  parent. Its lines live in consignment_delivery_order_items. */
+const cnWith = (items: string[]) =>
+  fakeSb({
+    consignment_delivery_order_items: items.map((m, i) => ({
+      id: `cdoi-${i}`, consignment_delivery_order_id: CN_ID, item_code: m,
+    })),
+  });
+
+/** A PC Receive carrying the given materials — the purchase-consignment-return
+ *  chain's parent. Its lines live in purchase_consignment_receive_items. */
+const pcrWith = (materials: string[]) =>
+  fakeSb({
+    purchase_consignment_receive_items: materials.map((m, i) => ({
+      id: `pcri-${i}`, pc_receive_id: PCR_ID, item_code: m,
     })),
   });
 
@@ -116,6 +138,60 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
     expect(out?.error).toBe('unlinked_line_repoint');
   });
 
+  it('REFUSES re-pointing an unlinked consignment-return line at the Note\'s own item', async () => {
+    // consignment_delivery_return_items.consignment_do_item_id stays NULL, so the
+    // over-return cap and the inventory resync (both gated on it) never see the
+    // line — the same goods come back IN twice.
+    const out = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
+      parentId: CN_ID,
+      storedLink: null,
+      storedCode: 'SPARE-LEG',
+      patchCode: 'NTYR-PILLOW',
+    });
+    expect(out?.error).toBe('unlinked_line_repoint');
+    expect(out?.message).toContain('Consignment Note');
+  });
+
+  it('REFUSES re-pointing an unlinked purchase-consignment-return line at the PC Receive\'s own material', async () => {
+    // pc_receive_item_id stays NULL, so the qty cap and returned_qty recount never
+    // move the receive line — the same goods go OUT twice.
+    const out = await unlinkedEditRefusal(pcrWith(['FOAM-40D']), 'purchase-consignment-return', {
+      parentId: PCR_ID,
+      storedLink: null,
+      storedCode: 'GOODWILL-ITEM',
+      patchCode: 'FOAM-40D',
+    });
+    expect(out?.error).toBe('unlinked_line_repoint');
+    expect(out?.message).toContain('PC Receive');
+  });
+
+  it('resolves the parent Note from the return header, not a passed parentId', async () => {
+    // The two consignment handlers have no header read to piggy-back on, so they
+    // hand the guard `parent` and it reads consignment_delivery_returns.consignment_do_id
+    // itself — company-scoped. Proven end to end here.
+    const withHeader = fakeSb({
+      consignment_delivery_returns: [{ id: 'cr-1', consignment_do_id: CN_ID, company_id: 7 }],
+      consignment_delivery_order_items: [{ id: 'cdoi-0', consignment_delivery_order_id: CN_ID, item_code: 'NTYR-PILLOW' }],
+    });
+    const out = await unlinkedEditRefusal(withHeader, 'consignment-return', {
+      parent: { table: 'consignment_delivery_returns', column: 'consignment_do_id', id: 'cr-1', companyId: 7 },
+      storedLink: null, storedCode: 'SPARE-LEG', patchCode: 'NTYR-PILLOW',
+    });
+    expect(out?.error).toBe('unlinked_line_repoint');
+  });
+
+  it('resolves the parent PC Receive from the return header', async () => {
+    const sb = fakeSb({
+      purchase_consignment_returns: [{ id: 'pr-1', pc_receive_id: PCR_ID, company_id: 7 }],
+      purchase_consignment_receive_items: [{ id: 'pcri-0', pc_receive_id: PCR_ID, item_code: 'FOAM-40D' }],
+    });
+    const out = await unlinkedEditRefusal(sb, 'purchase-consignment-return', {
+      parent: { table: 'purchase_consignment_returns', column: 'pc_receive_id', id: 'pr-1', companyId: 7 },
+      storedLink: null, storedCode: 'GOODWILL-ITEM', patchCode: 'FOAM-40D',
+    });
+    expect(out?.error).toBe('unlinked_line_repoint');
+  });
+
   it('matches across case and whitespace on EITHER side', async () => {
     // Both sides are hand-entered; a stored " foam-40d " that fails to match a
     // typed "FOAM-40D" would read as genuinely ad-hoc and let the edit through.
@@ -147,6 +223,32 @@ describe('unlinkedEditRefusal — what must still pass', () => {
       parentId: PO_ID, storedLink: 'poi-0', storedCode: 'FOAM-40D', patchCode: 'FOAM-40D',
     });
     expect(out).toBeNull();
+  });
+
+  it('ALLOWS a genuinely ad-hoc code on the two consignment-return chains', async () => {
+    // A goodwill / replacement item the source document never carried is the
+    // whole reason the link column is nullable — it must survive.
+    const cn = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
+      parentId: CN_ID, storedLink: null, storedCode: 'SPARE-LEG', patchCode: 'GOODWILL-CUSHION',
+    });
+    expect(cn).toBeNull();
+    const pcr = await unlinkedEditRefusal(pcrWith(['FOAM-40D']), 'purchase-consignment-return', {
+      parentId: PCR_ID, storedLink: null, storedCode: 'FREIGHT', patchCode: 'INSTALL-FEE',
+    });
+    expect(pcr).toBeNull();
+  });
+
+  it('ALLOWS a LINKED consignment-return line editing its own qty (code echoed back)', async () => {
+    // A linked line's cap + resync already govern it; a qty-only save that echoes
+    // the same code must not begin 409-ing.
+    const cn = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
+      parentId: CN_ID, storedLink: 'cdoi-0', storedCode: 'NTYR-PILLOW', patchCode: 'NTYR-PILLOW',
+    });
+    expect(cn).toBeNull();
+    const pcr = await unlinkedEditRefusal(pcrWith(['FOAM-40D']), 'purchase-consignment-return', {
+      parentId: PCR_ID, storedLink: 'pcri-0', storedCode: 'FOAM-40D', patchCode: 'FOAM-40D',
+    });
+    expect(pcr).toBeNull();
   });
 
   it('ALLOWS a patch that does not touch the code — the effective-value trap', async () => {
@@ -242,6 +344,28 @@ describe('unlinkedEditRefusal — a guard that cannot read the parent must refus
     expect(out?.error).toBe('unlinked_check_failed');
   });
 
+  it('REFUSES when the Consignment Note read fails (fail closed)', async () => {
+    const sb = fakeSb(
+      { consignment_delivery_order_items: [{ id: 'cdoi-0', consignment_delivery_order_id: CN_ID, item_code: 'NTYR-PILLOW' }] },
+      { consignment_delivery_order_items: ['item_code'] },
+    );
+    const out = await unlinkedEditRefusal(sb, 'consignment-return', {
+      parentId: CN_ID, storedLink: null, storedCode: 'SPARE-LEG', patchCode: 'NTYR-PILLOW',
+    });
+    expect(out?.error).toBe('unlinked_check_failed');
+  });
+
+  it('REFUSES when the PC Receive read fails (fail closed)', async () => {
+    const sb = fakeSb(
+      { purchase_consignment_receive_items: [{ id: 'pcri-0', pc_receive_id: PCR_ID, item_code: 'FOAM-40D' }] },
+      { purchase_consignment_receive_items: ['item_code'] },
+    );
+    const out = await unlinkedEditRefusal(sb, 'purchase-consignment-return', {
+      parentId: PCR_ID, storedLink: null, storedCode: 'GOODWILL-ITEM', patchCode: 'FOAM-40D',
+    });
+    expect(out?.error).toBe('unlinked_check_failed');
+  });
+
   it('doPendingItemCodesOf reports a failed DO read instead of answering "none pending"', async () => {
     const sb = fakeSb(
       { delivery_order_items: [{ id: 'doi-0', delivery_order_id: DO_ID, item_code: 'X', qty: 1 }] },
@@ -288,12 +412,16 @@ describe('every line-edit handler in the family calls the guard', () => {
     ['purchase-return line PATCH', 'purchase-returns.ts', 'export const patchPurchaseReturnItemHandler'],
     ['delivery-return line PATCH', 'delivery-returns.ts', "deliveryReturns.patch('/:id/items/:itemId'"],
     ['sales-invoice line PATCH', 'sales-invoices.ts', "salesInvoices.patch('/:id/items/:itemId'"],
+    ['consignment-return line PATCH', 'consignment-returns.ts', "consignmentReturns.patch('/:id/items/:itemId'"],
+    ['purchase-consignment-return line PATCH', 'purchase-consignment-returns.ts', "purchaseConsignmentReturns.patch('/:id/items/:itemId'"],
   ];
   const SRC: Record<string, string> = {
     'grns.ts': grnsSrc,
     'purchase-returns.ts': purchaseReturnsSrc,
     'delivery-returns.ts': deliveryReturnsSrc,
     'sales-invoices.ts': salesInvoicesSrc,
+    'consignment-returns.ts': consignmentReturnsSrc,
+    'purchase-consignment-returns.ts': purchaseConsignmentReturnsSrc,
   };
 
   for (const [name, file, marker] of HANDLERS) {

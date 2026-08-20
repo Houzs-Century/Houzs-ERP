@@ -40,6 +40,72 @@ Use `maybeSingle`, not `single`, on any by-id statement carrying a company
 predicate: the predicate can legitimately match zero rows, and `single()` turns
 that honest 404 into a 500.
 
+## ⚠️ THE OTHER HALF — one system, two organisations
+
+Everything above is about **isolation**: company A must not read company B's
+rows. There is a second requirement, and until 2026-08-18 this document did not
+state it, which is part of why it kept being violated. The owner put it plainly:
+
+> 两个公司不是用着同一个系统吗？他们只是 Multi-Organization 关系而已啊.
+
+**One system. One set of behaviours. Two organisations' DATA.** A company may
+legitimately have its own documents, its own numbering prefix, its own branding,
+and a small number of per-company RULES THE OWNER SET HIMSELF. It may **not**
+have different CAPABILITIES by accident. Isolation and symmetry are different
+properties and a module can pass one while failing the other: a perfectly scoped
+screen that offers one organisation a button and the other nothing is isolated
+and wrong.
+
+### The five ways this repo has actually produced an asymmetry
+
+Ranked by how often, and NONE of the top four is a company branch in code:
+
+1. **A guard keyed on a proxy that CORRELATES with company.** The one that
+   caused the 2026-08-18 report. The DO → Sales Invoice transfer button was
+   gated on a hand-typed `["signed","delivered"]` while the system's own
+   `DO_SHIPPED_STATES` is five states wide. No company term anywhere in it. It
+   fired on one organisation only because 2990's source system had no
+   "delivered" step, so its deliveries sit at `DISPATCHED`. **Identical code is
+   not identical behaviour when the data behind it differs.**
+2. **A config or master row present for one company and absent for the other.**
+   A document type, a numbering series, a warehouse, a settings row, a lookup a
+   picker reads. Source review cannot find these — only a query can.
+3. **A data-shape difference.** A column one company's importer writes and the
+   other's does not; a link column missing from one source schema entirely.
+4. **A scope that fails closed.** `.in('company_id', [])` matches nothing and
+   returns `[]` with `error: null`, which is indistinguishable from "this
+   company has none".
+5. **An explicit company branch.** The rarest, the easiest to find, and mostly
+   legitimate when it is there.
+
+### What holds each of them
+
+| # | what catches it |
+|---|---|
+| 1 | **One declaration per concept**, mirrored rather than re-typed, pinned by `check-shared-mirrors.mjs --strict`. A literal cannot drift from a constant it does not contain. This is the real defence and the only one that would have caught the reported bug. |
+| 2, 3 | Nothing automated. A query, run by a person. Say so rather than implying coverage. |
+| 4 | `check-company-scope.mjs --strict`, plus the rule that an empty read may never claim the work is done (`check-empty-state-claims.mjs`). |
+| 5 | `check-company-divergence.mjs --strict` — a reviewed allowlist over every line that NAMES a company, each with a reason and **whose decision it was**. A new one fails the build. |
+
+`backend/scripts/data/company-divergence-allowlist.json` is therefore the
+canonical list of per-company differences that somebody has deliberately
+accepted. Read it before "fixing" an asymmetry into symmetry: two entries on it
+are real capability differences the owner set on purpose —
+
+- the **mobile build exists for HOUZS only** (`frontend/src/auth/AuthGate.tsx`,
+  owner: "2990 手机关闭"), and
+- the **SO-PO edit lock applies to 2990 orders only**
+  (`backend/src/scm/lib/so-po-lock.ts`, owner 2026-08-12; locking HOUZS would
+  have flipped a two-year backlog to amendment-only in one deploy).
+
+The deposit threshold (HOUZS 30% / 2990 50%,
+`backend/src/scm/shared/order-rules.ts`) is the third and most-quoted.
+
+**The gate's honest limit, repeated here because a green CI run is not
+coverage:** it reads source and sees code that names a company. It cannot count
+rows, so it will never fail on a config row one organisation lacks — and it
+would not have caught the bug it was written after.
+
 **Measured 2026-08-13** (`.from()` write statements on tables that carry
 `company_id`, across `backend/src/scm/routes` + `backend/src/routes`): 634 write
 statements, of which **294 carried no company predicate on their own statement**.

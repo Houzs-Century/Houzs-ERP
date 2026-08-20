@@ -258,6 +258,11 @@ const MUST_GATE_MERGE = [
      SO lines. The deploy stays perfectly healthy while edits quietly revert,
      which is precisely the shape that has to stop a MERGE. */
   "tests/soMirrorImportOnce.test.ts",
+  /* The converted-file list behind check-company-scope.mjs's scopedDb pass.
+     Deleting an entry there deletes a tenant-boundary guard and leaves every
+     check green — the script cannot see git history, so this suite is the only
+     thing that notices. A boundary must stop the MERGE, not the deploy. */
+  "tests/companyScopeConverted.test.mjs",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

@@ -12,7 +12,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  addsBugHistoryEntry,
+  addsBugEntry,
   buildModuleIndex,
   detectFixIntent,
   detectSurfaceChanges,
@@ -37,6 +37,19 @@ const diff = (path, added = [], removed = [], section = "") =>
     `+++ b/${path}`,
     `@@ -1,3 +1,3 @@ ${section}`,
     ...removed.map((l) => `-${l}`),
+    ...added.map((l) => `+${l}`),
+  ].join("\n");
+
+/* What `git diff` emits for a file it CREATED. Rule 1 keys on this since the
+   ledger became one file per entry: an entry is a new PATH, and the shape of
+   the diff is the only thing that says so. */
+const created = (path, added = []) =>
+  [
+    `diff --git a/${path} b/${path}`,
+    `new file mode 100644`,
+    `--- /dev/null`,
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${added.length} @@`,
     ...added.map((l) => `+${l}`),
   ].join("\n");
 
@@ -101,11 +114,54 @@ test("word boundaries: debug and 500ms are not fix signals", () => {
   assert.equal(detectFixIntent({ title: "returns 500 on empty", branch: "feat/x", body: "", templateBody: TEMPLATE }).isFix, true);
 });
 
-test("a BUG-HISTORY entry is a new heading, not a touched file", () => {
-  assert.equal(addsBugHistoryEntry(parseUnifiedDiff(diff("BUG-HISTORY.md", ["typo"]))).entry, false);
-  const ok = addsBugHistoryEntry(parseUnifiedDiff(diff("BUG-HISTORY.md", ["## The thing broke [high]"])));
+test("a bug entry is a NEW FILE under docs/bugs/ carrying a heading", () => {
+  // A new file with no heading is not an entry.
+  assert.equal(addsBugEntry(parseUnifiedDiff(created("docs/bugs/0462-x.md", ["typo"]))).entry, false);
+
+  // An EDIT to an existing entry is somebody else's entry, not yours.
+  const edit = addsBugEntry(parseUnifiedDiff(diff("docs/bugs/0461-old.md", ["## Reworded heading [high]"])));
+  assert.equal(edit.touched, true, "the directory was touched");
+  assert.equal(edit.entry, false, "editing an existing entry is not logging a new bug");
+
+  const ok = addsBugEntry(parseUnifiedDiff(created("docs/bugs/0462-the-thing-broke.md", ["## The thing broke [high]"])));
   assert.equal(ok.entry, true);
   assert.equal(ok.heading, "## The thing broke [high]");
+  assert.equal(ok.file, "docs/bugs/0462-the-thing-broke.md");
+});
+
+test("a mis-named new file in the ledger directory is reported, not counted", () => {
+  /* The one failure that would otherwise look like a clean pass: a file that
+     is invisible to the ledger, the index AND this gate simultaneously. */
+  const r = addsBugEntry(parseUnifiedDiff(created("docs/bugs/my-notes.md", ["## The thing broke [high]"])));
+  assert.equal(r.entry, false);
+  assert.deepEqual(r.misnamed, ["docs/bugs/my-notes.md"]);
+
+  // The directory's own README is not an entry and is not a mis-named one.
+  const readme = addsBugEntry(parseUnifiedDiff(created("docs/bugs/README.md", ["# The bug ledger"])));
+  assert.equal(readme.entry, false);
+  assert.deepEqual(readme.misnamed, []);
+});
+
+test("parseUnifiedDiff marks a created file, from either header", () => {
+  const viaMode = parseUnifiedDiff(created("docs/bugs/0462-x.md", ["## x [low]"]))[0];
+  assert.equal(viaMode.isNew, true);
+  /* `gh pr diff` has been seen to omit `new file mode`, so `--- /dev/null`
+     alone must be enough — and it must not land in `removed` as `-- /dev/null`,
+     which is what happened before it was intercepted. */
+  const viaDevNull = parseUnifiedDiff(
+    [
+      "diff --git a/docs/bugs/0462-x.md b/docs/bugs/0462-x.md",
+      "--- /dev/null",
+      "+++ b/docs/bugs/0462-x.md",
+      "@@ -0,0 +1,1 @@",
+      "+## x [low]",
+    ].join("\n"),
+  )[0];
+  assert.equal(viaDevNull.isNew, true);
+  assert.deepEqual(viaDevNull.removed, []);
+
+  const edited = parseUnifiedDiff(diff("backend/src/a.ts", ["const x = 1;"]))[0];
+  assert.equal(edited.isNew, false);
 });
 
 test("rule 1 fails a fix that changes code without an entry, and the escape says why", () => {
@@ -118,13 +174,13 @@ test("rule 1 fails a fix that changes code without an entry, and the escape says
   assert.equal(escaped.ok, true);
   const esc = escaped.findings.find((f) => f.level === "escape");
   assert.match(esc.message, /SKIPPED by label/);
-  assert.match(esc.message, /NO BUG-HISTORY.md entry/, "an escape must PRINT the violation it waives");
+  assert.match(esc.message, /NO docs\/bugs\/ entry/, "an escape must PRINT the violation it waives");
 
   const logged = evaluate({
     ...base,
     title: "fix the repair script",
     branch: "fix/x",
-    files: [...files, ...parseUnifiedDiff(diff("BUG-HISTORY.md", ["## The repair script double-encoded jsonb [high]"]))],
+    files: [...files, ...parseUnifiedDiff(created("docs/bugs/0462-the-repair-script-double-encoded-jsonb.md", ["## The repair script double-encoded jsonb [high]"]))],
   });
   assert.equal(logged.ok, true);
 });

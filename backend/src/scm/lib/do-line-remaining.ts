@@ -62,7 +62,9 @@
 // operator hunting for a duplicate that does not exist.
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST, doCountsAsDelivered } from '../shared/do-shipped-states';
 import { paginateAll, chunkIn } from './paginate-all';
+import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 
 export type DoRemainingLine = {
   doItemId: string;
@@ -168,12 +170,12 @@ export async function doLineRemaining(
     id: string; do_number: string; status: string | null;
     debtor_code: string | null; debtor_name: string | null;
   }>) {
-    const st = (d.status ?? '').toUpperCase();
-    // LEAK GUARD (DRAFT, 2026-06-25 anchoring diff vs 2990) — a DRAFT DO has NOT
-    // shipped: it delivered nothing, so its lines must never become invoiceable /
-    // returnable (the "Pending" pool both downstream pickers read). Dropped
-    // alongside CANCELLED.
-    if (st === 'CANCELLED' || st === 'DRAFT') continue; // delivered nothing
+    // LEAK GUARD (PRE-SHIP, 2026-06-25 anchoring diff vs 2990) — a DO that has
+    // NOT shipped delivered nothing, so its lines must never become invoiceable
+    // / returnable (the "Pending" pool both downstream pickers read). That is
+    // DRAFT *and* LOADED; this read named only DRAFT until 2026-08-20, and
+    // unbilled-deliveries.ts had already dropped LOADED by hand next door.
+    if (!doCountsAsDelivered(d.status)) continue; // delivered nothing
     headerById.set(d.id, { do_number: d.do_number, debtor_code: d.debtor_code, debtor_name: d.debtor_name });
   }
   const activeDoIds = [...headerById.keys()];
@@ -388,7 +390,28 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-      .not('status', 'in', '("CANCELLED","DRAFT")');
+      /* KEPT EXACTLY AS `main` LANDED IT (#2557). THE DISAGREEMENT IS REAL AND
+         IS NOT SETTLED HERE — two merged PRs answer "may a LOADED delivery be
+         invoiced" differently:
+           - #2485 (owner, 2026-08-19): every CONFIRMED delivery, LOADED
+             included. Still what the desktop offers — do-next-step.ts's
+             SI_TRANSFERABLE_DO_STATUSES opens with 'loaded'.
+           - #2557 (2026-08-20): a LOADED DO is still on the lorry and its
+             inventory OUT has not fired, so billing it would be the bug. That
+             is this line; unbilled-deliveries.ts:39 says the same in words.
+         Which one wins is the owner's call, so this change does not make it: it
+         leaves main's behaviour exactly as it found it and raises the question.
+
+         The invariant siTransferRefusal exists for HOLDS either way, because the
+         two lists nest the safe direction — this picker offers a STRICT SUBSET
+         of what the create gate accepts, so it can never advertise a delivery
+         the create path then refuses. A picker WIDER than its gate is the shape
+         that produced the original bug; this is the opposite. */
+      /* A LOADED DO is still on the lorry, so it is not invoiceable either —
+         unbilled-deliveries.ts already dropped LOADED from its own copy of this
+         list by hand, saying "billing it would be the bug". Same list now,
+         built from DO_NOT_DELIVERED_STATES. */
+      .not('status', 'in', DO_NOT_DELIVERED_IN_LIST);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);
   });
@@ -512,4 +535,47 @@ export function findOverInvoicedDoItems(
     if (r < 0) out.push({ doItemId: id, over: -r });
   }
   return out;
+}
+
+/* THE SERVER'S ANSWER TO "MAY THIS DELIVERY BE INVOICED", AND UNTIL 2026-08-18
+   THERE WAS NONE. The rule lived only in clients, so it had been re-derived four
+   times and the four disagreed:
+     · here — refused only CANCELLED, so the API and the mobile shell would
+       invoice anything else;
+     · resolveCandidateDoIds (do-line-remaining.ts) — everything except CANCELLED
+       and DRAFT;
+     · the desktop footer — a hand-typed ['signed','delivered'];
+     · the same page's line edit-lock — the five shipped states.
+   A restriction only one client enforces is not a restriction: the desktop
+   greyed the button out while the same transfer went through from a phone.
+
+   That narrowest spelling was also a MULTI-ORGANISATION defect rather than a
+   status one. It carries no company term and never did; it bit one organisation
+   because of DATA — 2990's source system has no "delivered" step, so its
+   deliveries sit at DISPATCHED, while HOUZS's AutoCount carry-overs arrived as
+   literal 'DELIVERED'. One build, one permission set, and 2990 was told the
+   transfer did not exist.
+
+   The owner ruled DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED on 2026-08-18; #2485
+   widened it next day to every CONFIRMED delivery, LOADED included.
+   SI_TRANSFERABLE_DO_STATES is that rule's one home and here it is ENFORCED.
+   BOTH Sales-Invoice entry points call it — POST /from-dos and the append
+   path — because a gate enforced on one of two doors is a gate with a hole.
+   The create path refused exactly CANCELLED before this function; it now also
+   refuses DRAFT (#2485 keeps Confirm a prerequisite) and INVOICED (nothing
+   writes it). LOADED is NOT refused: that would invent a new restriction. */
+export function siTransferRefusal(status: string | null | undefined): { error: string; reason: string } | null {
+  const s = String(status ?? '').trim().toUpperCase();
+  if ((SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(s)) return null;
+  if (s === 'CANCELLED') {
+    return { error: 'do_cancelled', reason: 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.' };
+  }
+  if (s === 'DRAFT') {
+    return { error: 'do_not_confirmed', reason: 'This delivery order is still a draft — confirm it before raising a Sales Invoice.' };
+  }
+  /* INVOICED lands here deliberately. routes/unbilled-deliveries.ts:13 measured
+     that nothing in this codebase ever writes it, so the label means "somebody
+     set it", not "this was billed" — the generic sentence states the gate, which
+     is true, rather than asserting a billing fact the flag cannot support. */
+  return { error: 'do_not_transferable', reason: `A Sales Invoice can only be raised from a confirmed delivery order (${SI_TRANSFERABLE_DO_STATES.join(', ')}).` };
 }

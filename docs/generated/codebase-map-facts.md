@@ -20,9 +20,9 @@ resolves full mounted paths and their gates.
 | module | endpoints | lines |
 |---|---|---|
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
-| `backend/src/routes/announcements.ts` | 11 | 1414 |
+| `backend/src/routes/announcements.ts` | 11 | 1420 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3339 |
+| `backend/src/routes/assr.ts` | 62 | 3344 |
 | `backend/src/routes/assrFormIntake.ts` | 5 | 675 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
@@ -176,7 +176,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1542 files, 595537 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1548 files, 596561 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -194,11 +194,11 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4473 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4195 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3723 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3726 |
 | `backend/src/scm/routes/grns.ts` | 3581 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
-| `backend/src/routes/assr.ts` | 3339 |
+| `backend/src/routes/assr.ts` | 3344 |
 | `backend/src/services/projects.ts` | 3085 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3012 |
 
@@ -380,7 +380,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1145 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
-| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2435 |
+| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2440 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
 | `frontend/src/mobile/MobileInbox.tsx` | 241 |
@@ -391,7 +391,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleDetail.tsx` | 1973 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3723 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3726 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4473 |
 | `frontend/src/mobile/MobilePOD.tsx` | 536 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |

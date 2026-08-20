@@ -1436,9 +1436,79 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 |------|------|------|
 | Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`), **minus the by-SKU exemptions below** |
 | Colour KIV | `fabric_colour_kiv` | **no line may still be colour-KIV** (series committed via `fabricId`/`fabricLabel`, no `fabricCode` — `isColourKiv` in `variant-summary.ts`). Owner rule 2026-07-24 after SO-2607-016: a Processing Date means every line is a fully-confirmed maintained selection. Fires only when the date is genuinely SET or CHANGED — unrelated edits to an old KIV order, and clearing the date, never block. Also enforced on line-ADD / line-EDIT against an already-dated SO (409). |
-| Deposit, PER COMPANY | `processing_date_unpaid` | **Houzs 30%, 2990 50%** of the order total collected (`processingDateThresholdFor` in `order-rules`). Until 2026-07-31 the split existed only in a comment and both constants applied to everyone, so a 2990 order was refused at the Houzs 30%. An unknown/absent company code falls back to the LOOSER 30% on purpose — over-gating stops the shop floor with no signal. |
+| ~~Deposit, PER COMPANY~~ | ~~`processing_date_unpaid`~~ | **REMOVED 2026-08-20 by owner ruling — see "THE DEPOSIT IS NO LONGER A SAVE GATE" below.** It was Houzs 30% / 2990 50% of the order total collected (`processingDateThresholdFor` in `order-rules`). No save path weighs it any more, on any surface. The predicate `meetsDepositGate` still EXISTS and is still correct — the orphaned proceed refusal renders it — but nothing live consults it. |
 | Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. (A 2026-07-31 impact measurement over the then-live dated SOs found none blocked by the four kept fields. The figures are not restated here: nothing in the repo re-measures them, and they predate the 0286 rename, so they are a record of that day rather than a current claim.) |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
+
+### THE DEPOSIT IS NO LONGER A SAVE GATE (owner ruling, 2026-08-20)
+
+His words: **「以电脑为准 —— 两边都不查」** — the desktop is the standard, and
+NEITHER surface checks the money. This is a POLICY change, not a bug fix.
+
+**Why he was asked.** The rule had become a property of the SCREEN rather than
+of the order:
+
+| path | before the ruling |
+|---|---|
+| desktop create (`SalesOrderNew.tsx`) | sent a bare literal `manualEntry: true` on EVERY create — tied to no checkbox and to no operator decision — and the backend dropped the deposit condition for it |
+| mobile create (`MobileNewSO.tsx`) | sent nothing, so the phone REFUSED the identical order the desk had just accepted |
+| header edit (`PATCH /:docNo`) | no waiver at all. Fires when the patch SETS or CHANGES the Processing Date (an unchanged value is dropped by the normalisation at the top of the handler, so an unrelated header edit never reached it) — so a hand-keyed RM 0 order was accepted at create and then refused the moment anyone RESCHEDULED it, naming a deposit the operator had been told was fine the day before |
+| `/status` → IN_PRODUCTION | applied it through `soProcessingDateProblemsForDoc` |
+| amendment approve (`so-amendments.ts`) | summed the payment ledger and applied it again |
+
+**What changed.** The condition was removed **where it is decided** —
+`ProcessingGateFacts.deposit` and step 2 of `collectProcessingGateProblems`
+(`shared/so-save-problems.ts`) are gone, so all five paths above lose it from one
+place. The alternative (a second `manualEntry` flag on the phone) would have been
+a second copy of the thing that made this surface-dependent in the first place.
+`companyCode` went with it on that type and on `soProcessingDateProblemsForDoc`'s
+signature — it existed only to pick the deposit fraction, and removing it from
+the SIGNATURE rather than ignoring it is what made the compiler name every
+caller. That is how the amendment-approve path was found; a grep had missed it.
+
+**What did NOT change, and must not be read as loosened:**
+
+- The other four conditions still refuse — customer name, delivery address line
+  1, postcode, delivery date. An order purchasing cannot deliver against is
+  still not releasable.
+- Variants, colour-KIV, the past-date rules and the pair rule are untouched.
+- The deposit is still COLLECTED and still booked; `deposit_sen` is written at
+  the create exactly as before. Only the REFUSAL is gone.
+- Payments still cannot be recorded against a cancelled order, etc. — none of
+  the payment module moved.
+
+**Two live traps this leaves, deliberately out of scope:**
+
+1. **`proceedGateFailures` / `collectProceedGateProblems` (`order-rules.ts`)
+   still carry a deposit condition.** They are reachable only through
+   `soProceedGateBlocked`, which has had NO callers since 2026-08-18, so they
+   refuse nothing today — but whoever wires a future proceed path to them will
+   silently resurrect a rule the owner removed. Read this paragraph first.
+2. **`pendingDepositSen` is now inert.** Both `SalesOrderNew.tsx` and
+   `MobileNewSO.tsx` still compute and send it, and the create no longer reads
+   it — it existed only to feed this gate ("GATE-ONLY money, never booked"). It
+   is harmless and it is the `optional-param-noop` shape; removing it touches
+   `so-slip-optional-contract.test.ts`, which belongs to the SEPARATE
+   slip-optional ruling of 2026-08-13, so it was left for a follow-up rather
+   than folded in here.
+
+   The exact sites, so the follow-up does not have to rediscover them
+   (`git grep -n "pendingDepositSen" -- frontend/src`, run 2026-08-20):
+
+   | file:line | what it is |
+   |---|---|
+   | `mobile/MobileNewSO.tsx:2061` | the mobile create body's key |
+   | `pages/scm-v2/SalesOrderNew.tsx:1587` | the desktop's computation |
+   | `pages/scm-v2/SalesOrderNew.tsx:1594` | the desktop create body's key |
+   | `vendor/scm/lib/so-slip-optional-contract.test.ts:95,98,130,132` | the contract test that pins both — and the reason this is a follow-up, not a tidy-up |
+
+   Under `backend/src` the only remaining mention is the comment recording the
+   removal (`scm/routes/mfg-sales-orders.ts`). No code reads the key.
+
+Pinned by `backend/src/scm/shared/deposit-not-a-save-gate.test.ts` (behaviour)
+and `backend/tests/depositGateOffWiring.test.ts` (that no surface re-introduces
+it), plus the inverted route-level case in
+`backend/tests/soProceedRefusalNamesCondition.test.ts`.
 
 ### The by-SKU variant exemptions
 
@@ -1528,9 +1598,18 @@ an empty order can never mix.
 **The client check is a SECOND implementation on purpose** — it must refuse
 before a request, and it reads free-text `itemGroup` where the server reads the
 catalogue enum. It has the same two forms: `hasSofaMixConflict` (flat) on the
-New-order surfaces, `sofaMixIntroduced(before, after)` on the Detail pages, both
-in `frontend/src/vendor/shared/so-variant-rule.ts`. A Detail page using the flat
+New-order surfaces, `sofaMixIntroduced(before, after)` on the EDIT surfaces, both
+in `frontend/src/vendor/shared/so-variant-rule.ts`. An EDIT surface using the flat
 form refuses saves the server would accept.
+
+**That is not hypothetical, and the phone was the last one holding it.**
+`frontend/src/mobile/MobileNewSO.tsx` renders new AND edit as one form, and its
+`save()` ran the flat form ABOVE the edit branch, so on an order written before
+the rule existed a rep could not save ANY change from the phone — not a phone
+number — while desktop's `SalesOrderDetail.tsx` had moved to the differential
+form in #2395. Fixed 2026-08-20: mobile now calls
+`sofaMixIntroduced(origItems, edited)`. `origItems` is empty on a create, so on
+that path the differential form IS the flat question and nothing changed there.
 
 **The enumeration is a TEST, not prose**: `backend/tests/mainMixOneHome.test.ts`.
 Its population is every unit in the two routers that runs `validateItemCodes`, so
@@ -1599,9 +1678,11 @@ enforced separately in `so-save-problems.ts`, which never calls it; see *WHAT
 WAS UNIFIED IS THE RULE, NOT THE FUNCTION* below before editing either. Net
 effect of the unification: the proceed paths LOOSENED by one condition (email),
 the processing-date path TIGHTENED by four (name / address / postcode / delivery
-date), and the threshold became per-company. The money half is one predicate,
-`meetsDepositGate` — the Proceed gate and the aggregated report above both read
-it, so they cannot come to different verdicts about the same deposit.
+date), and the threshold became per-company. The money half was one predicate,
+`meetsDepositGate`, read by both — **and since the owner's ruling of 2026-08-20
+the aggregated save report no longer reads it at all** (see *THE DEPOSIT IS NO
+LONGER A SAVE GATE* above). The two cannot disagree about a deposit because only
+one of them still has an opinion, and that one is the orphaned proceed refusal.
 
 **PROCEED IS THE DATE (owner, pinned 2026-08-13).** *"只要有 Processing Date，就
 代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
@@ -1668,7 +1749,7 @@ that is not what the code does:
 | path | enforced by |
 |---|---|
 | create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts`). The create site reads it directly; both manual proceed paths reach it through `soProceedGateBlocked` (`backend/src/scm/lib/so-proceed-gate.ts`) → `collectProceedGateProblems` (`so-save-problems.ts`) |
-| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions plus `meetsDepositGate` for the money. It contains **zero** references to `meetsProceedGate` |
+| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions, the variant / KIV rules and the date rules. **No money term since 2026-08-20** (owner ruling). It contains **zero** references to `meetsProceedGate` and, now, zero to `meetsDepositGate` |
 
 Both sites read the same per-company threshold through the shared
 `processingDateThresholdFor` and demand the same four facts, so the rule is one
@@ -2068,7 +2149,21 @@ must not strand).
 **Frontend twins (change together).** Desktop `SoLineCard` marks unmatched
 typed text with a red ring + "Not in the catalog" note (the text stays for
 correction; the parent save guards refuse the line). `SalesOrderNew` + `MobileNewSO` pre-check venue / salesperson on Create, and
-Save-as-draft skips both. **Neither pre-checks variants at CONFIRM** — that
+Save-as-draft skips both.
+
+> **"Is this me?" is ONE module, not one per screen** (2026-08-20). The
+> salesperson pre-check above only fires when the creator was not recognised on
+> the staff roster, and mobile matched email-then-name while desktop had moved to
+> `user_id` first in #2049 — of 140 production `scm.staff` rows 18 carry an email
+> and 102 carry `user_id`, and `user_id` is what the backend joins on
+> (`resolveOwnerStaffId`). So the MAJORITY of salespeople were not recognised as
+> themselves on the phone and could be refused by this very gate. The ladder now
+> lives in `frontend/src/vendor/scm/lib/self-staff.ts` (`resolveSelfStaff`:
+> user_id → bridge staff id → email → name) and both `SalesOrderNew` and
+> `MobileNewSO` call it; the desktop ladder was moved verbatim, so that screen is
+> unchanged. `SalesOrderDetail.tsx` still holds a third copy for the Add-Payment
+> "Collected By" default — knowingly, because switching it would change which
+> people that picker matches. **Neither pre-checks variants at CONFIRM** — that
 sentence used to read "pre-check variants (confirm rule, KIV-exempt)" and was
 wrong three ways: `SalesOrderNew.tsx` has no variant pre-check at all, and
 `MobileNewSO.tsx:1778` calls `missingVariantAxes` — the PROCEED rule, which is
@@ -2383,18 +2478,68 @@ line authored from 0 stays a plain unit price until saved and re-mounted, and a
 product pick over the line resets the verdict. The keystroke sequence itself is
 a test case.
 
-**Only once the fee EXISTS (2026-08-20, same day).** The cell reads as
-"amount to charge" only when the line already carries a gross. A delivery-fee
-line added by hand on a NEW SO starts at 0, and there the operator is AUTHORING
-the fee: reading 250 as a target booked a discount of `max(0 - 250, 0)` = 0,
-never wrote the price, and the box snapped back to RM 0. That matters more than
-it sounds, because `applyDeliveryFee` — the create flag that makes the server
-derive a fee — is sent ONLY by the POS handover (`git grep applyDeliveryFee --
-frontend/src` returns nothing; see `mfg-sales-orders.ts:4477`), so a
-Houzs-authored SO has always had its fee typed in as a unit price. The rule is
-`editsFeeAsDiscount(isFeeCode, grossSen)`: no gross, plain unit price. The GROSS
-decides and not the net, so a fee waived to zero keeps fee semantics rather than
-flipping the cell's meaning under the operator's hands.
+**A hand-authored fee line is a plain PRICE, and that is why the verdict is
+per-mount (2026-08-20).** This paragraph used to describe the rule as
+`editsFeeAsDiscount(isFeeCode, grossSen)`. That predicate was **DELETED the same
+day** by #2529 and replaced by `lockedFeeSemantics` above; the reason is kept
+here because the CASE it was written for is still live and still decides the
+answer. A delivery-fee line added by hand on a NEW SO starts at 0, and there the
+operator is AUTHORING the fee: reading 250 as a target booked a discount of
+`max(0 - 250, 0)` = 0, never wrote the price, and the box snapped back to RM 0.
+That matters more than it sounds, because `applyDeliveryFee` — the create flag
+that makes the server derive a fee — is sent ONLY by the POS handover (`git grep
+applyDeliveryFee -- frontend/src` returns nothing; see `mfg-sales-orders.ts`), so
+a Houzs-authored SO has always had its fee typed in as a unit price. **In the ERP
+the typed amount IS the value** — owner, 2026-08-20: *"运费应该根据实际的价钱
+去填写。我们的 POS System 已经 preset 了 250，但进到 ERP 其实也只是把那个 amount
+填进来而已，所以正常来说 ERP 里是可以随意填写 amount 的"*. POS presetting 250 is a
+default carried in, not a derivation the ERP must defend. The two readings on
+record are complementary, not opposed: #2490 is the BACKEND half (the reduction
+survives the rebuild) and #2527/#2529 the FRONTEND half (where it is typed and
+what the cell means).
+
+**… and it only holds while nothing ELSE is saving (2026-08-20, migration 0314).**
+Everything above is about one editor typing one figure. A second line changed in
+the SAME Save used to put it back. `rebuild_mfg_so_delivery_lines` takes its
+advisory lock when it is CALLED, and `recomputeDeliveryFeeCore` READS the fee
+lines long before that — including the two things the operator owns on them
+(the `SVC-DELIVERY-ADD` gross and `discount_sen`). `runSoLineWrites` fans the
+dirty-line stage out with `Promise.allSettled`
+(`frontend/src/pages/scm-v2/so-add-lines.ts`), every one of those PATCHes ends in
+`rederiveDeliveryFee`, and one Save's PATCHes all carry the same edit-lease token
+so nothing separates them:
+
+    P_fee   writes discount_sen = 12500, reads, derives 125
+    P_sofa  reads BEFORE that commit, derives 250 (discount 0)
+    P_fee   takes the lock, writes 125
+    P_sofa  takes the lock, writes 250      <- quoted RM 125, invoiced RM 250
+
+The lock made that ordering deterministic; it never made it impossible. **0314
+turns read-then-lock into lock-read-compare-write.** The caller sends the
+operator-owned fee state it derived FROM as `p_expect_state` —
+`deliveryFeeStateKey` in `backend/src/scm/shared/service-lines.ts`, keyed by row
+id so the comparison is order-free — and the function re-reads that state under
+its own lock and **returns false without writing** when it has moved.
+`recomputeDeliveryFeeCore` is then a bounded loop (three attempts) over
+`recomputeDeliveryFeeAttempt`: re-read, re-derive, call again. If the lines keep
+moving it writes NOTHING, the same fail-closed posture as the failed header read
+("a failed read is not 'no fee'").
+
+Three things about that are deliberate and worth not re-litigating. It returns a
+**boolean, not a `RAISE`** — the same RPC runs inside `runScmPgCommand`
+(tbc-update / tbc-swap / tbc-swap-sofa) where an exception rolls back a whole save
+that only needed recomputing; and in that path convergence is guaranteed rather
+than likely, because the xact lock the first call took is held for the rest of the
+transaction. `p_expect_state` **NULL means do not check**, which is what
+`repair-so-fee-line-integrity.mjs` and the pg fixtures want. And only the
+`SVC-DELIVERY*` lines are in the expectation — a concurrent GOODS-line edit is
+still read unlocked, so an ordinary multi-line Save does not retry n times; the
+derivation reads goods lines for CATEGORY and item code, not qty or price.
+
+The write half of all of this now lives in
+`backend/src/scm/lib/so-delivery-fee-rebuild.ts` rather than inline in the router:
+one place that owns 0214 serialisation, 0310 line reuse and 0314 staleness
+refusal.
 
 **All three faults were on THIS side — it was not the mirror.** An earlier draft
 of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
@@ -2782,6 +2927,45 @@ line to RM 0 by editing it but not by adding it at 0 — the same amount accepte
 on one click and silently replaced on another. The amendment path has no
 `zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
 the split above rather than joining this table.
+
+**SO CREATE joined the same table on 2026-08-20, and until then it was not in it
+at all.** `erpLineTrust` was wired into the two LINE writes only; create computed
+one boolean for the whole request (`!(await isPosTabletCaller(c))`) and handed
+the same value to every line's recompute, so `zeroPriceIntended` was never read
+there. A line staff marked FREE on a NEW order was therefore silently re-priced
+to the catalogue figure on **both** surfaces, and the customer was invoiced for
+it; editing the line afterwards fixed it only at the desk.
+
+| | new SO line at RM 0 | existing SO line edited to RM 0 |
+|---|---|---|
+| desktop, before | reverted to catalogue | 0 sticks |
+| mobile, before | reverted to catalogue | reverted to catalogue |
+| both, now | 0 sticks when the operator typed it | 0 sticks |
+
+**The claim is now made from ONE place, and its second argument is the safety.**
+`frontend/src/vendor/scm/lib/zeroPriceClaim.ts` — `zeroPriceClaim(unitPriceSen,
+authored)` — replaces the arrow that lived inside `SalesOrderDetail.tsx` and was
+therefore unavailable to create and to the whole of mobile. `authored` is
+REQUIRED and has no default:
+
+- **true** — the operator typed into the price box on this line, OR the line
+  already exists and its 0 is its PERSISTED price being carried through an edit
+  (a qty-only edit re-sends the price, so withholding the claim there would
+  re-price a free line). A line seeded from a persisted row — desktop
+  copy-to-new-SO, mobile edit-prefill — is authored by construction; the mobile
+  edit-DRAFT road re-CREATES the order, so without that seed a free line would go
+  back to the catalogue.
+- **false** — the client could not resolve a price. An unpriced catalogue SKU,
+  and every sofa build (the server prices those from the Model's module SKUs at
+  save), reaches the wire at 0. **Claiming those would persist RM 0 instead of
+  pricing them**, which is a far worse defect than the one this closes — the
+  trust arm wins over the server's own module arithmetic. That is why a blanket
+  "claim every 0" is wrong and why the signal is threaded from the price INPUT
+  (`priceAuthored`, client-only, never persisted) rather than inferred.
+
+Pinned by `backend/tests/zeroPriceCreatePath.test.ts` (the wiring plus what the
+helper answers) and `frontend/src/vendor/scm/lib/zeroPriceClaimWiring.test.ts`
+(which surface makes which claim, and with which fact).
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after

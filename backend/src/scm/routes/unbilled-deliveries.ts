@@ -46,6 +46,7 @@
 // below — which is the whole point of (1).
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -78,7 +79,13 @@ unbilledDeliveries.use('*', supabaseAuth);
      • The fail direction is deliberate. An unknown status surfaces a row he can
        dismiss; a positive list would have hidden that row's money silently —
        which is the exact failure this whole report exists to catch. */
-const NOT_SHIPPED_STATES = '("DRAFT","LOADED","CANCELLED")';
+/* Was a hand-typed '("DRAFT","LOADED","CANCELLED")'. This file was the ONLY
+   consumer of the delivered-sum engine that had LOADED right, and it had it
+   right by hand — which is exactly how the other six sites could be wrong at
+   the same time and nothing said so. The list now comes from
+   DO_NOT_DELIVERED_STATES; the comment above still explains what the set MEANS
+   here, because that is the half a constant cannot carry. */
+const NOT_SHIPPED_STATES = DO_NOT_DELIVERED_IN_LIST;
 
 /* Ageing buckets, days since do_date. Same shape + lookup as the inventory
    ageing report (routes/inventory.ts BUCKETS) so the two read alike.

@@ -55,7 +55,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -1255,10 +1255,9 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   const distinctDoNumbers = [...new Set(sortedPicks.map((l) => l.doNumber))].sort();
 
   const DO_HEADER =
-    'id, do_number, company_id, so_doc_no, debtor_code, debtor_name, customer_delivery_date, ' +
+    'id, status, do_number, company_id, so_doc_no, debtor_code, debtor_name, customer_delivery_date, ' +
     'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
-    'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
-    'address1, address2, city, state, postcode, phone, currency, ' +
+    'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, address1, address2, city, state, postcode, phone, currency, ' +
     'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship';
   // HEADER half of the same source document — same predicate as the lines.
   const { data: doHeaderRow, error: hLoadErr } = await scopeToCompany(sb
@@ -1269,6 +1268,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   if (hLoadErr) return c.json({ error: 'load_failed', reason: hLoadErr.message }, 500);
   if (!doHeaderRow) return c.json({ error: 'delivery_order_not_found' }, 404);
   const head = doHeaderRow as unknown as Record<string, unknown>;
+  const badDo = siTransferRefusal(head.status as string | null); if (badDo) return c.json(badDo, 409);
 
   const nowIso = new Date().toISOString();
   const phoneRaw = head.phone as string | null;
@@ -1480,7 +1480,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   const { data: doHeader } = await scopeToCompany(sb.from('delivery_orders')
     .select('id, status, do_number, company_id').eq('id', doId), c).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
-  if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
+  const bad = siTransferRefusal((doHeader as { status: string }).status); if (bad) return c.json(bad, 409);
 
   /* Same refusal as /from-dos: a delivery carried over from AutoCount is
      invoiced by the migrated-invoice converter, never appended by hand. This

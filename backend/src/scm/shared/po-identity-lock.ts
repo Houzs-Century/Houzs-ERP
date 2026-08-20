@@ -18,7 +18,7 @@
  * Lines are a separate, deliberately WHOLESALE lock (add/edit/delete a PO line
  * is refused once a GRN exists): a line IS what was ordered, and you cannot
  * change what was ordered after it has been received. That lock is unchanged. */
-import { PO_LOCK_COLS } from './document-policy';
+import { PO_LOCK_COLS, PO_LOCK_LABELS } from './document-policy';
 
 /* The columns (supplier / currency / purchase location — the GRN's basis) come
    from the ONE rulebook (document-policy.ts) so this set can't drift from the
@@ -44,12 +44,12 @@ export function changedPoIdentityLockCols(
 /** The 409 body when a header PATCH tries to move an inherited field on a PO
     that already has a GRN. Names the fields and the cancel-to-source remedy. */
 export function poIdentityLockedRefusal(cols: string[]) {
-  const label: Record<string, string> = {
-    supplier_id: 'supplier',
-    currency: 'currency',
-    purchase_location_id: 'purchase location',
-  };
-  const names = cols.map((c) => label[c] ?? c);
+  /* LABELS from the same rulebook as the COLUMNS (PO_LOCK_COLS, above). Re-typing
+     them here made the label map a second answer to a question document-policy.ts
+     calls "the single source": a column added to the rulebook would read as
+     `purchase_location_id` in this refusal and as "purchase location" in the PCO
+     one, which shares the very same set. */
+  const names = cols.map((c) => PO_LOCK_LABELS[c] ?? c);
   return {
     error: 'po_identity_locked',
     message:
