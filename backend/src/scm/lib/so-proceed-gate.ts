@@ -121,8 +121,26 @@ export async function soProcessingDateProblemsForDoc(
      rather than ignoring it is what makes the compiler name every caller — an
      optional parameter here would have let a call site keep passing a company
      and believe it still decided something. */
-  const { data: liveItems } = await sb.from('mfg_sales_order_items')
+  /* FAILS CLOSED: an unreadable line list is not an empty one. supabase-js does
+     not throw, so `const { data }` with no `error` bound cannot tell "the query
+     failed" from "there are no lines" — and the caller reads [] as "no variant
+     problems" and releases the order to purchasing with its lines unchecked.
+     That is the same shape as the cancel gate's unreadable-ledger rule
+     (docs/modules/sales-order.md), and the audit that names it is
+     `audit:swallowed-reads`.
+
+     The read used to sit inside a `Promise.all` beside the deposit read, where
+     it swallowed its error just as silently; removing the deposit half is what
+     put it under the checker. Fixed here rather than reproduced. */
+  const { data: liveItems, error: itemsError } = await sb.from('mfg_sales_order_items')
     .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo);
+  if (itemsError) {
+    return [{
+      code: 'so_lines_unreadable',
+      message: 'The order lines could not be read, so this Processing Date was not set. Try again in a moment.',
+      field: 'Processing Date',
+    }];
+  }
   const lines = ((liveItems ?? []) as Array<{
     id: string; item_code: string; item_group: string;
     variants: Record<string, unknown> | null; cancelled: boolean;
