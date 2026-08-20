@@ -201,13 +201,11 @@ export interface ErpSoHeader {
    */
   emergency_contact_phone: string | null;
   ref: string | null;
-  /** The customer's own reference for this order, in the three columns that
-   *  have held it. Only the third is still WRITTEN: PR #140 dropped the
-   *  Customer PO card, so no Houzs surface fills `po_doc_no` or `customer_po`
-   *  any more and the operator's text lands in `customer_so_no`. See
+  /** The customer's own reference for this order. It has lived in three columns;
+   *  `po_doc_no` and `customer_po` were 0%-filled and DROPPED from
+   *  scm.mfg_sales_orders by migration 0310, leaving `customer_so_no` — the only
+   *  one any surface still writes (PR #140 dropped the Customer PO card). See
    *  `soCustomerRef`. */
-  po_doc_no: string | null;
-  customer_po: string | null;
   customer_so_no: string | null;
   /** The SO's "Processing date" — the field with that label in the UI, and the
    *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
@@ -695,25 +693,24 @@ export const AC_PURCHASE_AGENT = 'OTHERS';
 /**
  * The customer's own reference for this sales order, as AutoCount's `ToPONo`.
  *
- * THREE ERP COLUMNS HAVE HELD IT AND ONLY THE LAST IS STILL WRITTEN. PR #140
+ * THREE ERP COLUMNS HELD IT AND ONLY `customer_so_no` SURVIVES. PR #140
  * ("customer PO 不需要") dropped the Customer PO card, so no Houzs surface fills
  * `po_doc_no` or `customer_po` any more — `frontend/src/pages/scm-v2/so-relationship-map.ts`
- * states it plainly — and the reference the operator types lands in
- * `customer_so_no`. The composer read `po_doc_no` alone, which no live order
- * carries, so `ToPONo` never reached the book.
+ * states it plainly — and both were 0%-filled and DROPPED from
+ * scm.mfg_sales_orders by migration 0310. The reference the operator types lands
+ * in `customer_so_no`, which is what goes out as `ToPONo`.
  *
- * Read newest-writer-LAST so a cutover-imported order keeps AutoCount's own
- * text. `ref` is deliberately absent: it goes out as the document's `Ref`, and
- * sending it twice would put the same string in two AutoCount fields.
+ * `ref` is deliberately absent: it goes out as the document's `Ref`, and sending
+ * it twice would put the same string in two AutoCount fields.
  */
 export function soCustomerRef(h: {
   /* `unknown` and optional, so the two callers can both pass what they have
      without a cast: the composer has a typed ErpSoHeader, `soEditHeader` has a
      bare `Record<string, unknown>` off PostgREST. `tidy` reads either. A cast
      at the call site would be the thing that stops the compiler helping. */
-  po_doc_no?: unknown; customer_po?: unknown; customer_so_no?: unknown;
+  customer_so_no?: unknown;
 }): string | null {
-  return tidy(h.po_doc_no) ?? tidy(h.customer_po) ?? tidy(h.customer_so_no);
+  return tidy(h.customer_so_no);
 }
 
 /**
