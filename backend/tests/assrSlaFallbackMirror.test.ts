@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs';
 
 function serviceFallback(): Record<string, number> {
   const src = readFileSync(
-    new URL('../src/services/assr.ts', import.meta.url),
+    new URL('../src/services/assrSla.ts', import.meta.url),
     'utf8',
   );
   const block = src.match(

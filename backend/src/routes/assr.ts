@@ -25,6 +25,7 @@ import {
   setItemQty,
   setItemCartonQty,
 } from "../services/assr";
+import { normalizeSlaHours } from "../services/assrSla";
 import { runSlaEscalation } from "../services/assrEscalation";
 import { issueStaffToken, issueSalesToken, revokeCaseTokens } from "../services/caseTracking";
 import { sendEmail, publicUrl } from "../services/email";
@@ -372,22 +373,6 @@ function lookupTable(kind: string): string | null {
   return (LOOKUP_TABLES as Record<string, string>)[kind] ?? null;
 }
 
-/**
- * `sla_hours` is now READ back by `slaHoursForPriority()`, so what gets stored
- * here decides a real deadline. Blank stays legitimate — it means "use the
- * module default", which is what the UI's own cell title promises — but a
- * value that is not a positive whole number is junk, and storing it would put
- * this cell straight back into the shape this fix exists to remove: saved with
- * `{ ok: true }`, then silently ignored at read time.
- *
- * Returns the value to store, or `false` meaning "refuse with a 400".
- */
-function normalizeSlaHours(raw: unknown): number | null | false {
-  if (raw === undefined || raw === null || raw === "") return null;
-  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
-  if (!Number.isInteger(n) || n <= 0) return false;
-  return n;
-}
 
 app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   const kind = c.req.param("kind");
