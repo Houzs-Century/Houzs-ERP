@@ -241,12 +241,18 @@ try {
     notice(`R4 PRE-SHIP STUCK: ${total} LOADED delivery order(s) in total.`);
   }
 
-  /* R4b — of those, the ones the LOADED -> DISPATCHED confirm gate would
-     actually refuse today. `delivered` counts this DO itself (the CANCELLED +
-     DRAFT exclusion is the app's own), so `remaining` is already short by the
-     line's own qty and the gate's test `qty > remaining` fires. This is the
-     count that says how many deliveries are stuck RIGHT NOW, as opposed to how
-     many rows merely wear the status. */
+  /* R4b — of those, the ones that would GENUINELY over-deliver, i.e. the ones
+     the confirm gate is right to refuse. `delivered` uses the shared
+     DO_NOT_DELIVERED_STATES like every other query here, so a LOADED DO is NOT
+     counted against itself and `remaining` is the order's real open qty.
+
+     Read the ORIGINAL reading of this section with care: run 32368212535
+     (2026-08-20T12:19Z) ran it while `delivered` still excluded only
+     {CANCELLED, DRAFT}, so it measured the OLD behaviour — how many LOADED DOs
+     the gate would refuse against themselves. It answered 0, as did R4. Since
+     the fix the two questions have different meanings and the same answer, and
+     this comment is here so the next reader does not compare them as if they
+     were one number. */
   const blocked = await pg`
     WITH delivered AS (
       SELECT doi.so_item_id, SUM(doi.qty)::numeric AS delivered_qty
