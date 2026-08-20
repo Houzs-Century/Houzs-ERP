@@ -41,8 +41,8 @@ The route gate is separate and also title-based: `canAccessServiceCases`
 
 | source of the SO | who may see / open a case |
 | --- | --- |
-| **AutoCount mirror** (`sales_orders`) | **anyone holding the HOUZS company grant** — no agent, no subtree, no job title |
-| **ERP's own SO** (`scm.mfg_sales_orders`) | **own cases only** (ERP has a real binding, so per-person is meaningful) |
+| **AutoCount mirror** (`sales_orders`) | **anyone holding the HOUZS company grant** — no agent, no subtree, no job title. There is no dependable agent binding on this side, so any agent filter here is guesswork that silently removes access |
+| **ERP's own SO** (`scm.mfg_sales_orders`) | **own + DOWNLINE** — self and the people under you. ERP has a real binding, so a per-person scope is meaningful here |
 
 Rationale in the owner's words: AutoCount has no dependable agent binding, so
 filtering by agent there is guesswork — and guesswork that silently removes
@@ -58,8 +58,19 @@ access. ERP does have one, so ERP-sourced work can be per-person.
    has ruled it out.
 2. Visibility for AutoCount-sourced cases — stop consulting the subtree and the
    name text; scope by company.
-3. ERP-sourced cases — keep per-person, and settle the one question still open:
-   does "own" mean *the SO's salesperson is me* or *I created the case*?
+3. ERP-sourced cases — keep the **self + downline** scope. Note carefully what
+   this does and does not mean for the existing code: the SUBTREE stays, and
+   `subtreeAgentNames` is not deleted. What must change is what it is matched
+   ON. Today a case is admitted when the free-text `sales_agent` string CONTAINS
+   a subtree member's name (`routes/assr.ts:285`, `agent.includes(n)`) - a
+   substring test over a mirrored string. For ERP-sourced orders resolve the
+   salesperson by ID through `scm.mfg_sales_orders`, which is the real binding,
+   and let the subtree decide on ids.
+
+   Still open, and small: for an ERP order does "own" key off the SO's
+   salesperson or the case's creator? Ask before choosing - they differ whenever
+   office raises a case on a salesperson's behalf, which the tier above exists
+   to allow.
 
 Do NOT widen write / manage / approve / delete. Those keep their existing
 `requirePermission` gate; this decision is about READ and CREATE only, which is
