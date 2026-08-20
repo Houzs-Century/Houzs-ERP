@@ -265,6 +265,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
+| GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
 | PUT/POST/PATCH/DELETE | `/settings`, `/lookups/:kind*` | `service_cases.manage` `:321-475` | Admin config (read is `:296` / `:371`) |
 | POST | `/bulk/archive`, `/bulk/unarchive`, `/bulk/assign`, `/run-escalation` | `service_cases.manage` `:1025`, `:1042`, `:1058`, `:2057` | Bulk + manual SLA sweep |

@@ -4592,6 +4592,9 @@ app.get("/attachments/:key{.+}", async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      // Block MIME-sniffing the server-derived content-type back into
+      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });

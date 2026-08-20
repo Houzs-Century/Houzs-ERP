@@ -2287,6 +2287,18 @@ would read as charge-nothing and waive the fee on the way to retyping it. A real
 waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
 unit price, on the same `canEditPrice` gate.
 
+**...and the verdict is LOCKED per mounted line (2026-08-20, third pass).**
+Deriving fee-vs-price live from the gross shipped a second regression within the
+hour of the first fix: typing "250" writes RM 2 after the first keystroke, the
+gross is now positive, the next render flips the cell into amount-to-charge, and
+"25…" reads as a target above the RM 2 gross — no discount, and the sync-back
+pins the box at 2.00 ("stuck at RM 2"; pasting 250 worked because paste is one
+change event). `lockedFeeSemantics` makes the decision ONCE per mounted line and
+never re-derives it per keystroke: a line that ARRIVES priced edits as a fee, a
+line authored from 0 stays a plain unit price until saved and re-mounted, and a
+product pick over the line resets the verdict. The keystroke sequence itself is
+a test case.
+
 **Only once the fee EXISTS (2026-08-20, same day).** The cell reads as
 "amount to charge" only when the line already carries a gross. A delivery-fee
 line added by hand on a NEW SO starts at 0, and there the operator is AUTHORING

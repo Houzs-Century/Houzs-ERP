@@ -90,6 +90,7 @@ company-prefixed). View + grid-sort prefs are identity-scoped
 | POST | `/api/users/:id/reset-password` | Email a 1h reset link (never shown in UI). |
 | POST | `/api/users/:id/impersonate` | Staging-only; probe `GET /api/users/impersonation-enabled`. |
 | GET | `/api/presence` | Online ids — drives presence dots + the Presence column. |
+| GET | `/api/users/:id/profile-pic` | Streams the member's avatar bytes from R2. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. Cache-control is `avatarCacheControl(?k, key)`. |
 
 Member rows already return everything the table renders — id, email, name,
 status(+reason), role, manager, department(+ids/color), division, position,
