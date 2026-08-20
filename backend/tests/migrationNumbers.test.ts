@@ -57,11 +57,39 @@ const KNOWN_DUPLICATES: Record<string, string[]> = {
   "src/db/migrations": ["010"],
 };
 
+/* THE FIX FOR THE COLLISION ITSELF, not just its detection.
+   A sequential number can only be CLAIMED at merge, but it has to be CHOSEN at
+   authoring time — so every branch open at once picks the same "next free" one
+   and all but the first must rename. With ~10 PRs in flight this is constant:
+   0300 was taken twice inside thirty minutes on 2026-08-18.
+
+   A UTC timestamp is chosen at authoring time and is already unique, so two
+   authors cannot pick the same one, and nobody has to rename. It sorts AFTER
+   every numbered file (lexicographically "2" > "0"), which is the order
+   pg-migrate applies in — it reads the directory, `.sort()`s by filename, and
+   keys its tracker on the full filename, so the format is invisible to it.
+
+   Existing numbered files are NOT renamed and never should be: pg-migrate
+   matches by full filename, so a rename reads to it as an orphaned tracker row
+   plus an unknown file, and it would run the SQL a second time.
+
+       new:  20260818T0345_acc_gl_views_composite_account_key.sql
+       old:  0303_acc_gl_views_composite_account_key.sql      (left alone)
+
+   Generate one with:  npm run migration:new -- <slug>
+*/
+const TIMESTAMP_NAME = /^\d{8}T\d{4}_/;
+
 /** number → the files claiming it, from the glob's KEYS (paths). */
 function numbered(glob: Record<string, unknown>): Map<string, string[]> {
   const byNo = new Map<string, string[]>();
   for (const path of Object.keys(glob)) {
     const file = path.split("/").pop() ?? "";
+    /* A TIMESTAMP-NAMED migration claims no number and cannot collide — that is
+       the whole point of the format (see the header). \d{3,4} would match its
+       first four digits ("2026") and file every one of them under the same
+       phantom number, so they are excluded before the number is read. */
+    if (TIMESTAMP_NAME.test(file)) continue;
     const m = file.match(/^(\d{3,4})[_-]/);
     if (!m) continue;
     const list = byNo.get(m[1]) ?? [];
@@ -111,11 +139,15 @@ describe("migration numbering", () => {
       expect(Object.keys(glob).length, `no files globbed from ${dir}`).toBeGreaterThan(0);
     });
 
-    test(`${dir}: every file carries a parseable number`, () => {
-      const total = Object.keys(glob).length;
-      const parsed = [...numbered(glob).values()].reduce((n, f) => n + f.length, 0);
-      // A file the number-parser skips is a file the duplicate check cannot see.
-      expect(parsed, `${total - parsed} file(s) in ${dir} have no NNNN_ prefix`).toBe(total);
+    test(`${dir}: every file is either numbered or timestamped`, () => {
+      /* A file the parser skips is a file the duplicate check cannot see — so
+         the two accepted shapes are enumerated here rather than assumed. A
+         timestamp is skipped ON PURPOSE (it claims no number and cannot
+         collide); anything that is NEITHER is an unnamed file that would slip
+         past the duplicate check unnoticed, which is what this asserts. */
+      const files = Object.keys(glob).map((p) => p.split("/").pop() ?? "");
+      const unnamed = files.filter((f) => !TIMESTAMP_NAME.test(f) && !/^\d{3,4}[_-]/.test(f));
+      expect(unnamed, `${dir}: neither NNNN_ nor YYYYMMDDTHHMM_`).toEqual([]);
     });
 
     test(`${dir}: no NEW duplicate numbers beyond the known historical ones`, () => {
