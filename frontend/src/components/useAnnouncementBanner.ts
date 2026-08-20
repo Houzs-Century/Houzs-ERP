@@ -85,7 +85,12 @@ export function announcementFeedKey(scope: BannerScope): string[] {
   return [...ANNOUNCEMENT_FEED_KEY, scope];
 }
 
-const POLL_MS = 60_000;
+// 3 min, not 60s: announcements are not time-critical, and the backend caches
+// the banner per-user for 5 min (CONFIG_CACHE_TTL_SECONDS.banner), so a 3-min
+// poll lands mostly on cache hits and cuts the /banner call volume ~3x. Measured
+// on prod 2026-08-20: each poll is ~360ms on a hit, ~950ms on a miss, and it was
+// firing every 60s from every page.
+const POLL_MS = 180_000;
 
 // Local ack memo so the banner stays dismissed across reloads even before
 // the next poll picks up the server's ackedIds.
