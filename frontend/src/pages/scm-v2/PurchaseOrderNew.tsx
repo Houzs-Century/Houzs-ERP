@@ -54,6 +54,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
@@ -535,22 +536,16 @@ export const PurchaseOrderNew = () => {
   /* PR #126 — Patch only the variants bag for a line. Used by per-category
      editors so other line fields (qty, price, supplier SKU) stay untouched.
      Commander 2026-05-29: bedframe Total Height is NOT a manual pick — it's
-     AUTO-COMPUTED = Divan + Leg + Gap (mirrors SoLineCard), so we recompute it
-     here whenever one of those three changes. */
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
+     AUTO-COMPUTED = Divan + Leg + Gap, recomputed whenever one of those three
+     changes. The arithmetic AND the "what if all three are blank" answer live
+     in vendor/shared/total-height.ts — this screen used to carry its own copy,
+     one of sixteen. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants };
     }));
