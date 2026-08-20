@@ -34,6 +34,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { writeMovements, defaultWarehouseId, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { loadKnownPurchaseCostSen, normalizeMaterialCode } from '../lib/zero-cost-receipt-guard';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo } from '../lib/doc-no';
@@ -45,6 +46,28 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
 export const purchaseConsignmentReceives = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseConsignmentReceives.use('*', supabaseAuth);
+
+/* The IN cost for a consignment-receive line, in tiers (owner 2026-08-20). A
+ * consignment receive is legitimately 0-priced (the supplier still owns the
+ * goods until settlement), so we never BLOCK it the way GRN does; we resolve the
+ * missing cost instead of opening a 0-cost lot a later sale would under-cost on:
+ *   1. the line's own price, if any;
+ *   2. else the SKU's current on-hand weighted-avg cost (open lots);
+ *   3. else its last KNOWN historical purchase cost (any priced lot — covers a
+ *      SKU that was priced but is now fully sold out, which tier 2 misses);
+ *   4. else 0 — a genuinely never-priced SKU, same as GRN allows.
+ * `undefined` (not 0) means "no value at this tier": a present-but-0 on-hand cost
+ * wins over the historical tier, preserving the pre-existing `?? ` semantics. */
+export function resolvePcReceiveUnitCostSen(
+  lineCostSen: number,
+  onHandBucketCostSen: number | undefined,
+  historicalCostSen: number | undefined,
+): number {
+  if (lineCostSen > 0) return lineCostSen;
+  if (onHandBucketCostSen !== undefined) return onHandBucketCostSen;
+  if (historicalCostSen !== undefined) return historicalCostSen;
+  return 0;
+}
 
 /* ── Shared helper: post a PC Receive + roll up to PC Order items ──────────
    Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
@@ -135,13 +158,34 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     // current on-hand weighted-avg cost instead of opening a 0-cost FIFO lot a
     // later sale would consume and under-state COGS on. Same fix the sales-side
     // consignment-returns.ts got for BUG-2026-06-07-001; this in-path was missed.
+    //
+    // Owner 2026-08-20 — the on-hand fallback misses a SKU that WAS priced but is
+    // now fully sold out (resolveWarehouseLotCosts reads only OPEN lots), so a
+    // repeat 0-price consignment receipt of it still opened a 0-cost lot. This is
+    // the residual the "match GRN" review flagged — but the right fix is NOT
+    // GRN's block-and-ack (a consignment receive is LEGITIMATELY 0-priced, so
+    // blocking every one would fight the normal case): it is a second, silent
+    // cost tier. Below the on-hand cost we consult the SKU's last KNOWN historical
+    // purchase cost (the same inventory_lots lookup GRN's guard uses), so a
+    // known-cost SKU never opens a 0-cost lot, with zero operator friction. A
+    // genuinely never-priced SKU still books at 0 — same as GRN lets it.
     const costByBucket = await resolveWarehouseLotCosts(sb, warehouseId);
+    const zeroPricedCodes = ((lines ?? []) as Array<{ item_code: string; unit_price_sen: number | null }>)
+      .filter((l) => !(Number(l.unit_price_sen ?? 0) > 0))
+      .map((l) => l.item_code);
+    const histCost = zeroPricedCodes.length
+      ? await loadKnownPurchaseCostSen(sb, zeroPricedCodes, (header as { company_id?: number | null }).company_id ?? null)
+      : new Map<string, number>();
     for (const it of ((lines ?? []) as Array<{ item_code: string; material_name: string | null; qty_accepted: number | null; unit_price_sen: number | null; item_group: string | null; variants: unknown }>)) {
       const qty = Number(it.qty_accepted ?? 0);
       if (qty <= 0) continue;
       const vk = computeVariantKey(it.item_group, (it.variants as VariantAttrs | null) ?? null);
       const lineCost = Number(it.unit_price_sen ?? 0);
-      const unitCost = lineCost > 0 ? lineCost : (costByBucket.get(`${it.item_code}::${vk}`) ?? 0);
+      const unitCost = resolvePcReceiveUnitCostSen(
+        lineCost,
+        costByBucket.get(`${it.item_code}::${vk}`),
+        histCost.get(normalizeMaterialCode(it.item_code)),
+      );
       const k = `${it.item_code}::${vk}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;

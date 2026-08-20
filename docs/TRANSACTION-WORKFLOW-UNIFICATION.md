@@ -304,9 +304,20 @@ Decisions locked 2026-08-20:
   gate is frontend-only (`PurchaseOrderNew.tsx:616`); a direct-API confirm bypasses it.
   Add `missingRequiredVariants` to `confirmMfgPurchaseOrderHandler`. (This is the one
   deliberate tightening; it is not a field-nicety, it is "supplier must know what to make.")
-- **PC Receive zero-cost guard: ADD (match GRN).** PC Receive posts stock IN like GRN but
-  runs no `checkReceiptCosts` — a previously-priced SKU received at 0 opens a silent
-  zero-cost lot. Add the same guard + `zeroCostAck` escape. Integrity, not strictness.
+- **PC Receive zero-cost: "match GRN" was REFUTED (corrected 2026-08-20 by reading the
+  code).** The review flagged PC Receive as missing GRN's `checkReceiptCosts`, but a
+  consignment receive is LEGITIMATELY 0-priced (the supplier still owns the goods until
+  settlement), so GRN's block-and-ack would fire on the NORMAL case — wrong. And PC
+  Receive already mitigates the valuation risk (`postPcReceiveAndRollup`, comment
+  2026-06-18): a 0-price line inherits the SKU's current on-hand weighted-avg cost
+  instead of opening a 0-cost lot. The real gap was narrower: `resolveWarehouseLotCosts`
+  reads only OPEN lots, so a SKU that was priced but is now fully sold out still opened a
+  0-cost lot on a repeat 0-price receipt. **Fix shipped:** a second silent cost tier —
+  below the on-hand cost, consult the SKU's last KNOWN historical purchase cost (the same
+  `inventory_lots` lookup GRN's guard uses via `loadKnownPurchaseCostSen`). Extracted as
+  the pure `resolvePcReceiveUnitCostSen` (line-price → on-hand → historical → 0),
+  unit-tested. No guard, no operator friction; a genuinely never-priced SKU still books 0,
+  same as GRN allows.
 - **Consignment docs have no draft (CO/CN/PCO/PC-Receive commit on create).** Lower
   priority: add `asDraft` to the consignment mirrors so they match their siblings.
 - **≥1 line required on GRN/PI/PC-Receive:** keep (you cannot receive/invoice nothing);
@@ -317,5 +328,8 @@ Decisions locked 2026-08-20:
 - **Loosen:** PO/PCO `expected_at` → optional; consignment drafts → add; document-level
   parent lock → field-level (§8 GAP-1). Everything pure-field defaults/allows/warns.
 - **Keep hard (integrity only):** required variant at confirm (SO done, PO to add to
-  backend), qty > 0, cancel-child-first + atomic stock reversal, GRN + PC-Receive
-  zero-cost guard, the line-PATCH inherited-line guard (§8 GAP-2).
+  backend), qty > 0, cancel-child-first + atomic stock reversal, GRN zero-cost guard,
+  the line-PATCH inherited-line guard (§8 GAP-2). NOTE: PC Receive does NOT get GRN's
+  guard (a consignment receive is legitimately 0-priced) — it resolves the cost instead
+  (tiered fallback incl. last-known historical cost), so it never blocks yet never opens
+  a 0-cost lot for a known-cost SKU.
