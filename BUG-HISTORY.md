@@ -1,6 +1,6 @@
 ## R2 object serves missed `X-Content-Type-Options: nosniff` on three endpoints [low]
 
-<!-- area: assr, projects, users -->
+<!-- area: Auth, permissions, sessions -->
 
 **白话.** 有三个下载 / 看图的接口（服务单附件、项目附件、用户头像）从 R2 直接把文件
 丢回浏览器，但没告诉浏览器「别自作聪明去猜这是什么档」。浏览器猜错时，一个被塞进来的
