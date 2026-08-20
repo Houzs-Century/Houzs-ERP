@@ -86,6 +86,243 @@ allowed exemption BY NAME, including the sentence that explains it.
 **Ref.** fix/do-loaded-preship-coverage, 2026-08-20. Same family as the
 2026-08-01 audit D5 leak guard, which made the rule consistent everywhere while
 the rule itself was still missing a state.
+## The announcements banner read the WHOLE table on every page, every minute [medium]
+
+<!-- area: Mail, search, notifications -->
+
+**Symptom.** The browser console logged `[perf] slow GET /api/announcements/banner
+~900ms` on prod, repeating from every page every ~60s. Measured 2026-08-20 on
+erp.houzscentury.com (console open) — no JS error, but the banner poll was the
+one call consistently over the slow threshold.
+
+**Root cause (traced, not guessed).** `GET /banner` is cached per-user in KV for
+60s, but on a cache MISS the handler ran `SELECT * FROM announcements ORDER BY
+created_at DESC` — the ENTIRE table, no `WHERE`, no `LIMIT` — then filtered
+active / not-expired / company / user in JS. Migration 0058 had already created
+the index `announcements (is_active, created_at DESC)`, but with no `WHERE` the
+planner could not use it, so every miss was a full sequential scan. The banner is
+polled from every desktop page (`NotificationBell`, `useAnnouncementBanner`) and
+every mobile page (`MobileAnnouncements`), all hitting the same endpoint, so the
+scan ran constantly as caches expired across users.
+
+**Fix.** Push the active filter into SQL: `SELECT * FROM announcements WHERE
+is_active = 1 ORDER BY created_at DESC`. `is_active` is `integer NOT NULL DEFAULT
+1`, so the column holds only 0/1 and `is_active = 1` selects EXACTLY the rows the
+JS `isActiveFlag` filter already kept — behaviour-identical, no announcement that
+used to show is lost. The query now matches the `(is_active, created_at DESC)`
+index as a range scan instead of a full-table read. The JS filters (expired /
+company / user targeting) are unchanged. One backend endpoint feeds both desktop
+and mobile, so this fixes both surfaces at once.
+
+**Verified against.** `announcementsBannerFilter.test.ts` +
+`announcementsListAccess.test.ts` (5 tests) green; backend typecheck clean.
+
+Ref: 2026-08-20.
+## The date fix reached every literal `type="date"`, and three other spellings of the same bug went straight through [medium]
+
+<!-- area: Frontend + mobile -->
+
+The owner, on two delivery orders side by side: "我又不是两套系统." The answer
+given on 2026-08-18 was that a rule with no single home gets re-typed at each
+surface. This is the same shape one layer down — inside the fix, and inside the
+gate shipped to protect it.
+
+`DateField` was built on 2026-06-18 because a native `<input type="date">`
+renders its value in the OPERATING SYSTEM's locale — the "有时候 MMDDYYYY" bug.
+It reached 14 of 189 inputs and sat there two months. #2390 finished it: all 175
+native date inputs now go through `DateField`, and `check-date-formatting.mjs`
+fails a new one. Verified here rather than trusted — `<DateField` is at 163
+usages across 77 files, the 26 remaining `type="date"` lines are wrapper PROPS,
+and all five wrappers were read to confirm each routes `type === 'date'` to
+`DateField`: `components/InlineEdit.tsx:100`,
+`mobile/MobileServiceCase.tsx:2864`, `scm-v2/LorryDetail.tsx:625`,
+`scm-v2/DeliveryOrderNewV2.tsx:166`, `scm-v2/DeliveryRateCards.tsx:760`. That
+half is genuinely done, and the allowlist entries covering it are true rather
+than a doc labelling a live bug as intended.
+
+**Both the sweep and the gate keyed on a LITERAL `type="date"`.** Two spellings
+of the identical bug were therefore invisible to both.
+
+**One — `<input type="datetime-local">`.** It renders its DATE half in the OS
+locale by exactly the same mechanism. The `raw-date-input` pattern cannot see
+it: `["']date["']` needs the closing quote immediately after `date`. Proven by
+executing the rule against `<input type="datetime-local" value={x} />` — false.
+Six were left. The sharpest pair is on one screen: in the delivery-planning
+drawer, **Arrival** and **Departure** were native `datetime-local` while
+**Shipout Date**, rendered directly beneath them in the same column, was already
+a `DateField`. On any machine whose OS is not day-first that drawer spelled a
+date two ways, one field apart — the owner's complaint reproduced inside the
+component built to end it. The mobile twin had the same three fields in the same
+order with the same split.
+
+- `vendor/scm/components/DeliveryFieldsDrawer.tsx` — Arrival, Departure
+- `mobile/MobileDeliveryPlanning.tsx` — Departure, Arrival
+- `pages/Announcements.tsx` — "Hide automatically after"
+- `pages/Projects.tsx` — the OUT/RETURN transfer timestamp
+
+**Two — the input type decided in a VARIABLE.** `components/UdfCell.tsx` had
+`const type = field.type === "number" ? "number" : field.type === "date" ? "date"
+: "text";` and then `<input type={type} …>`. `"date"` is a first-class
+`UdfFieldType`, so this one was USER REACHABLE with no code change at all: every
+operator who added a date column to a table got a native OS-locale input in the
+grid. It survived the June build, the sweep of all 175, and the gate — the type
+never appears next to the input. Found only because the repo's own
+completeness-claim gate refused the phrase "all five wrappers" without a
+reproducible enumeration, and the enumeration listed two files I had not read.
+
+**Three — a native date input written as an EXPRESSION.**
+`mobile/MobileServiceCase.tsx`'s `EditableAcc` rendered
+`<input type={f.type === "date" ? "date" : "text"} …>`. Every rule keyed on a
+quote straight after `type=`; here the next character is `{`. So this one input
+survived the June build, the August sweep of all 175, AND the gate that sweep
+shipped — three passes over the same tree. Stated precisely because it changes
+the severity: NO caller passes a date field today, so nothing was misreading on
+screen. The `EditField` union offers `"date"` and handles it in three places, so
+the first one added would have got the OS locale back with nothing failing.
+
+**The fix.** `vendor/scm/components/DateTimeField.tsx`: the date half goes
+through `DateField`, the time half stays a native `type="time"`. That split is
+not invented here — `Projects.tsx` already used it, which is why the
+`type="date"` sweep correctly found nothing to do in that file. Its local
+component is now `LogisticsDateTimeField`, because it and the shared control
+differ in CONTRACT (commit-on-blur with a label and a midnight normalisation,
+versus a plain controlled value) and not in date rendering; a name collision is
+a bad way to learn that.
+
+THE WIRE CONTRACT IS BYTE-IDENTICAL, AND THAT IS THE WHOLE SAFETY ARGUMENT.
+`value` is the same wall-clock `YYYY-MM-DDTHH:mm` a native `datetime-local`
+reads and writes; `onChange` emits the same; nothing in the component parses
+through `Date`. The callers that convert TIMESTAMPTZ to and from that shape
+(`toDtLocal` in both delivery files, `new Date(expiresAt).toISOString()` in
+Announcements) are untouched. A date input that stops CLEARING, or that shifts a
+day across a timezone, is a worse bug than the one being fixed, so both are
+pinned rather than argued: 20 tests in `DateTimeField.test.tsx` cover clearing
+the date, clearing the time, refilling a cleared field, a date-only stored
+value, both half-filled states, and an external reset — and the file passes
+identically under `America/New_York`, `Pacific/Kiritimati`, `UTC` and
+`Asia/Kuala_Lumpur` (−5, +14, 0, +8).
+
+Half-filled emits `''`, which is native `datetime-local`'s own behaviour and is
+deliberate. `LogisticsDateTimeField` normalises a date-only entry to midnight
+instead; adopting that here would mean a field that used to save nothing starts
+saving `00:00`, and a silently invented time is not a change to make inside a
+display fix.
+
+**The gate, so there is no third rediscovery.** Three new shapes —
+`raw-datetime-input`, `computed-date-input-type` and
+`date-input-type-in-a-variable` — in the script that already runs in the
+required `backend-typecheck` job. The third was measured before it was added:
+ZERO hits across `frontend/src` and `backend/src` once UdfCell was fixed, so it
+buys its coverage at no false-positive cost. Both proven by planting in the
+REAL source tree: exit 1 naming the file and the shape, exit 0 once removed
+(1454 files, 53 hits, 0 unreviewed). The existing `raw-date-input` was
+re-planted and still bites. Six new cases in `dateFormatGate.test.ts` make it
+permanent, including the wrapper-prop spelling — the bug can arrive on a line
+with no `<input` token on it, which is exactly how the 26 reviewed date entries
+are written — and two NEGATIVE cases, because `computed-date-input-type` keys on
+`type=` plus a brace and must stay silent on a `type:` annotation, an object
+literal and an `f.type === "date"` comparison, all five of which live in the very
+file that motivated the rule.
+
+WHERE THE RULE DELIBERATELY STOPS, pinned by its own test so it reads as a
+decision and not an oversight: `type="time"`, `type="month"` and `type="week"`
+are also OS-locale rendered and are NOT gated. None puts a day number beside a
+month number, which is the only way a date gets MISREAD — 14:30 and 2:30 PM are
+the same minute. A gate that fires on cosmetic variation is a gate somebody
+switches off, which is how the previous generation of checks here died. And one
+hole is named rather than papered over: a date literal assigned to a variable
+NOT named like a type is still invisible to any regex, and is not claimed.
+## A batch of Sales Agents lost every Service Case at once — visibility was decided by a NAME typed into a mirrored text field [high]
+
+<!-- area: Service cases (ASSR) -->
+
+**白话.** 有一批 sales 突然一张 Service Case 都看不到了。不是单据不见，也不是
+AutoCount 出问题——是我们自己的「谁能看谁」的规则用错了根据。以前系统是拿**名字的文字**
+去比对：把 AutoCount 抄过来的「业务员」那一栏，跟这个人（和他手下）的名字做「包含」比
+较。名字改过、多一个空格、拼法不一样，比对就不中，这个人手上所有的单就整批消失，而且
+系统一句话都不说。老板的决定是：AutoCount 那边的业务员资料本来就不准，所以那边的单
+**只看公司授权**——有 Houzs 这家公司的授权就看得到，不看职称、不看上下线；ERP 自己开的
+单才继续「自己＋下线」，而且改成用**编号**认人，不再比名字。Office 维持看全部，因为他们
+要帮 sales 处理事情。
+
+**Symptom.** Reported 2026-08-20: many Sales Agents could no longer see Service
+Cases. Not their data and not the AutoCount binding — the list simply came back
+without their cases, and nothing said why.
+
+**Root cause.** Traced through the read path, not guessed. A scoped caller's
+rows were selected by `pushVisibilityScope` (`services/assr.ts`) and its
+hand-written twin `assrVisibilitySql` (`routes/assr.ts`), both of which OR-ed
+`LOWER(COALESCE(sales_agent,'')) LIKE '%<subtree member display name>%'` on top
+of the `created_by` / `assigned_to` / `assigned_to_2` id terms. `sales_agent` is
+free text mirrored out of AutoCount (mig 010). So the "binding" between a case
+and the person who owns it was a **substring comparison between two strings** —
+a rename, a stray space or a different spelling silently drops a rep out of
+every case they are not also the creator or assignee of. Three things break it
+in batches: a tier change, a reporting-line move, or the mirrored text drifting
+from the ERP user's name. The route gate had the same shape one level up:
+`canAccessServiceCases` admitted on `isSalesUser` — `/^sales/i` over
+`position_name` plus a "sales" substring over `department_name`
+(`services/pmsAccess.ts`) — so an owner-editable job title also decided access.
+
+**Fix (owner decision 2026-08-20, `docs/SERVICE-CASE-VISIBILITY-DECISION.md`).**
+Visibility is keyed off the COMPANY, and off IDs where an id exists.
+
+- Route gate: `isSalesUser` is replaced by `holdsHouzsCompanyGrant(c)`. The
+  permission and director terms are unchanged.
+- Rows: one predicate, `assrVisibilityPredicateSql`
+  (`services/assrVisibility.ts`). A case whose `doc_no` resolves to a live
+  `scm."mfg_sales_orders"` row stays self + downline, resolved BY ID through
+  `scm.staff.user_id` (mig 0066). Every other case — the AutoCount `sales_orders`
+  mirror, or no resolvable SO — is company-scoped only. The `sales_agent`
+  substring match is gone from the visibility path entirely.
+- The `assrUnrestricted` (office / director) tier is untouched, deliberately:
+  office works cases on a salesperson's behalf.
+- READ and CREATE only. Every write / manage / approve / delete route keeps its
+  `requirePermission` gate.
+
+The two SQL twins and the two TypeScript copies of the row rule (in
+`caseInCallerScope` and `assrCaseRowInScope`) all collapse into that one
+predicate, so the list, its own totals, the detail GET and the printable can no
+longer disagree.
+
+**Measured before shipping, not reasoned about.** `Census — Service Case
+visibility (read-only)`, run 32351722894 against production 2026-08-20: 859
+non-archived cases, of which **7** are ERP-sourced and **852** AutoCount-sourced;
+route admittance 49 -> 77 users (**+28 gained, 0 lost**); of 60 visibility-scoped
+users **all 60** gain cases and **36 go from ZERO visible cases to some** — the
+reported outage, counted. **0** users lose admittance and **0** user-case pairs
+are lost.
+
+**Tests.** `backend/tests/assrVisibilityRule.test.ts` — 21 assertions pinning the
+three scope states, that a Sales TITLE alone no longer admits, that the office
+tier emits no predicate, that the `sales_agent` LIKE is absent, that a NULL
+`doc_no` cannot poison the `NOT IN`, and a source scan asserting the id clause
+exists in exactly one file. Both guards were proved RED by reintroducing a
+`sales_agent LIKE` arm and a second copy of the id clause before being trusted.
+
+**A second bug, found by the MERGE QUEUE and invisible on this branch.**
+`frontend/src/auth/permissionDivergence.test.ts` is a FRONTEND test that reads
+BACKEND source and asserted `canAccessServiceCases` ORs in `isSalesUser(user)`.
+Replacing the job title with the company grant is the whole point of this fix, so
+that mirror went stale the moment the gate changed — it now asserts
+`holdsHouzsCompanyGrant(c)`, which is the same invariant (a rep the API would
+serve is never Forbidden) against the mechanism that actually decides it. The
+stale comment it mirrored, `backend/src/middleware/auth.ts` on the
+`/mfg-sales-orders` arm, said the two gates agree; they now differ on purpose and
+it says so.
+
+Worth more than the fix: **this branch's own CI could not catch it.** The PR is
+backend-only, so `changes` path-filtered every frontend job to `skipping` — the
+suite holding the assertion never ran. The merge queue builds against a different
+base, the filter matched, `frontend-checks` ran `npm run test:coverage` for the
+first time, and it failed there. A cross-tree mirror test is exactly the shape a
+path filter cannot reason about: it lives in the tree that did NOT change and
+asserts on the tree that DID. This is CLAUDE.md's *"the check that is not
+running"* trap wearing a path filter — green on the branch meant "never
+executed", not "passed".
+
+**Ref.** `fix/service-case-visibility-by-company`, 2026-08-20. Census merged
+separately as #2534.
 ## Sixteen screens each decided a bedframe's Total Height, and two of them refused to clear it [high]
 
 <!-- area: Sofa, fabric, variants -->
