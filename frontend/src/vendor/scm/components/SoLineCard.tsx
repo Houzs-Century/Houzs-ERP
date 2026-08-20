@@ -34,7 +34,7 @@ import {
   type MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
-import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   useMaintenanceConfig,
@@ -51,6 +51,7 @@ import {
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
+import { feeAmountSen, feeDiscountForAmount } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -242,6 +243,24 @@ const SoLineCardInner = ({
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
   const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
+     The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
+     typed unit price never survived: the next rebuild re-derived 250 over it
+     and the operator watched 250 -> 125 "nuke the line to 0". The sanctioned
+     reduction is the line DISCOUNT, which the PATCH has always accepted and
+     #2490 taught the rebuild to keep — but nothing on this screen could ever
+     enter one, so that road was reachable only from the POS voucher split.
+     So on a fee line this cell SHOWS the net and WRITES the difference as a
+     discount: type the amount you want charged. Gross stays derived, and the
+     printed SO reads unit 250 / discount 125 / total 125, exactly like every
+     other price reduction on an order. Raising a fee is NOT expressible this
+     way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
+     for — so a higher figure clamps to no discount rather than pretending. */
+  const isFeeLine = isDeliveryFeeServiceCode(draft.itemCode);
+  const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
+  const amountCellSen = isFeeLine
+    ? feeAmountSen(feeGrossSen, draft.discountSen)
+    : draft.unitPriceSen;
   /* Special-order price DISPLAY is off for EVERYONE on the order-entry
      documents (owner 2026-07-17: costing leaves the SO/DO/SI/DR forms entirely
      and moves to the separate Finance "Fulfillment Costing" module — even
@@ -278,7 +297,7 @@ const SoLineCardInner = ({
      every keystroke (which jumps the cursor and blocks typing). Synced back
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
-  const [priceText, setPriceText] = useState((draft.unitPriceSen / 100).toFixed(2));
+  const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
      this the product picker fired one /mfg-products?search=… request per
      keystroke even when the picker wasn't open (every render of an
@@ -369,13 +388,15 @@ const SoLineCardInner = ({
   // Sync picker search box to the description after picking.
   useEffect(() => { setSearch(draft.description ?? ''); }, [draft.description]);
 
-  // Reflect external Unit Price changes (e.g. product pick → 0) into the
-  // local text box, but leave the operator's in-progress typing untouched.
+  // Reflect external amount changes (e.g. product pick → 0, or a delivery fee
+  // re-derived by the server) into the local text box, but leave the
+  // operator's in-progress typing untouched. On a fee line the canonical value
+  // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
     const parsed = Math.round(Number(priceText) * 100) || 0;
-    if (parsed !== draft.unitPriceSen) setPriceText((draft.unitPriceSen / 100).toFixed(2));
+    if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.unitPriceSen]);
+  }, [amountCellSen]);
 
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
@@ -853,13 +874,27 @@ const SoLineCardInner = ({
           className={styles.priceInput}
           value={priceText}
           disabled={!isEditing || !canEditPrice}
-          title={!canEditPrice ? 'Price follows the SKU Master sell price — admin can override' : undefined}
+          title={
+            !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
+              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : undefined
+          }
           onChange={(e) => {
             const t = e.target.value;
             setPriceText(t);
+            if (isFeeLine) {
+              /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
+                 0, which would read as charge-nothing and discount the whole
+                 line on the way to retyping it — and a blur right then would
+                 save that. A real waiver is typed as 0, which still lands. */
+              const n = Number(t);
+              if (t.trim() === '' || !Number.isFinite(n)) return;
+              onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
+              return;
+            }
             onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0 });
           }}
-          onBlur={() => setPriceText((draft.unitPriceSen / 100).toFixed(2))}
+          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
