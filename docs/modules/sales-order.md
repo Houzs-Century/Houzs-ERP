@@ -723,7 +723,28 @@ numbers, the readonly wall lifts so staff can edit them) — and the receiver we
 on replaying 2990's older copy over those edits. Worse than losing the edit: it
 replaced the item set with a DELETE-then-INSERT, and
 `delivery_order_items.so_item_id` is `ON DELETE SET NULL`, so every replay
-blanked the Delivery Order lines that named those SO lines.
+blanked the Delivery Order lines that named those SO lines. Ten such lines
+across four documents were live on 2026-08-20, **whole documents at a time**,
+which is the shape only a whole-item-set replacement produces.
+
+**How busy is this receiver, actually — measure, do not assume.** 2990's own
+`public.sync_outbox` is readable from CI with the credentials this repo already
+holds, and `mirror-drift-sentinel.mjs` (workflow **Mirror drift sentinel**)
+prints it: on 2026-08-20 it read `source=69 mirrored=102 pending=0 sent=0
+done=102 stuck=0 lastDelivery=2026-08-19T08:42:39Z`. So the queue is drained and
+has delivered nothing for a day — the outbox is fed by triggers on 2990's OWN
+tables, and post-cutover almost nothing writes there.
+
+Two consequences worth knowing before you reason about this route:
+
+- **An empty queue is a state, not a guarantee.** Any 2990-side change, or any
+  row that fails and returns to `pending`, re-arms it. That is why import-once
+  is the fix rather than "the mirror is quiet now".
+- **A "the edit stuck" test proves nothing while the queue is idle.** It would
+  also be true of a dormant mirror. The conclusive signal is the
+  `[so-mirror] skipped_existing` log line firing for that doc while the value
+  survives; the outbox reading above is how you tell whether a delivery was even
+  offered during the window.
 
 **Every refusal is 200, deliberately.** 2990's drainer keys on HTTP status;
 non-2xx keeps the outbox row PENDING and retries forever, so one refused order
@@ -734,6 +755,38 @@ delivered message we chose not to apply.
 the header it just wrote before returning 500, so the retry redoes the whole
 document instead of finding a header-only order and skipping it. Pinned by
 `backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
+
+**Every decline is RECORDED — `scm.so_mirror_skips`, migration 0311.** This is
+what makes the refusal provable rather than merely claimed, and it exists
+because of the reading above: while the queue is idle a surviving edit proves
+nothing, so the missing fact was "was a delivery even offered?".
+
+| column | |
+|---|---|
+| `(company_id, doc_no, action)` | primary key. `action` is `skipped_existing` or `refused_delete` |
+| `hits` | how many deliveries have been declined for that pair |
+| `first_seen` / `last_seen` | `last_seen` is the one an acceptance test turns on |
+
+One row per pair, **never one per delivery** — the drainer retries every 10s, so
+append-per-event would grow by 8,640 rows a day per wedged document. The ceiling
+is (2990 orders) x 2.
+
+**Reading it:** `node backend/scripts/check-so-mirror-skips.mjs`, workflow **So
+mirror skips**. An edit that survived while that doc's `last_seen` moved inside
+your wait window is proof import-once held; an edit that survived while it did
+not move says only that the mirror was quiet.
+
+Two properties worth not breaking:
+
+- **The write is wrapped and never fatal.** Same rule as mig 0302's delete
+  audit: turning a correct refusal into a 500 would put the outbox row back to
+  PENDING and wedge the queue, which is the exact failure the 200 avoids. A
+  failed record is logged, and the refusal still stands.
+- **The reader asserts the COLUMN SHAPE, not a row count.** 0311 is `CREATE
+  TABLE IF NOT EXISTS`, so a pre-existing table of that name and a different
+  shape would be skipped in silence and the INSERT would fail against it
+  forever. An empty table and a wrong table both count zero; only the shape
+  check tells them apart.
 
 ### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
 
