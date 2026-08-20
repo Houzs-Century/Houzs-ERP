@@ -116,27 +116,71 @@ describe('ASSR_STAGES owns the ORDER, not the words', () => {
    Five surfaces spelled "Voided — Not Valid" by hand. Remove any one of these
    wirings and the assertion names the file that went its own way. */
 describe('no frontend surface has re-grown its own voided label', () => {
-  const SITES: Array<[string, string]> = [
-    ['MobileServiceCase (mobile detail + timeline)', 'src/mobile/MobileServiceCase.tsx'],
-    ['ServiceCases (desktop filter, stage select, void banner)', 'src/pages/ServiceCases.tsx'],
-    ['MyCases (agent case pills)', 'src/pages/MyCases.tsx'],
-    ['PortalSupplierCase (supplier portal header)', 'src/portal/pages/PortalSupplierCase.tsx'],
+  /* `screen` is the surface a person looks at; `labelHome` is the file on that
+     surface's side that must actually import the shared table.
+     They are the same file for three of the four. On mobile they are not, and
+     that is deliberate rather than a leak: `prettyStage` moved into
+     `src/mobile/assr-case-fields.ts` when MobileServiceCase.tsx hit its size
+     ceiling. The rule did not move surfaces — it moved one hop along the same
+     one — so the IMPORT is asserted where the label is resolved, and the
+     "spells no literal" assertion runs over BOTH files. Nothing was dropped:
+     this describe block makes strictly more assertions than it used to. */
+  const SITES: Array<{ name: string; screen: string; labelHome: string }> = [
+    {
+      name: 'MobileServiceCase (mobile detail + timeline)',
+      screen: 'src/mobile/MobileServiceCase.tsx',
+      labelHome: 'src/mobile/assr-case-fields.ts',
+    },
+    {
+      name: 'ServiceCases (desktop filter, stage select, void banner)',
+      screen: 'src/pages/ServiceCases.tsx',
+      labelHome: 'src/pages/ServiceCases.tsx',
+    },
+    {
+      name: 'MyCases (agent case pills)',
+      screen: 'src/pages/MyCases.tsx',
+      labelHome: 'src/pages/MyCases.tsx',
+    },
+    {
+      name: 'PortalSupplierCase (supplier portal header)',
+      screen: 'src/portal/pages/PortalSupplierCase.tsx',
+      labelHome: 'src/portal/pages/PortalSupplierCase.tsx',
+    },
   ];
 
-  for (const [name, path] of SITES) {
+  for (const { name, screen, labelHome } of SITES) {
     test(`${name} imports the shared table`, () => {
       expect(
-        read(path).includes('assr-stage-labels'),
-        `${name} no longer imports assr-stage-labels`,
+        read(labelHome).includes('assr-stage-labels'),
+        `${name} no longer imports assr-stage-labels (checked in ${labelHome})`,
       ).toBe(true);
     });
 
-    test(`${name} does not spell "Voided — Not Valid" itself`, () => {
+    test(`${name} reaches its label home`, () => {
+      /* A hop is only legitimate while the screen still goes through it. If
+         MobileServiceCase stopped importing assr-case-fields, the assertion
+         above would be checking a file nobody reads. */
+      if (labelHome === screen) return;
+      /* The EXACT specifier, closing quote included. A bare `includes` of
+         "./assr-case-fields" is satisfied by "./assr-case-fields-RENAMED",
+         which is how this assertion first shipped unable to fail — the
+         "a checker that cannot match reports a clean run" trap, caught by
+         renaming the import and watching the test stay green. */
+      const spec = labelHome.replace(/^src\/mobile\//, './').replace(/\.tsx?$/, '');
       expect(
-        code(path).includes('Voided — Not Valid'),
-        `${name} has re-grown a literal voided label`,
-      ).toBe(false);
+        code(screen).includes(`from "${spec}"`) || code(screen).includes(`from '${spec}'`),
+        `${name} no longer imports ${labelHome}, so its label wiring is unchecked`,
+      ).toBe(true);
     });
+
+    for (const path of new Set([screen, labelHome])) {
+      test(`${name} does not spell "Voided — Not Valid" itself (${path})`, () => {
+        expect(
+          code(path).includes('Voided — Not Valid'),
+          `${name} has re-grown a literal voided label`,
+        ).toBe(false);
+      });
+    }
   }
 
   test('mobile builds its stage confirm text from the labels, not the stepper', () => {
