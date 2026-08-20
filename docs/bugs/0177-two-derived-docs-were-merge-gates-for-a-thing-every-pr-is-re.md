@@ -1,11 +1,8 @@
 ## Two derived docs were merge gates for a thing every PR is required to change [high]
 
 **Symptom** — on 2026-08-14, five open pull requests failed `backend-typecheck`
-simultaneously, all on the same line:
-
-```
-docs/generated/bug-index.md is out of date (175 entries in BUG-HISTORY.md).
-```
+simultaneously, all on the same line — `docs/generated/bug-index.md` [generated]
+*is out of date (175 entries in BUG-HISTORY.md).*
 
 None of them had touched the index. They were regenerated one at a time, and
 were stale again after the very next merge. Separately, `audit:map` failed a
@@ -34,8 +31,9 @@ separated: a generator that parses zero entries or scans zero route modules
 exits **2**; drift prints both counts and the fix and returns **0**. `--strict`
 restores the hard failure for a local run or a job that wants it.
 
-**Pinned by** `backend/tests/derivedDocsDoNotDeadlock.node.mjs` (in
-`test:scale-contract`): it fails 3 of 3 on the previous scripts, and asserts
+**Pinned by** `backend/tests/derivedDocsDoNotDeadlock.test.mjs` (then
+`.node.mjs`, in `test:scale-contract`, both since renamed away): it fails 3 of 3
+on the previous scripts, and asserts
 that the only `process.exit(1)` left in either check path is guarded by
 `--strict`.
 

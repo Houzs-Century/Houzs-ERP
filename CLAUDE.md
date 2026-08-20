@@ -739,15 +739,28 @@ resolves every mechanically checkable claim the documentation makes — a path, 
 gates a PR on the CERTAIN half. It does NOT check behaviour: no script settles
 "the confirm gate requires a venue", and that half still needs a reader.
 
-Three markers keep an honest doc green, and each tells the READER the same thing
-it tells the checker:
+Five markers keep an honest doc green, and each tells the READER the same thing
+it tells the checker. **One list, honoured by all three reference checks** —
+paths, migration filenames and `npm run` names alike. It used to be two lists
+that had drifted apart, and a doc using the right marker for its shape was
+reported anyway because the other check had never heard of it.
 
 | marker | meaning |
 | --- | --- |
-| `` `path` [gone] `` | the doc is RECORDING a deletion — much of `docs/bugs/` is this by construction |
+| `` `path` [gone] `` | the doc is RECORDING a deletion — much of `docs/bugs/` is this by construction. Also the marker for a deleted `npm run` script an entry is ABOUT |
 | `` `path` [planned] `` | proposed, not written yet |
-| `` `path` [external] `` | lives in the 2990 source repo this SCM tree was vendored from, not here |
-| `` `path` [generated] `` | REGENERATED on demand and gitignored — `docs/generated/bug-index.md` [generated], `docs/generated/bug-history.md` [generated]. Absent in a fresh checkout, present the moment you run the generator. NOT for a TRACKED generated file: those are in the tree and must resolve |
+| `` `path` [external] `` | lives in ANOTHER repo, not here — the 2990 source tree this SCM code was vendored from, or Hookka, which several plan docs shortlist files from |
+| `` `path` [generated] `` | REGENERATED on demand and gitignored — `docs/generated/bug-index.md` [generated], `docs/generated/bug-history.md` [generated], `backend/houzs-d1-full.sql` [generated]. Absent in a fresh checkout, present the moment you run the generator. NOT for a TRACKED generated file: those are in the tree and must resolve |
+| `` `NNNN_foo.sql` [renumbered] `` | the migration EXISTS and carries a different number — parallel PRs collide on numbers and the loser renumbers. Says "findable, just not at that number", which neither `[gone]` nor `[external]` does |
+
+**The marker goes on the SAME LINE, immediately after the reference**, past any
+closing delimiters (`` `"` [gone] `` is fine). A marker that wraps onto the next
+line is not seen — reflow the sentence.
+
+**Fenced code blocks ARE scanned.** A fence is where docs put the command a
+reader copies, and a stale one there is the most expensive kind. The consequence
+to know: a fence quoting a tool's VERBATIM OUTPUT cannot take a marker without
+falsifying the quote, so lift the path out of the quote into marked prose.
 
 Do not add a silent exemption list instead. A suppression the reader cannot see
 is a suppression nobody re-checks — which is the whole failure mode here.

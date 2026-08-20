@@ -49,6 +49,7 @@
     "audit:bug-index": "node scripts/gen-bug-index.mjs --check",
     "gen:bug-history": "node scripts/gen-bug-history.mjs",
     "audit:bug-history": "node scripts/gen-bug-history.mjs --check",
+    "audit:bug-signpost": "node scripts/check-bug-ledger-signpost.mjs",
     "check:doc-refs": "node scripts/check-doc-refs.mjs",
     "audit:doc-refs": "node scripts/check-doc-refs.mjs --strict",
     "check:empty-state-claims": "node scripts/check-empty-state-claims.mjs",

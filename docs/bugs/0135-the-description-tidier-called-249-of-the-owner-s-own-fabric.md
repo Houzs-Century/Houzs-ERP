@@ -25,7 +25,7 @@ series, left exactly as he dictated* — instead of mixing them into the
 unparseable bucket.
 
 **The check** — `backend/tests/catalogueSeriesOneList.test.mjs`, wired into
-`npm run test:scale-contract`. It fails on the tree as it was (2 of 5 tests),
+`npm run test:scale-contract` [gone]. It fails on the tree as it was (2 of 5 tests),
 and it asserts three things a comment cannot: both derivers import the shared
 list; a series the SEED declares is one the shared list holds, so the seed
 cannot add a series the derivers would then trample; and no other script holds
