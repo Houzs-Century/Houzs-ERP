@@ -20,6 +20,7 @@
 // ----------------------------------------------------------------------------
 
 import type { AuditFieldMap } from './entity-audit-fields';
+import { DO_LOCK_COLS, DO_LOCK_LABELS } from '../shared/document-policy';
 
 export type { AuditFieldMap };
 
@@ -60,14 +61,9 @@ export const DO_AUDIT_SELECT =
    identity, the currency, the ship-from location and the brand the SI prints —
    NOT the salesperson (reassignable, owner 2026-08-17) nor correctable customer
    details. Keyed by DB column; paired with changedLockedCols in the route. */
-export const DO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
-  'debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding',
-]);
-
-export const DO_IDENTITY_LABELS: Record<string, string> = {
-  debtor_code: 'customer code', debtor_name: 'customer', currency: 'currency',
-  sales_location: 'sales location', branding: 'branding',
-};
+/* Columns + labels from the ONE rulebook (document-policy.ts) so they can't drift. */
+export const DO_IDENTITY_LOCK_COLS: ReadonlySet<string> = DO_LOCK_COLS;
+export const DO_IDENTITY_LABELS: Record<string, string> = DO_LOCK_LABELS;
 
 /* The auditable LINE fields. The camel names are deliberate: unitCostSen,
    lineCostSen and lineMarginSen are the exact keys AUDIT_FINANCE_FIELDS

@@ -10,6 +10,7 @@
  * re-serialised-but-unchanged payload (key order, a recomputed totalHeight) never
  * false-trips; only a real spec change is flagged. Pure — the route passes the
  * summary builder in so this stays free of the shared-module import graph. */
+import { GRN_LOCK_COLS } from '../shared/document-policy';
 
 export type GrnLinePrev = {
   purchase_order_item_id: string | null;
@@ -68,9 +69,8 @@ export function grnInheritedLockedRefusal(changed: string[]) {
  * warehouse (which carries its own stock-relocation handling) stay editable.
  * Keyed by DB column name; the norm() collapses null/undefined/'' like the PO
  * lock so a form re-sending an unchanged blank does not read as a change. */
-export const GRN_HEADER_INHERITED_COLS: ReadonlySet<string> = new Set<string>([
-  'supplier_id', 'currency', 'exchange_rate', 'allocation_method',
-]);
+/* Columns from the ONE rulebook (document-policy.ts) so this set can't drift. */
+export const GRN_HEADER_INHERITED_COLS: ReadonlySet<string> = GRN_LOCK_COLS;
 
 const normLock = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
 
