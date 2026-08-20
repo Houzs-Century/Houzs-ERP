@@ -11,6 +11,9 @@ import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
@@ -109,19 +112,6 @@ const GRN_AUDIT_SELECT =
    line in hand but not the parent. Best-effort by design: the writer is
    fail-open, so an unresolved doc number costs the row its human key and
    nothing else. */
-async function loadGrnAuditMeta(
-  sb: Variables['supabase'],
-  grnId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('grns')
-      .select('grn_number, company_id, status').eq('id', grnId).maybeSingle();
-    const row = (data ?? null) as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.grn_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
 
 /**
  * Record the CREATE of a GRN that has SURVIVED its handler.
@@ -3422,9 +3412,18 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-grns.delete('/:id/items/:itemId', async (c) => {
+/* First GRN route in the PG command txn: line delete, stock OUT, audit, outbox
+   and allocation request commit together or not at all. 503s without
+   DATABASE_URL by design. `sb` is the TRANSACTIONAL client - the body must not
+   reach for c.get('supabase'). The body stays INSIDE the route on purpose:
+   several checks scan grns.ts by route block, and hoisting it to a named
+   handler moved it out of their sight. docs/modules/grn.md 7c. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as mfg-sales-orders' command handlers.
+  sb: any,
+) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
-  const sb = c.get('supabase'); const user = c.get('user');
+  const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
     const { data: own, error: ownErr } = await scopeToCompany(
@@ -3570,11 +3569,9 @@ grns.delete('/:id/items/:itemId', async (c) => {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out → re-walk SO allocation. */
-          try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-delete failed:', e); }
+          /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+             enqueue must fail the delete. docs/modules/grn.md 7c. */
+          await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
         }
       } catch { /* best-effort */ }
     }
@@ -3583,4 +3580,4 @@ grns.delete('/:id/items/:itemId', async (c) => {
   await recomputeGrnTotals(sb, grnId);
   await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-});
+}));
