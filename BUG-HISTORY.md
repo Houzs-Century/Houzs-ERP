@@ -7,6 +7,41 @@
 **Root cause (traced, census-verified — not guessed).** Read-only production census (run 32280818981, 2026-08-19, PR #2508): all four columns are filled = 0 across all 2830 SO rows. Exactly one view (`mfg_sales_orders_with_payment_totals`) projected them and one index (`trgm_mfg_so_po_doc_no`) was on `po_doc_no`; no constraint, function or policy referenced them. They were dead weight — projected by the SO list view, selected by the SO/reports/search/AutoCount-outbox routes, and frozen in the SO identity lock — but never carrying a value.
 
 **Fix.** Migration 0310 drops the index, drops the four columns, and recreates the payment-totals view without them, restoring the view's owner + grants via the 0191 self-adapting copy from `scm.suppliers_with_derived_category` (the 0189 grant-loss hazard). Every backend read of them on `mfg_sales_orders` was removed first — the SO HEADER select / insert / PATCH map (`mfg-sales-orders.ts`), the reports embed (`reports.ts`), the `/api/search` ILIKE (`search.ts`), the AutoCount outbox `SO_HEADER_COLS` + `ErpSoHeader` + `soCustomerRef` (`autocount-outbox.ts`, `autocount-writeback.ts`), the SO identity lock (`so-identity-lock.ts`) and the scale contract (`scale-pg-real-schema.mjs`). Sibling tables (`sales_invoices`, `delivery_orders`, consignment) keep their own `po_doc_no` snapshots — untouched. **Ref:** migration 0310 / 2026-08-19 (STAGED, awaiting review).
+## A GRN line delete could move stock and lose its allocation recompute [high]
+
+**Symptom.** None visible — that is the whole problem. Delete a line from a
+posted GRN, and if the Worker died between the reversing stock OUT and the
+allocation recompute, SO lines stayed READY while the stock backing them had
+just been pulled out. Nothing logged, nothing retried, nothing to see until an
+unrelated mutation happened to sweep.
+
+**Root cause (traced, not guessed).** The recompute was a best-effort call AFTER
+the write: `recomputeSoStockAllocation(sb)` inside a try/catch, with the source
+write already committed through PostgREST. Only a queue row inside the source
+write's own transaction can survive that window, and this route had no
+transaction to join — `grns.ts` used `runScmPgCommand` in zero places.
+
+Counted on the tree the day this was written: 4 durable call sites against 42
+`recomputeSoStockAllocation` call sites.
+
+**Fix.** The route runs inside `runScmPgCommand`, and the recompute is requested
+with `scheduleStockAllocationAfterCommand`, whose queue row commits in the same
+transaction as the stock movement. It is also no longer swallowed: a failure to
+enqueue now fails the delete, because a stock move with no recompute is the
+exact state being removed.
+
+**Proof, because this is a transaction property and no unit test can see it.**
+`backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` against real Postgres —
+commit leaves the line gone AND the request queued; a throw after the enqueue
+leaves NEITHER; a throw before it leaves the line intact; the queue stays a
+singleton across two deletes.
+
+**Scope, stated so nobody reads more into it.** ONE of six GRN routes. The other
+five are unchanged and still best-effort, `postGrnHandler` last on purpose. The
+ledger `stockAllocationDurabilityScope.test.ts` moved 4/33 -> 5/32 in this PR,
+which is how progress here is recorded — it FAILS if a count drifts silently.
+
+**Ref.** `feat/grn-line-delete-in-transaction`, 2026-08-20.
 
 ## company-scope: round2's stricter checker DEFERRED, leak fixes land on main's #2484 ratchet [minor]
 
