@@ -1,5 +1,3 @@
-// @vitest-project light
-//
 // THE ALWAYS-HOLDS RULE on GET /staff/pickable — the roster a picker gets back
 // must contain the CALLER and every id the screen already has to name, whatever
 // narrowing was asked for.

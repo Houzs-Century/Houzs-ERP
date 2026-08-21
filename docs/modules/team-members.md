@@ -237,6 +237,36 @@ source.
 the ids, so it cannot enumerate — but note it returns email and phone, which is
 why an unscoped LIST endpoint beside it was a full directory disclosure.
 
+### `GET /staff/pickable` ALWAYS holds the caller, and whatever you name in `?include=` (2026-08-21)
+
+`?onlySales=1` narrows the roster to Sales positions / departments (owner
+2026-07-22 — keep office, admin, owner and test accounts out of the SALESPERSON
+dropdown). That narrowing is unchanged. What is new is that the answer also
+carries two id sets the narrowing may never remove:
+
+| set | how | why |
+| --- | --- | --- |
+| the CALLER's own ACTIVE staff row | automatic — nothing to pass, matched on `staff.user_id` against `c.get('houzsUser').id` | a screen must always be able to resolve the person standing on it to a REAL employee. Without it `SalesOrderNew` synthesized a `__self__` option labelled "<name> (me)" and the Payments "Collected By" default fell to blank |
+| `?include=<uuid>,<uuid>,…` | the caller passes the ids the screen already has to NAME — in practice the one `salesperson_id` stored on the document being shown | without it seven pickers labelled a sitting employee "(former staff)" |
+
+Both defeat `onlySales` **only**. Neither resurrects a deactivated row and
+neither survives the fail-closed branch (an unresolved active company still
+answers `[]`), so `(former staff)` still means the row is genuinely gone.
+`include` cannot enumerate — it answers exactly the ids handed to it — which
+makes it strictly narrower than `GET /staff/by-ids` above. Capped at 50 ids;
+past that the endpoint answers **400 `too_many_include_ids`** rather than
+truncating, because a truncated include IS the bug it exists to fix.
+
+Rule and cap live in `backend/src/scm/lib/staffCompanyScope.ts`
+(`alwaysPickableStaffIds`, `unionAlwaysPickable`, `parseIncludeIds`), beside the
+company derivation, and every exit from the handler goes through one `answer()`
+helper so a future narrowing branch cannot forget them —
+`backend/tests/staffPickableAlwaysHolds.test.ts` pins that structurally. The
+frontend entry point is `usePickableStaff({ onlySales, include })`
+(`frontend/src/vendor/scm/lib/admin-queries.ts`); `include` is part of the
+query key. Full trace:
+`docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
 `PATCH /staff/by-user/:userId/showroom` now proves the TARGET PERSON is in the
 caller's company before writing. The warehouse half was already scoped; the write
 keys on `user_id` alone because there is no `company_id` on `scm.staff` to

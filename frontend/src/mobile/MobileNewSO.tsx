@@ -599,13 +599,10 @@ export function MobileNewSO({
      collected_by_name (PaymentInfoBlock), so no full roster is needed here. */
   // Salesperson picker (owner 2026-07-22) — sales-only, mirrors desktop
   // SalesOrderNew's narrowed dropdown.
-  /* The PERSISTED salesperson, kept apart from the editable `salespersonId`.
-     It is what the picker must be able to NAME — feeding the live state to
-     `include` instead would re-key the roster query on every pick. */
+  /* The PERSISTED salesperson (edit mode), kept apart from the editable
+     `salespersonId`: it is the id the picker must be able to NAME, and feeding
+     the live state to `include` would re-key the roster query on every pick. */
   const [origSalespersonId, setOrigSalespersonId] = useState<string>("");
-  /* `include` carries the salesperson already ON this order (edit mode), so
-     someone the onlySales narrowing hides is still named rather than dropping
-     out of the picker. */
   const pickableStaffQ = usePickableStaff({ onlySales: true, include: [origSalespersonId] });
   const { staff: authStaff } = useAuth();
   /* FIX A — the app-level Houzs auth exposes the permission gate + the signed-in
