@@ -324,13 +324,30 @@ try {
   // owner's own saved row. Whether that is a lockout or a dead module is a
   // question about the DATA, not the code.
   notice("-- (9) sales_entries usage --");
+  // created_at is TEXT on this table -- compare as text, never cast blindly.
   const se = await pg`
     SELECT count(*)::int AS total,
-           count(*) FILTER (WHERE created_at > now() - interval '90 days')::int AS last_90d,
-           max(created_at) AS newest,
+           max(created_at::text) AS newest,
+           min(created_at::text) AS oldest,
            count(DISTINCT created_by)::int AS distinct_creators
       FROM sales_entries`;
   console.log(`  ${JSON.stringify(se[0])}`);
+
+  // -- (9b) which companies the unclassified-position people are granted -----
+  notice("-- (9b) company grants for the unclassified-position cohort --");
+  const uc = await pg`
+    SELECT p.name AS position, coalesce(c.code, '(none)') AS company, count(DISTINCT u.id)::int AS people
+      FROM users u
+      JOIN positions p ON p.id = u.position_id
+      LEFT JOIN user_companies g ON g.user_id = u.id
+      LEFT JOIN companies c ON c.id = g.company_id
+     WHERE u.status = 'active'
+       AND lower(p.name) IN ('outsource transporter', 'warehouse crew kl', 'logistic admin',
+                             'operation executive', 'hr manager', 'it developer executive',
+                             'finance manager')
+     GROUP BY 1, 2 ORDER BY 1, 2`;
+  for (const r of uc)
+    console.log(`  ${String(r.position).padEnd(24)} ${String(r.company).padEnd(8)} ${String(r.people).padStart(3)} people`);
 
   // -- (10) HAS THE FULL-COHORT EXPOSURE BEEN EXERCISED? --------------------
   notice("-- (10) audit_events by people on an UNCLASSIFIED position --");
