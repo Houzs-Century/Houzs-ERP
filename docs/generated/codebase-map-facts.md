@@ -141,7 +141,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/so-amendments.ts` | 9 | 1231 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 2 | 214 |
-| `backend/src/scm/routes/so-mirror.ts` | 1 | 284 |
+| `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 795 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
@@ -176,7 +176,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1623 files, 611194 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1628 files, 611608 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -204,7 +204,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-144 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+145 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -266,6 +266,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/delivery-returns/from-do` | `frontend/src/pages/scm-v2/DeliveryReturnFromDo` |
 | `/scm/delivery-returns/new` | `frontend/src/pages/scm-v2/DeliveryReturnNew` |
 | `/scm/delivery-zones` | `frontend/src/pages/scm-v2/DeliveryZones` |
+| `/scm/do-load` | `frontend/src/pages/scm-v2/DoLoadScan` |
 | `/scm/dp-orders` | `frontend/src/pages/scm-v2/DpOrders` |
 | `/scm/driver-leave` | `frontend/src/pages/scm-v2/DriverLeave` |
 | `/scm/fabric-tracking` | `frontend/src/pages/scm-v2/FabricTracking` |
@@ -360,7 +361,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 33 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 123 |
+| `frontend/src/pages/scm-v2` | 124 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 1 |
 
@@ -393,7 +394,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1814 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1987 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1990 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |

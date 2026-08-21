@@ -161,6 +161,7 @@ const ScmDeliveryOrdersV2 = lazy(() => import("./pages/scm-v2/MfgDeliveryOrdersL
 const ScmDeliveryOrderNewV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderNewV2").then((m) => ({ default: m.DeliveryOrderNewV2 })));
 const ScmDeliveryOrderFromSoV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
 const ScmDeliveryOrderDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
+const ScmDoLoadScan = lazy(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
 const ScmSalesInvoicesV2 = lazy(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
 const ScmSalesInvoiceNewV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
 const ScmSalesInvoiceFromDoV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
@@ -770,6 +771,8 @@ export default function App() {
         <Route path="/scm/delivery-orders/new" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/from-so" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/:id" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDeliveryOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* The DO print's "SCAN · MARK LOADED" QR lands here (warehouse loading confirmation). */}
+        <Route path="/scm/do-load" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDoLoadScan /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices" element={<ScmGuard area="scm.sales.invoices" allowSales><Scm2990Shell><ScmSalesInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/new" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/from-do" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceFromDoV2 /></Scm2990Shell></ScmGuard>} />

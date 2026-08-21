@@ -816,7 +816,12 @@ export function DeliveryOrderDetailV2() {
   const doDeliverPdf = (action: PdfAction) => {
     return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(deliveryOrder as never, items as never, { action })
+        generateDeliveryOrderPdf(
+          // loadScanId arms the print's "scan to mark loaded" QR.
+          { ...(deliveryOrder as Record<string, unknown>), loadScanId: (deliveryOrder as { id?: string }).id } as never,
+          items as never,
+          { action },
+        )
       )
       .then(() => {
         // Downloads and prints are terminal — close behind them. A new-tab
