@@ -55,3 +55,20 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # DISPATCHED-vs-closed census — the third DO question you cannot answer by
+      # reading code: for the delivery orders sitting at DISPATCHED, what is
+      # actually different? Were they invoiced anyway, did their Sales Orders
+      # advance, is anything chasing them?
+      #
+      # It rides this workflow for the same reason the POD census above does: a
+      # workflow_dispatch file is only dispatchable once it is on the default
+      # branch, so `--ref <branch>` on an already-dispatchable workflow is the
+      # only way to run this version before the PR lands.
+      #
+      # `if: always()` so it still reports when a step above finds something.
+      - run: node scripts/check-dispatched-do-gap.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
