@@ -99,7 +99,10 @@ const BUCKET_OWNERS = {
   "src/scm/routes/purchase-invoices.ts": "purchase_invoice_status",
   "src/scm/routes/sales-invoices.ts": "sales_invoice_status",
   "src/scm/routes/grns.ts": "grn_status",
-  "src/scm/routes/delivery-orders-mfg.ts": "do_status",
+  /* MOVED 2026-08-21 out of routes/delivery-orders-mfg.ts, which is 225 lines
+     over its size ceiling, when the four buckets became one-per-status. The map
+     is registered at its new address; the route imports it. */
+  "src/scm/lib/do-status-buckets.ts": "do_status",
 };
 
 /* ── The enum vocabulary, out of the SQL ─────────────────────────────────── */
