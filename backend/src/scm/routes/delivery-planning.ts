@@ -80,7 +80,14 @@ import { boardDeliverableByDoc } from '../lib/board-deliverable';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
-import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap, type CompanyScopeCtx } from '../lib/companyScope';
+/* THE Service-Case company rule — imported, never re-derived. `assrCompanySql`
+   is what /api/assr itself scopes `public.assr_cases` with, so the board and the
+   Service Cases list can only ever answer the same caller the same way. This is
+   the exact remedy routes/search.ts needed: it kept its own COPY of the rule and
+   drifted, and global search and /api/assr answered the same rep differently
+   until someone noticed. A copy here would be that bug for a third time. */
+import { assrCompanySql } from '../../routes/assr';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -99,6 +106,66 @@ import { dateOrNull } from '../lib/date-coerce';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
+
+/* ── Service Cases on the board are COMPANY-SCOPED (owner ruling 2026-08-21) ──
+   「这个也不可以啊」 — a Service Case belonging to a company the caller holds no
+   grant for must not appear on the Delivery Planning board. Until this change
+   the board's ASSR union (section 7b of GET /) read `public.assr_cases` through
+   raw env.DB SQL with NO company predicate, while /api/assr scoped the SAME
+   table with `assrCompanySql`. The two surfaces answered the same person
+   differently, and the board was the one that leaked.
+
+   THE RULE LIVES IN ONE PLACE — `assrCompanySql` (routes/assr.ts), which is the
+   caller's GRANTED companies, widened not isolated: Delivery Planning is a
+   cross-company view module (see scm/lib/companyScope.ts), so a caller granted
+   both companies still sees the combined queue. Its three-state sentinel comes
+   along for free: unresolved company context degrades to no predicate (legacy
+   single-company installs serve unchanged) and a caller granted no active
+   company matches nothing.
+
+   These are FUNCTIONS returning SQL, and they are exported, so the predicate is
+   assertable without a database — see backend/tests/deliveryBoardAssrScope.test.ts.
+   An inline template literal inside a 3,000-line handler is not testable, which
+   is why the missing predicate survived this long.
+
+   NOT SCOPED HERE, deliberately: the row-level VISIBILITY rule
+   (`assrVisibilityPredicateSql`, "which cases may THIS person see within the
+   company"). The owner ruled on the COMPANY boundary; narrowing the fleet
+   coordinator's board to only the cases they personally handled is a different
+   decision nobody has made, and it would empty the board for dispatchers. */
+
+/** The board's Service-Case (ASSR) union — OPEN cases carrying a driving date,
+ *  restricted to the caller's granted companies. */
+export function assrBoardUnionSql(c: CompanyScopeCtx): string {
+  return `SELECT id            AS id,
+              assr_no       AS assr_no,
+              company_id    AS company_id,
+              status        AS status,
+              customer_name AS customer_name,
+              phone         AS phone,
+              location      AS location,
+              customer_pickup_at AS customer_pickup_at,
+              inspection_visit_at AS inspection_visit_at,
+              inspection_by AS inspection_by,
+              do_date       AS do_date,
+              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
+         FROM assr_cases
+        WHERE closed_at IS NULL
+          AND archived_at IS NULL
+          AND (customer_pickup_at IS NOT NULL OR do_date IS NOT NULL
+               OR (inspection_visit_at IS NOT NULL AND inspection_by = 'own'))${assrCompanySql(c)}`;
+}
+
+/** The open-case guard the ASSR schedule write runs before it touches anything.
+ *  Carries the SAME company predicate as the read: a case the caller cannot see
+ *  on the board is a case they cannot schedule onto a lorry either, and it 404s
+ *  exactly as /api/assr's own `caseInCallerScope` does. Without this the board
+ *  read would be scoped while the write beside it stayed open — the write is the
+ *  half that consumes real fleet capacity. */
+export function assrOpenCaseGuardSql(c: CompanyScopeCtx): string {
+  return `SELECT id FROM assr_cases
+        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL${assrCompanySql(c)}`;
+}
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
@@ -1027,32 +1094,20 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         'customer_pickup', one 'delivery'), so each leg schedules independently.
         assr_cases lives in the PUBLIC schema (not scm) — read it via c.env.DB
         (the D1-shim raw SQL over Postgres public.*, the same path the SO
-        active-venue lookup uses), NOT the scm-scoped supabase client. Wrapped
-        defensively: any failure logs + leaves the SO rows untouched. */
+        active-venue lookup uses), NOT the scm-scoped supabase client. That raw
+        path is exactly why this union shipped company-BLIND: the scm supabase
+        helpers (scopeToAllowedCompanies) cannot reach it, so the predicate has
+        to be added by hand — see the raw-SQL caveat at the foot of
+        scm/lib/companyScope.ts. It is added by hand now, in assrBoardUnionSql,
+        which appends /api/assr's own assrCompanySql (owner ruling 2026-08-21).
+        Wrapped defensively: any failure logs + leaves the SO rows untouched. */
   type BoardRow = (typeof orders)[number];
   const assrOrders: BoardRow[] = [];
   try {
     // Explicit lowercase aliases → deterministic snake_case result keys
     // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
-    const assrRows = await c.env.DB.prepare(
-      `SELECT id            AS id,
-              assr_no       AS assr_no,
-              status        AS status,
-              customer_name AS customer_name,
-              phone         AS phone,
-              location      AS location,
-              customer_pickup_at AS customer_pickup_at,
-              inspection_visit_at AS inspection_visit_at,
-              inspection_by AS inspection_by,
-              do_date       AS do_date,
-              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
-         FROM assr_cases
-        WHERE closed_at IS NULL
-          AND archived_at IS NULL
-          AND (customer_pickup_at IS NOT NULL OR do_date IS NOT NULL
-               OR (inspection_visit_at IS NOT NULL AND inspection_by = 'own'))`,
-    ).all<{
-      id: number | null; assr_no: string | null; status: string | null;
+    const assrRows = await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
+      id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
       customer_name: string | null; phone: string | null; location: string | null;
       customer_pickup_at: string | null; inspection_visit_at: string | null;
       inspection_by: string | null; do_date: string | null;
@@ -1152,9 +1207,17 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
-          // ASSR (service) cases live in public.assr_cases (no scm company_id yet)
-          // — no company label on the shared queue.
-          company_code: null,
+          /* The company chip, from the SAME codeMap the SO rows use. This used
+             to be a hard `null` under the comment "no scm company_id yet" —
+             which was wrong, and being wrong is what let the union ship
+             unscoped: `public.assr_cases.company_id` is `bigint NOT NULL` and
+             /api/assr has scoped on it since 2026-07-20 (verified against
+             production 2026-08-21: 72 board-eligible cases, every one resolving
+             to a real company, none NULL). Now that a case only reaches this
+             board when the caller is granted its company, labelling which
+             company it is costs one map lookup and stops a both-company
+             dispatcher having to guess. */
+          company_code: a.company_id != null ? (codeMap.get(Number(a.company_id)) ?? null) : null,
           region: primaryRegion,
           regions: [...regionSet],
           warehouse_id: null,
@@ -2284,10 +2347,16 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
        check such a call would mint a trip, a trip_stop and a DP number for a
        closed / archived / non-existent case: fleet capacity consumed by work that
        is finished or was never there, and invisible on the board because the
-       board has no row for it. Fails the same way the date path already does. */
+       board has no row for it. Fails the same way the date path already does.
+
+       It is ALSO the company gate for everything below (owner ruling
+       2026-08-21). assrOpenCaseGuardSql carries the caller's granted-company
+       predicate, so an out-of-scope case 404s here — the same answer, and the
+       same reason, as /api/assr's own caseInCallerScope. Scoping the board READ
+       and leaving this write open would have been the worse half done: the read
+       only shows a row, the write consumes a lorry. */
     const openCase = (await c.env.DB.prepare(
-      `SELECT id FROM assr_cases
-        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+      assrOpenCaseGuardSql(c),
     ).bind(caseId).first()) as { id: number } | null;
     if (!openCase) return c.json({ error: 'not_found' }, 404);
 
@@ -2794,7 +2863,12 @@ async function scheduleAssrOntoTrip(
 
     /* Case snapshot (customer / address) + the leg's own date, from public.assr_cases
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's
-       default date so a crew-only edit (no scheduleDate) still lands on the right day. */
+       default date so a crew-only edit (no scheduleDate) still lands on the right day.
+       company-scope: deliberately UNSCOPED, and safe. This function is reachable
+       only from the ASSR branch of PATCH /:type/:id/schedule, whose
+       assrOpenCaseGuardSql check has already 404'd any case outside the caller's
+       granted companies — so `caseId` here can only ever be one they may touch.
+       Same shape as the annotated pairs in routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,
               addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
