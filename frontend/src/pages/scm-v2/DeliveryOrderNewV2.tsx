@@ -70,6 +70,7 @@ import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate } from "../../vendor/shared/format";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -573,7 +574,7 @@ export function DeliveryOrderNewV2() {
     const byValue = new Map<string, { value: string; label: string }>();
     for (const m of stateWarehousesQ.data?.mappings ?? []) {
       const w = m.warehouse;
-      if (w?.code) byValue.set(w.code, { value: w.code, label: w.name || w.code });
+      if (w?.code) byValue.set(w.code, { value: w.code, label: warehouseLabel(w) ?? w.code });
     }
     if (salesLocation && !byValue.has(salesLocation)) {
       byValue.set(salesLocation, { value: salesLocation, label: salesLocation });

@@ -35,6 +35,7 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
   DocumentLinesExpansion,
   AssignedSoCell,
@@ -100,9 +101,12 @@ const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 const itemsSummaryOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
-/* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
+/* Purchase Location display — the ONE warehouse rule, code first then name
+   (vendor/scm/lib/warehouse-label.ts). This column printed the NAME first and
+   the grid truncated it to "BALAKONG WAREHO…", while the same page's PDF
+   export already printed the CODE — one page, two answers for one warehouse. */
 const locationOf = (r: PoHeaderRow): string =>
-  r.purchase_location?.name || r.purchase_location?.code || "";
+  warehouseLabel(r.purchase_location) ?? "";
 
 /* Supplier-SKU summary (owner 2026-08-05) — the SUPPLIER's own codes, aligned
    with the Items column line-for-line ("—" holds the slot for an unbound
