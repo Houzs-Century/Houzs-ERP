@@ -89,10 +89,11 @@ describe('the statements waiting for money', () => {
     /* The headline total and the one owed statement's line — same number, so
        both must be on screen. */
     expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
-    /* The statement's total is NOT repeated in its cell — Still owed already
-       says it (owner: 不需要看那么多资料了吧。感觉重复很乱). It reappears only
-       once part of the money has landed, where the split is news. */
-    expect(screen.queryByText(/should pay/)).toBeNull();
+    /* The money columns, once each — what he came here to check (owner:
+       我应该是需要核对 net 的数据罢了哦). */
+    expect(screen.getByText('Net it should pay')).toBeTruthy();
+    expect(screen.getByText('RM 7,046.45')).toBeTruthy();       // the net
+    expect(screen.getByText('RM 2,818.58')).toBeTruthy();       // received
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
     expect(screen.queryByText('mbb-aug.csv')).toBeNull();
 
@@ -176,18 +177,22 @@ describe('a statement waiting for money shows what it is waiting FOR', () => {
   test('names the transaction, the reference and the customer, not just the file', () => {
     draw();
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
-    /* The line inside it. The statement's period repeats the date, so the
-       reference is what identifies the transaction here. */
-    expect(screen.getByText('663554')).toBeTruthy();
-    expect(screen.getByText('SO-2608-020')).toBeTruthy();
-    expect(screen.getByText(/Chong Wei Ming/)).toBeTruthy();
-    /* Every fact in its own column now (owner: 这里的资料同理，整理一下，太乱了),
-       so the fee is a cell rather than a phrase glued to the customer. */
+    /* FOLDED AWAY by default — from the card side this is agreed already, and
+       what he came for is the net (owner: 从卡机那边 recon 完了，我应该是需要核对
+       net 的数据罢了哦). */
+    expect(screen.queryByText('663554')).toBeNull();
+    expect(screen.queryByText('SO-2608-020')).toBeNull();
+
+    /* And one press away when the net does NOT match and he needs to see what
+       the report is made of. */
+    fireEvent.click(screen.getByLabelText('Transactions in hlb-aug.csv'));
     const row = screen.getByText('663554').closest('tr') as HTMLElement;
     const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
     expect(cells).toContain('RM 1,773.00');   // the net the acquirer will pay
     /* The fee and the gross belong to step 1 and are NOT repeated here. */
     expect(cells).not.toContain('RM 27.00');
     expect(cells).not.toContain('RM 1,800.00');
+    expect(cells).toContain('SO-2608-020');
+    expect(cells).toContain('Chong Wei Ming');
   });
 });

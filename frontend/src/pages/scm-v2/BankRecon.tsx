@@ -123,37 +123,32 @@ const WaitingForMoney = () => {
         </div>
       )}
 
-      {/* FEWER COLUMNS THAN THE MERCHANT SCREEN, on purpose. The owner, after
-          I gave both screens the same two bands: 但是等着 bank statement
-          reconciliation 不需要看那么多资料了吧。感觉重复很乱.
+      {/* ONE ROW PER STATEMENT, and the transactions folded away.
+          The owner, twice: 不需要看那么多资料了吧。感觉重复很乱 — and then, on
+          what he actually does here: 从卡机那边 recon 完了，我应该是需要核对 net
+          的数据罢了哦.
 
-          He is right, and the sameness was my mistake. Over there you are
-          COMPARING two sides — what the merchant said against what the ERP
-          said — so the bands and the seam earn their place. Here that
-          comparison is DONE and agreed; this screen is chasing money for
-          statements already reconciled, so there is nothing to hold side by
-          side and the band framing is decoration.
-
-          Gross and Fee are gone because the fee was booked in step 1 and is
-          not what anybody is waiting for; the payment's own Amount is gone
-          because it was the same number as the gross; "should pay" is gone
-          because Still owed already says it. What is left is what identifies
-          the money and what is outstanding. */}
+          That is the job in one sentence. He has a bank statement in his hand
+          showing a credit, and he is looking for the report whose NET is that
+          number. The transactions inside it were agreed at step 1 and are only
+          wanted when the number does NOT match — so they are one press away
+          rather than spread across the screen, and their query does not even
+          run until he asks. */}
       {shown.length > 0 && (
         <table className={grid.grid}>
           <thead>
             <tr>
+              <th>Acquirer</th>
               <th>Statement</th>
-              <th>Date</th>
-              <th>Reference</th>
-              <th>Document</th>
-              <th>Customer</th>
-              <th className={grid.num}>Net</th>
+              <th>Period</th>
+              <th className={grid.num}>Net it should pay</th>
+              <th className={grid.num}>Received</th>
               <th className={grid.num}>Still owed</th>
+              <th />
             </tr>
           </thead>
           {shown.map((b) => (
-            <StatementLines key={b.id} batch={b} owed={outstandingOf(b)} onOpen={() => setBatchId(b.id)} />
+            <StatementRow key={b.id} batch={b} owed={outstandingOf(b)} onOpen={() => setBatchId(b.id)} />
           ))}
         </table>
       )}
@@ -161,94 +156,97 @@ const WaitingForMoney = () => {
   );
 };
 
-/* ── What one statement is actually waiting to be paid FOR ──────────────────
-   The owner, on a list that named the file and nothing else — the same thing
-   he said of the merchant screen and then again here: 这里 pending bank
-   statement matching 的也显示 detail 哦.
 
-   A file name is not a transaction. He is chasing RM 3,743.04 from Maybank,
-   and what tells him whether that is right is the sale behind it: whose it
-   was, which day it was swiped, what the card machine charged. So the
-   statement names itself once down the side, and its own lines fill the rest —
-   the same shape as the merchant screen, because it is the same act read from
-   the other end. */
+/* ── One statement, one row ─────────────────────────────────────────────────
+   The owner asked for the transactions here (这里 pending bank statement
+   matching 的也显示 detail 哦), saw them, and then said what he actually does
+   with this screen: 从卡机那边 recon 完了，我应该是需要核对 net 的数据罢了哦.
 
-const StatementLines = ({ batch, owed, onOpen }: {
+   Both are true, and they are not in conflict. He is holding a bank statement
+   and looking for the report whose NET is the credit he can see — that is a
+   money question, one row per report. The transactions behind it were agreed
+   at step 1 and are wanted only when the number does NOT match. So they are
+   folded away, and `useSettlementBatch(null)` means the query for them does
+   not run at all until he opens one. */
+
+const StatementRow = ({ batch, owed, onOpen }: {
   batch: SettlementBatch; owed: number; onOpen: () => void;
 }) => {
-  const q = useSettlementBatch(batch.id);
+  const [open, setOpen] = useState(false);
+  const q = useSettlementBatch(open ? batch.id : null);
   const rows = q.data?.rows ?? [];
-  const span = Math.max(1, rows.length);
-
-  const head = (
-    <td className={grid.report} rowSpan={span}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span className={styles.codeChip}>{batch.acquirer_code}</span>
-        <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
-      </div>
-      {/* Only what no other cell carries. The total is Still owed's business
-          until part of it has landed — then the split is worth saying, because
-          "owed 3,743.04" alone hides that 2,000.00 already came. */}
-      {(batch.received_sen ?? 0) !== 0 && (
-        <div className={grid.sub}>{fmt(batch.received_sen)} of {fmt(payableOf(batch))} received</div>
-      )}
-      <button type="button" style={{ ...btn(owed !== 0), marginTop: 6 }} onClick={onOpen}>
-        {owed === 0 ? 'Open' : 'Record the money'}
-      </button>
-    </td>
-  );
-
-  const owedCell = (
-    <td className={grid.num} rowSpan={span}
-      style={{ fontWeight: owed === 0 ? undefined : 700, color: owed === 0 ? good : undefined }}>
-      {owed === 0 ? 'all in' : fmt(owed)}
-    </td>
-  );
-
-  if (rows.length === 0) {
-    return (
-      <tbody>
-        <tr>
-          {head}
-          <td colSpan={5}>
-            <span style={softText}>{q.isLoading ? 'Reading its transactions…' : 'This statement has no lines.'}</span>
-          </td>
-          {owedCell}
-        </tr>
-      </tbody>
-    );
-  }
+  const received = batch.received_sen ?? 0;
 
   return (
     <tbody>
-      {rows.map((r, i) => {
-        /* Always an array — settlementBatchDetail maps every row with
-           `linked: linksByRow.get(id) ?? []`. Empty means the line claimed no
-           payment, which is a state to SHOW, not to guard against. */
-        const links = r.linked;
-        /* One line settling several orders stacks INSIDE its cell — the rare
-           case, and the only place stacking is still the honest shape. */
-        const stack = (pick: (l: typeof links[number]) => React.ReactNode) => (
-          links.length === 0
-            ? <span className={grid.sub}>no sale linked</span>
-            : links.map((l) => <div key={l.payment_id}>{pick(l) ?? '—'}</div>)
-        );
-        return (
-        <tr key={r.id}>
-          {i === 0 && head}
-          <td>{r.txn_date}</td>
-          <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
-          <td>{stack((l) => <b>{l.doc_no ?? l.payment_id}</b>)}</td>
-          <td>{stack((l) => l.customer_name)}</td>
-          {/* The NET — what the acquirer will actually pay for this
-              transaction, which is the only money figure this screen is about.
-              Worth a column even on a one-line statement, because on a
-              several-line one it is what the total is made of. */}
-          <td className={grid.num}>{fmt(r.net_sen)}</td>
-          {i === 0 && owedCell}
+      <tr>
+        <td><span className={styles.codeChip}>{batch.acquirer_code}</span></td>
+        <td>
+          <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
+          <div>
+            <button type="button" style={{ ...btn(), padding: '2px 8px', marginTop: 4 }}
+              aria-label={`Transactions in ${batch.file_name}`} onClick={() => setOpen(!open)}>
+              {open ? 'Hide' : 'Show'} its {batch.row_count} transaction{batch.row_count === 1 ? '' : 's'}
+            </button>
+          </div>
+        </td>
+        <td>{batch.period_from} → {batch.period_to}</td>
+        <td className={grid.num}>{fmt(payableOf(batch))}</td>
+        <td className={grid.num}>{received === 0 ? '—' : fmt(received)}</td>
+        <td className={grid.num}
+          style={{ fontWeight: owed === 0 ? undefined : 700, color: owed === 0 ? good : undefined }}>
+          {owed === 0 ? 'all in' : fmt(owed)}
+        </td>
+        <td>
+          <button type="button" style={btn(owed !== 0)} onClick={onOpen}>
+            {owed === 0 ? 'Open' : 'Record the money'}
+          </button>
+        </td>
+      </tr>
+
+      {open && (
+        <tr>
+          {/* Indented under its own statement rather than given the top-level
+              columns, because these are a different kind of row — the parts of
+              the number above, not another number to compare against it. */}
+          <td />
+          <td colSpan={6} style={{ background: 'var(--c-paper)' }}>
+            {q.isLoading && <span style={softText}>Reading its transactions…</span>}
+            {!q.isLoading && rows.length === 0 && <span style={softText}>This statement has no lines.</span>}
+            {rows.length > 0 && (
+              <table className={grid.grid} style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Date</th><th>Reference</th><th>Document</th><th>Customer</th>
+                    <th className={grid.num}>Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    /* One line settling several orders stacks inside its cell —
+                       the rare case, and the only honest shape for it. */
+                    const links = r.linked;
+                    const stack = (pick: (l: typeof links[number]) => React.ReactNode) => (
+                      links.length === 0
+                        ? <span className={grid.sub}>no sale linked</span>
+                        : links.map((l) => <div key={l.payment_id}>{pick(l) ?? '—'}</div>)
+                    );
+                    return (
+                      <tr key={r.id}>
+                        <td>{r.txn_date}</td>
+                        <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
+                        <td>{stack((l) => <b>{l.doc_no ?? l.payment_id}</b>)}</td>
+                        <td>{stack((l) => l.customer_name)}</td>
+                        <td className={grid.num}>{fmt(r.net_sen)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </td>
         </tr>
-        );
-      })}
+      )}
     </tbody>
   );
 };
