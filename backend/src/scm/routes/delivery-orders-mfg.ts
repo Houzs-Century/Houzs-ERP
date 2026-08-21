@@ -2808,9 +2808,8 @@ deliveryOrdersMfg.get('/', async (c) => {
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
       return cq;
     };
-    /* One count per BUCKET, derived from the map rather than hand-listed, so a
-       bucket added above cannot be left without a count — the shape that let a
-       tab render beside a silent 0. */
+    /* One count per BUCKET, derived from the map — a bucket added there cannot
+       be left without a count, the shape that renders a tab beside a silent 0. */
     const bucketNames = Object.keys(DO_STATUS_BUCKETS);
     const [allC, ...bucketC] = await Promise.all([
       countBase(),
