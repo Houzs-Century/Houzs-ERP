@@ -203,13 +203,35 @@ async function rawSales(env: Env, start: string, end: string, companyId?: number
  * `companyId === undefined` (pre-migration / cold-start) omits the filter, which
  * is the same three-state degrade `rawSales` has always used so single-company
  * Houzs is unchanged. */
+/* THE COMPANY OF A COST LINE IS ITS PROJECT'S, not the line's copy of it.
+ * (report-money audit, 2026-08-21.)
+ *
+ * `project_finance_lines.company_id` is a DENORMALISED copy added by mig 0170.
+ * Two writers never fill it: `services/projectCostRates.ts` stamps it on INSERT
+ * only, so an auto row created before 0170 keeps NULL through every later
+ * UPDATE; and the historical FAIR PNL ledger seeds were written without it.
+ * `l.company_id = ?` therefore DROPS those rows from a company-scoped P&L —
+ * silently, because a missing row cannot announce itself.
+ *
+ * Measured against production 2026-08-21 (run 32465233085,
+ * `backend/scripts/check-report-money.mjs`): 85 live cost lines on unarchived
+ * projects carry NULL — 79 manual (RM 1,327,267.94) + 6 auto (RM 126,069.00) =
+ * RM 1,453,336.94 — while `/api/projects/analytics/profitability` and
+ * `/api/projects/finance/by-project`, which both scope on `p.company_id`,
+ * counted every one of them. The same money, two reports, RM 1.45M apart.
+ *
+ * Reading the project is not a widening: the same run found ZERO lines whose
+ * own company_id disagrees with their project's, so the row set changes by
+ * exactly the NULLs it was losing. The `projects` join is already here for
+ * `archived_at`. The column stays — it is provenance, and other callers may
+ * use it — it just stops being a second home for this answer. */
 const projectCostFrom = (companyId?: number) =>
   `FROM project_finance_lines l
        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
       WHERE l.kind = 'cost' AND l.archived_at IS NULL
         AND COALESCE(l.occurred_at, l.created_at) >= ?
         AND COALESCE(l.occurred_at, l.created_at) < ?
-        ${companyId != null ? "AND l.company_id = ?" : ""}`;
+        ${companyId != null ? "AND p.company_id = ?" : ""}`;
 
 const serviceCostFrom = (companyId?: number, alias = "", join = "") => {
   const p = alias ? `${alias}.` : "";
