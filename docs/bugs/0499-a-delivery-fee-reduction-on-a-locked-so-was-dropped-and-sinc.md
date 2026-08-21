@@ -50,8 +50,12 @@ The channel end to end:
   qty and unit can change in the same amendment, so the bound lives where both
   are final — and audits the clamped value.
 - The approver's card (`AmendmentDetailV2`) renders the discount before/after;
-  a discount change routes as **PRICE** (money moves to the same desk a price
-  change does). Without this the approver signs a money change blind.
+  a discount change carries the **PRICE** atom. (CORRECTED 2026-08-21: the
+  LANE is split by item code — a fee line is a service line and waits on
+  **Logistics**, not Purchasing; only a product-line discount goes to
+  Purchasing. And this PR shipped the write half only — the READ sweep the
+  remark channel (#1992) prescribed was missed, so the card showed "no line
+  changes" until it landed. See 0501.)
 
 Proved RED on the unfixed tree: with the source fix stashed, exactly the three
 new apply cases fail (`3 failed | 17 passed`) — a requested discount ignored, a
