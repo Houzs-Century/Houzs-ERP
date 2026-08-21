@@ -186,7 +186,6 @@ type StatusTab =
   | "shipped"
   | "delivered"
   | "invoiced"
-  | "closed"
   | "on_hold"
   | "cancelled"
   | "other";
@@ -200,7 +199,6 @@ const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
   { value: "shipped", label: "Shipped" },
   { value: "delivered", label: "Delivered" },
   { value: "invoiced", label: "Invoiced" },
-  { value: "closed", label: "Closed" },
   { value: "on_hold", label: "On Hold" },
   { value: "cancelled", label: "Cancelled" },
 ];

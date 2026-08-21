@@ -155,7 +155,13 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-type StatusTab = "all" | "open" | "in_transit" | "delivered" | "cancelled";
+/* ONE TAB PER STATUS (owner, 2026-08-21): 页签＝状态, the shape the Sales Order
+   list already has. Four buckets over eight statuses could not tell a DRAFT
+   from a LOADED delivery. SIGNED has no tab — it is merged into DELIVERED by
+   the owner's ruling and folds into that bucket server-side. */
+type StatusTab =
+  | "all" | "draft" | "loaded" | "dispatched" | "in_transit"
+  | "delivered" | "invoiced" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -190,15 +196,20 @@ const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
-  draft:       { tone: "warning", label: "Draft",       bucket: "open" },
-  loaded:      { tone: "warning", label: "Confirmed",   bucket: "open" },
+  draft:       { tone: "warning", label: "Draft",       bucket: "draft" },
+  loaded:      { tone: "warning", label: "Confirmed",   bucket: "loaded" },
   // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
   // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Dispatched",  bucket: "in_transit" },
+  dispatched:  { tone: "warning", label: "Shipped",     bucket: "dispatched" },
   in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  signed:      { tone: "success", label: "Signed",      bucket: "delivered" },
+  // SIGNED is merged into DELIVERED (owner, 2026-08-21) — same stock effect,
+  // same invoiceability, same delivered count. No tab of its own; a row still
+  // carrying the value reads and files as Delivered until the data migrates.
+  signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },
   delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
-  invoiced:    { tone: "success", label: "Invoiced",    bucket: "delivered" },
+  invoiced:    { tone: "success", label: "Invoiced",    bucket: "invoiced" },
+  // Not a member of scm.do_status and nothing writes it. Kept so a row that
+  // somehow carries it lands in a tab instead of rendering its raw slug.
   completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
   cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
   cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
@@ -876,12 +887,9 @@ export function MfgDeliveryOrdersListV2() {
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
   // Full-set status-tab counts from the server (stable while paging / searching).
-  const counts = data?.statusCounts ?? {
-    all: 0,
-    open: 0,
-    in_transit: 0,
-    delivered: 0,
-    cancelled: 0,
+  const counts: Record<string, number> = data?.statusCounts ?? {
+    all: 0, draft: 0, loaded: 0, dispatched: 0,
+    in_transit: 0, delivered: 0, invoiced: 0, cancelled: 0,
   };
 
   /* The rows the TABLE is showing — the server page minus whatever the
@@ -904,13 +912,17 @@ export function MfgDeliveryOrdersListV2() {
      handful of rows, which is the exact contradiction this change exists to
      remove. So while a funnel is narrowing the page, they describe the visible
      set instead; with no funnel they are byte-identical to before. */
+  /* The TABS are one-per-status now; these two KPI cards are not, and must not
+     be. "On the road" is dispatched + in transit, and "Delivered" counts the
+     invoiced ones too — an invoiced delivery was delivered. Splitting the cards
+     the way the tabs split would have quietly halved both numbers. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;
     for (const r of visible.rows) {
       const b = statusFor(r.status).bucket;
-      if (b === "in_transit") inTransit += 1;
-      if (b === "delivered") delivered += 1;
+      if (b === "dispatched" || b === "in_transit") inTransit += 1;
+      if (b === "delivered" || b === "invoiced") delivered += 1;
     }
     return { inTransit, delivered };
   }, [visible.rows]);
@@ -1657,9 +1669,12 @@ export function MfgDeliveryOrdersListV2() {
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
-    { value: "open", label: `Open · ${counts.open}` },
+    { value: "draft", label: `Draft · ${counts.draft}` },
+    { value: "loaded", label: `Confirmed · ${counts.loaded}` },
+    { value: "dispatched", label: `Shipped · ${counts.dispatched}` },
     { value: "in_transit", label: `In transit · ${counts.in_transit}` },
     { value: "delivered", label: `Delivered · ${counts.delivered}` },
+    { value: "invoiced", label: `Invoiced · ${counts.invoiced}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];
 
@@ -1755,9 +1770,9 @@ export function MfgDeliveryOrdersListV2() {
               label="In transit"
               value={(visible.filtered
                 ? visibleBucketCounts.inTransit
-                : counts.in_transit
+                : counts.dispatched + counts.in_transit
               ).toLocaleString("en-MY")}
-              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
+              subtitle={visible.filtered ? "En route · filtered" : "Shipped · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
@@ -1766,10 +1781,10 @@ export function MfgDeliveryOrdersListV2() {
               label="Delivered"
               value={(visible.filtered
                 ? visibleBucketCounts.delivered
-                : counts.delivered
+                : counts.delivered + counts.invoiced
               ).toLocaleString("en-MY")}
               subtitle={
-                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+                visible.filtered ? "Delivered · filtered" : "Delivered · including invoiced"
               }
               tone="success"
               rail="bg-synced"
