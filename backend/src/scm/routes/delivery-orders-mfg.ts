@@ -5558,16 +5558,16 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   }
 
   /* Inventory OUT — fire on the first transition into ANY shipped state.
-     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a jump
-     to SIGNED/DELIVERED still deducts once. DRAFT CONFIRM (2026-06-24) is exactly
-     DRAFT→DISPATCHED, so the deduction skipped at draft-create fires HERE. */
+     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a jump to
+     SIGNED/DELIVERED deducts once. DRAFT CONFIRM (2026-06-24) = DRAFT→DISPATCHED. */
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
     movementErrors = await deductInventoryForDo(sb, id, user.id);
-    /* Mirror the create path: re-check the source SO for full coverage and
-       auto-advance to DELIVERED. A DRAFT confirm reaches this first here. Best-effort. */
-    if (prevStatus === 'DRAFT') {
+    /* Mirror the create path: SO coverage sync on the ship-time hop. PRESHIP set, not
+       a DRAFT literal — LOADED→DISPATCHED ships here too, and the DRAFT-only gate left
+       goods out with the SO parked and MRP re-ordering them (8-17 class). Best-effort. */
+    if (DO_PRESHIP_STATUSES.has(prevStatus)) {
       const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
       await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
     }

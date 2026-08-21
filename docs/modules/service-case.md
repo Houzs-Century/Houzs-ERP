@@ -331,7 +331,7 @@ is the ones that matter; the full machine-checked gate list is
 | POST | `/api/assr/:id/generate-po` | `service_cases.manage` `:2470` | Mint the service PO number |
 | GET | `/api/assr/summary` | `service_cases.read` `:584` | KPI tiles (backlog, aging, SLA breach, by stage/status/location/category) |
 | GET | `/api/assr/metrics`, `/metrics/drill` | `service_cases.read` `:2064`, `:2320` | Reporting |
-| GET | `/api/assr/my-cases` | `requireServiceCaseAccess()` `:1297` | Assignee board |
+| GET | `/api/assr/my-cases` | `requireServiceCaseAccess()` `:1447` | Sales-side "my cases" list. Body is `listMyCases` (`services/assrVisibility.ts`) — keyed on WHO RAISED the case since 2026-08-21, see §6 |
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
@@ -684,11 +684,44 @@ If the owner rules the other way, the change is to drop the `es.user_id` arm fro
 `assrVisibilityPredicateSql` and rely on `created_by` alone. It affects 7 cases
 today (census run 32351722894).
 
-**`/my-cases` is NOT part of this rule and still matches on the name.** It
-answers a different question — "cases that are MINE" — and lists rows whose
-`sales_agent` text matches a subtree display name (`subtreeAgentNames`). So a rep
-can see an AutoCount case in the main list that does not appear under My Cases.
-That is deliberate, and it was left alone on 2026-08-20 rather than swept in.
+**`/my-cases` answers a different question — "cases that are MINE" — and since
+2026-08-21 it keys on WHO RAISED the case.** Owner ruling: 「如果是他开的 就算不是
+他as agent它也可以看啊 … 那就是他submit就代表他认领这个case了啊」 — a case a person
+opened is theirs whether or not the order names them as agent. The reasoning is
+the same one that opened AutoCount-sourced cases to everyone above: AutoCount's
+agent data is unreliable, so anyone may raise a case on those orders — and once
+anyone may raise it, **submitting is claiming**.
+
+THE RULE is `myCasesPredicateSql` (`services/assrVisibility.ts`), two arms
+OR-ed:
+
+| arm | what it reaches |
+|---|---|
+| `created_by IN (subtree ids)` | the ruling. Self + full downline BY ID — the pyramid rule stands, and nothing depends on how a name is typed. |
+| `LOWER(COALESCE(sales_agent,'')) LIKE '%<subtree display name>%'` | the LEGACY reach, KEPT. |
+
+**The name arm is unioned, never replaced, and that is a measurement.** Census
+run **32463589829** (2026-08-21, production, §6): 862 non-archived cases, **856**
+carry a `created_by`, only **5** have none — but **1,113 user→case pairs across
+28 users are reachable ONLY by the agent text**. Almost all of them are office
+staff raising a case on a rep's behalf (`created_by` = the office user,
+`sales_agent` = the rep); replacing the arm would have taken those cases out of
+those reps' lists. The creator arm ADDS 2,359 pairs across 20 users, and **824**
+cases were raised by someone the agent text does not name — the cohort the ruling
+makes visible. Company split 854 HOUZS / 8 2990.
+
+The name match is exactly as brittle as it ever was. That is what the creator arm
+is for: every case raised in the ERP from here on is keyed by id and cannot be
+lost to a rename. The name arm only has to keep reaching what is already there.
+`subtreeAgentNames` (`services/orgScope.ts`) therefore stays; it now delegates to
+`agentNamesForUserIds` so `listMyCases` can take the ids and the names off ONE
+subtree expansion instead of running the manager_id walk twice per request.
+
+Note the two lists still answer differently by design: the main list admits an
+AutoCount case to anyone the company predicate allows, while My Cases admits only
+what you raised or are named on. A rep can still see a case in the main list that
+is not under My Cases — that is the difference between "may I see it" and "is it
+mine".
 
 **The FRONTEND gate is now NARROWER than the backend**, deliberately and
 temporarily. `PageGuard allowSales` still asks `org.sales.staff`

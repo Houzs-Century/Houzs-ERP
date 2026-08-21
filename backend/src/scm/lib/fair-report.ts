@@ -184,7 +184,6 @@ export interface FairSoInputs {
   others_cost_sen: number | null;
   service_cost_sen: number | null;
   total_cost_sen: number | null;
-  balance_sen: number | null;
   deposit_sen: number | null;
 }
 
@@ -201,7 +200,37 @@ export interface FairSoMoney {
   };
   total_so_cost_sen: number;   // total_cost_sen
   margin_pct: number | null;
-  balance_sen: number;
+}
+
+/**
+ * WHAT THE ORDER STILL OWES, for the Fair Report's Balance column.
+ *
+ * NOT `mfg_sales_orders.balance_sen`. That column is not a balance:
+ * `recomputeTotals` writes `balance_sen = local_total_sen = total_revenue_sen =
+ * grandTotal` on every edit, so it never reflects a payment — the reasoning is
+ * written out in full in `scm/shared/so-outstanding.ts`, which exists because
+ * this exact column keeps being read as the balance. Measured on production
+ * 2026-08-21 (`backend/scripts/check-report-money.mjs`, run 32466500870): 85 of
+ * 103 live orders carried a `balance_sen` equal to their full order value while
+ * the ledger held RM 238,652.50 of payments — RM 132,869.50 of it on the 51
+ * CONFIRMED orders that ARE this report's row set.
+ *
+ * `paidSen` must come from `soPaidSen` (so-outstanding.ts), which owns the
+ * legacy-deposit rule: the header `deposit_sen` counts only when the ledger has
+ * no `is_deposit` row, or every modern order double-counts its deposit.
+ *
+ * It is subtracted from the SAME `amount_sen` this report prints, not from
+ * `total_revenue_sen`, so the Balance column always reconciles with the Amount
+ * column beside it. That is why this is not `soBalanceSen`: that function
+ * deliberately answers 0 when `total_revenue_sen` is 0, to keep a negative out
+ * of AutoCount's `UDF_BALANCE`, and a report that printed a large Amount next
+ * to a 0 Balance would just be inconsistent in a different place.
+ *
+ * Signed on purpose — an over-collected order reads negative, which the owner
+ * asked to see rather than have clamped away.
+ */
+export function fairBalanceSen(amountSen: number | null | undefined, paidSen: number | null | undefined): number {
+  return n(amountSen) - n(paidSen);
 }
 
 /** Assemble the money half of a stage=so row from the SO header columns. */
@@ -226,7 +255,6 @@ export function fairSoMoney(h: FairSoInputs): FairSoMoney {
     },
     total_so_cost_sen: totalCost,
     margin_pct: marginPct(amount, totalCost),
-    balance_sen: n(h.balance_sen),
   };
 }
 

@@ -33,6 +33,7 @@ import { activeOptions, buildVariantSummary, maintPickerValues } from '@2990s/sh
 import {
   useCreatePurchaseReturn,
   usePostPurchaseReturn,
+  useReturnableGrnLines,
 } from '../../vendor/scm/lib/purchase-return-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
@@ -130,6 +131,8 @@ export const PurchaseReturnNew = () => {
 
   const grnQ       = useGrnDetail(grnId);
   const poQ        = usePurchaseOrderDetail(poId);
+  // PO mode draws from the PO's receipts — see the prefill effect below.
+  const returnableQ = useReturnableGrnLines(poId);
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
   // Free-form mode = no GRN and no PO source. Then the operator picks a
@@ -202,26 +205,32 @@ export const PurchaseReturnNew = () => {
     if (items.length > 0) setLines(items);
   }, [grnQ.data]);
 
-  // Pre-fill lines + supplier from PO (no grnItemId linkage).
+  /* Pre-fill from PO — via its RECEIPTS, not its own lines (2026-08-21, audit
+     B6). The old prefill mapped PO lines with grnItemId:null, which made every
+     line "manual": uncapped, consuming no returned_qty, and deducting the
+     company DEFAULT warehouse instead of the receiving one. A return of
+     received goods draws from receipts, so the pool is now the PO's POSTED GRN
+     lines with remaining > 0 — same linkage the GRN prefill above produces.
+     Supplier comes from the receipts (falling back to the PO header). */
   useEffect(() => {
-    if (!poQ.data) return;
-    const po = poQ.data.purchaseOrder;
-    setSupplierId(po?.supplier_id ?? '');
-    const items: DraftLine[] = (poQ.data.items ?? []).map((it: any) => ({
-      rid:            `r${it.id}`,
-      grnItemId:      null,
-      materialKind:   it.material_kind,
-      itemCode:   it.item_code,
-      materialName:   it.material_name,
-      itemGroup:      it.item_group ?? null,
-      variants:       (it.variants as Record<string, unknown> | null) ?? null,
-      qtyReturned:    0,                              // commander enters
-      unitPriceSen: it.unit_price_sen ?? 0,
-      reason:         '',
+    if (!poId || !returnableQ.data) return;
+    const po = poQ.data?.purchaseOrder;
+    setSupplierId(returnableQ.data.supplierId ?? po?.supplier_id ?? '');
+    const items: DraftLine[] = (returnableQ.data.lines ?? []).map((l) => ({
+      rid:            `r${l.grnItemId}`,
+      grnItemId:      l.grnItemId,
+      materialKind:   l.materialKind ?? 'mfg_product',
+      itemCode:   l.itemCode,
+      materialName:   l.materialName ?? '',
+      itemGroup:      l.itemGroup,
+      variants:       l.variants,
+      qtyReturned:    0,                              // commander enters (≤ remaining, server-capped)
+      unitPriceSen: l.unitPriceSen,
+      reason:         l.rejectionReason ?? '',
       notes:          '',
     }));
     if (items.length > 0) setLines(items);
-  }, [poQ.data]);
+  }, [poId, returnableQ.data, poQ.data]);
 
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -326,9 +335,22 @@ export const PurchaseReturnNew = () => {
     po  ? `from PO ${po.po_number}` :
     '(free-form)';
 
+  /* PO mode with nothing received: say the SCOPED thing is empty (the
+     convert-scope rule) — "nothing returnable on this PO" and "no receipts
+     exist" are different facts, and the operator acts on the wrong one by
+     keying a free-form return for goods that were never received. */
+  const poPoolEmpty = Boolean(poId) && returnableQ.isSuccess && (returnableQ.data?.lines ?? []).length === 0;
+
   return (
     <div className="space-y-4">
       <UnrecognisedScopeNotice unknown={scope.unknown} />
+      {poPoolEmpty && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Nothing returnable on {po?.po_number ?? 'this Purchase Order'} — no posted Goods Receipt
+          line still carries a remaining quantity. A return sends RECEIVED goods back: receive the
+          delivery first, or open the Goods Receipt and use Transfer to Purchase Return.
+        </div>
+      )}
       <PageHeader back
         eyebrow="Procurement"
         title={`New Purchase Return ${sourceTitle}`}

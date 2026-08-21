@@ -10,7 +10,7 @@
 // count runs here, against secrets.DATABASE_URL, and nobody handles the
 // credential.
 //
-// It answers five questions. The third and fourth are the ones that can STOP the
+// It answers six questions. The third and fourth are the ones that can STOP the
 // visibility change; the fifth is a SEPARATE question about the same module,
 // added 2026-08-21 because it has the same shape (a rule about who may touch a
 // case, whose answer lives only in production) and the same standing constraint
@@ -32,6 +32,11 @@
 //      whose agent TEXT matches a subtree member but whose ERP salesperson is
 //      someone else stops being visible. Only possible on ERP-sourced orders;
 //      AutoCount-sourced ones become company-open and can only gain.
+//   6. MY CASES BY CREATOR — added 2026-08-21 for the owner's ruling that a case
+//      a person RAISED is theirs regardless of the agent field. Measures whether
+//      `created_by` is populated enough to key the list on, and how many
+//      user->case pairs would be lost if the free-text name arm were REPLACED
+//      rather than unioned. Same shape, same constraint as the others.
 //
 // READING, NOT A SETTING. SELECTs only — no DDL, no writes, no transaction.
 // Exits 0 for every legitimate answer (the ANSWER is the output; a red job reads
@@ -440,6 +445,125 @@ try {
         : `BROKEN BUTTONS: 0 of ${reps.length} rep(s) hold service_cases.write, so every mobile stage/advance/close/archive control 403s. No unauthorised edit is possible; the defect is a screen of dead buttons.`;
   say(ruling);
 
+  // -- 6 MY CASES: creator vs free-text agent name (owner ruling 2026-08-21) ----
+  // Owner: 「如果是他开的 就算不是他as agent它也可以看啊 ... 那就是他submit就代表
+  // 他认领这个case了啊」 — a case a person RAISED is theirs, agent field or not,
+  // because AutoCount's agent data is unreliable and AutoCount-sourced orders are
+  // open to every Houzs staff member to raise a case on. So submitting IS
+  // claiming.
+  //
+  // GET /api/assr/my-cases today keys ONLY on `LOWER(sales_agent) LIKE
+  // '%<subtree member name>%'` — the same free-text mechanism the ACCESS gate
+  // already moved off (2 above). This section measures, BEFORE the change:
+  //   a. how many cases even HAVE a created_by to key on;
+  //   b. how many are reachable ONLY by the name arm (i.e. would vanish if the
+  //      name arm were replaced rather than unioned) — the number that decides
+  //      whether the name arm has to stay;
+  //   c. how many user->case pairs the creator arm ADDS.
+  // READING, NOT A SETTING. A zero here is an answer, never something to fix.
+  const withCreator = liveCases.filter((c) => c.created_by != null).length;
+  const withAgentText = liveCases.filter(
+    (c) => (c.sales_agent ?? "").trim() !== "",
+  ).length;
+  const agentOnly = liveCases.filter(
+    (c) => c.created_by == null && (c.sales_agent ?? "").trim() !== "",
+  ).length;
+  const neither = liveCases.filter(
+    (c) => c.created_by == null && (c.sales_agent ?? "").trim() === "",
+  ).length;
+  // The cohort the ruling is ABOUT: someone raised it, and the agent text names
+  // a different person (or nobody). Today these are invisible in the creator's
+  // My Cases.
+  const creatorNotAgent = liveCases.filter((c) => {
+    if (c.created_by == null) return false;
+    const agent = (c.sales_agent ?? "").trim().toLowerCase();
+    const creator = (byId.get(Number(c.created_by))?.name ?? "").trim().toLowerCase();
+    if (creator === "") return true; // creator not resolvable to a name at all
+    return agent === "" || !agent.includes(creator);
+  }).length;
+
+  // Company split — the HC transaction data was wiped on 2026-08-21, so a
+  // population that is entirely one company must SAY so: it bounds what the
+  // measurement proves.
+  const byCompany = new Map();
+  for (const c of liveCases) {
+    const key = c.company_id == null ? "NULL" : String(c.company_id);
+    byCompany.set(key, (byCompany.get(key) ?? 0) + 1);
+  }
+  const codeById = new Map(companies.map((r) => [String(r.id), String(r.code)]));
+
+  say("");
+  say("== §6  My Cases: creator vs free-text agent name (ruling 2026-08-21) ==");
+  say(`non-archived cases = ${liveCases.length}`);
+  say(`  created_by NOT NULL                       = ${withCreator}`);
+  say(`  sales_agent non-empty                     = ${withAgentText}`);
+  say(`  created_by NULL but sales_agent non-empty = ${agentOnly}  <-- reachable ONLY by the name arm`);
+  say(`  neither created_by nor sales_agent        = ${neither}  (unreachable by either arm)`);
+  say(`  raised by someone the agent TEXT does not name = ${creatorNotAgent}  <-- what the ruling makes visible`);
+  say(
+    `  by company: ` +
+      [...byCompany.entries()]
+        .map(([id, n]) => `${codeById.get(id) ?? `company_id=${id}`}:${n}`)
+        .join("  "),
+  );
+
+  // Per-user My Cases delta. The audience is every ACTIVE user the route gate
+  // admits (canAccessServiceCases) — my-cases has no visibility tier of its own,
+  // it is a self-scoped list, so an unrestricted director is measured too.
+  let myGained = 0;
+  let myLostIfReplaced = 0;
+  let usersMyGaining = 0;
+  const usersMyLosing = [];
+  for (const u of admitAfter) {
+    const sub = subtree(u.id);
+    const subNames = [...sub]
+      .map((id) => (byId.get(id)?.name ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    const allowed = allowedCompanies(u);
+    const inCompany = (c) => {
+      if (allowed === null) return true;
+      const co = c.company_id == null ? NaN : Number(c.company_id);
+      if (!Number.isFinite(co)) return true;
+      return allowed.includes(co);
+    };
+    let today = 0;
+    let creatorArm = 0;
+    let lost = 0;
+    let gained = 0;
+    for (const c of liveCases) {
+      if (!inCompany(c)) continue;
+      const agent = (c.sales_agent ?? "").trim().toLowerCase();
+      const nameHit = agent !== "" && subNames.some((n) => agent.includes(n));
+      const creatorHit = c.created_by != null && sub.has(Number(c.created_by));
+      if (nameHit) today++;
+      if (creatorHit) creatorArm++;
+      if (nameHit && !creatorHit) lost++; // lost ONLY if the name arm is REPLACED
+      if (creatorHit && !nameHit) gained++;
+    }
+    myGained += gained;
+    myLostIfReplaced += lost;
+    if (gained > 0) usersMyGaining++;
+    if (lost > 0) usersMyLosing.push({ u, lost, today, creatorArm });
+  }
+
+  say("");
+  say(`my-cases audience (route-admitted active users) = ${admitAfter.length}`);
+  say(`user->case pairs the CREATOR arm ADDS = ${myGained}   (users gaining = ${usersMyGaining})`);
+  say(
+    `user->case pairs that would be LOST if the name arm were REPLACED = ${myLostIfReplaced}` +
+      `   (users affected = ${usersMyLosing.length})`,
+  );
+  for (const l of usersMyLosing) {
+    say(
+      `   - #${l.u.id} ${l.u.name}: name_arm=${l.today} creator_arm=${l.creatorArm} lost_if_replaced=${l.lost}`,
+    );
+  }
+  const myCasesVerdict =
+    myLostIfReplaced === 0
+      ? `NAME ARM DROPPABLE: 0 user->case pairs are reachable only by the free-text name, so keying My Cases on created_by + downline ids loses nothing.`
+      : `KEEP THE NAME ARM: ${myLostIfReplaced} user->case pair(s) across ${usersMyLosing.length} user(s) are reachable ONLY by the free-text agent name. Union, never replace.`;
+  say(myCasesVerdict);
+
   const verdict =
     lostAdmit.length === 0 && totalLost === 0
       ? `SAFE: +${gainedAdmit.length} users admitted, +${totalGained} case grants, 0 admittance lost, 0 cases lost.`
@@ -447,6 +571,7 @@ try {
   say("");
   notice(verdict);
   notice(`§5 ruling: ${ruling}`);
+  notice(`§6 my-cases: ${myCasesVerdict}`);
   process.exit(0);
 } catch (e) {
   console.error(

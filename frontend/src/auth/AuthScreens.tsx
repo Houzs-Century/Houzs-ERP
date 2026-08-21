@@ -403,8 +403,10 @@ export function ForgotPasswordScreen() {
         email: email.toLowerCase().trim(),
       });
     } catch {
-      // Deliberately swallowed — the endpoint always answers ok and the
-      // confirmation below stays generic (anti-enumeration).
+      // silent-write-ok: anti-enumeration. The endpoint always answers ok and
+      // the confirmation below is conditional ("If an account exists for …"),
+      // so telling this apart from success would leak whether the address is
+      // registered.
     } finally {
       setBusy(false);
       setSent(true);
