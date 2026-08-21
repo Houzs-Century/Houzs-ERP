@@ -93,13 +93,26 @@ const notice = (msg) =>
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  /* ONE statement. Grouped by company AND status because the two tenants got
-     here by different routes and the remedy differs: 2990's deliveries were
-     IMPORTED from a source system that has no POD step at all (nothing was
-     ever lost — there was never anything to capture), while HOUZS rows were
-     closed through screens that HAD a capture path and skipped it. A single
-     total would blend a data-migration artefact with a live product gap and
-     invite a backfill against rows that can never be backfilled. */
+  /* ONE statement. Grouped by company AND status because the two tenants can
+     reach a closed delivery by different routes and the remedy differs: a row
+     carried over from a source system that has no POD step at all lost nothing
+     (there was never anything to capture), while a row closed through a screen
+     that HAD a capture path and skipped it is a live product gap. A single
+     total would blend the two and invite a backfill against rows that can
+     never be backfilled.
+
+     WHAT PRODUCTION ACTUALLY SAYS, so the next reader does not inherit the
+     guess this comment used to state as fact. It read "2990's deliveries were
+     IMPORTED ... while HOUZS rows were closed through screens that HAD a
+     capture path and skipped it". Measured (run 32457160124, 2026-08-21):
+     there are ZERO Houzs delivery orders — every row in this table belongs to
+     2990's Home — so the second half described a population that does not
+     exist. The first half is right in substance and wrong in mechanism: the
+     twelve closed rows were not carried in already-closed either. They were
+     created DISPATCHED and flipped to DELIVERED in a single minute on
+     2026-07-24 by backfill-2990-delivered-dos.mjs, whose own header records
+     the owner ruling behind it. Sections 2 to 5 below print the evidence
+     rather than asking anyone to believe this paragraph. */
   const rows = await pg`
     SELECT company_id,
            status,
