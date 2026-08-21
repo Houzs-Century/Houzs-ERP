@@ -7,8 +7,9 @@
  * staff notes so the rep can hold the conversation with ops + the
  * customer in one place.
  *
- * Scope: cases where LOWER(sales_agent) LIKE '%' || lower(user.name)
- * || '%' — the same rule /api/assr/my-cases uses on the backend.
+ * Scope: sales_agent matched (space-stripped, both directions) against the
+ * rep's subtree names, OR created_by = the rep — the backend rule lives in
+ * services/assrMyCases.ts (myCasesPredicate).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -133,8 +134,8 @@ export function MyCases() {
         title="My Cases"
         description={
           userName
-            ? `Service cases where you're the sales agent (matched on "${userName}").`
-            : "Service cases where you're the sales agent."
+            ? `Service cases where you're the sales agent (matched on "${userName}") — plus every case you raised yourself.`
+            : "Service cases where you're the sales agent, plus every case you raised yourself."
         }
       />
 
@@ -150,9 +151,10 @@ export function MyCases() {
         </div>
       ) : cases.length === 0 ? (
         <div className="mt-6 rounded-lg border border-dashed border-border bg-bg/40 p-8 text-center text-[13px] text-ink-muted">
-          No cases matched your name on the sales_agent field yet. If a case
-          you raised isn&rsquo;t showing here, tell IT the name spelling used
-          on the sales order.
+          No cases here yet — nothing matched your name on the sales_agent
+          field, and you haven&rsquo;t raised any cases yourself. If a case
+          you expect isn&rsquo;t showing, tell IT the name spelling used on
+          the sales order.
         </div>
       ) : (
         <>

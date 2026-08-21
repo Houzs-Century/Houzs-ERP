@@ -43,6 +43,7 @@ import {
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
+import { myCasesPredicate } from "../services/assrMyCases";
 /* Row-level case visibility + the creditor strip. Lives in services/ so the
    PRINT route can apply the SAME rule — see assrVisibility.ts. */
 import {
@@ -1439,11 +1440,13 @@ app.post("/resync-so/:docNo", requirePermission("service_cases.write"), async (c
 
 // ── My Cases (sales-side portal) ──────────────────────────────
 // Lists cases where assr_cases.sales_agent (free text mirrored from
-// AutoCount, mig 010 — typically the rep's name) substring-matches a
-// name in the caller's reporting subtree: their OWN name plus every
-// downline member's (pyramid rule — a manager sees their reps' cases).
-// This bridges the legacy text field to our user accounts without any
-// data backfill.
+// AutoCount, mig 010 — typically the rep's name) matches a name in the
+// caller's reporting subtree (their OWN name plus every downline
+// member's — pyramid rule), OR that the caller created themselves. The
+// row rule lives in services/assrMyCases.ts (myCasesPredicate): names
+// are compared space-stripped in both directions, and created_by is an
+// OR-arm so a rep covering a resigned agent's customers still sees the
+// cases they raise (2026-08-21 — Shawn).
 app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
   const userId = (c as any).get?.("userId") ?? 0;
   if (!userId) return c.json({ cases: [] });
@@ -1453,25 +1456,23 @@ app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
     .bind(userId)
     .first<{ name: string | null }>();
   const ownName = (userRow?.name || "").trim();
-  // Self + downline display names (lowercased). subtreeAgentNames always
-  // includes the caller's own name, so a rep with no reports matches exactly
-  // as before — the downline names are purely additive.
+  // Self + downline display names. subtreeAgentNames always includes the
+  // caller's own name, so a rep with no reports matches exactly as before —
+  // the downline names are purely additive. An EMPTY name set no longer
+  // early-returns: the created_by arm must answer even then.
   const names = await subtreeAgentNames(c.env, Number(userId));
-  if (names.length === 0) return c.json({ cases: [], user_name: ownName });
-  const likeClauses = names
-    .map(() => `LOWER(COALESCE(sales_agent, '')) LIKE ?`)
-    .join(" OR ");
+  const scope = myCasesPredicate(names, Number(userId));
   const rows = await c.env.DB.prepare(
     `SELECT id, assr_no, stage, status, priority, doc_no, ref_no,
             customer_name, phone, complained_date, deadline_at,
             complaint_issue, item_code, sales_agent
        FROM assr_cases
-      WHERE (${likeClauses})
+      WHERE ${scope.sql}
         AND archived_at IS NULL${assrCompanySql(c)}
       ORDER BY complained_date DESC, id DESC
       LIMIT 200`
   )
-    .bind(...names.map((n) => `%${n}%`))
+    .bind(...scope.binds)
     .all();
   return c.json({ cases: rows.results ?? [], user_name: ownName });
 });
