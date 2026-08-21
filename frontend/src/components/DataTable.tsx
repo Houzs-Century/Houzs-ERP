@@ -43,6 +43,7 @@ import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
+import { measureAnchoredPanel } from "../lib/anchoredPanel";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
@@ -448,6 +449,12 @@ function sanitizeColFilters(value: unknown): Record<string, string[]> {
 // checklist grows and shrinks with its search box). Before the first
 // measurement the raw anchor is used, and the layout effect corrects it in
 // the same frame, so nothing visibly jumps.
+/* The funnel popover's own width — it is a fixed-width menu, not the width of
+   the little filter button it hangs off, so the shared positioner is told
+   what it is rather than measuring the trigger. Keep in step with the
+   `w-[236px]` class on the popover. */
+const FILTER_MENU_W = 236;
+
 function useViewportClampedPos(
   anchor: { x: number; y: number } | null,
   ref: React.RefObject<HTMLDivElement | null>,
@@ -793,9 +800,13 @@ function DataTableInner<T>({
     legacyStorageKey("filters"),
     sanitizeColFilters,
   );
+  /* The funnel popover is anchored to the FILTER BUTTON's own rect, not to a
+     click point, because the shared positioner needs both edges of the trigger
+     to decide which side has more room. */
   const [filterMenu, setFilterMenu] = useState<{
     x: number;
-    y: number;
+    top: number;
+    bottom: number;
     colKey: string;
   } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -804,7 +815,25 @@ function DataTableInner<T>({
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  const filterMenuPos = useViewportClampedPos(filterMenu, filterMenuRef);
+  /* Vertical placement is the shared house rule (lib/anchoredPanel): open on
+     the side of the button with more room, and never taller than that room.
+     Before this, the funnel always hung DOWNWARD from a header row, so on a
+     table whose header sits low in the window the value checklist and the
+     Select all / Invert / Clear bar were off the bottom of the screen.
+     Horizontal is clamped here because this menu has its own fixed width
+     rather than the trigger's. */
+  const filterMenuPos = useMemo(() => {
+    if (!filterMenu) return null;
+    const pos = measureAnchoredPanel(
+      { top: filterMenu.top, bottom: filterMenu.bottom, left: filterMenu.x, width: FILTER_MENU_W },
+      window.innerHeight,
+      window.innerHeight - 16,
+    );
+    return {
+      ...pos,
+      left: Math.max(8, Math.min(pos.left, window.innerWidth - FILTER_MENU_W - 8)),
+    };
+  }, [filterMenu]);
   const headerMenuPos = useViewportClampedPos(headerMenu, headerMenuRef);
 
   function toggleFilterValue(colKey: string, value: string) {
@@ -2659,7 +2688,7 @@ function DataTableInner<T>({
                                   setFilterMenu((cur) =>
                                     cur?.colKey === c.key
                                       ? null
-                                      : { x: rect.left, y: rect.bottom + 4, colKey: c.key }
+                                      : { x: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key }
                                   );
                                 }}
                                 className={cn(
@@ -3203,12 +3232,17 @@ function DataTableInner<T>({
 
           const sortBtn =
             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-surface-dim disabled:cursor-not-allowed disabled:text-ink-muted disabled:hover:bg-transparent";
-          const pos = filterMenuPos ?? { top: filterMenu.y, left: filterMenu.x };
+          if (!filterMenuPos) return null;
           return createPortal(
             <div
               ref={filterMenuRef}
-              className="fixed z-[120] flex max-h-[calc(100dvh-16px)] w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
-              style={{ top: pos.top, left: pos.left }}
+              className="fixed z-[120] flex w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
+              style={{
+                top: filterMenuPos.top,
+                bottom: filterMenuPos.bottom,
+                left: filterMenuPos.left,
+                maxHeight: filterMenuPos.maxHeight,
+              }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >

@@ -60,6 +60,41 @@ describe('measureAnchoredPanel', () => {
     expect(pos.maxHeight).toBe(120);
   });
 
+  test('the panel and its footer both end INSIDE the viewport when it opens downward', () => {
+    // The owner's 2026-08-21 report, as arithmetic: the SKU picker asks for a
+    // 460px list from a field 300px down a 700px window. Below (360) is less
+    // than the cap but still more than above (288), so it stays put and is
+    // SHORTENED — unclamped it would have ended at 792, putting the last rows
+    // and the green "Add N" bar (a sticky footer INSIDE the scroller) below
+    // the fold, unreachable.
+    const pos = measureAnchoredPanel(anchor(300), 700, 460);
+    expect(pos.top).toBe(332);
+    expect(pos.maxHeight).toBe(360);
+    expect(pos.top! + pos.maxHeight).toBeLessThanOrEqual(700 - 8);
+  });
+
+  test('a flipped panel ends inside the viewport at the TOP edge too', () => {
+    // Same 460px request from a field near the bottom: it flips, and the
+    // clamp has to hold on the other side or the first rows go off the top.
+    const pos = measureAnchoredPanel(anchor(760), 800, 460);
+    expect(pos.top).toBeUndefined();
+    expect(pos.maxHeight).toBe(460);
+    // bottom is measured from the viewport bottom; the top edge is what must
+    // stay on screen.
+    expect(800 - pos.bottom! - pos.maxHeight).toBeGreaterThanOrEqual(8);
+  });
+
+  test('picks the side with MORE room when neither side can hold the cap', () => {
+    // 600px down a 700px viewport with a 460px cap: 88 below, 588 above.
+    const below = measureAnchoredPanel(anchor(600), 700, 460);
+    expect(below.top).toBeUndefined();
+    expect(below.maxHeight).toBe(460);
+    // 100px down the same viewport: 560 below, 88 above. Stays put.
+    const above = measureAnchoredPanel(anchor(100), 700, 460);
+    expect(above.top).toBe(132);
+    expect(above.maxHeight).toBe(460);
+  });
+
   test('honours the caller cap rather than a house default', () => {
     // The cap is the list's own design — a two-row menu must not open ten rows
     // tall just because the state picker does.

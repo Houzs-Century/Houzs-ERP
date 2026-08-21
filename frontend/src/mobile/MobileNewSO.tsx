@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
+import {
+  cascadeMasterVariants,
+  seedFollowerVariants,
+  seedableMasterVariants,
+  FABRIC_IDENTITY_KEYS,
+  type MasterVariantSnapshot,
+} from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
@@ -307,9 +314,11 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
 /* Fabric-identity variant keys a colour pick writes (FabricPicker.onPick /
    SoLineCard.pickFabricColour). Colour auto-sync mirrors exactly these across
    the compartments of one sofa. */
-const FABRIC_SYNC_KEYS: string[] = [
-  "fabricCode", "colourId", "fabricId", "fabricLabel", "colourLabel", "colourHex",
-];
+const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
+
+/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
+   scoped to those. Desktop passes null (every category). */
+const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
@@ -1290,64 +1299,58 @@ export function MobileNewSO({
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
 
-  /* Per-category variants captured from the FIRST line of that category that
-     has any variants set. Mirrors SalesOrderNew.inheritVariantsByCategory. */
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) out[cat] = l.variants;
-    }
-    return out;
-  }, [lines]);
+  /* The lines as the shared cascade layer sees them. A line with no SKU picked
+     has no category, so it neither drives nor follows. */
+  const cascadeLines = useMemo(
+    () => lines.map((l) => ({
+      category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '',
+      variants: l.variants,
+    })),
+    [lines],
+  );
 
-  /* Follower-line inherit cascade (mirror SoLineCard master-follower): when the
-     FIRST same-category line's variants change, copy each variant key onto
-     follower lines of that category — UNLESS the follower manually overrode that
-     key (overriddenKeys wins). The first line of each category is the master. */
+  /* Per-category variants captured from the FIRST line of that category that
+     has any variants set — the PICK-TIME seed. Same shared helper the desktop
+     form calls; this file used to carry its own copy of it. */
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(cascadeLines),
+    [cascadeLines],
+  );
+
+  /* Follower-line cascade — the FIRST same-category line is the master and its
+     variants travel to the rest. The rule is the shared layer
+     (vendor/scm/lib/so-variant-cascade), imported by the desktop SalesOrderNew
+     too; this file used to carry a second copy whose comment claimed it
+     mirrored the desktop while behaving differently.
+
+     Owner ruling 2026-08-21 — the master's LATEST change always wins, so a
+     follower already typed by hand IS overwritten when the master moves again.
+     `overriddenKeys` no longer vetoes this cascade; it still guards the
+     per-sofa colour sync in the FabricPicker below, which is a different rule.
+
+     The effect now depends on the LINES rather than on a JSON string of the
+     inherit map — the snapshot ref is what decides whether a key was actually
+     moved by the master, so the dependency no longer has to encode that. */
+  const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
+    const { variants, masters } = cascadeMasterVariants(
+      cascadeLines,
+      masterSnapshotRef.current,
+      /* Mobile only shows variant panels for sofa + bedframe, so only those
+         cascade here. Passed explicitly because desktop answers differently. */
+      MOBILE_CASCADE_CATEGORIES,
+    );
+    masterSnapshotRef.current = masters;
     setLines((prev) => {
-      const masterByCat = new Map<string, LineItem>();
-      for (const l of prev) {
-        if (!l.itemCode.trim() || !l.itemGroup) continue;
-        if (!masterByCat.has(l.itemGroup)) masterByCat.set(l.itemGroup, l);
-      }
       let mutated = false;
-      const next = prev.map((l) => {
-        if (!l.itemCode.trim() || !l.itemGroup) return l;
-        const master = masterByCat.get(l.itemGroup);
-        if (!master || master.key === l.key) return l; // masters are untouched
-        if (l.cat !== "sofa" && l.cat !== "bedframe") return l;
-        const overrides = new Set(l.overriddenKeys);
-        const merged: Record<string, unknown> = { ...l.variants };
-        /* Fabric COLOUR only follows within the SAME sofa: when master and this
-           follower are distinct split sofas (different variants.buildKey), keep
-           the master's fabric-identity keys out of it (the per-sofa colour sync
-           in the FabricPicker handles same-buildKey compartments). Other axes
-           keep the category-wide inherit. */
-        const masterBk = (master.variants as { buildKey?: unknown }).buildKey;
-        const followerBk = (l.variants as { buildKey?: unknown }).buildKey;
-        const differentSofa =
-          typeof masterBk === "string" && masterBk !== "" &&
-          typeof followerBk === "string" && followerBk !== "" &&
-          masterBk !== followerBk;
-        let changed = false;
-        for (const [k, v] of Object.entries(master.variants)) {
-          if (k === "remark") continue; // remark is per-line, never inherited
-          if (overrides.has(k)) continue; // manual override wins
-          if (differentSofa && FABRIC_SYNC_KEYS.includes(k)) continue;
-          if (merged[k] !== v) { merged[k] = v; changed = true; }
-        }
-        if (changed) { mutated = true; return { ...l, variants: merged }; }
-        return l;
+      const next = prev.map((l, idx) => {
+        if (variants[idx] === undefined || variants[idx] === l.variants) return l;
+        mutated = true;
+        return { ...l, variants: variants[idx]! };
       });
       return mutated ? next : prev;
     });
-    // Depend on the master variants (JSON) so the cascade re-runs on any master
-    // edit; overriddenKeys guards keep manual follower values.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(inheritVariantsByCategory)]);
+  }, [cascadeLines]);
 
   /* Scanned hint — a field the scan filled shows a subtle "scanned" tag. */
   const scanned = (key: keyof ScanBaseline, current: string): boolean => {
@@ -2670,12 +2673,11 @@ export function MobileNewSO({
           const group = (sku.itemGroup ?? "").trim().toLowerCase();
           const nextCat = catForGroup(group);
           const inherited = inheritVariantsByCategory[group];
-          const seeded = inherited && Object.keys(inherited).length > 0
-            ? { ...inherited }
-            : (nextCat === base.cat ? base.variants : {});
-          // Don't inherit remark across lines.
-          const seededVariants = { ...seeded };
-          delete (seededVariants as Record<string, unknown>).remark;
+          /* seedFollowerVariants drops the keys that must never travel between
+             lines (remark, and the build identity of another sofa). */
+          const seededVariants = inherited && Object.keys(inherited).length > 0
+            ? seedFollowerVariants(inherited)
+            : seedFollowerVariants(nextCat === base.cat ? base.variants : {});
           return {
             ...base,
             itemCode: code,
