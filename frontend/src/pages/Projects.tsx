@@ -5887,16 +5887,13 @@ function CreateProjectPanel({
   brands: string[];
   eventTypes: EventType[];
 }) {
-  const { can, user } = useAuth();
-  // Owner 2026-07-18: setting the PIC at creation is open to EVERYONE holding
-  // projects.write EXCEPT the Sales Director — mirrors the assignment-on-an-
-  // existing-project rule (canAssignPeople in ProjectDetailContent) and the
-  // backend POST / gate. Sales Director matched by EXACT normalised name
-  // (isSalesDirectorUser), never a \b substring. When false we hide the PIC
-  // picker entirely so the project is created unassigned (admin PICs it later).
-  // Owner 2026-07-21: the 2026-07-18 Sales-Director assignment block is fully
-  // reversed (backend already open) — anyone with projects.write may assign.
-  const canAssignPeople = can("projects.write");
+  // Owner 2026-08-19: the Ownership/PIC section is REMOVED from creation
+  // (supersedes the 2026-07-18/07-21 back-and-forth on who may assign at
+  // create). The creator does not know the PIC — only the Sales Director
+  // does, and they assign it AFTER creation on the detail page (which also
+  // surfaces the "Set Sales PIC" duty in their My Pending while it is
+  // empty). Projects are therefore always created unassigned; row scope
+  // falls back to created_by via COALESCE(p.pic_id, p.created_by).
   const [eventTypeId, setEventTypeId] = useState<string>("");
   const [brand, setBrand] = useState<string>("");
   const [startDate, setStartDate] = useState("");
@@ -5906,7 +5903,6 @@ function CreateProjectPanel({
   // Not user-editable — the venue is the single source of truth.
   const [stateName, setStateName] = useState("");
   const [organizer, setOrganizer] = useState("");
-  const [picId, setPicId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
   const eventTypeSlug =
@@ -5922,28 +5918,6 @@ function CreateProjectPanel({
   });
 
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
-
-  // Users list for PIC picker — narrowed to the picked brand's
-  // department coverage so admins can't assign someone whose dept
-  // doesn't cover the brand. Empty brand → empty list (with a hint
-  // shown in the dropdown rendering).
-  const usersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users?brand=:",
-    () =>
-      brand
-        ? api.get(`/api/users?brand=${encodeURIComponent(brand)}`)
-        : Promise.resolve({ users: [] }),
-    [brand]
-  );
-  const users = usersQ.data?.users ?? [];
-
-  // If the picked PIC is no longer in the filtered list (e.g. brand
-  // changed), drop them so the form doesn't submit a stale id.
-  useEffect(() => {
-    if (!picId) return;
-    if (!users.some((u) => String(u.id) === picId)) {
-      setPicId("");
-    }
-  }, [users, picId]);
 
   // The backend derives the project code from state/venue/brand and
   // throws when any are missing. Validate all three client-side so the
@@ -5980,7 +5954,6 @@ function CreateProjectPanel({
         venue: venue.trim(),
         state: stateName.trim() || undefined,
         organizer: organizer.trim() || undefined,
-        pic_id: picId ? parseInt(picId, 10) : undefined,
       });
       toast.success(`Created ${res.code}`);
       onCreated(res.id);
@@ -6165,41 +6138,8 @@ function CreateProjectPanel({
         </div>
       </PanelSection>
 
-      {canAssignPeople && (
-      <PanelSection title="Ownership">
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            PIC
-          </div>
-          <select
-            value={picId}
-            onChange={(e) => setPicId(e.target.value)}
-            disabled={!brand}
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:bg-bg disabled:text-ink-muted"
-          >
-            <option value="">
-              {brand ? "— default to me —" : "Pick a brand first"}
-            </option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name || u.email}
-              </option>
-            ))}
-          </select>
-          <div className="mt-1.5 text-[10px] text-ink-muted">
-            {brand
-              ? `Only users in a department covering "${brand}" can be picked. Their direct reports inherit visibility of this project.`
-              : "The PIC dropdown unlocks once you choose a brand."}
-            {brand && users.length === 0 && !usersQ.loading && (
-              <span className="mt-1 block text-warning-text">
-                No user has a department covering this brand yet — assign
-                the brand to a department first under Team → Departments.
-              </span>
-            )}
-          </div>
-        </div>
-      </PanelSection>
-      )}
+      {/* Ownership/PIC section removed at creation (owner 2026-08-19) — the
+          Sales Director assigns the PIC on the detail page after creation. */}
     </Panel>
   );
 }
