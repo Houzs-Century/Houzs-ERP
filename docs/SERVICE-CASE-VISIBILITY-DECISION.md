@@ -96,3 +96,59 @@ already how `requireServiceCaseAccess` is applied.
 - **Measure who gains access.** This widens what Sales can see. Count the
   affected users and cases first, with a read-only workflow, and put the number
   in the PR — this repo does not ship access changes on reasoning alone.
+
+---
+
+## Amendment — 2026-08-21: "My Cases" keys on WHO RAISED the case
+
+The open question left above — *"for an ERP order does 'own' key off the SO's
+salesperson or the case's creator? Ask before choosing"* — was asked, and
+answered for the **My Cases list**:
+
+> 「如果是他开的 就算不是他as agent它也可以看啊 如果是autocount的 因为autocount的
+> agent会有问题的 居然都开放给了全部人 那就是他submit就代表他认领这个case了啊」
+
+If a person RAISED the case it is theirs, and it must appear in their My Cases,
+whether or not they are the order's sales agent. The reasoning is the load-bearing
+half and it is the same one behind the original decision: **AutoCount's agent data
+is unreliable**, which is precisely why AutoCount-sourced orders were opened to
+every Houzs staff member to raise a case on. Once anyone may raise it,
+**submitting is claiming**.
+
+**Scope of the amendment.** It changes `GET /api/assr/my-cases` only — the list
+that answers *"which cases are MINE"*. The ACCESS rule above
+(`assrVisibilityPredicateSql`, *"may I see this case at all"*) is untouched,
+including its ERP `es.user_id` salesperson arm.
+
+**What shipped** (`myCasesPredicateSql`, `services/assrVisibility.ts`): two arms,
+OR-ed.
+
+- `created_by IN (subtree ids)` — the ruling. Self + full downline BY ID, so the
+  pyramid rule stands and nothing depends on how a name is typed.
+- `LOWER(COALESCE(sales_agent,'')) LIKE '%<subtree display name>%'` — the legacy
+  free-text arm, **kept**.
+
+**The name arm was NOT dropped, and that is a measurement, not a preference.**
+Census run **32463589829** (production, 2026-08-21, §6 of
+`backend/scripts/census-service-case-visibility.mjs`):
+
+| | |
+|---|---|
+| non-archived `assr_cases` | 862 (HOUZS 854 / 2990 8) |
+| with `created_by` | 856 |
+| `created_by` NULL but `sales_agent` set — reachable ONLY by the name arm | 5 |
+| neither — reachable by no arm | 1 |
+| raised by someone the agent text does not name — what the ruling makes visible | 824 |
+| user→case pairs the CREATOR arm ADDS | 2,359 across 20 users |
+| user→case pairs LOST if the name arm were REPLACED | **1,113 across 28 users** |
+
+The 1,113 is not the 5 no-creator rows. It is overwhelmingly **office staff
+raising a case on a rep's behalf** — `created_by` = the office user,
+`sales_agent` = the rep — which is exactly the situation the paragraph above said
+to ask about. Replacing the name arm would have taken those cases out of those
+reps' lists. Union, never replace.
+
+Caveat on what the census proves: the ERP-vs-AutoCount split it reports (4 vs
+858) is distorted by the HC transaction wipe earlier the same day — a case whose
+SO no longer exists in `scm.mfg_sales_orders` counts as "unresolvable". The §6
+figures above do not read `scm` at all, so they are unaffected.
