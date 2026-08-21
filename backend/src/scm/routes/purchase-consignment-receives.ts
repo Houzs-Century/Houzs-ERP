@@ -76,7 +76,7 @@ export function resolvePcReceiveUnitCostSen(
    Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
    (recompute-from-live) and flips the receive to POSTED; the inventory IN is then
    booked by resyncReceiveInventory (called at the end of this helper). */
-async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true; recountError?: string } | { ok: false; reason: string; status?: number }> {
+async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true; recountError?: string; movementErrors?: string[] } | { ok: false; reason: string; status?: number }> {
   const { data: items } = await sb.from('purchase_consignment_receive_items')
     .select('pc_order_item_id')
     .eq('pc_receive_id', receiveId);
@@ -108,9 +108,20 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // ON-LEDGER (2026-06-05) — book the received consignment stock INTO the
   // receive's warehouse so it shows in Inventory. Self-healing resync (idempotent
   // + best-effort).
-  try { await resyncReceiveInventory(sb, receiveId, null); } catch { /* best-effort */ }
+  /* CAPTURED, not discarded (2026-08-21, audit A11): this was the module's one
+     truly silent seam — a bare catch around a function that itself never
+     throws, so a refused stock IN answered a clean 200 and the receive read
+     POSTED while inventory never moved. The refusal now rides the response as
+     movementErrors, the same contract every sibling stock writer carries. */
+  let movementErrors: string[] = [];
+  try { movementErrors = await resyncReceiveInventory(sb, receiveId, null); }
+  catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
 
-  return recount.ok ? { ok: true } : { ok: true, recountError: recount.reason };
+  return {
+    ok: true,
+    ...(recount.ok ? {} : { recountError: recount.reason }),
+    ...(movementErrors.length ? { movementErrors } : {}),
+  };
 }
 
 /* ── resyncReceiveInventory — self-healing IN ledger for a PC Receive ──────────
@@ -121,7 +132,8 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
    batch=pc_order_no when linked) against what inventory_movements already record
    for this receive, and writes only the DELTA:
      • first-ever IN for a bucket   → PC_RECEIVE  (carries the "consignment stock
-       IN" label; PC_RECEIVE has no unique index, but we keep the first/delta
+       IN" label; uq_inv_mov_pc_receive_source (0318) makes the primary posting
+       once-only at the database, and we keep the first/delta
        split for consistency with the note template)
      • any later increase           → STOCK_TRANSFER IN
      • any decrease / give-back     → STOCK_TRANSFER OUT
@@ -904,11 +916,12 @@ purchaseConsignmentReceives.post('/', async (c) => {
 
   // Roll up qty_accepted to PC Order items + book the inventory IN (both inside
   // postPcReceiveAndRollup). Best-effort.
-  await postPcReceiveAndRollup(sb, h.id);
+  const posted = await postPcReceiveAndRollup(sb, h.id);
   // Populate header money rollups from the inserted lines.
   await recomputePcReceiveTotals(sb, h.id);
 
-  return c.json({ id: h.id, grnNumber: h.receive_number }, 201);
+  const postedErrs = posted.ok && posted.movementErrors?.length ? posted.movementErrors : undefined;
+  return c.json({ id: h.id, grnNumber: h.receive_number, ...(postedErrs ? { movementErrors: postedErrs } : {}) }, 201);
 });
 
 // ── POST /from-pcos ─────────────────────────────────────────────────────
@@ -1038,10 +1051,11 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
     }
   }
 
-  await postPcReceiveAndRollup(sb, h.id);
+  const posted = await postPcReceiveAndRollup(sb, h.id);
   await recomputePcReceiveTotals(sb, h.id);
 
-  return c.json({ id: h.id, grnNumber: h.receive_number, pcoCount: pcoList.length, lineCount: itemList.length }, 201);
+  const postedErrs = posted.ok && posted.movementErrors?.length ? posted.movementErrors : undefined;
+  return c.json({ id: h.id, grnNumber: h.receive_number, pcoCount: pcoList.length, lineCount: itemList.length, ...(postedErrs ? { movementErrors: postedErrs } : {}) }, 201);
 };
 purchaseConsignmentReceives.post('/from-pcos', createPcReceiveFromPcosHandler);
 
@@ -1072,7 +1086,7 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
      The receive IS posted — a stale received_qty on the parent PC Order must not
      un-post it — but the operator and /inventory/reconcile now learn that the
      roll-up did not land, instead of a clean 200 hiding it. */
-  return c.json({ receive: data, ...(res.recountError ? { recountError: res.recountError } : {}) });
+  return c.json({ receive: data, ...(res.recountError ? { recountError: res.recountError } : {}), ...(res.movementErrors?.length ? { movementErrors: res.movementErrors } : {}) });
 });
 
 /* ── PATCH /:id/cancel — cancel a PC Receive ────────────────────────────────
@@ -1292,9 +1306,11 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   await recomputePcReceiveTotals(sb, receiveId);
   // Roll the added line's qty onto the PC Order. Best-effort.
   try { await recomputePcoReceived(sb, [addLinePcoItemId]); } catch { /* best-effort */ }
-  // Book the added line's stock IN (self-healing resync). Best-effort.
-  try { await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  // Book the added line's stock IN — refusals ride the response (audit A11).
+  let movementErrors: string[] = [];
+  try { movementErrors = await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); }
+  catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
+  return c.json({ item: data, ...(movementErrors.length ? { movementErrors } : {}) }, 201);
 });
 
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_received. ── */
@@ -1372,9 +1388,11 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   // Editing qty_accepted changes how much the PC Order counts as received —
   // recount it. Best-effort.
   try { await recomputePcoReceived(sb, [(prev as { pc_order_item_id: string | null }).pc_order_item_id]); } catch { /* best-effort */ }
-  // Adjust inventory by the qty/variant delta (self-healing resync). Best-effort.
-  try { await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  // Adjust inventory by the qty/variant delta — refusals ride the response (audit A11).
+  let movementErrors: string[] = [];
+  try { movementErrors = await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); }
+  catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
+  return c.json({ ok: true, ...(movementErrors.length ? { movementErrors } : {}) });
 });
 
 /* ── DELETE /:id/items/:itemId — remove a line + roll back its PC Order receipt. ──
