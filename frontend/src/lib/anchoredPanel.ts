@@ -14,7 +14,7 @@
 // each carrying a copy that drifts.
 // ----------------------------------------------------------------------------
 
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useLayoutEffect, useMemo, useState, type RefObject } from 'react';
 
 /* Panel geometry, in px. Fixed house values — a caller choosing its own gap or
    floor is how two menus on one page stop looking like one control. Only the
@@ -67,6 +67,44 @@ export function measureAnchoredPanel(
     bottom: flipUp ? viewportHeight - anchor.top + PANEL_GAP : undefined,
     maxHeight: Math.max(PANEL_MIN_H, Math.min(maxHeight, flipUp ? above : below)),
   };
+}
+
+/**
+ * Place a panel whose WIDTH is its own design rather than the trigger's — a
+ * fixed-width menu such as a column funnel popover — and clamp it horizontally
+ * as well. `width` is the PANEL's, which is the whole difference from
+ * `measureAnchoredPanel`, where it is the trigger's and is inherited.
+ *
+ * `maxHeight` stays REQUIRED for the same reason it is there; pass
+ * `viewportHeight - 2 * VIEWPORT_MARGIN` for a menu that may use the whole
+ * window when there is room.
+ */
+export function measureFixedWidthPanel(
+  anchor: { top: number; bottom: number; left: number },
+  width: number,
+  viewport: { width: number; height: number },
+  maxHeight: number,
+): AnchoredPanelPos {
+  const pos = measureAnchoredPanel({ ...anchor, width }, viewport.height, maxHeight);
+  const maxLeft = viewport.width - width - VIEWPORT_MARGIN;
+  return { ...pos, left: Math.max(VIEWPORT_MARGIN, Math.min(pos.left, maxLeft)) };
+}
+
+/** `measureFixedWidthPanel` against the live window, recomputed when the
+ *  anchor changes. For a menu anchored to a rect captured at click time — it
+ *  has no live element to re-measure, and this app's point-anchored menus
+ *  close on scroll rather than following it. */
+export function useFixedWidthPanel(
+  anchor: { top: number; bottom: number; left: number } | null,
+  width: number,
+  maxHeight: number,
+): AnchoredPanelPos | null {
+  return useMemo(
+    () => (anchor
+      ? measureFixedWidthPanel(anchor, width, { width: window.innerWidth, height: window.innerHeight }, maxHeight)
+      : null),
+    [anchor, width, maxHeight],
+  );
 }
 
 function samePos(a: AnchoredPanelPos | null, b: AnchoredPanelPos): boolean {

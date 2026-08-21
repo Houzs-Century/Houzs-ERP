@@ -551,8 +551,10 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 - **Fabrics** ← `useFabricColoursActive()` + `fabric_library` series via
   `useFabricLibrary()`. The Fabric picker is a SEARCHABLE modal (700+ colours),
   not a native `<select>`.
-- **Sofa** — Seat height ← `maintenanceConfig.sofaSizes`; Leg height ←
-  `maintenanceConfig.sofaLegHeights`.
+- **Sofa** — Seat Size ← `maintenanceConfig.sofaSizes`; Leg height ←
+  `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
+  surface (`so-variant-rule` declares it, and the SO line card renders it since
+  2026-08-21 — it was the last screen saying "Seat Heights").
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -566,15 +568,60 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   there is no per-screen copy, and the canonical test fails by name if one
   reappears.
 
+**Every floating picker on the line card is placed by ONE shared module**,
+`frontend/src/lib/anchoredPanel.ts`. The SKU dropdown and the fabric-colour
+combobox are portalled to `<body>` (so a card's `overflow:hidden` cannot slice
+them) and their geometry — which SIDE of the field to open on, and how tall they
+may be — is measured from the field's live rect: the side with more room wins,
+and the height is clamped to that room so the last rows and any footer bar stay
+inside the window. Both pass 460px as their PREFERRED cap. Do not re-hand-roll
+`top: rect.bottom + 4` for a new menu; that is what put the SKU picker's green
+"Add N" bar off the bottom of the screen
+(`docs/bugs/0504-every-portalled-dropdown-opened-downward-and-ran-off-the-bot.md`).
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
-**Sofa follower-line inherit** mirrors desktop `SoLineCard`'s
-`inheritVariantsByCategory` + `overriddenKeys`: follower sofa / bedframe lines
-inherit the FIRST same-category line's variants, BUT a manually-changed follower
-value WINS.
+**Sofa follower-line cascade — ONE module, and the master's LATEST change
+wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
+by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx` and `SoLineCard.tsx`. The FIRST
+line of a category is the MASTER; every later line of that category follows it.
+Three outcomes per variant key, in this order:
+
+1. the master MOVED that key since the previous run -> **force** it onto the
+   follower, overwriting a value the operator typed by hand;
+2. else the follower's own value is blank -> **fill** it (the pick-time
+   inherit);
+3. else **leave** it — an edit made after the master's last change stands until
+   the master moves again.
+
+Rule 1 is the owner's ruling of 2026-08-21, taken with the cost stated: it
+REPLACES the old `overriddenKeys` veto, under which a follower touched once was
+sticky forever and line 1 could never correct it again
+(`docs/bugs/0506-a-follower-sofa-line-touched-once-could-never-be-corrected-f.md`).
+"Since the previous run" is a snapshot each form holds in a ref and hands back
+to the module; it is what keeps rules 1 and 3 from cancelling each other out.
+
+`overriddenKeys` is still on the draft and still used — by the per-sofa fabric
+COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
+physical sofa (`variants.buildKey`), not to a category. It no longer gates the
+master cascade.
+
+**Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
+one physical sofa — copying it forges a compartment, which reaches the free-gift
+trigger and the PDF module grouping;
+`docs/bugs/0507-the-variant-cascade-copied-the-master-sofa-buildkey-onto-an.md`).
+Fabric identity is additionally held back when master and follower are two
+DIFFERENT split sofas.
+
+**The one deliberate surface difference is a REQUIRED argument, not a default:**
+desktop passes `null` (every category cascades), mobile passes
+`{sofa, bedframe}` (the only variant panels it renders). Two other SO-family
+forms still carry their own copy of this rule and are NOT on the shared module
+yet — `ConsignmentOrderNew.tsx` (its own cascade) and `DeliveryOrderNewV2.tsx`
+(pick-time seed only, **no cascade at all**).
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 

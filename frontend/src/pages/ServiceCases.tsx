@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
 import { NEXT_STAGE, STAGE_FUNNEL_DESC } from "./serviceCaseStages";
 import { createPortal } from "react-dom";
+import { useAnchoredPanel, anchoredPanelStyle } from "../lib/anchoredPanel";
 import { Link, useSearchParams, useNavigate, useParams, Navigate } from "react-router-dom";
 import {
   Plus,
@@ -90,6 +91,12 @@ import { readAssrListFilter, writeAssrListFilter } from "../lib/assrListFilter";
    why the two changes ship together. 5 minutes matches the reference-data
    callsites in Team.tsx. */
 const LOOKUP_CACHE = { staleTime: 300_000 } as const;
+
+/* How tall the SO typeahead lists on this page want to be when there is room
+   (what the old `max-h-72` class asked for). lib/anchoredPanel shortens them
+   to the room actually available on the side it opens, so the last suggestion
+   is never below the bottom of the window. */
+const SO_SUGGEST_MAX_H = 288;
 import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
@@ -2245,7 +2252,6 @@ function SoNoSearchEdit({
   >([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
     setDraft(current);
@@ -2277,25 +2283,10 @@ function SoNoSearchEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, current]);
 
-  // Track the input rect so the portaled dropdown follows it.
-  useLayoutEffect(() => {
-    if (!suggestions.length || !inputRef.current) {
-      setRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!inputRef.current) return;
-      const r = inputRef.current.getBoundingClientRect();
-      setRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [suggestions]);
+  /* Track the input rect so the portaled dropdown follows it — shared
+     geometry (lib/anchoredPanel), so the list flips above the field when the
+     room below cannot hold it and is never taller than the space it is in. */
+  const rect = useAnchoredPanel(inputRef, suggestions.length > 0, SO_SUGGEST_MAX_H);
 
   async function commit(next: string) {
     setSuggestions([]);
@@ -2355,8 +2346,11 @@ function SoNoSearchEdit({
       {rect &&
         createPortal(
           <div
-            style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width, zIndex: 60 }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            /* The SO list needs a readable minimum even under a narrow field,
+               so the width floor overrides the anchor's own width. zIndex
+               stays this page's 60. */
+            style={{ ...anchoredPanelStyle(rect), width: Math.max(rect.width, 320), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {suggestions.map((s) => (
               <button
@@ -2478,7 +2472,6 @@ function CreatePanel({
   // otherwise clip suggestions extending below the section. Track the
   // input's viewport rect and re-render dropdown in fixed coordinates.
   const soInputRef = useRef<HTMLInputElement | null>(null);
-  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [lookupItems, setLookupItems] = useState<{ item_code: string; item_description: string | null; qty?: number }[] | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   // Per-item affected quantity (owner 2026-07: multiselect + per-product
@@ -2634,28 +2627,14 @@ function CreatePanel({
     return () => clearTimeout(handle);
   }, [docNo, pickedDocNo]);
 
-  // Sync the portaled dropdown's coords to the input rect whenever
-  // results or visibility change, and on scroll/resize so the menu
-  // tracks if the panel body scrolls.
-  useLayoutEffect(() => {
-    const open = soSuggestions.length > 0 && pickedDocNo !== docNo.trim();
-    if (!open || !soInputRef.current) {
-      setDropdownRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!soInputRef.current) return;
-      const r = soInputRef.current.getBoundingClientRect();
-      setDropdownRect({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [soSuggestions, pickedDocNo, docNo]);
+  /* Sync the portaled dropdown to the input rect, tracking scroll/resize so
+     the menu follows if the panel body scrolls — shared geometry, same flip
+     and clamp as every other picker here. */
+  const dropdownRect = useAnchoredPanel(
+    soInputRef,
+    soSuggestions.length > 0 && pickedDocNo !== docNo.trim(),
+    SO_SUGGEST_MAX_H,
+  );
 
   function pickSuggestion(s: { doc_no: string; ref?: string | null; debtor_name: string | null; phone: string | null }) {
     setDocNo(s.doc_no);
@@ -2821,14 +2800,8 @@ function CreatePanel({
             the section. Coords are tracked in `dropdownRect`. */}
         {dropdownRect && createPortal(
           <div
-            style={{
-              position: "fixed",
-              top: dropdownRect.top,
-              left: dropdownRect.left,
-              width: dropdownRect.width,
-              zIndex: 60,
-            }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            style={{ ...anchoredPanelStyle(dropdownRect), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {soSuggestions.map((s) => (
               <button

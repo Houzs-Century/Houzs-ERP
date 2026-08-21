@@ -26,6 +26,17 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 
 ## 1. Frontend
 
+### The two SO typeahead dropdowns are placed by the shared positioner
+
+Both SO search boxes — the one on the case detail panel and the one on the
+intake form — portal their suggestion list to `<body>` and place it with
+`frontend/src/lib/anchoredPanel.ts`, the same module every other floating picker
+in this app uses. It opens the list on whichever side of the input has more
+room and clamps its height to that room, so the last suggestion is never below
+the fold; each passes 288px as its preferred cap (what the old `max-h-72` class
+asked for) and keeps this page's own `z-index: 60`. The detail-panel list also
+keeps its 320px width floor, which overrides the anchor's own width.
+
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|

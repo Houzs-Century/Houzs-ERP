@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Search, Check } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useAnchoredPanel, anchoredPanelStyle } from "../lib/anchoredPanel";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 
@@ -16,6 +17,13 @@ export interface UserOptionItem {
    typeahead result set (limit 50); this is a belt-and-braces client bound so
    the dropdown can never balloon. (parity with FabricPicker / MobileSkuPicker.) */
 const RENDER_CAP = 60;
+
+/* How tall the people list wants to be when there is room (what the old
+   `max-h-64` class asked for). lib/anchoredPanel shortens it to the space
+   actually available and flips it above the chips when there is more room
+   there, so the last person on the list is never off the bottom of the
+   window. */
+const MENU_MAX_H = 256;
 
 // Minimum characters before the server typeahead fires. Below this we show a
 // "type to search" prompt instead of hammering the endpoint on every keystroke.
@@ -86,7 +94,6 @@ export function UserMultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const controlRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -131,24 +138,10 @@ export function UserMultiSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.data]);
 
-  // Track the control's viewport position while open so the portalled
-  // menu follows it through scrolling panels and window resizes.
-  useLayoutEffect(() => {
-    if (!open) return;
-    function place() {
-      const el = controlRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setRect({ top: r.bottom + 4, left: r.left, width: r.width });
-    }
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  }, [open]);
+  // Track the control's viewport position while open so the portalled menu
+  // follows it through scrolling panels and window resizes — shared geometry,
+  // so this menu flips and clamps exactly like every other one here.
+  const rect = useAnchoredPanel(controlRef, open, MENU_MAX_H);
 
   // Close on outside click — the menu lives in a portal, so check both.
   useEffect(() => {
@@ -200,12 +193,14 @@ export function UserMultiSelect({
   }
 
   const menu =
-    open && rect
+    rect
       ? createPortal(
           <div
             ref={menuRef}
-            style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width, zIndex: 90 }}
-            className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-stone"
+            /* zIndex stays this component's own 90 — it is not one of the
+               drawer-backdrop pickers the shared 1000 exists for. */
+            style={{ ...anchoredPanelStyle(rect), zIndex: 90 }}
+            className="overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-stone"
           >
             {max != null && (
               <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
