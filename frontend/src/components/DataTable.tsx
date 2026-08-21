@@ -43,7 +43,7 @@ import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
-import { measureAnchoredPanel } from "../lib/anchoredPanel";
+import { useFixedWidthPanel } from "../lib/anchoredPanel";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
@@ -441,20 +441,12 @@ function sanitizeColFilters(value: unknown): Record<string, string[]> {
   return out;
 }
 
-// Keep a fixed-position popover fully inside the viewport. The menus are
-// anchored at the pointer / funnel button, so one opened near the bottom or
-// right edge used to hang off-screen — and since any page scroll dismisses
-// them, the clipped tail was simply unreachable. Measure after render and
-// pull top/left back inside; re-clamp when the menu resizes (the filter
-// checklist grows and shrinks with its search box). Before the first
-// measurement the raw anchor is used, and the layout effect corrects it in
-// the same frame, so nothing visibly jumps.
-/* The funnel popover's own width — it is a fixed-width menu, not the width of
-   the little filter button it hangs off, so the shared positioner is told
-   what it is rather than measuring the trigger. Keep in step with the
-   `w-[236px]` class on the popover. */
-const FILTER_MENU_W = 236;
-
+// Keep a pointer-anchored context menu inside the viewport: one opened near the
+// bottom or right edge hung off-screen, and any page scroll dismisses these
+// menus, so the clipped tail was unreachable. Measured after render, re-clamped
+// on resize; the raw anchor shows for the frame before that, so nothing jumps.
+// NOT the funnel popover — that goes through lib/anchoredPanel, which also
+// decides which SIDE to open on.
 function useViewportClampedPos(
   anchor: { x: number; y: number } | null,
   ref: React.RefObject<HTMLDivElement | null>,
@@ -800,40 +792,19 @@ function DataTableInner<T>({
     legacyStorageKey("filters"),
     sanitizeColFilters,
   );
-  /* The funnel popover is anchored to the FILTER BUTTON's own rect, not to a
-     click point, because the shared positioner needs both edges of the trigger
-     to decide which side has more room. */
-  const [filterMenu, setFilterMenu] = useState<{
-    x: number;
-    top: number;
-    bottom: number;
-    colKey: string;
-  } | null>(null);
+  // The filter BUTTON's rect, not a click point: the positioner needs both edges.
+  const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   // Menu DOM nodes, for viewport clamping and (filter popover only) telling
   // an inside-the-menu scroll apart from a page scroll in the close handler.
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  /* Vertical placement is the shared house rule (lib/anchoredPanel): open on
-     the side of the button with more room, and never taller than that room.
-     Before this, the funnel always hung DOWNWARD from a header row, so on a
-     table whose header sits low in the window the value checklist and the
-     Select all / Invert / Clear bar were off the bottom of the screen.
-     Horizontal is clamped here because this menu has its own fixed width
-     rather than the trigger's. */
-  const filterMenuPos = useMemo(() => {
-    if (!filterMenu) return null;
-    const pos = measureAnchoredPanel(
-      { top: filterMenu.top, bottom: filterMenu.bottom, left: filterMenu.x, width: FILTER_MENU_W },
-      window.innerHeight,
-      window.innerHeight - 16,
-    );
-    return {
-      ...pos,
-      left: Math.max(8, Math.min(pos.left, window.innerWidth - FILTER_MENU_W - 8)),
-    };
-  }, [filterMenu]);
+  /* Opens on whichever side of the button has more room, never taller than that
+     room (lib/anchoredPanel). It used to hang DOWNWARD always, so on a table
+     whose header sits low the value checklist and the Select all / Invert /
+     Clear bar fell off the bottom. 236 is the popover's own `w-[236px]`. */
+  const filterMenuPos = useFixedWidthPanel(filterMenu, 236, window.innerHeight - 16);
   const headerMenuPos = useViewportClampedPos(headerMenu, headerMenuRef);
 
   function toggleFilterValue(colKey: string, value: string) {
@@ -2688,7 +2659,7 @@ function DataTableInner<T>({
                                   setFilterMenu((cur) =>
                                     cur?.colKey === c.key
                                       ? null
-                                      : { x: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key }
+                                      : { left: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key }
                                   );
                                 }}
                                 className={cn(
@@ -3237,12 +3208,7 @@ function DataTableInner<T>({
             <div
               ref={filterMenuRef}
               className="fixed z-[120] flex w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
-              style={{
-                top: filterMenuPos.top,
-                bottom: filterMenuPos.bottom,
-                left: filterMenuPos.left,
-                maxHeight: filterMenuPos.maxHeight,
-              }}
+              style={{ top: filterMenuPos.top, bottom: filterMenuPos.bottom, left: filterMenuPos.left, maxHeight: filterMenuPos.maxHeight }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >

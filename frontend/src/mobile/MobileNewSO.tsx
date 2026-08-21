@@ -1302,10 +1302,7 @@ export function MobileNewSO({
   /* The lines as the shared cascade layer sees them. A line with no SKU picked
      has no category, so it neither drives nor follows. */
   const cascadeLines = useMemo(
-    () => lines.map((l) => ({
-      category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '',
-      variants: l.variants,
-    })),
+    () => lines.map((l) => ({ category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '', variants: l.variants })),
     [lines],
   );
 
@@ -1327,10 +1324,8 @@ export function MobileNewSO({
      follower already typed by hand IS overwritten when the master moves again.
      `overriddenKeys` no longer vetoes this cascade; it still guards the
      per-sofa colour sync in the FabricPicker below, which is a different rule.
-
-     The effect now depends on the LINES rather than on a JSON string of the
-     inherit map — the snapshot ref is what decides whether a key was actually
-     moved by the master, so the dependency no longer has to encode that. */
+     The dep is now the LINES, not a JSON string of the inherit map: the
+     snapshot ref is what decides whether the master actually moved a key. */
   const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
     const { variants, masters } = cascadeMasterVariants(

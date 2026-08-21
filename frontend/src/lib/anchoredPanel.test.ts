@@ -8,7 +8,13 @@
 
 import { renderHook, act } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { measureAnchoredPanel, useAnchoredPanel, anchoredPanelStyle } from './anchoredPanel';
+import {
+  measureAnchoredPanel,
+  measureFixedWidthPanel,
+  useAnchoredPanel,
+  useFixedWidthPanel,
+  anchoredPanelStyle,
+} from './anchoredPanel';
 
 const anchor = (top: number, height = 28, left = 40, width = 200) => ({
   top,
@@ -100,6 +106,48 @@ describe('measureAnchoredPanel', () => {
     // tall just because the state picker does.
     expect(measureAnchoredPanel(anchor(100), 800, 160).maxHeight).toBe(160);
     expect(measureAnchoredPanel(anchor(100), 800, 300).maxHeight).toBe(300);
+  });
+});
+
+describe('measureFixedWidthPanel', () => {
+  const viewport = { width: 1200, height: 800 };
+
+  test('keeps the panel width the CALLER gave, not the trigger width', () => {
+    const pos = measureFixedWidthPanel(anchor(100), 236, viewport, 400);
+    expect(pos.width).toBe(236);
+  });
+
+  test('pulls a panel back inside the right edge', () => {
+    // A column funnel on the far-right column: the button is at 1150, so a
+    // 236-wide menu hung from it would end at 1386, off the screen.
+    const pos = measureFixedWidthPanel({ top: 100, bottom: 128, left: 1150 }, 236, viewport, 400);
+    expect(pos.left).toBe(1200 - 236 - 8);
+  });
+
+  test('never pushes it off the LEFT edge either', () => {
+    const pos = measureFixedWidthPanel({ top: 100, bottom: 128, left: -40 }, 236, viewport, 400);
+    expect(pos.left).toBe(8);
+  });
+
+  test('still flips and clamps vertically like every other panel', () => {
+    const pos = measureFixedWidthPanel({ top: 700, bottom: 728, left: 100 }, 236, viewport, 400);
+    expect(pos.top).toBeUndefined();
+    expect(pos.bottom).toBe(104);
+  });
+});
+
+describe('useFixedWidthPanel', () => {
+  test('returns null while there is no anchor, so the caller has one render guard', () => {
+    const { result } = renderHook(() => useFixedWidthPanel(null, 236, 400));
+    expect(result.current).toBeNull();
+  });
+
+  test('measures against the live window', () => {
+    const { result } = renderHook(() =>
+      useFixedWidthPanel({ top: 100, bottom: 128, left: 40 }, 236, 400),
+    );
+    expect(result.current?.top).toBe(132);
+    expect(result.current?.width).toBe(236);
   });
 });
 
