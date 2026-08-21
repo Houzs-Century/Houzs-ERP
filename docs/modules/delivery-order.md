@@ -30,7 +30,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx` | Server-paginated, `pageSize = 50` (`:834`), page in `?page=`. Sends the **bucket name** as `status` (`:854`). Revenue card is page-only; In-transit / Delivered cards read full-set `statusCounts` (`:878-880`). |
 | Desktop detail | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` | Header + lines + payments + crew. |
-| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | |
+| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | The Sales-location dropdown labels each option with the ONE warehouse rule — `warehouseLabel`, code first then name (`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of the backend module; 2026-08-21). It printed the NAME first. Do not hand-write the order — see `docs/modules/warehouses.md`. |
 | Desktop from-SO | `frontend/src/pages/scm-v2/DeliveryOrderFromSo.tsx` | Line-level picker over `/deliverable-so-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
