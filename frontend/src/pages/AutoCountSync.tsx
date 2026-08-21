@@ -609,13 +609,19 @@ function DaySeparator({ label }: { label: string }) {
  * *When* is a button because it is the sort. Nothing else is sortable yet — the
  * default order is the one a register is read in, and a column that can be
  * clicked but has no second order is a control that lies.
+ *
+ * NO `role="table"` / `row` / `columnheader`, deliberately. The rows below are
+ * inside `<MobileVirtualList>`, which publishes `role="list"` and `role="listitem"`
+ * — declaring a table over the top would put a table's roles and a list's roles
+ * in one tree and leave assistive technology reading neither. A half-built ARIA
+ * table is worse than an honest strip of labels, which is what this is; the
+ * sortable heading is a real `<button>` and carries `aria-sort` itself.
  */
 function RegisterHead({ sort, onSort }: { sort: AcSort; onSort: () => void }) {
   return (
     <div
       className="grid h-[30px] items-center rounded-t-lg border-x border-t border-border bg-surface-2 text-[10px] font-bold uppercase tracking-brand text-ink-muted"
       style={{ gridTemplateColumns: AC_COLS }}
-      role="row"
     >
       {AC_REGISTER_COLUMNS.map((c) => (
         c.key === "when" ? (
