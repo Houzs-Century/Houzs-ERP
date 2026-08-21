@@ -4430,9 +4430,7 @@ export function buildProjectsCalendarModel({
   const matchesStatus = (project: CalendarProject): boolean =>
     !status || (project.status || "").toLowerCase() === status;
 
-  // Free-text search — case-insensitive, matches ANY of the visible/label
-  // fields so someone typing "mid valley" finds every event with that venue
-  // regardless of casing. Owner 2026-07-20.
+  // Free-text search — case-insensitive over the visible/label fields.
   const needle = q.trim().toLowerCase();
   const matchesQuery = (project: CalendarProject): boolean => {
     if (!needle) return true;
@@ -5015,10 +5013,8 @@ function ProjectsCalendarView() {
 
         {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Owner 2026-07-20 — "where is search button on calender?".
-              Free-text search across venue / organizer / brand / project code
-              / event title. Live-filters both the bars and any task chips
-              beside them. URL-persisted (?q=) so a Ctrl+F5 keeps the search. */}
+          {/* Free-text search (owner 2026-07-20) — live-filters bars + task
+              chips; URL-persisted (?q=). */}
           <label className="relative inline-flex h-8 items-center">
             <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
             <input
@@ -6303,7 +6299,10 @@ function ProjectDetailContent({
     // control reached any other way silently does nothing instead of firing a
     // 403 that lands as a "Forbidden: requires one of ..." toast.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
-    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
+    // Backend rule since 2026-08-17 (docs/bugs/0488): the approval key gates
+    // only non-na/pending transitions — N/A is the document owner's call.
+    if (item.required_perm && status !== "na" && status !== "pending"
+      && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
     try {
       await api.post(`/api/projects/checklist/${item.id}/status`, { status });
       detail.reload();

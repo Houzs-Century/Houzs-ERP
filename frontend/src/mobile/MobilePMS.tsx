@@ -2133,7 +2133,6 @@ function TaskRow({
   // are not automatically approvers; see auth/projectAccess.ts.
   const permBlocked =
     !!it.required_perm && !holdsChecklistApproval(user?.permissions, it.required_perm);
-  const canRowTick = canTick && !permBlocked;
   // Attach button: full-write users get it on every task; tick-only users
   // (drivers) only on tasks badged for THEIR role — a driver should upload
   // to "Setup Image · DRIVER", not to BD/PURCHASER/SALES PIC tasks
@@ -2153,6 +2152,13 @@ function TaskRow({
       return !!l && (l === userRole ||
         (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
     });
+  // Gated row, no approval key, but the row is badged for THIS user's function
+  // (the purchaser on her own Exchange List / Stock In / Stock Out): since
+  // 2026-08-17 the backend lets the owner function toggle N/A — only
+  // 'done' stays key-only. Their tap cycle therefore SKIPS 'done':
+  // pending <-> na. Key holders keep the full pending -> done -> na cycle.
+  const naOnly = permBlocked && canTick && roleMatchesUser;
+  const canRowTick = canTick && (!permBlocked || naOnly);
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
   // Owner 2026-08-05: file DELETE follows the PC rule — managers only
   // (projects.manage: BD / managers / directors). Crew and sales keep upload
@@ -2162,7 +2168,9 @@ function TaskRow({
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
-    const next = NEXT_STATUS[status] ?? "done";
+    const next = naOnly
+      ? (status === "na" ? "pending" : "na")
+      : (NEXT_STATUS[status] ?? "done");
     setBusy(true);
     try {
       await api.post(`/api/projects/checklist/${it.id}/status`, { status: next });
@@ -2372,7 +2380,7 @@ function TaskRow({
       <span
         role={canRowTick ? "button" : undefined}
         onClick={cycle}
-        title={permBlocked ? `Requires ${it.required_perm}` : canRowTick ? "Cycle status" : undefined}
+        title={naOnly ? "Toggle N/A" : permBlocked ? `Requires ${it.required_perm}` : canRowTick ? "Cycle status" : undefined}
         style={{ flex: "none", display: "flex", cursor: canRowTick ? "pointer" : "default", opacity: busy ? 0.6 : 1 }}
       >
         {done ? (
