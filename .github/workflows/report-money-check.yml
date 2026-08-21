@@ -1,0 +1,50 @@
+name: Report money check (read-only)
+
+# Does what a money REPORT shows agree with the same figure recomputed from the
+# underlying documents? Every section is a comparison — the report's own rule on
+# one side, an independent recompute from source rows on the other — and prints
+# the delta, the row count and the worst single row.
+#
+# Read-only: SELECT only, no DDL, no writes, no transaction. Manual trigger
+# only; a production read must never become scheduled CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      section:
+        description: "which section (all | schema | ratecard | autolines)"
+        required: false
+        default: "all"
+        type: string
+      limit:
+        description: "how many worked examples to print"
+        required: false
+        default: "20"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: report-money-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-report-money.mjs
+        env:
+          SECTION: ${{ inputs.section }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
