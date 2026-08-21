@@ -586,7 +586,8 @@ missing a required axis.
 
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
-by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx` and `SoLineCard.tsx`. The FIRST
+by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
+2026-08-21 — `pages/scm-v2/ConsignmentOrderNew.tsx`. The FIRST
 line of a category is the MASTER; every later line of that category follows it.
 Three outcomes per variant key, in this order:
 
@@ -597,10 +598,14 @@ Three outcomes per variant key, in this order:
 3. else **leave** it — an edit made after the master's last change stands until
    the master moves again.
 
-Rule 1 is the owner's ruling of 2026-08-21, taken with the cost stated: it
-REPLACES the old `overriddenKeys` veto, under which a follower touched once was
-sticky forever and line 1 could never correct it again
+Rule 1 is the owner's ruling of 2026-08-21, in his words 「第一个沙发再改就拉回去」:
+it REPLACES the old `overriddenKeys` veto, under which a follower touched once
+was sticky forever and line 1 could never correct it again
 (`docs/bugs/0506-a-follower-sofa-line-touched-once-could-never-be-corrected-f.md`).
+He gave it AFTER that fix shipped — the first version of the rule was written
+into the implementing agent's brief and then reported in code as a ruling he
+had already made
+(`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`).
 "Since the previous run" is a snapshot each form holds in a ref and hands back
 to the module; it is what keeps rules 1 and 3 from cancelling each other out.
 
@@ -616,12 +621,20 @@ trigger and the PDF module grouping;
 Fabric identity is additionally held back when master and follower are two
 DIFFERENT split sofas.
 
+**Which pages are on it, and which are not.** `SalesOrderNew`, `MobileNewSO`
+and `ConsignmentOrderNew` run the live cascade. `DeliveryOrderNewV2` SEEDS from
+the same module (`seedableMasterVariants` + `seedFollowerVariants`, so a picked
+line never inherits `buildKey` or `remark`) but runs **no cascade** — a follower
+line on a delivery order does not follow line 1 afterwards. That is an open
+owner decision, not an oversight, and it is named in the module header rather
+than left to inference. `soVariantCascadeSingleCopy.test.ts` holds this shape:
+it fails if a page re-implements the rule, keeps an `overriddenKeys` veto, or
+seeds from a hand-written memo.
+
 **The one deliberate surface difference is a REQUIRED argument, not a default:**
 desktop passes `null` (every category cascades), mobile passes
-`{sofa, bedframe}` (the only variant panels it renders). Two other SO-family
-forms still carry their own copy of this rule and are NOT on the shared module
-yet — `ConsignmentOrderNew.tsx` (its own cascade) and `DeliveryOrderNewV2.tsx`
-(pick-time seed only, **no cascade at all**).
+`{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
+passes `null` too, matching the desktop SO page it is a clone of.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 

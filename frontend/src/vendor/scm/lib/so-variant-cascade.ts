@@ -5,12 +5,17 @@
 // that category is a FOLLOWER: it wears the master's fabric / seat size / leg
 // height unless the operator has deliberately moved it since.
 //
-// Owner ruling 2026-08-21 — **the master's LATEST change always wins.** He was
-// told what it costs (a follower the operator had already typed by hand gets
-// overwritten) and chose it anyway: one sofa set is one set, and re-typing the
-// fabric on line 1 must reach lines 2..n. That REPLACES the old
+// Owner ruling 2026-08-21 — **the master's LATEST change always wins.** Asked
+// what should happen to a follower he had already corrected by hand once line 1
+// moves again, he answered: 「第一个沙发再改就拉回去」. That REPLACES the old
 // `overriddenKeys` veto, under which a follower touched once was sticky
 // forever and line 1 could never correct it again.
+//
+// PROVENANCE, because the first version of this comment got it wrong: the rule
+// was written into the implementing agent's brief before the owner had been
+// asked, and this header then reported it as a ruling he had already given. He
+// gave it on 2026-08-21, after the fact. Do not attribute a rule to him here
+// that he has not said in his own words — quote him, as above.
 //
 // "Latest" is why this module takes a SNAPSHOT of the previous masters and
 // returns the next one. Without it the only two options are both wrong:
@@ -25,6 +30,14 @@
 // and DeliveryOrderNewV2 — which had no cascade at all). That is the bug class
 // CLAUDE.md calls out: desktop and mobile are one product, with ONE shared
 // logic layer.
+//
+// The first version of this header claimed all four had been converted. Two
+// had: SalesOrderNew and MobileNewSO. ConsignmentOrderNew was converted on
+// 2026-08-21, one merge later, still carrying all three drifts. **DeliveryOrder
+// NewV2 is STILL not on this module** — it seeds a line's variants at pick time
+// and never follows afterwards. Whether a delivery-order line should follow
+// line 1 at all is an owner decision, not a defect to fix quietly, so it is
+// named here rather than assumed.
 // ----------------------------------------------------------------------------
 
 /** Fabric IDENTITY keys — everything a colour pick writes together. They move
