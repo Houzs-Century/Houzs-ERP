@@ -527,7 +527,7 @@ async function fairVsDoc() {
   // 6c — header vs the SO's own LINES (the document itself).
   const vsLines = await tryQ('header vs lines', () => sql`
     WITH li AS (
-      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS lines_sen, count(*)::int AS n
+      SELECT doc_no AS so_doc_no, COALESCE(SUM(total_sen),0)::bigint AS lines_sen, count(*)::int AS n
         FROM scm.mfg_sales_order_items
        WHERE COALESCE(cancelled,false) = false
        GROUP BY 1
@@ -542,7 +542,7 @@ async function fairVsDoc() {
 
   const worstLines = await tryQ('worst header-vs-lines', () => sql`
     WITH li AS (
-      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS lines_sen
+      SELECT doc_no AS so_doc_no, COALESCE(SUM(total_sen),0)::bigint AS lines_sen
         FROM scm.mfg_sales_order_items WHERE COALESCE(cancelled,false) = false GROUP BY 1
     )
     SELECT h.doc_no, h.company_id, h.status, h.local_total_sen, COALESCE(li.lines_sen,0) AS lines_sen
@@ -554,7 +554,7 @@ async function fairVsDoc() {
 
   // 6d — the delivery-fee service family is a PREFIX, not three fixed codes.
   const svc = await tryQ('service line codes', () => sql`
-    SELECT item_code, count(*)::int AS n, COALESCE(SUM(line_total_sen),0)::bigint AS amt
+    SELECT item_code, count(*)::int AS n, COALESCE(SUM(total_sen),0)::bigint AS amt
       FROM scm.mfg_sales_order_items
      WHERE COALESCE(cancelled,false) = false AND item_code LIKE 'SVC-%'
      GROUP BY 1 ORDER BY 3 DESC`);
@@ -563,7 +563,7 @@ async function fairVsDoc() {
 
   const svcVsHeader = await tryQ('service_sen vs svc lines', () => sql`
     WITH s AS (
-      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS svc_sen
+      SELECT doc_no AS so_doc_no, COALESCE(SUM(total_sen),0)::bigint AS svc_sen
         FROM scm.mfg_sales_order_items
        WHERE COALESCE(cancelled,false) = false AND item_code LIKE 'SVC-%'
        GROUP BY 1
@@ -573,8 +573,47 @@ async function fairVsDoc() {
            COALESCE(SUM(COALESCE(h.service_sen,0) - COALESCE(s.svc_sen,0)),0)::bigint AS delta_sen
       FROM scm.mfg_sales_orders h LEFT JOIN s ON s.so_doc_no = h.doc_no
      GROUP BY 1,2 ORDER BY 1,2`);
-  note('   header service_sen vs SUM(SVC-% line_total_sen):');
+  note('   header service_sen vs SUM(SVC-% total_sen):');
   for (const r of svcVsHeader) note(`     co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} delta=${rm(r.delta_sen)}`);
+
+  // 6e — TWO revenue columns on one header. The Fair Report reads
+  // local_total_sen; /api/pos/sales-stats SUMs total_revenue_sen. If they ever
+  // differ, one order reports two different revenues to two dashboards.
+  const twoRev = await tryQ('local_total vs total_revenue', () => sql`
+    SELECT company_id, status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(local_total_sen,0) <> COALESCE(total_revenue_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(local_total_sen,0) - COALESCE(total_revenue_sen,0)),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6e. local_total_sen (Fair Report) vs total_revenue_sen (POS sales-stats) on the SAME header:');
+  for (const r of twoRev) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} delta=${rm(r.delta_sen)}`);
+
+  // 6f — total_margin_sen vs (revenue - cost). marginPct in the report is
+  // recomputed from amount/total_cost; the stored margin column is a third home.
+  const marg = await tryQ('margin column', () => sql`
+    SELECT company_id, status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(total_margin_sen,0) <> COALESCE(local_total_sen,0) - COALESCE(total_cost_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(total_margin_sen,0) - (COALESCE(local_total_sen,0) - COALESCE(total_cost_sen,0))),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6f. stored total_margin_sen vs (local_total_sen - total_cost_sen), the report\'s own rule:');
+  for (const r of marg) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} delta=${rm(r.delta_sen)}`);
+
+  // 6g — header paid_sen / balance_sen vs the LIVE payment ledger. The Fair
+  // Report prints balance_sen from the header but decides below_deposit from
+  // the ledger, so a divergence makes the two cells on one row disagree.
+  const paid = await tryQ('paid vs ledger', () => sql`
+    WITH p AS (
+      SELECT so_doc_no, COALESCE(SUM(amount_sen),0)::bigint AS ledger_sen
+        FROM scm.mfg_sales_order_payments GROUP BY 1
+    )
+    SELECT h.company_id, h.status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(h.paid_sen,0) <> COALESCE(p.ledger_sen,0))::int AS paid_mismatch,
+           COALESCE(SUM(COALESCE(h.paid_sen,0) - COALESCE(p.ledger_sen,0)),0)::bigint AS paid_delta,
+           count(*) FILTER (WHERE COALESCE(h.balance_sen,0) <> COALESCE(h.local_total_sen,0) - COALESCE(p.ledger_sen,0))::int AS bal_mismatch,
+           COALESCE(SUM(COALESCE(h.balance_sen,0) - (COALESCE(h.local_total_sen,0) - COALESCE(p.ledger_sen,0))),0)::bigint AS bal_delta
+      FROM scm.mfg_sales_orders h LEFT JOIN p ON p.so_doc_no = h.doc_no
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6g. header paid_sen / balance_sen vs the live payment ledger:');
+  for (const r of paid) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} paid_mismatch=${r.paid_mismatch} (${rm(r.paid_delta)}) balance_mismatch=${r.bal_mismatch} (${rm(r.bal_delta)})`);
 }
 
 // ── 7. is the AR-aging delta freshness, or a rule drift? ────────────────────
