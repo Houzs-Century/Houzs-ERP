@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrOpenCaseGuardSql } from "../src/scm/routes/delivery-planning";
+import { assrBoardUnionSql, assrOpenCaseGuardSql } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -10,8 +10,8 @@ import { assrCompanySql } from "../src/routes/assr";
    Why these tests exist in this shape. The predicate was missing for months
    because it lived inside a template literal in the middle of a 3,000-line
    request handler, where nothing could assert it and nobody re-read it. Pulling
-   the two statements into exported builders makes the rule checkable without a
-   database, a Worker, or a Hono request.
+   the two statements into their own module (scm/lib/assr-board-scope) makes the
+   rule checkable without a database, a Worker, or a Hono request.
 
    What they pin, and what they deliberately do not:
      - The READ (the board union) and the WRITE guard (the schedule endpoint's

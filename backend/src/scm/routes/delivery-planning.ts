@@ -80,14 +80,11 @@ import { boardDeliverableByDoc } from '../lib/board-deliverable';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
-import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap, type CompanyScopeCtx } from '../lib/companyScope';
-/* THE Service-Case company rule — imported, never re-derived. `assrCompanySql`
-   is what /api/assr itself scopes `public.assr_cases` with, so the board and the
-   Service Cases list can only ever answer the same caller the same way. This is
-   the exact remedy routes/search.ts needed: it kept its own COPY of the rule and
-   drifted, and global search and /api/assr answered the same rep differently
-   until someone noticed. A copy here would be that bug for a third time. */
-import { assrCompanySql } from '../../routes/assr';
+import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+/* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
+   Both statements live in ONE module, with the reasoning, so the predicate is
+   assertable and cannot be re-derived by hand here. */
+import { assrBoardUnionSql, assrOpenCaseGuardSql } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -107,65 +104,6 @@ import { dateOrNull } from '../lib/date-coerce';
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
 
-/* ── Service Cases on the board are COMPANY-SCOPED (owner ruling 2026-08-21) ──
-   「这个也不可以啊」 — a Service Case belonging to a company the caller holds no
-   grant for must not appear on the Delivery Planning board. Until this change
-   the board's ASSR union (section 7b of GET /) read `public.assr_cases` through
-   raw env.DB SQL with NO company predicate, while /api/assr scoped the SAME
-   table with `assrCompanySql`. The two surfaces answered the same person
-   differently, and the board was the one that leaked.
-
-   THE RULE LIVES IN ONE PLACE — `assrCompanySql` (routes/assr.ts), which is the
-   caller's GRANTED companies, widened not isolated: Delivery Planning is a
-   cross-company view module (see scm/lib/companyScope.ts), so a caller granted
-   both companies still sees the combined queue. Its three-state sentinel comes
-   along for free: unresolved company context degrades to no predicate (legacy
-   single-company installs serve unchanged) and a caller granted no active
-   company matches nothing.
-
-   These are FUNCTIONS returning SQL, and they are exported, so the predicate is
-   assertable without a database — see backend/tests/deliveryBoardAssrScope.test.ts.
-   An inline template literal inside a 3,000-line handler is not testable, which
-   is why the missing predicate survived this long.
-
-   NOT SCOPED HERE, deliberately: the row-level VISIBILITY rule
-   (`assrVisibilityPredicateSql`, "which cases may THIS person see within the
-   company"). The owner ruled on the COMPANY boundary; narrowing the fleet
-   coordinator's board to only the cases they personally handled is a different
-   decision nobody has made, and it would empty the board for dispatchers. */
-
-/** The board's Service-Case (ASSR) union — OPEN cases carrying a driving date,
- *  restricted to the caller's granted companies. */
-export function assrBoardUnionSql(c: CompanyScopeCtx): string {
-  return `SELECT id            AS id,
-              assr_no       AS assr_no,
-              company_id    AS company_id,
-              status        AS status,
-              customer_name AS customer_name,
-              phone         AS phone,
-              location      AS location,
-              customer_pickup_at AS customer_pickup_at,
-              inspection_visit_at AS inspection_visit_at,
-              inspection_by AS inspection_by,
-              do_date       AS do_date,
-              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
-         FROM assr_cases
-        WHERE closed_at IS NULL
-          AND archived_at IS NULL
-          AND (customer_pickup_at IS NOT NULL OR do_date IS NOT NULL
-               OR (inspection_visit_at IS NOT NULL AND inspection_by = 'own'))${assrCompanySql(c)}`;
-}
-
-/** The open-case guard the ASSR schedule write runs before it touches anything.
- *  Carries the SAME company predicate as the read: a case the caller cannot see
- *  on the board is a case they cannot schedule onto a lorry either, and it 404s
- *  exactly as /api/assr's own `caseInCallerScope` does. Without this the board
- *  read would be scoped while the write beside it stayed open — the write is the
- *  half that consumes real fleet capacity. */
-export function assrOpenCaseGuardSql(c: CompanyScopeCtx): string {
-  return `SELECT id FROM assr_cases
-        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL${assrCompanySql(c)}`;
-}
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained

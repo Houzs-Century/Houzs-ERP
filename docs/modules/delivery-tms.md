@@ -638,8 +638,9 @@ materialised; there is no board table.
    `'inspection'`, `do_date` → `'delivery'`. Row key is `<ASSR-NO>#<job_kind>`
    (`:1031`). ASSR rows always land as `PENDING_DELIVERY` (`:1046-1048`).
    **COMPANY-SCOPED since 2026-08-21** — see *Service Cases on the board are
-   company-scoped* below. The SQL lives in the exported `assrBoardUnionSql()`
-   rather than inline in the handler, so the predicate is assertable
+   company-scoped* below. The SQL lives in `assrBoardUnionSql()`
+   (`backend/src/scm/lib/assr-board-scope.ts`) rather than inline in the handler,
+   so the predicate is assertable
    (`backend/tests/deliveryBoardAssrScope.test.ts`). ASSR rows now also carry
    `company_code`, from the same `companyCodeMap` the SO rows use.
 3. **DP Orders** (`row_type: 'dp'`, `:1150`) — manual jobs from `scm.dp_orders`
@@ -963,10 +964,14 @@ and nobody did. Meanwhile `/api/assr` scoped the very same table with
 Shown the board listing service cases from a company the caller holds no grant
 for, the owner ruled: 「这个也不可以啊」.
 
-- **The rule has ONE home.** `assrBoardUnionSql()` and `assrOpenCaseGuardSql()`
-  append `assrCompanySql` — imported from `routes/assr.ts`, the same function
-  `/api/assr` uses, never a local copy. `routes/search.ts` kept a copy of this
-  rule once and drifted; that is the precedent being avoided.
+- **The rule has ONE home** — `backend/src/scm/lib/assr-board-scope.ts`.
+  `assrBoardUnionSql()` and `assrOpenCaseGuardSql()` append `assrCompanySql`,
+  imported from `routes/assr.ts`, the same function `/api/assr` uses, never a
+  local copy. `routes/search.ts` kept a copy of this rule once and drifted; that
+  is the precedent being avoided. They are a MODULE rather than two more
+  functions in the router because the router is at its file-size ceiling — and
+  because a statement inside a 3,000-line handler is a statement nothing can
+  assert, which is how the predicate stayed missing.
 - **Widen, not isolate.** Delivery Planning is a cross-company VIEW module, so a
   dispatcher granted both companies still sees the combined queue. Only a caller
   granted one company loses the other's rows. Measured on production 2026-08-21
