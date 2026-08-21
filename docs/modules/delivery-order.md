@@ -951,6 +951,31 @@ Watch as data grows:
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
 
+## A DO line SEEDS its variants from line 1, and then stops (2026-08-21)
+
+`DeliveryOrderNewV2.tsx` seeds a newly picked line's `variants` from the first
+line of the same category — and that is ALL it does. Unlike `SalesOrderNew`,
+`MobileNewSO` and `ConsignmentOrderNew`, it runs **no live cascade**: once a
+line is on the page, changing line 1 afterwards does not reach it.
+
+That is an open owner decision, not an oversight. Whether a delivery-order line
+*should* follow line 1 is a business question — a DO is a snapshot of what
+ships, and quietly rewriting line 2's fabric because someone corrected line 1
+would be a different kind of wrong from leaving it alone. It is named here, and
+in the module header of `frontend/src/vendor/scm/lib/so-variant-cascade.ts`,
+rather than left to whoever reads the file next.
+
+What DID change on 2026-08-21: the seed comes from that shared module
+(`seedableMasterVariants` + `seedFollowerVariants`) instead of a hand-written
+memo plus a raw `{ ...inherited }` spread. The spread handed the master's
+`buildKey` to the new line, forging a sofa compartment on an unrelated line —
+which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
+the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
+which is per-line by nature. `seedFollowerVariants` strips both.
+`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+The rule itself, and which pages are on it, are documented in
+`docs/modules/sales-order.md`.
+
 ## A migrated DO line's snapshot columns (2026-08-11)
 
 `scm.delivery_order_items` carries `item_group`, `variants` and `description2`
