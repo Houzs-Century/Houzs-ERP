@@ -74,15 +74,27 @@ import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { fmtDateTime } from "../vendor/shared/format";
 
-/** The states the page can filter to. `attention` is the owner's question. */
+/**
+ * The states the page can filter to. FOUR tabs (owner, 2026-08-21: *"4个"*, after
+ * *"分成三个种类就可以了，不需要那么多"* about the earlier seven):
+ *
+ *   all        -> All            everything
+ *   pending    -> Waiting        on its way, sent every five minutes
+ *   attention  -> Not accepted   STUCK — in the ERP, not in the account book
+ *   sent       -> In AutoCount   done, in the account book
+ *
+ * `attention` already merges the two "in ERP not in book" states (failed +
+ * skipped) at the server, so the confusing "Needs attention / Held back /
+ * Replaced" tabs collapse into one "Not accepted" the owner acts on. The row
+ * STATES themselves are unchanged (a row still knows failed vs skipped vs
+ * replaced — see STATE_WORDS); only the FILTER TABS are fewer. A stale
+ * `?state=failed` link degrades to the default tab (AutoCountSync.tsx:435).
+ */
 export const AC_FILTER_STATES = [
   "all",
-  "attention",
   "pending",
+  "attention",
   "sent",
-  "failed",
-  "skipped",
-  "requeued",
 ] as const;
 export type AcFilterState = (typeof AC_FILTER_STATES)[number];
 
@@ -552,11 +564,19 @@ const STATE_WORDS = {
 
 export const AC_STATE_LABEL: Record<string, string> = STATE_WORDS;
 
-/** The word on a filter chip, including the two that are not row states. */
+/**
+ * The word on a filter TAB. Four now (owner 2026-08-21). "Not accepted" is the
+ * merged stuck bucket (`attention` = failed + skipped): both mean the document
+ * is in the ERP and not in the account book, which is the only thing the reader
+ * acts on. Not built from STATE_WORDS — the tab set and the row-badge set are no
+ * longer the same list, so listing the four here is clearer than a spread plus
+ * two overrides.
+ */
 export const AC_FILTER_STATE_LABEL: Record<AcFilterState, string> = {
-  all: "Everything",
-  attention: "Needs attention",
-  ...STATE_WORDS,
+  all: "All",
+  pending: "Waiting",
+  attention: "Not accepted",
+  sent: "In AutoCount",
 };
 
 /**
@@ -1661,14 +1681,14 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
     };
   }
   if (d.counts.attention > 0) {
-    const bits: string[] = [];
-    if (d.counts.failed > 0) {
-      bits.push(`${d.counts.failed} ${d.counts.failed === 1 ? "was" : "were"} not accepted`);
-    }
-    if (d.counts.skipped > 0) bits.push(`${d.counts.skipped} held back`);
+    /* One plain line (owner 2026-08-21, simplifying the page): the "X not
+       accepted, Y held back" split it used to carry is the same distinction the
+       four-tab change merged into "Not accepted", so the headline no longer
+       breaks it down — both mean the document is in the ERP, not in the book. */
+    const n = d.counts.attention;
     return {
       tone: "bad",
-      text: `${d.counts.attention} document${d.counts.attention === 1 ? "" : "s"} need${d.counts.attention === 1 ? "s" : ""} your attention — ${bits.join(", ")}. They are in the ERP and not in the account book.`,
+      text: `${n} document${n === 1 ? " is" : "s are"} not in the account book — ${n === 1 ? "it is" : "they are"} in the ERP and need${n === 1 ? "s" : ""} your attention.`,
     };
   }
   /* THE COUNTS THEMSELVES CAN BE A FLOOR. The server SAYS SO — it sets
