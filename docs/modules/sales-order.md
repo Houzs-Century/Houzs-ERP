@@ -635,9 +635,12 @@ still emitting them, so its direct PATCH carried `address1: null` and the server
 `new_unit_price_sen`, `new_remark` (mig 0281) and `new_discount_sen` (mig
 0317). The dirtiness test (`amendmentLineSig`, now in
 `vendor/scm/lib/so-amendment-line-diff.ts`) is built from EXACTLY that list.
-The rule, learned twice (remark 2026-08-11, discount 2026-08-21): **a field
-joins the signature only together with its payload field, its column and its
-`applySoAmendment` write.** A signature entry without the channel records
+The rule, learned three times (remark 2026-08-11, discount 2026-08-21 — twice
+in one day): **a field joins the signature only together with its payload
+field, its column, its `applySoAmendment` write — and EVERY reader**: the
+`GET /so-amendments/:id` select, the PDF map, and the three view-changes
+renders. `git show --stat` the PR that added the previous field and touch every
+file it touched (#1992 is the complete map). A signature entry without the channel records
 phantom SPEC rows; a channel without the signature entry drops the edit in
 silence — and since the DIRECT_ONLY branch exists, "in silence" can read as
 *"Saved without an amendment"*, which is worse than an error.
@@ -647,7 +650,10 @@ derived and rebuilt by `rederiveDeliveryFee` on every edit and every amendment
 apply, so the line **discount is the only reduction that survives** — typing
 125 over a derived RM 250 books `discount_sen = 12500`. On an unlocked SO that
 saves directly; on a locked SO it now rides the amendment (clamped to
-`[0, qty * unit]` at apply, routed as PRICE, rendered on the approver's card).
+`[0, qty * unit]` at apply, rendered on the approver's card). The LANE is
+decided by item code (`shared/amendment-lane.ts`): the fee is a service line,
+so its amendment waits on **Logistics**; a product-line discount waits on
+Purchasing.
 Fields still without a channel: `lineDeliveryDate`, `description`, `uom`,
 `itemGroup`, cost fields — an edit to those on a locked SO still goes nowhere.
 

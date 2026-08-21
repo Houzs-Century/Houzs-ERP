@@ -2033,6 +2033,8 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                                 {(l.new_remark ?? "").trim() ? `“${l.new_remark}”` : "Remark cleared"}
                               </div>
                             ) : null}
+                            {/* mig 0317 — a fee line's discount IS the request. */}
+                            {chg.discount ? <div className="money" style={{ fontSize: 10.5, marginTop: 2, ...mEmphIf(true) }}>{Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount RM ${rm(l.new_discount_sen ?? 0)}` : "Discount cleared"}</div> : null}
                           </>
                         )}
                       </div>
