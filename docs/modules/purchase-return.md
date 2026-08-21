@@ -84,6 +84,7 @@ One guard, `scm.procurement.pr`, over the whole router — read and write.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | List |
+| GET | `/returnable-grn-lines?poId=` | The pool a PO-sourced return draws from: the PO's POSTED GRN lines with remaining (accepted − returned) > 0, company-scoped. Registered before `/:id` or that route swallows the literal path. Added 2026-08-21 (docs/bugs/0500) — the PO detail's "Raise Return" used to prefill the PO's own lines with no `grn_item_id`, making them "manual": uncapped, consuming nothing, and deducting the company DEFAULT warehouse. `PurchaseReturnNew`'s `?poId=` mode now prefills from this read with full linkage; an empty pool renders a named notice instead of a blank free-form. |
 | GET | `/:id` | One return, header + lines |
 | GET | `/:id/linked` | The GRN and PO behind this return, for the detail's links |
 | POST | `/` | Create — **lands as POSTED with inventory OUT written** (§2) |
