@@ -155,10 +155,8 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-/* ONE TAB PER STATUS (owner, 2026-08-21): 页签＝状态, the shape the Sales Order
-   list already has. Four buckets over eight statuses could not tell a DRAFT
-   from a LOADED delivery. SIGNED has no tab — it is merged into DELIVERED by
-   the owner's ruling and folds into that bucket server-side. */
+/* 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
+   docs/modules/delivery-order.md. */
 type StatusTab =
   | "all" | "draft" | "loaded" | "dispatched" | "in_transit"
   | "delivered" | "invoiced" | "cancelled";
@@ -202,14 +200,11 @@ const STATUS_TONE: Record<
   // 4 tones (success/warning/error/neutral); the label carries the nuance.
   dispatched:  { tone: "warning", label: "Shipped",     bucket: "dispatched" },
   in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  // SIGNED is merged into DELIVERED (owner, 2026-08-21) — same stock effect,
-  // same invoiceability, same delivered count. No tab of its own; a row still
-  // carrying the value reads and files as Delivered until the data migrates.
+  // SIGNED: merged into DELIVERED (owner, 2026-08-21). No tab of its own.
   signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },
   delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
   invoiced:    { tone: "success", label: "Invoiced",    bucket: "invoiced" },
-  // Not a member of scm.do_status and nothing writes it. Kept so a row that
-  // somehow carries it lands in a tab instead of rendering its raw slug.
+  // Not a do_status member; kept so such a row lands in a tab, not a raw slug.
   completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
   cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
   cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
@@ -912,10 +907,8 @@ export function MfgDeliveryOrdersListV2() {
      handful of rows, which is the exact contradiction this change exists to
      remove. So while a funnel is narrowing the page, they describe the visible
      set instead; with no funnel they are byte-identical to before. */
-  /* The TABS are one-per-status now; these two KPI cards are not, and must not
-     be. "On the road" is dispatched + in transit, and "Delivered" counts the
-     invoiced ones too — an invoiced delivery was delivered. Splitting the cards
-     the way the tabs split would have quietly halved both numbers. */
+  /* The TABS split one-per-status; these two cards must NOT — an invoiced
+     delivery was delivered, and en-route is dispatched + in transit. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;

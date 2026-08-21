@@ -2706,25 +2706,14 @@ function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
    until 2026-08-17 and is NOT a member: the tab 500'd (`22P02 invalid input value for enum do_status`) and its COUNT failed to
    a silent 0 — measured in prod that day, company 1 `all:27 delivered:0` with 25 DOs in no tab, company 2 `all:36 delivered:0`
    with 12. COMPLETED stays in shared/do-shipped-states.ts on purpose: those sets compare a status already in hand, in JS, where an impossible value is inert. This map is the one copy Postgres has to PARSE, which is why only this one was fatal. */
-/* ONE TAB PER STATUS (owner ruling, 2026-08-21). Four buckets over eight
-   statuses meant the screen could not tell a DRAFT from a LOADED delivery, or a
-   DISPATCHED one from an IN_TRANSIT one — his words: 「draft和load要分开吧？」
-   and 「怎么定义这几个状态呢？我不明白」. A page whose tabs are a different
-   vocabulary from its rows is a page nobody can reason about, and he asked for
-   the same shape the Sales Order list already has: 页签＝状态.
-
-   SIGNED IS BEING MERGED INTO DELIVERED, not given its own tab. The two are
-   indistinguishable to this system — same stock effect, same invoiceability,
-   both counted as delivered — and the owner ruled 「这个整合」. It stays in the
-   `delivered` bucket rather than vanishing, because the enum keeps the label for
-   ever and any row still carrying it must land in a tab. The DATA migration
-   (SIGNED rows -> DELIVERED) is separate and is not in this change; until it
-   runs, this bucket is what keeps those rows visible.
-
-   EVERY ENUM MEMBER IS IN EXACTLY ONE BUCKET AND EVERY BUCKET VALUE IS A MEMBER
-   — pinned by tests/statusBucketsEnumMembership.test.mjs. That pin is not
-   decoration: COMPLETED sat in `delivered` while not being an enum member at
-   all, and the tab 500'd with 22P02 while its count silently read 0. */
+/* ONE TAB PER STATUS (owner, 2026-08-21) — 页签＝状态. Four buckets over eight
+   statuses could not tell a DRAFT from a LOADED delivery. SIGNED has no tab of
+   its own: it is merged into DELIVERED by his ruling and folds here PERMANENTLY,
+   because the enum keeps the label for ever. Every enum member is in exactly one
+   bucket and every bucket value is a member — pinned by
+   tests/statusBucketsEnumMembership.test.mjs, which exists because COMPLETED sat
+   in `delivered` while not being a member and the tab 500'd on 22P02 with its
+   count silently reading 0. Full rationale: docs/modules/delivery-order.md. */
 const DO_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
   loaded: ['LOADED'],
