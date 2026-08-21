@@ -155,11 +155,8 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-/* 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
-   docs/modules/delivery-order.md. */
-type StatusTab =
-  | "all" | "draft" | "loaded" | "dispatched" | "in_transit"
-  | "delivered" | "invoiced" | "cancelled";
+// 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
+type StatusTab = "all" | "draft" | "loaded" | "dispatched" | "in_transit" | "delivered" | "invoiced" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -882,10 +879,7 @@ export function MfgDeliveryOrdersListV2() {
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
   // Full-set status-tab counts from the server (stable while paging / searching).
-  const counts: Record<string, number> = data?.statusCounts ?? {
-    all: 0, draft: 0, loaded: 0, dispatched: 0,
-    in_transit: 0, delivered: 0, invoiced: 0, cancelled: 0,
-  };
+  const counts: Record<string, number> = data?.statusCounts ?? {};
 
   /* The rows the TABLE is showing — the server page minus whatever the
      per-column funnels hide (owner 2026-08-13, following the Purchase Orders
@@ -1660,16 +1654,11 @@ export function MfgDeliveryOrdersListV2() {
       : ([] satisfies Column<DoRow>[])),
   ];
 
-  const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
-    { value: "all", label: `All · ${counts.all}` },
-    { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "loaded", label: `Confirmed · ${counts.loaded}` },
-    { value: "dispatched", label: `Shipped · ${counts.dispatched}` },
-    { value: "in_transit", label: `In transit · ${counts.in_transit}` },
-    { value: "delivered", label: `Delivered · ${counts.delivered}` },
-    { value: "invoiced", label: `Invoiced · ${counts.invoiced}` },
-    { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
-  ];
+  const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
+    [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
+     ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
+     ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
+  ).map(([value, label]) => ({ value, label: `${label} · ${counts[value] ?? 0}` }));
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>

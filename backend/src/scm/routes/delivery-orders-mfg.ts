@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { soCanRaiseDo } from '../shared/so-deliverable-states';
+import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
@@ -2706,23 +2707,6 @@ function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
    until 2026-08-17 and is NOT a member: the tab 500'd (`22P02 invalid input value for enum do_status`) and its COUNT failed to
    a silent 0 — measured in prod that day, company 1 `all:27 delivered:0` with 25 DOs in no tab, company 2 `all:36 delivered:0`
    with 12. COMPLETED stays in shared/do-shipped-states.ts on purpose: those sets compare a status already in hand, in JS, where an impossible value is inert. This map is the one copy Postgres has to PARSE, which is why only this one was fatal. */
-/* ONE TAB PER STATUS (owner, 2026-08-21) — 页签＝状态. Four buckets over eight
-   statuses could not tell a DRAFT from a LOADED delivery. SIGNED has no tab of
-   its own: it is merged into DELIVERED by his ruling and folds here PERMANENTLY,
-   because the enum keeps the label for ever. Every enum member is in exactly one
-   bucket and every bucket value is a member — pinned by
-   tests/statusBucketsEnumMembership.test.mjs, which exists because COMPLETED sat
-   in `delivered` while not being a member and the tab 500'd on 22P02 with its
-   count silently reading 0. Full rationale: docs/modules/delivery-order.md. */
-const DO_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  loaded: ['LOADED'],
-  dispatched: ['DISPATCHED'],
-  in_transit: ['IN_TRANSIT'],
-  delivered: ['SIGNED', 'DELIVERED'],
-  invoiced: ['INVOICED'],
-  cancelled: ['CANCELLED'],
-};
 
 // ── List ────────────────────────────────────────────────────────────────
 deliveryOrdersMfg.get('/', async (c) => {
