@@ -6293,16 +6293,20 @@ function ProjectDetailContent({
   }
 
   async function setItemStatus(item: ChecklistItem, status: ChecklistStatus) {
-    // Owner 2026-07-15: never surface a permission-error toast on a checklist
-    // control. The tick / status buttons are rendered disabled when the user
-    // can't tick (off, not error); this is the belt-and-suspenders no-op so a
-    // control reached any other way silently does nothing instead of firing a
-    // 403 that lands as a "Forbidden: requires one of ..." toast.
+    // 07-15: silent no-op, never a permission toast. 08-17 (0488): the key
+    // gates only non-na/pending. 08-21 (0489): keyless N/A is scoped to the
+    // BADGED function — write does not extend it; projects.manage may.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
-    // Backend rule since 2026-08-17 (docs/bugs/0488): the approval key gates
-    // only non-na/pending transitions — N/A is the document owner's call.
-    if (item.required_perm && status !== "na" && status !== "pending"
-      && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
+    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) {
+      if (status !== "na" && status !== "pending") return;
+      const badge = (item.role_label || "").trim().toUpperCase();
+      const role = (user?.role_name || "").trim().toUpperCase();
+      const admits = !badge || badge.split("&").some((s) => {
+        const l = s.trim();
+        return l === role || (l === "DRIVER" && (role === "HELPER" || role === "STOREKEEPER"));
+      });
+      if (!admits && !can("projects.manage")) return;
+    }
     try {
       await api.post(`/api/projects/checklist/${item.id}/status`, { status });
       detail.reload();
@@ -9046,14 +9050,9 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): every action on this
-                  task — uploads, removes, approves, rejects. 'submit' entries
-                  (the internal "hey reviewer, this is ready" ping) are hidden
-                  as noise; the upload comment right next to it says the same
-                  thing with better context (the filename). Owner 2026-07-20:
-                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
-                  Sim · 06/08 10:33" removes the confusion about why the
-                  Approve button reappeared after a re-upload. */}
+              {/* Chronological history (oldest → newest): uploads, removes,
+                  approves, rejects. 'submit' pings hidden as noise — the
+                  upload comment beside them carries the filename instead. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments

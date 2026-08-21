@@ -3,7 +3,7 @@ import type { AuthUser } from '../../services/auth';
 import {
   parseStage, fairReportAccess, isFairManagement,
   tenderLabel, depositByTender, paymentMethodsUsed,
-  marginPct, belowDeposit, fairSoMoney, doCostTotal, siCostTotal,
+  marginPct, belowDeposit, fairSoMoney, fairBalanceSen, doCostTotal, siCostTotal,
   resolveDateWindow, summarizeSo, summarizeDo, summarizeInvoice,
   type FairStage,
 } from './fair-report';
@@ -140,7 +140,7 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
       service_sen: 30000,
       mattress_sofa_cost_sen: 20000, bedframe_cost_sen: 10000, accessories_cost_sen: 2000,
       others_cost_sen: 3000, service_cost_sen: 15000,
-      total_cost_sen: 50000, balance_sen: 40000, deposit_sen: 10000,
+      total_cost_sen: 50000, deposit_sen: 10000,
     });
     expect(m.amount_sen).toBe(100000);       // product 70000 + service 30000
     expect(m.selling_sen).toBe(70000);       // product only, excludes service
@@ -148,7 +148,9 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
     expect(m.total_so_cost_sen).toBe(50000);
     expect(m.cost_by_category.service_cost_sen).toBe(15000);
     expect(m.margin_pct).toBeCloseTo(50);      // (100000-50000)/100000
-    expect(m.balance_sen).toBe(40000);
+    // Balance is no longer a header pass-through: it is amount minus what the
+    // LEDGER says was paid. Same 40000, now derived (see fairBalanceSen).
+    expect(fairBalanceSen(m.amount_sen, 60000)).toBe(40000);
   });
   test('amount falls back to reconstructed sum when local_total is 0', () => {
     const m = fairSoMoney({
@@ -156,7 +158,7 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
       mattress_sofa_sen: 10000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0,
       service_sen: 5000,
       mattress_sofa_cost_sen: 0, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
-      total_cost_sen: 0, balance_sen: 0, deposit_sen: 0,
+      total_cost_sen: 0, deposit_sen: 0,
     });
     expect(m.amount_sen).toBe(15000);
   });

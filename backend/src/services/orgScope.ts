@@ -153,7 +153,22 @@ export async function subtreeAgentNames(
   rootUserId: number,
   maxDepth: number = MAX_CHAIN_DEPTH,
 ): Promise<string[]> {
-  const ids = await subtreeUserIds(env, rootUserId, maxDepth);
+  return agentNamesForUserIds(env, await subtreeUserIds(env, rootUserId, maxDepth));
+}
+
+/**
+ * The same lowercased, trimmed display NAMES for an id set the CALLER already
+ * resolved. Split out of `subtreeAgentNames` for the one caller that needs BOTH
+ * halves of the subtree — the ids AND the names (`listMyCases`): asking
+ * `subtreeAgentNames` for the names after `subtreeUserIds` for the ids re-ran
+ * the whole breadth-first manager_id expansion a second time, per request, for
+ * an answer already in hand. `subtreeAgentNames` now delegates here, so the two
+ * can never resolve to different people.
+ */
+export async function agentNamesForUserIds(
+  env: Env,
+  ids: number[],
+): Promise<string[]> {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(",");
   const rows = await env.DB.prepare(

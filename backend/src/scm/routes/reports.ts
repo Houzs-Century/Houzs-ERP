@@ -48,9 +48,10 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { salesJdDenial } from '../../services/salesJdAccess';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
+import { soPaidSen, soPaidInputsOf } from '../shared/so-outstanding';
 import {
   parseStage, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
-  belowDeposit, doCostTotal, siCostTotal, marginPct, resolveDateWindow,
+  belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, marginPct, resolveDateWindow,
   summarizeSo, summarizeDo, summarizeInvoice,
   fairPnlLineCost, summarizeFairPnl,
   type FairStage, type FairFilters, type PaymentRow, type FairCostRate, type FairPnlSummaryRow,
@@ -624,7 +625,7 @@ function fairCaller(c: { get(key: 'houzsUser'): Variables['houzsUser'] }): AuthU
 /* The SO-header columns every stage needs — fair dims + the money split. */
 const FAIR_SO_COLS = `
   doc_no, so_date, ref, venue, venue_id, customer_state, salesperson_id, project_id, branding,
-  local_total_sen, balance_sen, deposit_sen, paid_sen,
+  local_total_sen, total_revenue_sen, deposit_sen,
   mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen,
   mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen,
   total_cost_sen
@@ -640,7 +641,7 @@ type FairSoHeader = {
   salesperson_id: string | null;
   project_id: number | null;
   branding: string | null;
-  local_total_sen: number | null; balance_sen: number | null; deposit_sen: number | null; paid_sen: number | null;
+  local_total_sen: number | null; total_revenue_sen: number | null; deposit_sen: number | null;
   mattress_sofa_sen: number | null; bedframe_sen: number | null; accessories_sen: number | null; others_sen: number | null; service_sen: number | null;
   mattress_sofa_cost_sen: number | null; bedframe_cost_sen: number | null; accessories_cost_sen: number | null; others_cost_sen: number | null; service_cost_sen: number | null;
   total_cost_sen: number | null;
@@ -734,10 +735,14 @@ async function resolveProjects(c: any, ids: number[]): Promise<Map<number, Proje
   return out;
 }
 
-/* Fetch the payment ledger for a set of SO doc_nos, grouped by doc_no. */
-async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string, PaymentRow[]>> {
+/* Fetch the payment ledger for a set of SO doc_nos, grouped by doc_no.
+   `is_deposit` is carried, not dropped: soPaidSen needs it to decide whether the
+   header's legacy `deposit_sen` is already in the ledger. Dropping it here is
+   what would double-count every modern order's deposit. */
+type FairPaymentRow = PaymentRow & { is_deposit: boolean | null };
+async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string, FairPaymentRow[]>> {
   const sb = c.get('supabase');
-  const byDoc = new Map<string, PaymentRow[]>();
+  const byDoc = new Map<string, FairPaymentRow[]>();
   const uniq = Array.from(new Set(docNos.filter(Boolean)));
   if (uniq.length === 0) return byDoc;
   const { data } = await chunkIn(uniq, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
@@ -745,9 +750,9 @@ async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string,
     .select('so_doc_no, method, amount_sen, merchant_provider, installment_months, is_deposit')
     .in('so_doc_no', batch), c)
     .range(pFrom, pTo));
-  for (const p of (data ?? []) as Array<{ so_doc_no: string; method: string | null; amount_sen: number | null }>) {
+  for (const p of (data ?? []) as Array<{ so_doc_no: string; method: string | null; amount_sen: number | null; is_deposit: boolean | null }>) {
     const arr = byDoc.get(p.so_doc_no) ?? [];
-    arr.push({ method: p.method, amount_sen: p.amount_sen });
+    arr.push({ method: p.method, amount_sen: p.amount_sen, is_deposit: p.is_deposit ?? null });
     byDoc.set(p.so_doc_no, arr);
   }
   return byDoc;
@@ -857,9 +862,16 @@ export const fairReportHandler = async (c: FairCtx) => {
     const rows = soRows.map((h) => {
       const money = fairSoMoney(h);
       const payments = payByDoc.get(h.doc_no) ?? [];
-      const paidTotal = payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
+      /* PAID and BALANCE both come from the payment LEDGER, never from the
+         header's `paid_sen` / `balance_sen` columns — neither is maintained
+         (see fairBalanceSen and scm/shared/so-outstanding.ts). soPaidSen owns
+         the legacy-deposit rule so a modern order does not double-count it. */
+      const paidTotal = soPaidSen(soPaidInputsOf(h as unknown as Record<string, unknown>,
+        payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0),
+        payments.some((p) => p.is_deposit === true)));
+      const balanceSen = fairBalanceSen(money.amount_sen, paidTotal);
       const tender = depositByTender(payments);
-      const below = belowDeposit({ balanceSen: h.balance_sen, depositSen: h.deposit_sen, paidSen: paidTotal });
+      const below = belowDeposit({ balanceSen, depositSen: h.deposit_sen, paidSen: paidTotal });
       return {
         ...fairDims(h, staffNames, projects),
         so_date: h.so_date,
@@ -871,7 +883,7 @@ export const fairReportHandler = async (c: FairCtx) => {
         cost_by_category: money.cost_by_category,
         total_so_cost_sen: money.total_so_cost_sen,
         margin_pct: money.margin_pct,
-        balance_sen: money.balance_sen,
+        balance_sen: balanceSen,
         paid_total_sen: paidTotal,
         deposit_sen: Number(h.deposit_sen ?? 0),
         payment_methods: paymentMethodsUsed(payments),
@@ -1210,8 +1222,13 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     .range(pFrom, pTo));
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const payments = (payData ?? []) as Array<{ method: string | null; amount_sen: number | null; merchant_provider: string | null; installment_months: number | null; approval_code: string | null; paid_at: string | null; is_deposit: boolean | null }>;
-  const paidTotal = payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
+  /* Same ledger rule as the list — the header's balance_sen/paid_sen columns
+     are not maintained (fairBalanceSen, scm/shared/so-outstanding.ts). */
+  const paidTotal = soPaidSen(soPaidInputsOf(h as unknown as Record<string, unknown>,
+    payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0),
+    payments.some((p) => p.is_deposit === true)));
   const money = fairSoMoney(h);
+  const balanceSen = fairBalanceSen(money.amount_sen, paidTotal);
 
   // SO → DO → Invoice linkage doc numbers.
   const { data: doData } = await scopeToCompany(sb
@@ -1230,10 +1247,10 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     cost_by_category: money.cost_by_category,
     total_so_cost_sen: money.total_so_cost_sen,
     margin_pct: money.margin_pct,
-    balance_sen: money.balance_sen,
+    balance_sen: balanceSen,
     deposit_sen: Number(h.deposit_sen ?? 0),
     paid_total_sen: paidTotal,
-    below_deposit: belowDeposit({ balanceSen: h.balance_sen, depositSen: h.deposit_sen, paidSen: paidTotal }),
+    below_deposit: belowDeposit({ balanceSen, depositSen: h.deposit_sen, paidSen: paidTotal }),
     payment_methods: paymentMethodsUsed(payments),
     deposit_by_tender: depositByTender(payments),
     payments: payments.map((p) => ({
