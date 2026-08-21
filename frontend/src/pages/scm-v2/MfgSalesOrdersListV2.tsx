@@ -1701,7 +1701,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "customer_delivery_date",
       group: "Logistics",
-      label: "Customer Delivery Date",
+      label: "Delivery Date",
       width: "160px",
       defaultHidden: true,
       disableSort: true,

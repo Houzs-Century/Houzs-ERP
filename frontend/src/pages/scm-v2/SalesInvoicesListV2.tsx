@@ -193,7 +193,7 @@ const STATUS_TONE: Record<
 > = {
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
   sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
-  issued:          { tone: "warning", label: "Issued",      bucket: "sent" },
+  issued:          { tone: "warning", label: "Confirmed",   bucket: "sent" },
   overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
   partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
   partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },

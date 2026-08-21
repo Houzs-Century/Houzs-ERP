@@ -71,7 +71,7 @@ describe("column grouping", () => {
       ["deposit_sen", "Deposit", COLUMN_GROUPS.amounts],
       ["payment_method", "Payment Method", COLUMN_GROUPS.amounts],
 
-      ["customer_delivery_date", "Customer Delivery Date", COLUMN_GROUPS.logistics],
+      ["customer_delivery_date", "Delivery Date", COLUMN_GROUPS.logistics],
       ["warehouse", "Warehouse", COLUMN_GROUPS.logistics],
       ["driver", "Driver", COLUMN_GROUPS.logistics],
       ["eta", "ETA", COLUMN_GROUPS.logistics],

@@ -507,11 +507,11 @@ export const SoFromProducts = () => {
                 placeholder="e.g. Walk-in / customer name" className={styles.fieldInput} />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Processing date</span>
+              <span className={styles.fieldLabel}>Processing Date</span>
               <DateField fullWidth value={manualProc} min={todayMY()} onChange={(iso) => setManualProc(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Delivery date</span>
+              <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField fullWidth value={manualDeliv} min={todayMY()} onChange={(iso) => setManualDeliv(iso)} className={styles.fieldInput}/>
             </label>
           </div>

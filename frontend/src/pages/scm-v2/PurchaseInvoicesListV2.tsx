@@ -131,7 +131,7 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   DRAFT:          { tone: "warning", label: "Draft",           bucket: "draft" },
-  POSTED:         { tone: "warning", label: "Posted",          bucket: "posted" },
+  POSTED:         { tone: "warning", label: "Confirmed",       bucket: "posted" },
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },
@@ -957,7 +957,7 @@ export function PurchaseInvoicesListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "paid", label: `Paid · ${counts.paid}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },

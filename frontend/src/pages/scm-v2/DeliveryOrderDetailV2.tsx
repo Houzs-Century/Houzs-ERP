@@ -243,7 +243,7 @@ const EFFECTIVE_TONE: Record<
 // even when the effective bucket collapses to "shipped".
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
-  LOADED: "Loaded",
+  LOADED: "Confirmed",
   DISPATCHED: "Dispatched",
   IN_TRANSIT: "In transit",
   SIGNED: "Signed",

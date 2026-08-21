@@ -493,7 +493,7 @@ export const ConsignmentNoteNew = () => {
               <DateField fullWidth className={styles.fieldInput} value={expectedDeliveryAt} onChange={(iso) => setExpectedDeliveryAt(iso)}/>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Delivery Date</span>
+              <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField fullWidth className={styles.fieldInput} value={customerDeliveryDate} onChange={(iso) => setCustomerDeliveryDate(iso)}/>
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
