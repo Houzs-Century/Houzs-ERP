@@ -31,7 +31,8 @@ async function tryQ(label, fn, fallback = []) {
     return fallback;
   }
 }
-const want = (s) => SECTION === 'all' || SECTION === s;
+const WANTED = new Set(SECTION.split(/[,+ ]+/).filter(Boolean));
+const want = (s) => WANTED.has('all') || WANTED.has(s);
 
 // ── 0. schema census — read the LIVE catalog, never a migration file ────────
 async function schemaCensus() {
@@ -401,6 +402,200 @@ async function arAging() {
   if (!disagree) note('AGREES — the nightly snapshot reproduces the live rule exactly.');
 }
 
+// ── 5. WHY the stored auto lines disagree — the rate the row itself names ───
+// Every auto row carries its own rate in the description ("Commission (auto ·
+// 14% of sales)"). Parsing it says whether the row was written under a DIFFERENT
+// card than the one the Fair P&L reads today — a rate-card edit that never
+// reached the ledger — or whether only the sales base moved underneath it.
+async function autoWhy() {
+  hr('5. stored auto cost lines: which rate does the ROW ITSELF claim vs the card?');
+
+  const rows = await tryQ('auto rows with pct', () => sql`
+    SELECT l.auto_source, p.company_id, p.brand,
+           substring(l.description from '([0-9]+(?:\\.[0-9]+)?)%') AS row_pct,
+           r.transport_pct, r.merchandise_pct, r.commission_normal_pct, r.commission_boost_pct,
+           count(*)::int AS n, COALESCE(SUM(l.amount),0) AS amt
+      FROM project_finance_lines l
+      JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+      LEFT JOIN project_cost_rates r ON r.brand = btrim(p.brand)
+     WHERE l.auto_source IS NOT NULL AND l.archived_at IS NULL
+     GROUP BY 1,2,3,4,5,6,7,8 ORDER BY 3,1,4`);
+  note('auto rows grouped by (source, company, brand, the % the row names):');
+  for (const r of rows) {
+    const card =
+      r.auto_source === 'auto:transport' ? r.transport_pct :
+      r.auto_source === 'auto:merchandise' ? r.merchandise_pct : `${r.commission_normal_pct}/${r.commission_boost_pct}`;
+    const flag = r.auto_source === 'auto:commission'
+      ? (String(r.row_pct) !== String(r.commission_normal_pct) && String(r.row_pct) !== String(r.commission_boost_pct) ? '  <-- MATCHES NEITHER CARD RATE' : '')
+      : (String(r.row_pct) !== String(card) ? '  <-- DISAGREES WITH CARD' : '');
+    note(`   ${r.auto_source} co=${r.company_id} brand=${JSON.stringify(r.brand)} row_says=${r.row_pct}% card_says=${card}% rows=${r.n} RM ${Number(r.amt).toFixed(2)}${flag}`);
+  }
+
+  // Split the disagreement into its two causes.
+  const causes = await tryQ('mismatch causes', () => sql`
+    WITH base AS (
+      SELECT p.id, p.company_id, btrim(p.brand) AS brand,
+             COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.category='sales' AND l.auto_source IS NULL AND l.archived_at IS NULL), 0) AS sales
+        FROM projects p LEFT JOIN project_finance_lines l ON l.project_id = p.id
+       WHERE p.archived_at IS NULL
+       GROUP BY 1,2,3
+    ), got AS (
+      SELECT project_id,
+             COALESCE(SUM(amount) FILTER (WHERE auto_source='auto:commission'),0) AS comm,
+             substring(max(description) FILTER (WHERE auto_source='auto:commission') from '([0-9]+(?:\\.[0-9]+)?)%') AS row_pct,
+             count(*)::int AS n
+        FROM project_finance_lines WHERE auto_source IS NOT NULL AND archived_at IS NULL
+       GROUP BY 1
+    )
+    SELECT b.company_id, b.brand,
+           count(*) FILTER (WHERE g.n IS NULL AND b.sales > 0)::int AS no_auto_rows_at_all,
+           count(*) FILTER (WHERE g.n IS NOT NULL AND b.sales > 0
+                             AND abs(g.comm - (b.sales * g.row_pct::numeric / 100)) > 0.011)::int AS base_moved_under_row,
+           count(*) FILTER (WHERE g.n IS NOT NULL AND b.sales > 0
+                             AND abs(g.comm - (b.sales * g.row_pct::numeric / 100)) <= 0.011)::int AS row_self_consistent,
+           COALESCE(SUM(b.sales) FILTER (WHERE g.n IS NULL AND b.sales > 0),0) AS sales_with_no_auto
+      FROM base b LEFT JOIN got g ON g.project_id = b.id
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('\nmismatch causes per (company, brand):');
+  for (const c of causes) note(`   co=${c.company_id} brand=${JSON.stringify(c.brand)} no_auto_rows=${c.no_auto_rows_at_all} (sales RM ${Number(c.sales_with_no_auto).toFixed(2)}) sales_base_moved=${c.base_moved_under_row} self_consistent=${c.row_self_consistent}`);
+}
+
+// ── 6. Fair Report money vs the SO's own document ───────────────────────────
+// fairSoMoney reads SIX denormalised header columns. `amount` comes from
+// local_total_sen; the category split next to it comes from the four product
+// columns + service. If those two disagree the printed row does not add up, and
+// summarizeSo's totals inherit the gap. total_cost_sen drives margin_pct while
+// the cost BREAKDOWN beside it comes from five other columns.
+async function fairVsDoc() {
+  hr('6. Fair Report (stage=so/pnl): header money vs the SO lines and the header split');
+
+  const cols = await tryQ('mfg_sales_orders cols', () => sql`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema='scm' AND table_name='mfg_sales_orders' AND column_name LIKE '%_sen'
+     ORDER BY 1`);
+  note('mfg_sales_orders money columns: ' + cols.map((c) => c.column_name).join(', '));
+
+  const itemCols = await tryQ('mfg_sales_order_items cols', () => sql`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema='scm' AND table_name='mfg_sales_order_items'
+     ORDER BY ordinal_position`);
+  note('mfg_sales_order_items columns: ' + itemCols.map((c) => c.column_name).join(', '));
+
+  // 6a — local_total_sen vs the FIVE revenue columns the report splits it into.
+  const split = await tryQ('header revenue split', () => sql`
+    SELECT company_id, status,
+           count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(local_total_sen,0) <>
+                 COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)
+                 +COALESCE(others_sen,0)+COALESCE(service_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(local_total_sen,0) -
+                 (COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)
+                  +COALESCE(others_sen,0)+COALESCE(service_sen,0))),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6a. local_total_sen  vs  (mattress_sofa+bedframe+accessories+others+service):');
+  for (const r of split) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} sum(local_total-split)=${rm(r.delta_sen)}`);
+
+  const worstSplit = await tryQ('worst split', () => sql`
+    SELECT doc_no, company_id, status, local_total_sen,
+           COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)
+           +COALESCE(others_sen,0)+COALESCE(service_sen,0) AS split_sen
+      FROM scm.mfg_sales_orders
+     WHERE COALESCE(local_total_sen,0) <>
+           COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)
+           +COALESCE(others_sen,0)+COALESCE(service_sen,0)
+     ORDER BY abs(COALESCE(local_total_sen,0) -
+           (COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)
+            +COALESCE(others_sen,0)+COALESCE(service_sen,0))) DESC LIMIT 10`);
+  note('   worst rows (the Fair Report prints amount from the left and the split from the right):');
+  for (const w of worstSplit) note(`     ${w.doc_no} co=${w.company_id} ${w.status} local_total=${rm(w.local_total_sen)} split=${rm(w.split_sen)} delta=${rm(Number(w.local_total_sen ?? 0) - Number(w.split_sen))}`);
+
+  // 6b — total_cost_sen vs the five cost columns shown beside it.
+  const costSplit = await tryQ('header cost split', () => sql`
+    SELECT company_id, status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(total_cost_sen,0) <>
+                 COALESCE(mattress_sofa_cost_sen,0)+COALESCE(bedframe_cost_sen,0)
+                 +COALESCE(accessories_cost_sen,0)+COALESCE(others_cost_sen,0)+COALESCE(service_cost_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(total_cost_sen,0) -
+                 (COALESCE(mattress_sofa_cost_sen,0)+COALESCE(bedframe_cost_sen,0)
+                  +COALESCE(accessories_cost_sen,0)+COALESCE(others_cost_sen,0)+COALESCE(service_cost_sen,0))),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6b. total_cost_sen  vs  (the five *_cost_sen columns the report lists beside it):');
+  for (const r of costSplit) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} sum(total_cost-split)=${rm(r.delta_sen)}`);
+
+  // 6c — header vs the SO's own LINES (the document itself).
+  const vsLines = await tryQ('header vs lines', () => sql`
+    WITH li AS (
+      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS lines_sen, count(*)::int AS n
+        FROM scm.mfg_sales_order_items
+       WHERE COALESCE(cancelled,false) = false
+       GROUP BY 1
+    )
+    SELECT h.company_id, h.status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(h.local_total_sen,0) <> COALESCE(li.lines_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(h.local_total_sen,0) - COALESCE(li.lines_sen,0)),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders h LEFT JOIN li ON li.so_doc_no = h.doc_no
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('\n6c. local_total_sen  vs  SUM(non-cancelled line_total_sen) — the document itself:');
+  for (const r of vsLines) note(`   co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} sum(header-lines)=${rm(r.delta_sen)}`);
+
+  const worstLines = await tryQ('worst header-vs-lines', () => sql`
+    WITH li AS (
+      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS lines_sen
+        FROM scm.mfg_sales_order_items WHERE COALESCE(cancelled,false) = false GROUP BY 1
+    )
+    SELECT h.doc_no, h.company_id, h.status, h.local_total_sen, COALESCE(li.lines_sen,0) AS lines_sen
+      FROM scm.mfg_sales_orders h LEFT JOIN li ON li.so_doc_no = h.doc_no
+     WHERE h.status = 'CONFIRMED' AND COALESCE(h.local_total_sen,0) <> COALESCE(li.lines_sen,0)
+     ORDER BY abs(COALESCE(h.local_total_sen,0) - COALESCE(li.lines_sen,0)) DESC LIMIT 10`);
+  note('   worst CONFIRMED rows (CONFIRMED is exactly the Fair Report row set):');
+  for (const w of worstLines) note(`     ${w.doc_no} co=${w.company_id} header=${rm(w.local_total_sen)} lines=${rm(w.lines_sen)} delta=${rm(Number(w.local_total_sen ?? 0) - Number(w.lines_sen))}`);
+
+  // 6d — the delivery-fee service family is a PREFIX, not three fixed codes.
+  const svc = await tryQ('service line codes', () => sql`
+    SELECT item_code, count(*)::int AS n, COALESCE(SUM(line_total_sen),0)::bigint AS amt
+      FROM scm.mfg_sales_order_items
+     WHERE COALESCE(cancelled,false) = false AND item_code LIKE 'SVC-%'
+     GROUP BY 1 ORDER BY 3 DESC`);
+  note('\n6d. SVC-% service lines actually present on live SOs:');
+  for (const r of svc) note(`   ${r.item_code} lines=${r.n} ${rm(r.amt)}`);
+
+  const svcVsHeader = await tryQ('service_sen vs svc lines', () => sql`
+    WITH s AS (
+      SELECT so_doc_no, COALESCE(SUM(line_total_sen),0)::bigint AS svc_sen
+        FROM scm.mfg_sales_order_items
+       WHERE COALESCE(cancelled,false) = false AND item_code LIKE 'SVC-%'
+       GROUP BY 1
+    )
+    SELECT h.company_id, h.status, count(*)::int AS docs,
+           count(*) FILTER (WHERE COALESCE(h.service_sen,0) <> COALESCE(s.svc_sen,0))::int AS mismatched,
+           COALESCE(SUM(COALESCE(h.service_sen,0) - COALESCE(s.svc_sen,0)),0)::bigint AS delta_sen
+      FROM scm.mfg_sales_orders h LEFT JOIN s ON s.so_doc_no = h.doc_no
+     GROUP BY 1,2 ORDER BY 1,2`);
+  note('   header service_sen vs SUM(SVC-% line_total_sen):');
+  for (const r of svcVsHeader) note(`     co=${r.company_id} status=${r.status} docs=${r.docs} mismatched=${r.mismatched} delta=${rm(r.delta_sen)}`);
+}
+
+// ── 7. is the AR-aging delta freshness, or a rule drift? ────────────────────
+async function agingFreshness() {
+  hr('7. AR aging: are the snapshot-vs-live deltas explained by documents created AFTER the refresh?');
+  const meta = await tryQ('meta', () => sql`SELECT refreshed_at FROM scm.mv_ar_aging_meta LIMIT 1`);
+  const at = meta[0]?.refreshed_at ?? null;
+  note(`snapshot refreshed_at = ${at}`);
+  if (!at) return;
+  const po = await tryQ('po since', () => sql`
+    SELECT doc_no, company_id, total_sen, created_at
+      FROM scm.v_po_outstanding WHERE is_outstanding AND created_at > ${at} ORDER BY created_at`);
+  note(`outstanding POs created AFTER the refresh: ${po.length}`);
+  for (const r of po) note('   ' + JSON.stringify(r));
+  const so = await tryQ('so since', () => sql`
+    SELECT doc_no, company_id, local_total_sen, created_at
+      FROM scm.v_so_outstanding WHERE is_outstanding AND created_at > ${at} ORDER BY created_at`);
+  note(`outstanding SOs created AFTER the refresh: ${so.length}`);
+  for (const r of so) note('   ' + JSON.stringify(r));
+}
+
 async function main() {
   note(`check-report-money — section=${SECTION} — READ ONLY`);
   if (want('schema')) await schemaCensus();
@@ -408,6 +603,9 @@ async function main() {
   if (want('autolines')) await autoLines();
   if (want('pnl')) await pnlRowSet();
   if (want('aging')) await arAging();
+  if (want('autowhy')) await autoWhy();
+  if (want('fairdoc')) await fairVsDoc();
+  if (want('aging')) await agingFreshness();
   await sql.end({ timeout: 5 });
 }
 
