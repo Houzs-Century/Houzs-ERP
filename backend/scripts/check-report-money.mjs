@@ -622,17 +622,44 @@ async function agingFreshness() {
   const meta = await tryQ('meta', () => sql`SELECT refreshed_at FROM scm.mv_ar_aging_meta LIMIT 1`);
   const at = meta[0]?.refreshed_at ?? null;
   note(`snapshot refreshed_at = ${at}`);
-  if (!at) return;
-  const po = await tryQ('po since', () => sql`
-    SELECT doc_no, company_id, total_sen, created_at
-      FROM scm.v_po_outstanding WHERE is_outstanding AND created_at > ${at} ORDER BY created_at`);
-  note(`outstanding POs created AFTER the refresh: ${po.length}`);
-  for (const r of po) note('   ' + JSON.stringify(r));
-  const so = await tryQ('so since', () => sql`
-    SELECT doc_no, company_id, local_total_sen, created_at
-      FROM scm.v_so_outstanding WHERE is_outstanding AND created_at > ${at} ORDER BY created_at`);
-  note(`outstanding SOs created AFTER the refresh: ${so.length}`);
-  for (const r of so) note('   ' + JSON.stringify(r));
+  if (!at) { note('UNPROVEN — no freshness row, so nothing here can be attributed to lag.'); return; }
+
+  /* Column names come from the LIVE view, never from a guess. The first cut of
+     this section hard-coded `doc_no` and `created_at`; both queries died on
+     42703 and the section then printed "0", which reads exactly like a clean
+     answer. A check that could not run must say so. */
+  async function since(view, idCandidates, amtCandidates) {
+    const cols = await tryQ(`${view} cols`, () => sql`
+      SELECT a.attname AS col
+        FROM pg_attribute a
+       WHERE a.attrelid = ${'scm.' + view}::regclass AND a.attnum > 0 AND NOT a.attisdropped`);
+    const have = new Set(cols.map((c) => c.col));
+    if (!have.size) { note(`${view}: UNPROVEN — could not read its columns.`); return; }
+    const dateCol = ['created_at', 'doc_date', 'so_date', 'updated_at'].find((c) => have.has(c));
+    const idCol = idCandidates.find((c) => have.has(c));
+    const amtCol = amtCandidates.find((c) => have.has(c));
+    if (!dateCol || !idCol) {
+      note(`${view}: UNPROVEN — no usable date/id column. It has: ${[...have].sort().join(', ')}`);
+      return;
+    }
+    let rows;
+    try {
+      rows = await sql`
+        SELECT ${sql(idCol)} AS doc, company_id, ${amtCol ? sql(amtCol) : sql`0`} AS amt, ${sql(dateCol)} AS at
+          FROM ${sql('scm.' + view)} WHERE is_outstanding AND ${sql(dateCol)} > ${at} ORDER BY 4`;
+    } catch (e) {
+      note(`${view}: UNPROVEN — the query failed: ${e.code ?? ''} ${e.message}`);
+      return;
+    }
+    note(`${view}: ${rows.length} outstanding row(s) dated after the refresh (by ${dateCol}), worth ${rm(rows.reduce((s, r) => s + Number(r.amt ?? 0), 0))}`);
+    for (const r of rows) note('   ' + JSON.stringify(r));
+  }
+
+  await since('v_po_outstanding', ['doc_no', 'po_number', 'document_no'], ['total_sen']);
+  await since('v_so_outstanding', ['doc_no', 'so_doc_no', 'document_no'], ['local_total_sen']);
+  await since('v_pi_outstanding', ['doc_no', 'invoice_number', 'pi_number'], ['total_sen']);
+  await since('v_si_outstanding', ['doc_no', 'invoice_number'], ['total_sen']);
+  note('\nA snapshot-minus-live delta is only FRESHNESS when a row above accounts for it.');
 }
 
 async function main() {
