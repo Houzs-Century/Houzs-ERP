@@ -238,7 +238,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/consignment-notes.ts": {
-      "reads": 12,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
@@ -246,7 +246,7 @@
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
-      "reads": 12,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
