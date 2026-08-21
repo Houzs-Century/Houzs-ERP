@@ -71,6 +71,10 @@ import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import {
+  seedFollowerVariants,
+  seedableMasterVariants,
+} from "../../vendor/scm/lib/so-variant-cascade";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -802,17 +806,23 @@ export function DeliveryOrderNewV2() {
     [lines]
   );
 
-  // ── Sofa-set inherit — first line per category seeds followers on pick
-  //    (same memo SalesOrderNew feeds SoLineCard). ───────────────────
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) out[cat] = l.variants;
-    }
-    return out;
-  }, [lines]);
+  // ── Sofa-set inherit — first line per category seeds followers on pick.
+  //    The rule lives in vendor/scm/lib/so-variant-cascade, which is also
+  //    where the never-inherited keys are named: a fresh line must not take
+  //    the master's `buildKey` (that forges a sofa compartment on an
+  //    unrelated line — free-gift trigger + PDF grouping) or its `remark`.
+  //    This page seeds ONLY; unlike the SO pages it does not run the live
+  //    cascade afterwards, and whether a delivery-order line should follow
+  //    line 1 at all is an owner decision, not a defect to fix quietly. ──
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(
+      lines.map((l) => ({
+        category: l.itemGroup ?? "",
+        variants: (l.variants ?? {}) as Record<string, unknown>,
+      })),
+    ),
+    [lines]
+  );
 
   // ── Line ops ───────────────────────────────────────────────────────
   const addLine = () => {
@@ -839,7 +849,7 @@ export function DeliveryOrderNewV2() {
           itemGroup: category,
           description: p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants: inherited ? { ...inherited } : {},
+          variants: seedFollowerVariants(inherited),
         };
       }),
     ]);
