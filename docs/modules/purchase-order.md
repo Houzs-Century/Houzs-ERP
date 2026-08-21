@@ -134,6 +134,23 @@ that forgets its gate will not typecheck.
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.
 
+**The "Purchase Location" column shows the warehouse CODE (2026-08-21).** It
+printed `purchase_location?.name || purchase_location?.code`, so the grid
+truncated the full name to `BALAKONG WAREHO…` while this same page's PDF export
+already printed the code. The one display rule is `warehouseLabel` — code first,
+then name — and it now has a FRONTEND home to import:
+`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of
+`backend/src/scm/lib/warehouse-label.ts`. Never hand-write the order again; see
+`docs/modules/warehouses.md` for the mirror and its referee. The GRN-from-PO
+picker's Warehouse column reads through the same rule.
+
+**The variant summary on the transfer pickers is labelled "Description 2"
+(2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
+other Convert-From pickers render that column through) exports
+`DESCRIPTION_2_LABEL` and prints it above the summary. The word is the system's
+existing one — the SO line editor's column header and
+`pages/scm-v2/so-audit-labels.ts` — not a new name for the string.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/suppliers-queries.ts` — the PO hook block was
 vendored into the Suppliers slice, **not** a `purchase-order-queries.ts` (see the

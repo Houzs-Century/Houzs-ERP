@@ -183,10 +183,9 @@ const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   return "warning";
 };
 
-// DO lifecycle: LOADED → DISPATCHED → IN_TRANSIT → SIGNED → DELIVERED →
-// INVOICED, plus CANCELLED. Compress into 4 buckets for the filter pills
-// (open / in_transit / delivered / cancelled) so the row of tabs stays
-// scannable — the full status shows in each row's Badge.
+// DO lifecycle: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED →
+// INVOICED, plus CANCELLED. ONE BUCKET PER STATUS since 2026-08-21 (页签＝状态);
+// SIGNED folds into `delivered` because the enum keeps the label for ever.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }

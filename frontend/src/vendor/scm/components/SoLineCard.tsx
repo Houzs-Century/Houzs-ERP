@@ -10,7 +10,7 @@
 //
 // Below row, per-category variants (only when SKU picked + has variants):
 //   BEDFRAME → Fabrics / Gaps / Divan Heights / Leg Heights · Specials accordion
-//   SOFA     → Fabrics / Seat Heights / Leg Heights        · Specials accordion
+//   SOFA     → Fabrics / Seat Size / Leg Heights           · Specials accordion
 //   MATTRESS / ACCESSORY / OTHERS → no variants section
 //
 // Wired to:
@@ -58,6 +58,8 @@ import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
+import { seedFollowerVariants } from '../lib/so-variant-cascade';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
@@ -66,6 +68,13 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+
+/* The tallest either portalled picker on this card wants to be. Matches
+   `.suggestList { max-height: 460px }` in SoLineCard.module.css, which is now
+   only the fallback for a render before the first measurement — the live value
+   comes from lib/anchoredPanel, which shortens it whenever the room on the
+   chosen side is less than this. */
+const SUGGEST_LIST_MAX_H = 460;
 
 const isBlankVariant = (v: unknown): boolean =>
   v === undefined || v === null || String(v).trim() === '';
@@ -300,7 +309,6 @@ const SoLineCardInner = ({
   // the options got cut at the card's bottom edge on every doc that uses this
   // card (SO / DO / DR / consignment). Wei Siang 2026-06-06.
   const pickerWrapRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   /* Multi-add (desktop MobileSkuPicker.onPickMany parity) — when the parent
      wires onAddProducts, ticked SKUs collect here; "Add N" commits them (first
      → this line, rest → new lines). Keyed by MfgProductRow.id. */
@@ -421,11 +429,13 @@ const SoLineCardInner = ({
     setPicked(p);
     const category = p.category.toLowerCase();
     /* PR #141 — Sofa-set inherit: same-category follower lines copy the
-       master's variants on pick. PR #147 — reset overriddenKeys on a fresh
-       pick so cascade can repopulate everything cleanly. */
-    const inherited = inheritVariantsByCategory?.[category];
-    const seedVariants: Record<string, unknown> =
-      inherited && Object.keys(inherited).length > 0 ? { ...inherited } : {};
+       master's variants on pick. The seed only removes the flash of an empty
+       configurator; the live cascade in the parent form is what actually keeps
+       a follower in step, including when the master is typed AFTER this line
+       already exists (the owner's two-sofa multi-add). Both go through
+       lib/so-variant-cascade so the never-inherited keys are stripped in one
+       place. PR #147 — reset overriddenKeys on a fresh pick. */
+    const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
     onChange({
       itemCode:       p.code,
       itemGroup:      category,
@@ -702,24 +712,13 @@ const SoLineCardInner = ({
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
-  // Keep the portal'd SKU dropdown pinned under its input while open; reposition
-  // on scroll/resize so it tracks the page.
-  useEffect(() => {
-    if (!showPicker || !isEditing) { setMenuPos(null); return; }
-    const update = () => {
-      const el = pickerWrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [showPicker, isEditing]);
+  /* Keep the portal'd SKU dropdown pinned to its input while open. The
+     geometry — flip above when there is more room there, clamp the height to
+     the room actually available — is the shared house rule in
+     lib/anchoredPanel, not a copy. Owner 2026-08-21: he typed a code, the list
+     opened downward past the bottom of the window, and the last rows plus the
+     green "Add N" bar could not be reached at all. */
+  const menuPos = useAnchoredPanel(pickerWrapRef, showPicker && isEditing, SUGGEST_LIST_MAX_H);
 
   return (
     <div className={styles.card}>
@@ -797,7 +796,7 @@ const SoLineCardInner = ({
                class's absolute top:100%/left/right. */
             <ul
               className={styles.suggestList}
-              style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: menuPos.width, right: 'auto', marginTop: 0, zIndex: 1000 }}
+              style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
             >
               {multiEnabled && candidates.length > 0 && (
                 /* Multi-add toggle (MobileSkuPicker.onPickMany parity). onMouseDown
@@ -1059,7 +1058,12 @@ const SoLineCardInner = ({
               onSelect={pickFabricColour}
             />
             <VariantSelect
-              label="Seat Heights" required={variantsRequired}
+              /* "Seat Size" is the system-wide name (vendor/shared/so-variant-rule
+                 declares it, and PO / GRN / Stock Adjustment / PI / PR / PoLineCard
+                 / PcVariantEditor all render it). This card was the last screen
+                 still saying "Seat Heights", and the only one anywhere that
+                 pluralised it. */
+              label="Seat Size" required={variantsRequired}
               value={String(draft.variants.seatHeight ?? '')}
               disabled={!isEditing}
               options={sortByNumeric(restrictS(maintPickerValues(maint!.sofaSizes, String(draft.variants.seatHeight ?? '')), allowOpts?.sizes).map((s) => {
@@ -1408,7 +1412,6 @@ const FabricColourCombobox = ({
   const [open, setOpen]     = useState(false);
   const [search, setSearch] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   /* Same debounce + length>=2 + open gate the SKU picker uses, so the query
      only fires while the operator is actively picking. */
@@ -1428,24 +1431,10 @@ const FabricColourCombobox = ({
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 
-  /* Pin the portalled dropdown under the input (escapes the card's
-     overflow:hidden clip), tracking scroll/resize — same as the SKU picker. */
-  useEffect(() => {
-    if (!open || disabled) { setMenuPos(null); return; }
-    const update = () => {
-      const el = wrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [open, disabled]);
+  /* Pin the portalled dropdown to the input (escapes the card's
+     overflow:hidden clip), tracking scroll/resize — the same shared geometry
+     the SKU picker above uses, so both flip and clamp identically. */
+  const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
 
@@ -1469,10 +1458,10 @@ const FabricColourCombobox = ({
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
           title={value || undefined}
         />
-        {open && !disabled && menuPos && createPortal(
+        {menuPos && createPortal(
           <ul
             className={styles.suggestList}
-            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: menuPos.width, right: 'auto', marginTop: 0, zIndex: 1000 }}
+            style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
           >
             {results.length > 0 ? (
               /* Owner 2026-06-23: show ONLY the fabric code — the code IS the

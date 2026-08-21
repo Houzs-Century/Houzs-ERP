@@ -50,6 +50,15 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
 There is **no dedicated mobile screen**. The generic `MobileModuleList` /
 `MobileModuleDetail` render it. That is worth knowing before assuming the
 repo-wide "desktop and mobile are one product" rule implies a paired file here —

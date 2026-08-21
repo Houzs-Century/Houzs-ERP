@@ -30,12 +30,21 @@ only document in it that leaves the building as a customer's own copy.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
 | Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments. Status flags computed at `:991-998`. |
-| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | |
+| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is computed client-side as `total − paid`, floored at 0 (`balanceCenti`, `:287-291`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:275`; status actions `:498-511`. |
 | Mobile convert (DO→SI) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "si"` (`:73`). |
+
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
 Desktop routes: `frontend/src/App.tsx:658-661`, behind
 `<ScmGuard area="scm.sales.invoices" allowSales>` for list + detail, without

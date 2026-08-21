@@ -44,6 +44,7 @@ import {
 import { ScheduleRouteMap, type RoutePoint } from "./ScheduleRouteMap";
 import { useNotify } from "./NotifyDialog";
 import { DateField } from "./DateField";
+import { warehouseLabel } from "../lib/warehouse-label";
 
 /* One order's effective delivery date — amended wins over the customer's
    original (the same rule derivePlanningState uses), null-safe. Sliced to the
@@ -441,7 +442,7 @@ export function ScheduleTripDrawer({
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               >
                 <option value="">None</option>
-                {activeWarehouses.map((w) => <option key={w.id} value={w.id}>{w.code || w.name}</option>)}
+                {activeWarehouses.map((w) => <option key={w.id} value={w.id}>{warehouseLabel(w)}</option>)}
               </select>
             </label>
             <label className="block">

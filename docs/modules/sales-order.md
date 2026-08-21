@@ -594,8 +594,10 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 - **Fabrics** ← `useFabricColoursActive()` + `fabric_library` series via
   `useFabricLibrary()`. The Fabric picker is a SEARCHABLE modal (700+ colours),
   not a native `<select>`.
-- **Sofa** — Seat height ← `maintenanceConfig.sofaSizes`; Leg height ←
-  `maintenanceConfig.sofaLegHeights`.
+- **Sofa** — Seat Size ← `maintenanceConfig.sofaSizes`; Leg height ←
+  `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
+  surface (`so-variant-rule` declares it, and the SO line card renders it since
+  2026-08-21 — it was the last screen saying "Seat Heights").
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -609,15 +611,73 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   there is no per-screen copy, and the canonical test fails by name if one
   reappears.
 
+**Every floating picker on the line card is placed by ONE shared module**,
+`frontend/src/lib/anchoredPanel.ts`. The SKU dropdown and the fabric-colour
+combobox are portalled to `<body>` (so a card's `overflow:hidden` cannot slice
+them) and their geometry — which SIDE of the field to open on, and how tall they
+may be — is measured from the field's live rect: the side with more room wins,
+and the height is clamped to that room so the last rows and any footer bar stay
+inside the window. Both pass 460px as their PREFERRED cap. Do not re-hand-roll
+`top: rect.bottom + 4` for a new menu; that is what put the SKU picker's green
+"Add N" bar off the bottom of the screen
+(`docs/bugs/0504-every-portalled-dropdown-opened-downward-and-ran-off-the-bot.md`).
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
-**Sofa follower-line inherit** mirrors desktop `SoLineCard`'s
-`inheritVariantsByCategory` + `overriddenKeys`: follower sofa / bedframe lines
-inherit the FIRST same-category line's variants, BUT a manually-changed follower
-value WINS.
+**Sofa follower-line cascade — ONE module, and the master's LATEST change
+wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
+by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
+2026-08-21 — `pages/scm-v2/ConsignmentOrderNew.tsx`. The FIRST
+line of a category is the MASTER; every later line of that category follows it.
+Three outcomes per variant key, in this order:
+
+1. the master MOVED that key since the previous run -> **force** it onto the
+   follower, overwriting a value the operator typed by hand;
+2. else the follower's own value is blank -> **fill** it (the pick-time
+   inherit);
+3. else **leave** it — an edit made after the master's last change stands until
+   the master moves again.
+
+Rule 1 is the owner's ruling of 2026-08-21, in his words 「第一个沙发再改就拉回去」:
+it REPLACES the old `overriddenKeys` veto, under which a follower touched once
+was sticky forever and line 1 could never correct it again
+(`docs/bugs/0506-a-follower-sofa-line-touched-once-could-never-be-corrected-f.md`).
+He gave it AFTER that fix shipped — the first version of the rule was written
+into the implementing agent's brief and then reported in code as a ruling he
+had already made
+(`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`).
+"Since the previous run" is a snapshot each form holds in a ref and hands back
+to the module; it is what keeps rules 1 and 3 from cancelling each other out.
+
+`overriddenKeys` is still on the draft and still used — by the per-sofa fabric
+COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
+physical sofa (`variants.buildKey`), not to a category. It no longer gates the
+master cascade.
+
+**Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
+one physical sofa — copying it forges a compartment, which reaches the free-gift
+trigger and the PDF module grouping;
+`docs/bugs/0507-the-variant-cascade-copied-the-master-sofa-buildkey-onto-an.md`).
+Fabric identity is additionally held back when master and follower are two
+DIFFERENT split sofas.
+
+**Which pages are on it, and which are not.** `SalesOrderNew`, `MobileNewSO`
+and `ConsignmentOrderNew` run the live cascade. `DeliveryOrderNewV2` SEEDS from
+the same module (`seedableMasterVariants` + `seedFollowerVariants`, so a picked
+line never inherits `buildKey` or `remark`) but runs **no cascade** — a follower
+line on a delivery order does not follow line 1 afterwards. That is an open
+owner decision, not an oversight, and it is named in the module header rather
+than left to inference. `soVariantCascadeSingleCopy.test.ts` holds this shape:
+it fails if a page re-implements the rule, keeps an `overriddenKeys` veto, or
+seeds from a hand-written memo.
+
+**The one deliberate surface difference is a REQUIRED argument, not a default:**
+desktop passes `null` (every category cascades), mobile passes
+`{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
+passes `null` too, matching the desktop SO page it is a clone of.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
@@ -1022,6 +1082,39 @@ is invisible to it; its natural-key pass understands `doc_no` but walks
 `backend/scripts/probe-natural-key-reads.mjs` reports the surface that falls
 between the two passes — and its header explains why that count is an upper
 bound on exposure rather than a defect list.
+
+### There is no "(me)" — the Salesperson is always a real employee (owner 2026-08-21)
+
+His ruling, on `HC-SO-2608-003`, an order he had raised himself minutes earlier
+and which named him **"(former staff)"**: *「『我』不应该存在，永远要是一个真人。」*
+
+`SalesOrderNew` / `MobileNewSO` used to carry a `SELF_SALESPERSON = '__self__'`
+sentinel, rendered as `<name> (me)` whenever `resolveSelfStaff` could not find
+the creator on the roster, and stripped again at submit
+(`salespersonId !== SELF_SALESPERSON ? … : undefined`). **Both are deleted.**
+The creator was missing for exactly one reason — `GET /staff/pickable?onlySales=1`
+narrows to Sales positions and the owner is not one — so the sentinel was
+covering for a roster that had been asked the wrong question. The roster now
+always contains the caller (`team-members.md`, *"`GET /staff/pickable` ALWAYS
+holds the caller"*), so `selfStaffMatch` resolves to a real `scm.staff` uuid on
+every account and three things follow with no further code:
+
+- the Salesperson field seeds to that id and SUBMITS it, instead of omitting it
+  and leaving the backend to re-derive the caller;
+- `defaultCollectedBy={selfStaffMatch?.id}` is a real id, so the Payments row's
+  "Collected By" defaults to the person operating the screen instead of `—`
+  (it stays changeable — `PaymentsTable`'s `collectedByAllowedIds` filter has
+  always kept `s.id === defaultStaffId`);
+- the pickers that must name a STORED `salesperson_id` pass it through
+  `usePickableStaff({ onlySales: true, include: [<that id>] })` —
+  `SalesOrderDetail`, `SalesInvoiceNew`, `DeliveryReturnNew`,
+  `ConsignmentNote/Order/Return New+Detail` and `MobileNewSO`'s edit mode — so
+  **`(former staff)` is now reachable only for a row that really is gone**, never
+  for a person the filter merely hid.
+
+The 2026-07-22 narrowing is untouched: an ordinary sales user's pick list is
+exactly what it was. Trace:
+`docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 

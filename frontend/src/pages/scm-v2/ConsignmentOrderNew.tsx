@@ -55,6 +55,11 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import {
+  cascadeMasterVariants,
+  seedableMasterVariants,
+  type MasterVariantSnapshot,
+} from '../../vendor/scm/lib/so-variant-cascade';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
@@ -247,39 +252,36 @@ export const ConsignmentOrderNew = () => {
   }, [deliveryDate]);
 
   /* Master-follower cascade for line variants — LINE 1 of each category drives
-     variant changes on subsequent lines unless a follower overrode a key. */
-  useEffect(() => {
-    const masterByCategory: Record<string, Record<string, unknown>> = {};
-    const masterIdx: Record<string, number> = {};
-    lines.forEach((l, idx) => {
-      if (!l.itemGroup) return;
-      if (masterIdx[l.itemGroup] !== undefined) return;
-      masterIdx[l.itemGroup] = idx;
-      if (l.variants) masterByCategory[l.itemGroup] = l.variants;
-    });
+     the rest. The rule itself is the shared layer (vendor/scm/lib/
+     so-variant-cascade); this is only the wiring, exactly as SalesOrderNew and
+     MobileNewSO wire it. This page carried a FOURTH hand-written copy until
+     2026-08-21; it had drifted three ways from the rule the SO pages follow:
 
+       - `overriddenKeys` vetoed the cascade, so a follower line touched once
+         was sticky FOREVER and line 1 could never correct it again. Owner
+         2026-08-21: "第一个沙发再改就拉回去" — the master's latest change wins.
+       - `buildKey` was inherited like any other key, forging a sofa
+         compartment on an unrelated line (free-gift trigger + PDF grouping).
+       - `remark` was inherited category-wide, which it must never be.
+
+     Consignment orders never mint a buildKey (only the SO create path does),
+     so the fabric-identity scoping in the shared rule is inert here rather
+     than load-bearing — but the module is the one place that rule lives, and
+     a fifth copy is how the three drifts above happened in the first place. */
+  const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
+  useEffect(() => {
+    const { variants, masters } = cascadeMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      masterSnapshotRef.current,
+      /* Same answer as the desktop SO page: every category cascades. */
+      null,
+    );
+    masterSnapshotRef.current = masters;
     let didUpdate = false;
     const next = lines.map((l, idx) => {
-      if (!l.itemGroup) return l;
-      if (masterIdx[l.itemGroup] === idx) return l;
-      const masterVariants = masterByCategory[l.itemGroup];
-      if (!masterVariants) return l;
-      const cur = (l.variants ?? {}) as Record<string, unknown>;
-      const overridden = new Set(l.overriddenKeys ?? []);
-      const patch: Record<string, unknown> = {};
-      let hasChange = false;
-      for (const k of Object.keys(masterVariants)) {
-        if (overridden.has(k)) continue;
-        const masterVal = masterVariants[k];
-        if (masterVal === undefined || masterVal === null || masterVal === '') continue;
-        if (cur[k] !== masterVal) {
-          patch[k] = masterVal;
-          hasChange = true;
-        }
-      }
-      if (!hasChange) return l;
+      if (variants[idx] === l.variants) return l;
       didUpdate = true;
-      return { ...l, variants: { ...cur, ...patch } };
+      return { ...l, variants: variants[idx]! };
     });
     if (didUpdate) setLines(next);
   }, [lines]);
@@ -292,17 +294,17 @@ export const ConsignmentOrderNew = () => {
     [lines],
   );
 
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) {
-        out[cat] = l.variants;
-      }
-    }
-    return out;
-  }, [lines]);
+  /* The PICK-TIME seed for a brand-new line, and deliberately NOT the same
+     question the cascade's master asks: this one skips a category's first line
+     while it is still empty, so a new line does not flash an empty
+     configurator. SoLineCard strips the never-inherited keys on the way in
+     (seedFollowerVariants), so this hands over the master's variants raw. */
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+    ),
+    [lines],
+  );
 
   // ── Locality cascades ──────────────────────────────────────────────
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);

@@ -213,15 +213,19 @@ export async function scopeStaffRowsToActiveCompany(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a Hono Context or the synthetic headless one; see CompanyScopeCtx
   c: any,
   rows: Array<Record<string, unknown>>,
-): Promise<{ scoped: Array<Record<string, unknown>>; degrade: boolean }> {
+): Promise<{
+  scoped: Array<Record<string, unknown>>;
+  degrade: boolean;
+  failClosed: boolean;
+}> {
   const companies = c.get("companies") ?? [];
   // Pre-migration / cold-start: no companies master → single-company Houzs.
   // Degrade to the full roster (the pre-fix behaviour) — the caller then
   // renders the full list unchanged.
-  if (companies.length === 0) return { scoped: rows, degrade: true };
+  if (companies.length === 0) return { scoped: rows, degrade: true, failClosed: false };
   const active = activeCompanyId(c);
   // Multi-company context but no resolvable active company → fail closed.
-  if (active == null) return { scoped: [], degrade: false };
+  if (active == null) return { scoped: [], degrade: false, failClosed: true };
   const linkedIds = Array.from(
     new Set(rows.map(rowUserId).filter((n): n is number => n != null)),
   );
@@ -233,5 +237,113 @@ export async function scopeStaffRowsToActiveCompany(
     ids,
     SCM_SYSTEM_STAFF_ID,
   ).map((s) => s.raw);
-  return { scoped: filtered, degrade: false };
+  return { scoped: filtered, degrade: false, failClosed: false };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE ALWAYS-HOLDS RULE — added 2026-08-21.
+
+   A picker narrows its roster for good reasons (owner 2026-07-22: keep office /
+   admin / owner / test accounts out of the SALESPERSON dropdown). What it must
+   never do is narrow away a PERSON the screen has to resolve, because every
+   consumer resolves a person against the same narrowed list and every one of
+   them fails the same way:
+
+     · the caller themself → the New-SO page could not find its own creator and
+       fell back to a UI-only "<name> (me)" option that is not a staff id, and
+       the Payments "Collected By" default fell to blank ("—");
+     · the id already ON the document (salesperson_id) → the SO / SI / DR /
+       consignment pickers labelled it "(former staff)" for someone who had
+       raised the order minutes earlier.
+
+   So the narrowing stays exactly as it is, and the roster is UNIONED with the
+   two id sets a screen cannot do without. Server-side, because the alternative
+   — each screen patching its own copy back in — is the same rule written eight
+   times, which is how the three symptoms above came to have one cause.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The staff ids a picker must hold no matter what narrowing it applies:
+ * the CALLER's own row plus every id the screen explicitly asked to keep.
+ *
+ * `roster` is the un-narrowed candidate set the ids are resolved against — the
+ * caller is found in it by `user_id`, which is the same link the backend itself
+ * resolves the caller by (`resolveCallerStaffId`). A caller with no row in
+ * `roster` (no scm.staff row at all, or a deactivated one) contributes nothing:
+ * this function never invents an id.
+ *
+ * `callerHouzsUserId` is REQUIRED and explicitly nullable rather than optional —
+ * its absence changes the answer, so the compiler has to see every call site
+ * decide (CLAUDE.md, "a parameter that DECIDES something is required").
+ */
+export function alwaysPickableStaffIds(
+  roster: Array<Record<string, unknown>>,
+  callerHouzsUserId: number | null,
+  includeIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const id of includeIds) {
+    const trimmed = id.trim();
+    if (trimmed) out.add(trimmed);
+  }
+  if (callerHouzsUserId != null && Number.isFinite(callerHouzsUserId)) {
+    for (const r of roster) {
+      if (rowUserId(r) === callerHouzsUserId) {
+        out.add(String(r.id));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `narrowed` UNION the rows of `roster` whose id is in `alwaysIds`, in ROSTER
+ * order (staff_code) so the picker's ordering is unchanged and one id can never
+ * appear twice.
+ *
+ * `narrowed` is expected to be a subset of `roster`; an id in `alwaysIds` that
+ * names no roster row adds nothing — the screen then renders its own
+ * "(former staff)" fallback, which is now only reachable for a row that really
+ * is gone (deactivated / no longer in the table) rather than one a filter hid.
+ */
+export function unionAlwaysPickable(
+  roster: Array<Record<string, unknown>>,
+  narrowed: Array<Record<string, unknown>>,
+  alwaysIds: ReadonlySet<string>,
+): Array<Record<string, unknown>> {
+  const keep = new Set(narrowed.map((r) => String(r.id)));
+  return roster.filter((r) => {
+    const id = String(r.id);
+    return keep.has(id) || alwaysIds.has(id);
+  });
+}
+
+/** Cap on `?include=` — the screens pass the ONE id already on the document;
+ *  anything past this is a caller doing something else. Deliberately far below
+ *  GET /staff/by-ids' 200, because this list is bounded by what one document
+ *  can reference, not by what a list page can display. */
+export const MAX_INCLUDE_IDS = 50;
+
+/**
+ * Parse `?include=<uuid>,<uuid>,…` into a de-duplicated id list.
+ * Returns `null` when the caller sent more than {@link MAX_INCLUDE_IDS} — the
+ * route answers 400 rather than silently truncating, because a truncated
+ * include is exactly the "(former staff)" bug wearing a smaller hat.
+ *
+ * These ids are only ever COMPARED against rows already fetched — never
+ * interpolated into a query — so an unparseable value is inert, not dangerous.
+ */
+export function parseIncludeIds(raw: string | undefined | null): string[] | null {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return [];
+  const ids = Array.from(
+    new Set(
+      trimmed
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    ),
+  );
+  return ids.length > MAX_INCLUDE_IDS ? null : ids;
 }
