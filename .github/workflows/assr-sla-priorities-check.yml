@@ -42,3 +42,24 @@ jobs:
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Priority CHECK-constraint probe — the neighbouring question about the
+      # same lookup table, and one that cannot be answered by reading code: does
+      # public.assr_cases.priority still carry a CHECK admitting only the four
+      # original slugs, so that a priority added in Service Maintenance is
+      # offered by the picker and then refused by the database?
+      #
+      # It rides this workflow rather than a new one on purpose: a
+      # workflow_dispatch file is only dispatchable once it is on the default
+      # branch, so a brand-new workflow answers HTTP 404 until it merges — which
+      # is exactly when the answer is still needed. Extending a workflow that is
+      # already dispatchable lets `--ref <branch>` run THIS version of the file
+      # before the PR lands. Same reasoning as do-integrity-check.yml.
+      #
+      # `if: always()` so the probe still reports when the step above fails.
+      # They answer different questions and neither is a gate.
+      - run: node scripts/check-assr-priority-constraint.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
