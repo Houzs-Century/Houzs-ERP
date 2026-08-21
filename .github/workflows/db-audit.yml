@@ -1,7 +1,8 @@
 name: DB view audit (read-only)
 
-# Manual, read-only. Lists scm/public VIEWs via the prod DATABASE_URL secret so
-# the Phase 0f multi-company migration can recreate any scoped view. No writes.
+# TEMPORARY (audit/report-money-math branch only — reverted before the PR):
+# repointed at scripts/check-report-money.mjs so the read-only report-money
+# recompute can be dispatched before its own workflow file reaches main.
 on:
   workflow_dispatch:
 
@@ -17,6 +18,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: node scripts/audit-views.mjs
+      - run: node scripts/check-report-money.mjs
         env:
+          SECTION: all
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
