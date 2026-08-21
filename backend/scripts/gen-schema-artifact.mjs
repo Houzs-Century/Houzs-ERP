@@ -130,41 +130,74 @@ console.log(`gen-schema-artifact: ${tables.length} table(s) modelled through Dri
 console.log("  " + tables.join(", "));
 if (dryRun) process.exit(0);
 
-// ── 3. pull ─────────────────────────────────────────────────────────────────
+// ── 3. pull, closing over foreign-key targets ───────────────────────────────
 if (!process.env.DATABASE_URL) die("DATABASE_URL is required. `pull` reads the live catalog.");
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "schema-pull-"));
-const cfg = path.join(backendRoot, ".schema-pull.config.ts");
-fs.writeFileSync(
-  cfg,
-  `import type { Config } from "drizzle-kit";
+
+function pullOnce(wanted) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "schema-pull-"));
+  const cfg = path.join(backendRoot, ".schema-pull.config.ts");
+  fs.writeFileSync(
+    cfg,
+    `import type { Config } from "drizzle-kit";
 export default {
   schema: "./src/db/schema.pg.ts",
   out: ${JSON.stringify(tmp.replace(/\\/g, "/"))},
   dialect: "postgresql",
   dbCredentials: { url: process.env.DATABASE_URL! },
   schemaFilter: ["public"],
-  tablesFilter: ${JSON.stringify(tables)},
+  tablesFilter: ${JSON.stringify(wanted)},
   introspect: { casing: "preserve" },
 } satisfies Config;
 `,
-);
-try {
-  execFileSync("npx", ["drizzle-kit", "pull", `--config=${cfg}`], {
-    cwd: backendRoot,
-    stdio: ["ignore", "inherit", "inherit"],
-    env: process.env,
-    shell: process.platform === "win32",
-  });
-} finally {
-  fs.rmSync(cfg, { force: true });
+  );
+  try {
+    execFileSync("npx", ["drizzle-kit", "pull", `--config=${cfg}`], {
+      cwd: backendRoot,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: process.env,
+      shell: process.platform === "win32",
+    });
+  } finally {
+    fs.rmSync(cfg, { force: true });
+  }
+  const pulled = path.join(tmp, "schema.ts");
+  if (!fs.existsSync(pulled)) die(`drizzle-kit produced no ${pulled}`);
+  const out = fs.readFileSync(pulled, "utf8");
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return out;
 }
 
-const pulled = path.join(tmp, "schema.ts");
-if (!fs.existsSync(pulled)) die(`drizzle-kit produced no ${pulled}`);
-const raw = fs.readFileSync(pulled, "utf8");
+/* FOREIGN-KEY CLOSURE. drizzle-kit emits `foreignColumns: [companies.id]` for
+   an FK whose TARGET was filtered out, and the identifier then resolves to
+   nothing — the file does not compile. Pull, look for references it could not
+   satisfy, add those tables, pull again. Bounded, because an unbounded loop
+   against a 232-table schema would quietly widen back to everything. */
+let wanted = [...tables];
+let raw = "";
+let closure = [];
+for (let round = 1; round <= 4; round++) {
+  raw = pullOnce(wanted);
+  const declaredHere = new Set([...raw.matchAll(/export const ([a-z_0-9]+) = pgTable\(/g)].map((m) => m[1]));
+  const referenced = new Set([...raw.matchAll(/foreignColumns:\s*\[([a-z_0-9]+)\./g)].map((m) => m[1]));
+  const missing = [...referenced].filter((t) => !declaredHere.has(t)).sort();
+  if (!missing.length) break;
+  if (round === 4) {
+    die(
+      `FK closure did not settle after 4 pulls; still unresolved: ${missing.join(", ")}.\n` +
+        "  Refusing to write a schema that would not compile.",
+    );
+  }
+  console.log(`FK closure round ${round}: adding ${missing.join(", ")}`);
+  closure = [...new Set([...closure, ...missing])].sort();
+  wanted = [...new Set([...wanted, ...missing])].sort();
+}
+
 const pulledTables = [...raw.matchAll(/export const ([a-z_0-9]+) = pgTable\(/g)].map((m) => m[1]);
 const notPulled = tables.filter((t) => !pulledTables.includes(t));
 if (pulledTables.length === 0) die("pull produced a schema with ZERO pgTable declarations.");
+if (closure.length) {
+  console.log(`\nPulled additionally as foreign-key targets: ${closure.join(", ")}`);
+}
 
 const { text, repaired } = repairRawDefaults(raw);
 console.log(`\npull produced ${pulledTables.length} table(s); repaired ${repaired} raw SQL default(s).`);
@@ -206,4 +239,3 @@ const HEADER = `// -------------------------------------------------------------
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, HEADER + text.replace(/^﻿/, ""));
 console.log(`\nwrote ${OUT} (${(HEADER + text).split("\n").length} lines)`);
-fs.rmSync(tmp, { recursive: true, force: true });
