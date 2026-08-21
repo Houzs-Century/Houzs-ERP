@@ -260,6 +260,94 @@ try {
   notice("-- (5b) role_page_access rows (THE live source for a POSITIONLESS user) --");
   for (const r of rpa) console.log(`  ${String(r.name).padEnd(28)} ${String(r.rows).padStart(4)} rows`);
 
+  // -- (6) THE ROWS THE OWNER CONFIGURED THAT NOTHING READS ------------------
+  // auth.ts hydrates a POSITIONED user from resolvePositionPolicy(), not from
+  // position_page_access. For any position the policy does not classify
+  // (= not Driver/Helper/Storekeeper/Storekeeper Supervisor, not Sales, not
+  // Super Admin/Owner) the resolved map is fullAccessMap() -- so every row the
+  // owner saved in Team > Positions for that position is INERT, including the
+  // rows that say "none".
+  const classified = new Set([
+    ...GOD_POSITIONS, ...RESTRICTED_POSITIONS,
+  ]);
+  notice("-- (6) IGNORED Team>Positions rows (position resolves to FULL in code) --");
+  const ignored = await pg`
+    SELECT p.name AS position, a.page_key, a.level,
+           (SELECT count(*)::int FROM users u
+             WHERE u.position_id = p.id AND u.status = 'active') AS active_users,
+           d.name AS dept
+      FROM position_page_access a
+      JOIN positions p ON p.id = a.position_id
+      LEFT JOIN departments d ON d.id = p.department_id
+     ORDER BY p.name, a.page_key`;
+  let ignoredCount = 0;
+  let ignoredDenies = 0;
+  for (const r of ignored) {
+    const n = norm(r.position);
+    if (classified.has(n)) continue;
+    const dept = (r.dept ?? "").toLowerCase();
+    if (dept.includes("sales") || SALES_POSITION_PREFIX.test(String(r.position).trim())) continue;
+    ignoredCount++;
+    if (r.level === "none") ignoredDenies++;
+    console.log(
+      `  ${String(r.position).padEnd(24)} ${String(r.page_key).padEnd(28)} = ${String(r.level).padEnd(7)} (${r.active_users} active people)${r.level === "none" ? "   <-- a DENY the system ignores" : ""}`,
+    );
+  }
+  console.log(`\n  ${ignoredCount} saved rows are inert; ${ignoredDenies} of them are explicit "none" denials.`);
+
+  // -- (7) WHICH ROLE EACH UNCLASSIFIED-POSITION PERSON HOLDS ----------------
+  notice("-- (7) position x role for every active user --");
+  const px = await pg`
+    SELECT coalesce(p.name, '(no position)') AS position, r.name AS role,
+           count(*)::int AS people,
+           bool_or(r.permissions LIKE '%"scm.access"%') AS role_has_scm_access
+      FROM users u
+      JOIN roles r ON r.id = u.role_id
+      LEFT JOIN positions p ON p.id = u.position_id
+     WHERE u.status = 'active'
+     GROUP BY 1, 2 ORDER BY 1, 2`;
+  for (const r of px)
+    console.log(
+      `  ${String(r.position).padEnd(24)} | ${String(r.role).padEnd(34)} | ${String(r.people).padStart(3)} | role grants scm.access: ${r.role_has_scm_access ? "YES" : "no"}`,
+    );
+
+  // -- (8) IS THE SCM WRITE FREEZE ON RIGHT NOW? ----------------------------
+  notice("-- (8) scm.app_config['scm.write_freeze'] --");
+  const freeze = await pg`
+    SELECT company_id, value, description FROM scm.app_config WHERE key = 'scm.write_freeze'`;
+  if (!freeze.length) console.log("  no row -> SCM writes are OPEN");
+  for (const f of freeze)
+    console.log(`  company_id=${f.company_id} value=${JSON.stringify(f.value)} description=${JSON.stringify(f.description)}`);
+
+  // -- (9) IS THE SALES ENTRIES MODULE ACTUALLY LIVE? -----------------------
+  // The whole Sales cohort (34 people) has page_access sales = 'none' -- the
+  // owner's own saved row. Whether that is a lockout or a dead module is a
+  // question about the DATA, not the code.
+  notice("-- (9) sales_entries usage --");
+  const se = await pg`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE created_at > now() - interval '90 days')::int AS last_90d,
+           max(created_at) AS newest,
+           count(DISTINCT created_by)::int AS distinct_creators
+      FROM sales_entries`;
+  console.log(`  ${JSON.stringify(se[0])}`);
+
+  // -- (10) HAS THE FULL-COHORT EXPOSURE BEEN EXERCISED? --------------------
+  notice("-- (10) audit_events by people on an UNCLASSIFIED position --");
+  const acted = await pg`
+    SELECT p.name AS position, u.name AS person, count(*)::int AS events,
+           max(a.created_at) AS newest
+      FROM audit_events a
+      JOIN users u ON u.id = a.actor_id
+      JOIN positions p ON p.id = u.position_id
+     WHERE u.status = 'active'
+       AND lower(p.name) IN ('outsource transporter', 'warehouse crew kl', 'logistic admin',
+                             'operation executive', 'hr manager', 'it developer executive')
+     GROUP BY 1, 2 ORDER BY 3 DESC`;
+  if (!acted.length) console.log("  (no audit_events rows for these people)");
+  for (const a of acted)
+    console.log(`  ${String(a.position).padEnd(24)} ${String(a.person).padEnd(26)} ${String(a.events).padStart(5)} events, newest ${a.newest}`);
+
   console.log("\nDone. Read-only -- nothing was changed.");
 } finally {
   await pg.end({ timeout: 3 }).catch(() => {});
