@@ -644,12 +644,19 @@ purchaseReturns.post('/', async (c) => {
      (header grnId AND every line's grn_item_id, via isCrossCompanySource), and
      the only by-id write is the ROLLBACK of the header this handler inserted
      moments earlier. Verified 2026-08-13. */
+  /* Every refusal before the header insert calls markIdempotencyNoWrite
+     (2026-08-21, audit B2): these are provably-no-write exits, and without the
+     mark the claim survived the refusal — the operator fixed the quantity,
+     resubmitted, and got `idempotency_key_reused` with a page reload as the
+     only way out. The exact incident lib/no-write-refusal.ts was written for,
+     unported to this router until now. */
+  const refuse = (status: 400 | 404 | 409 | 500, bodyOut: object) => { markIdempotencyNoWrite(c); return c.json(bodyOut, status); };
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'DRAFT was removed in migration 0078 — PRs post immediately on create.' }, 400);
-  if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuse(400, { error: 'invalid_json' }); }
+  if (body.status === 'DRAFT') return refuse(400, { error: 'draft_status_not_supported', message: 'DRAFT was removed in migration 0078 — PRs post immediately on create.' });
+  if (!body.supplierId) return refuse(400, { error: 'supplier_required' });
   const items = body.items as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
+  if (!Array.isArray(items) || !items.length) return refuse(400, { error: 'items_required' });
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -661,11 +668,25 @@ purchaseReturns.post('/', async (c) => {
      company's receipt. Optional by design — a genuinely manual return sends no
      grnId, resolves to no source, and is unaffected. */
   if (body.grnId) {
-    const { data: srcGrn } = await sb.from('grns')
-      .select('grn_number, company_id').eq('id', body.grnId as string).maybeSingle();
-    const src = srcGrn as { grn_number?: string | null; company_id?: number | null } | null;
-    if (src && isCrossCompanySource(src.company_id, c)) {
+    /* Error BOUND and fail-closed (2026-08-21, audit B15a): this read was a
+       `const { data }` whose failure skipped BOTH the cross-company guard and —
+       since nothing else read the header GRN — every fact about the source. A
+       blip must refuse, not wave the return through unguarded. */
+    const { data: srcGrn, error: srcErr } = await sb.from('grns')
+      .select('grn_number, company_id, status').eq('id', body.grnId as string).maybeSingle();
+    if (srcErr) { markIdempotencyNoWrite(c); return c.json({ error: 'source_check_failed', reason: srcErr.message }, 500); }
+    const src = srcGrn as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
+    if (!src) { markIdempotencyNoWrite(c); return c.json({ error: 'grn_not_found' }, 404); }
+    if (isCrossCompanySource(src.company_id, c)) {
+      markIdempotencyNoWrite(c);
       return c.json(crossCompanyConversionBlocked(src.grn_number ?? null, src.company_id, c), 409);
+    }
+    /* Same gate /from-grn has always had (audit B5): a CANCELLED GRN already
+       wrote its reversing OUT — returning against it writes a SECOND OUT for
+       goods the shelf never got back, and a DRAFT one received nothing. */
+    if (src.status !== 'POSTED') {
+      markIdempotencyNoWrite(c);
+      return c.json({ error: 'grn_not_posted', status: src.status ?? null }, 409);
     }
   }
 
@@ -689,7 +710,7 @@ purchaseReturns.post('/', async (c) => {
     );
     // Refuses on an unreadable GRN too — see unlinkedScanRefusal.
     const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'purchase'));
-    if (bad) return c.json(bad, 409);
+    if (bad) return refuse(409, bad);
   }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
@@ -708,29 +729,50 @@ purchaseReturns.post('/', async (c) => {
        returned_qty on whichever company owns them while the return itself is
        stamped with the ACTIVE company. The header-level grnId check above only
        covers the note the return NAMES; a line can point somewhere else. */
-    const { data: giRows } = await sb.from('grn_items')
-      .select('id, qty_accepted, returned_qty, grn:grns!inner ( grn_number, company_id )').in('id', preGrnItemIds);
+    /* Error BOUND and fail-closed (2026-08-21, audit B3): this read was a
+       `const { data }` — a blip gave an empty map, and the loop below then
+       `continue`d past EVERY line, skipping the over-return cap AND the
+       cross-company line guard in one silent stroke. The exact class
+       lib/qty-cap.ts documents and refuses. */
+    const { data: giRows, error: giErr } = await sb.from('grn_items')
+      .select('id, qty_accepted, returned_qty, grn:grns!inner ( grn_number, company_id, status )').in('id', preGrnItemIds);
+    if (giErr) { markIdempotencyNoWrite(c); return c.json({ error: 'cap_check_failed', reason: giErr.message }, 500); }
     type GiRow = {
       id: string; qty_accepted: number; returned_qty: number;
-      grn?: { grn_number?: string | null; company_id?: number | null } | Array<{ grn_number?: string | null; company_id?: number | null }> | null;
+      grn?: { grn_number?: string | null; company_id?: number | null; status?: string | null } | Array<{ grn_number?: string | null; company_id?: number | null; status?: string | null }> | null;
     };
     const giList = (giRows ?? []) as unknown as GiRow[];
     const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
     const foreign = giList.find((g) => isCrossCompanySource(parentOf(g)?.company_id, c));
     if (foreign) {
       const p = parentOf(foreign);
+      markIdempotencyNoWrite(c);
       return c.json(crossCompanyConversionBlocked(p?.grn_number ?? null, p?.company_id, c), 409);
+    }
+    /* Line-level half of the POSTED gate above: these ids are caller-supplied,
+       so a line can point at a CANCELLED receipt while the header names a live
+       one (or none). Cancel-first-return-second was the door (audit B5). */
+    const badParent = giList.find((g) => (parentOf(g)?.status ?? null) !== 'POSTED');
+    if (badParent) {
+      const p = parentOf(badParent);
+      markIdempotencyNoWrite(c);
+      return c.json({ error: 'grn_not_posted', grnNumber: p?.grn_number ?? null, status: p?.status ?? null }, 409);
     }
     for (const r of giList) {
       remainingByGrnItem.set(r.id, Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)));
     }
+    /* A supplied id the read did not answer is NOT a free line — it is a
+       deleted/foreign/unknown row, and skipping it was an uncapped OUT. */
+    const missing = preGrnItemIds.find((id) => !remainingByGrnItem.has(id));
+    if (missing) { markIdempotencyNoWrite(c); return c.json({ error: 'grn_item_not_found', grnItemId: missing }, 409); }
   }
   for (const it of items) {
     const grnItemId = (it.grnItemId as string | undefined) ?? null;
-    if (!grnItemId || !remainingByGrnItem.has(grnItemId)) continue;
+    if (!grnItemId) continue;
     const requested = Number(it.qtyReturned ?? 0);
-    const remaining = remainingByGrnItem.get(grnItemId) as number;
+    const remaining = remainingByGrnItem.get(grnItemId) ?? 0;
     if (requested > remaining) {
+      markIdempotencyNoWrite(c);
       return c.json({ error: 'qty_exceeds_remaining', requested, remaining }, 409);
     }
   }
@@ -765,7 +807,7 @@ purchaseReturns.post('/', async (c) => {
     /* This is computed from the REQUEST, not from a read: itemRows is the
        caller's own items filtered to qty_returned > 0. "Every line is already
        fully returned" named a cause nothing here checked. */
-    return c.json({ error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' }, 400);
+    return refuse(400, { error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' });
   }
 
   /* PR-DRAFT-removal — PR is created POSTED, inventory OUT written inline. */
@@ -824,6 +866,50 @@ purchaseReturns.post('/', async (c) => {
     return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
   }
 
+  /* POST-INSERT over-return verification (2026-08-21, audit B4) — the pre-check
+     above is a read-then-write race: two concurrent creates against the same
+     GRN line each read the same remaining, both pass, both insert — 20 OUT
+     against 10 received, and adjustGrnReturnedQty's clamp then makes the excess
+     PERMANENTLY invisible. Same shape as the add-line path's verifier, run
+     BEFORE the movements so the rollback deletes rows that moved nothing.
+     Fail-closed: an unreadable re-check refuses (the insert is rolled back)
+     rather than letting the racy write stand unproven. */
+  {
+    const linkedIds = [...new Set(rowsWithId.map((r) => r.grn_item_id).filter((x): x is string => !!x))];
+    if (linkedIds.length > 0) {
+      const rollback = async () => {
+        await sb.from('purchase_return_items').delete().eq('purchase_return_id', h.id);
+        await sb.from('purchase_returns').delete().eq('id', h.id);
+        markIdempotencyNoWrite(c);
+      };
+      const { data: caps, error: capErr } = await sb.from('grn_items')
+        .select('id, qty_accepted').in('id', linkedIds);
+      const { data: sib, error: sibErr } = await sb.from('purchase_return_items')
+        .select('grn_item_id, qty_returned, pr:purchase_returns!inner ( status )').in('grn_item_id', linkedIds);
+      if (capErr || sibErr) {
+        await rollback();
+        return c.json({ error: 'over_return_recheck_failed', reason: (capErr ?? sibErr)?.message }, 500);
+      }
+      const capById = new Map(((caps ?? []) as Array<{ id: string; qty_accepted: number }>)
+        .map((r) => [r.id, Number(r.qty_accepted ?? 0)]));
+      const liveById = new Map<string, number>();
+      for (const r of (sib ?? []) as Array<{ grn_item_id: string; qty_returned: number; pr?: { status?: string } | Array<{ status?: string }> | null }>) {
+        const st = (Array.isArray(r.pr) ? r.pr[0] : r.pr)?.status ?? '';
+        if (st === 'CANCELLED') continue;
+        liveById.set(r.grn_item_id, (liveById.get(r.grn_item_id) ?? 0) + Number(r.qty_returned ?? 0));
+      }
+      const broken = linkedIds.find((id) => (liveById.get(id) ?? 0) > (capById.get(id) ?? 0));
+      if (broken) {
+        await rollback();
+        return c.json({
+          error: 'qty_exceeds_remaining',
+          grnItemId: broken,
+          message: 'Another return consumed this receipt line at the same moment — nothing was written; re-check the remaining quantity and submit again.',
+        }, 409);
+      }
+    }
+  }
+
   const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, grnId, user.id);
 
   /* Audit fix #3 — consume each GRN-linked line's returned_qty (0106). The
@@ -868,12 +954,13 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   const { data: grns, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
     .in('id', grnIds), c);
-  if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
+  if (grnErr) { markIdempotencyNoWrite(c); return c.json({ error: 'load_failed', reason: grnErr.message }, 500); }
   const grnList = (grns ?? []) as Array<{ id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null }>;
-  if (grnList.length === 0) return c.json({ error: 'grns_not_found' }, 404);
+  if (grnList.length === 0) { markIdempotencyNoWrite(c); return c.json({ error: 'grns_not_found' }, 404); }
 
   const notPosted = grnList.filter((g) => g.status !== 'POSTED');
   if (notPosted.length > 0) {
+    markIdempotencyNoWrite(c);
     return c.json({ error: 'not_all_posted', message: `These GRNs are not POSTED: ${notPosted.map((g) => g.grn_number).join(', ')}` }, 400);
   }
   const supplierIds = new Set(grnList.map((g) => g.supplier_id));
@@ -1031,10 +1118,10 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
     .eq('id', grnId), c).maybeSingle();
-  if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
-  if (!grn) return c.json({ error: 'grn_not_found' }, 404);
+  if (grnErr) { markIdempotencyNoWrite(c); return c.json({ error: 'load_failed', reason: grnErr.message }, 500); }
+  if (!grn) { markIdempotencyNoWrite(c); return c.json({ error: 'grn_not_found' }, 404); }
   const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null };
-  if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
+  if (g.status !== 'POSTED') { markIdempotencyNoWrite(c); return c.json({ error: 'grn_not_posted', status: g.status }, 409); }
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items } = await scopeToCompany(sb.from('grn_items')
@@ -1054,7 +1141,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   /* An empty read is evidence that THE QUERY FOUND NOTHING, never that the
      note is settled — the select is company-scoped and scopeToCompany fails
      closed (scm/lib/companyScope.ts). Refusing is right; the verdict was not. */
-  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this GRN. Open it and check its returned balance before treating it as returned in full.' }, 400);
+  if (lines.length === 0) { markIdempotencyNoWrite(c); return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this GRN. Open it and check its returned balance before treating it as returned in full.' }, 400); }
 
   /* Audit gap #7 — on-hand floor before the inventory OUT (soft-waivable via
      confirmShortStock, mirroring the DO ship side). */
@@ -1381,6 +1468,18 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   if (grnItemId) {
     const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
     if (!xl.ok) return c.json(xl.body, xl.status);
+    /* Same POSTED gate the create paths carry (2026-08-21, audit B5): a line
+       added against a CANCELLED receipt writes a second OUT for goods whose
+       reversing OUT already ran. Fail-closed on an unreadable parent. */
+    const { data: srcRow, error: srcErr } = await sb.from('grn_items')
+      .select('grn:grns!inner ( grn_number, status )').eq('id', grnItemId).maybeSingle();
+    if (srcErr) return c.json({ error: 'source_check_failed', reason: srcErr.message }, 500);
+    const srcParent = (Array.isArray((srcRow as { grn?: unknown } | null)?.grn)
+      ? ((srcRow as { grn: Array<{ grn_number?: string | null; status?: string | null }> }).grn[0])
+      : (srcRow as { grn?: { grn_number?: string | null; status?: string | null } | null } | null)?.grn) ?? null;
+    if ((srcParent?.status ?? null) !== 'POSTED') {
+      return c.json({ error: 'grn_not_posted', grnNumber: srcParent?.grn_number ?? null, status: srcParent?.status ?? null }, 409);
+    }
     const capLock = await qtyCapRefusal(sb, {
       table: 'grn_items', id: grnItemId,
       capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
