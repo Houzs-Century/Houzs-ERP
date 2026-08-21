@@ -1,6 +1,6 @@
 ## The frontend still swallowed the purchaser's N/A click after the backend allowed it [medium]
 
-<!-- area: PMS checklist status / approvals -->
+<!-- area: Projects + PMS + fair report -->
 
 **Symptom.** Owner 2026-08-21: "why sim still cannot click N/A for her part?" —
 four days after the backend N/A-gate fix (2026-08-17, the entry that let the
