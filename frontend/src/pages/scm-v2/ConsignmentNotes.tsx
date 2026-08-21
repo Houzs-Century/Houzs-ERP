@@ -99,7 +99,7 @@ const STATUS_CLASS: Record<string, string> = {
   CANCELLED:   soDetailStyles.statusCancelled ?? '',
 };
 const STATUS_LABEL: Record<string, string> = {
-  LOADED:     'Loaded',
+  LOADED:     'Confirmed',
   DISPATCHED: 'Shipped',
   IN_TRANSIT: 'In Transit',
   SIGNED:     'Signed',

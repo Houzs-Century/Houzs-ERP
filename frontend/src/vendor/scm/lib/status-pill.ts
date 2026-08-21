@@ -11,6 +11,30 @@
 // (see lib/so-status.ts soStatusDisplay / doEffectiveKey). Those callers must
 // resolve the effective raw status FIRST, then pass it here.
 
+/* ONE WORD FOR "THIS DOCUMENT IS NOW REAL" (owner ruling, 2026-08-21).
+ *
+ * His question: 「为什么会有这么多不一样的名词」. The step where a document stops
+ * being a draft and becomes committed is STORED under five different words —
+ * CONFIRMED (SO), SUBMITTED (PO), POSTED (GRN / PI / PR / stock transfer /
+ * stock take / PV), SENT (SI), LOADED (DO) — because each document type was
+ * written at a different time. This layer already translated three of them and
+ * stopped there, so the screen said "Confirmed" on a purchase order and
+ * "Posted" on a stock transfer for the identical act.
+ *
+ * He chose option A: change the WORD, never the stored value. Every one of
+ * those states now reads **Confirmed**. The database is untouched, so
+ * AutoCount, every report and every historical document are unaffected — which
+ * is the whole reason A was recommended over renaming the columns.
+ *
+ * WHAT DELIBERATELY KEEPS ITS OWN WORD, because it is a DIFFERENT event and not
+ * a second name for this one:
+ *   DO  DISPATCHED = "Shipped"  — the stock has left the building. LOADED is the
+ *       delivery order's confirm step (document real, nothing moved yet); the
+ *       first entry into DISPATCHED is what writes the inventory OUT.
+ *   SI  PAID / PARTIALLY_PAID   — money, not commitment.
+ *   PO  PARTIALLY_RECEIVED / RECEIVED — progress, not commitment.
+ *
+ * Adding a document type to this file? Its confirm step reads "Confirmed". */
 export type StatusTone = 'neutral' | 'info' | 'progress' | 'success' | 'danger' | 'pending';
 
 export const STATUS_TONES: Record<StatusTone, { bg: string; fg: string }> = {
@@ -72,7 +96,7 @@ const SO: Record<string, Entry> = {
 };
 const DO: Record<string, Entry> = {
   DRAFT:      { label: 'Draft',      tone: 'pending' },
-  LOADED:     { label: 'Loaded',     tone: 'info' },
+  LOADED:     { label: 'Confirmed',  tone: 'info' },
   DISPATCHED: { label: 'Shipped',    tone: 'progress' },
   IN_TRANSIT: { label: 'In Transit', tone: 'progress' },
   SIGNED:     { label: 'Signed',     tone: 'success' },
@@ -82,7 +106,7 @@ const DO: Record<string, Entry> = {
 };
 const SI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
-  SENT:           { label: 'Issued',         tone: 'info' },
+  SENT:           { label: 'Confirmed',      tone: 'info' },
   PARTIALLY_PAID: { label: 'Partially Paid', tone: 'progress' },
   PAID:           { label: 'Paid',           tone: 'success' },
   OVERDUE:        { label: 'Overdue',        tone: 'danger' },
@@ -99,12 +123,12 @@ const DR: Record<string, Entry> = {
   CANCELLED:    { label: 'Cancelled',    tone: 'danger' },
 };
 const STOCK_TRANSFER: Record<string, Entry> = {
-  POSTED:    { label: 'Posted',    tone: 'success' },
+  POSTED:    { label: 'Confirmed', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 const STOCK_TAKE: Record<string, Entry> = {
   OPEN:      { label: 'Open',      tone: 'neutral' },
-  POSTED:    { label: 'Posted',    tone: 'success' },
+  POSTED:    { label: 'Confirmed', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
@@ -144,7 +168,7 @@ const PO_AMENDMENT: Record<string, Entry> = {
 // happy path (posted to the GL); CANCELLED closes it (danger/red).
 const PV: Record<string, Entry> = {
   DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Posted',    tone: 'success' },
+  POSTED:    { label: 'Confirmed', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 

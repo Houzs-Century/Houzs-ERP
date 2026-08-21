@@ -778,7 +778,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Delivery Date</span>
+              <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField
                 fullWidth
                 className={styles.fieldInput}

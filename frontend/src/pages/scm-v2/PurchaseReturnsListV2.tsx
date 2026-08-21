@@ -95,7 +95,7 @@ const refundOf = (r: PrRow): number => r.refund_sen ?? 0;
 
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "warning", label: "Posted",    bucket: "posted" },
+  POSTED:    { tone: "warning", label: "Confirmed", bucket: "posted" },
   COMPLETED: { tone: "success", label: "Completed", bucket: "completed" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
@@ -724,7 +724,7 @@ export function PurchaseReturnsListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "completed", label: `Completed · ${counts.completed}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];

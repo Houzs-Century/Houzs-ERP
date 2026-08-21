@@ -121,7 +121,7 @@ const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 // receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
   CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
@@ -830,7 +830,7 @@ export function GoodsReceivedListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];
 

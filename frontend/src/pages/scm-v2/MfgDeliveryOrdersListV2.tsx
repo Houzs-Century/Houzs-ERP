@@ -191,7 +191,7 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   draft:       { tone: "warning", label: "Draft",       bucket: "open" },
-  loaded:      { tone: "warning", label: "Loaded",      bucket: "open" },
+  loaded:      { tone: "warning", label: "Confirmed",   bucket: "open" },
   // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
   // 4 tones (success/warning/error/neutral); the label carries the nuance.
   dispatched:  { tone: "warning", label: "Dispatched",  bucket: "in_transit" },
@@ -494,7 +494,7 @@ function DetailDrawer({
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
                 <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
-                <MetaItem k="Delivery date" v={fmtDate(row.customer_delivery_date)} />
+                <MetaItem k="Delivery Date" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem k="Expected at" v={fmtDate(row.expected_delivery_at)} />
                 <MetaItem k="Driver" v={row.driver_name || "—"} />
                 <MetaItem k="Vehicle" v={row.vehicle || "—"} />
@@ -1226,7 +1226,7 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "delivery_date",
-      label: "Delivery date",
+      label: "Delivery Date",
       width: "128px",
       getValue: (r) => r.customer_delivery_date ?? "",
       render: (r) => (

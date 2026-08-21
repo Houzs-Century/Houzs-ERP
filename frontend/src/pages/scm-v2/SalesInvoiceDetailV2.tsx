@@ -1421,7 +1421,7 @@ export function SalesInvoiceDetailV2() {
                   muted={!salesInvoice.due_date}
                 />
                 <Field
-                  label="Delivery date"
+                  label="Delivery Date"
                   value={
                     salesInvoice.customer_delivery_date
                       ? fmtDate(salesInvoice.customer_delivery_date)

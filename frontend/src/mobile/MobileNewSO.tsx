@@ -3086,7 +3086,7 @@ function LineCard({
               onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
-          <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
+          <Field label="Line Delivery Date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
             <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>
