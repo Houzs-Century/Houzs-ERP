@@ -1012,7 +1012,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingTitle: string | undefined;
   let pendingLogistic = false;
   let pendingApprove: string[] | undefined;
-  let pendingDirector: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean } | undefined;
+  let pendingDirector: { stock?: boolean; stock_titles?: string[]; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean } | undefined;
   /** Brands a brand-scoped approver owns (owner 2026-08-10). Empty = all. */
   let approverBrands: string[] | undefined;
   let pendingSalesAttending = false;
