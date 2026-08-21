@@ -183,6 +183,15 @@ number after the next change.
 - **Agent Console + System Health** — unified.
 - **Delivery Planning + Service Case dashboards** — unified (both companies see the
   same content).
+  - CLARIFIED (2026-08-21): "both companies see the same content" describes a
+    caller GRANTED both companies. It never meant "no predicate". The Delivery
+    Planning board's Service-Case rows were reading `public.assr_cases` with no
+    company term — raw `c.env.DB` SQL, which the supabase-js scoping helpers
+    cannot reach — so a caller granted ONE company saw the other's cases there
+    while `/api/assr` hid them. Owner ruling: 「这个也不可以啊」. The board's ASSR
+    read AND its schedule write now carry `assrCompanySql` (the caller's granted
+    companies), same as `/api/assr`. See `docs/modules/delivery-tms.md`,
+    *Service Cases on the board are company-scoped*.
 - **Staff roster** (scm.staff), **currencies**, so_settings,
   mrp_category_lead_times, my_localities.
   - NOTE `series` is **per-company** (`company_id NOT NULL`, mig 0083) — each

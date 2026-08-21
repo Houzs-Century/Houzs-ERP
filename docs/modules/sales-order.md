@@ -606,7 +606,7 @@ place that does:
 
 | Plan | When | What happens |
 |---|---|---|
-| `AMENDMENT` | a line changed, or any CONTROLLED header field did | direct half saved, then the amendment raised for approval |
+| `AMENDMENT` | a line changed (incl. its **discount**, mig 0317), or any CONTROLLED header field did | direct half saved, then the amendment raised for approval |
 | `DIRECT_ONLY` | only FREE fields (name / phone / email / note) or, on mobile, a staged payment | direct half saved; **no** amendment, and the operator is told so |
 | `NOTHING` | both halves empty | the only case that is an error |
 
@@ -628,6 +628,34 @@ into **NULL** — not "leave it alone". Mobile omitted `address1`/`address2` whi
 still emitting them, so its direct PATCH carried `address1: null` and the server
 409'd `so_locked_processing` on every amendment for any SO with an address.
 `AmendableHeaderValues` is a `Partial`, so this does not fail to compile.
+
+#### What an amendment LINE can carry — and the rule for extending it
+
+`scm.so_amendment_lines` carries `new_item_code`, `new_variants`, `new_qty`,
+`new_unit_price_sen`, `new_remark` (mig 0281) and `new_discount_sen` (mig
+0317). The dirtiness test (`amendmentLineSig`, now in
+`vendor/scm/lib/so-amendment-line-diff.ts`) is built from EXACTLY that list.
+The rule, learned three times (remark 2026-08-11, discount 2026-08-21 — twice
+in one day): **a field joins the signature only together with its payload
+field, its column, its `applySoAmendment` write — and EVERY reader**: the
+`GET /so-amendments/:id` select, the PDF map, and the three view-changes
+renders. `git show --stat` the PR that added the previous field and touch every
+file it touched (#1992 is the complete map). A signature entry without the channel records
+phantom SPEC rows; a channel without the signature entry drops the edit in
+silence — and since the DIRECT_ONLY branch exists, "in silence" can read as
+*"Saved without an amendment"*, which is worse than an error.
+
+The discount matters because of the **delivery fee**: the fee's unit price is
+derived and rebuilt by `rederiveDeliveryFee` on every edit and every amendment
+apply, so the line **discount is the only reduction that survives** — typing
+125 over a derived RM 250 books `discount_sen = 12500`. On an unlocked SO that
+saves directly; on a locked SO it now rides the amendment (clamped to
+`[0, qty * unit]` at apply, rendered on the approver's card). The LANE is
+decided by item code (`shared/amendment-lane.ts`): the fee is a service line,
+so its amendment waits on **Logistics**; a product-line discount waits on
+Purchasing.
+Fields still without a channel: `lineDeliveryDate`, `description`, `uom`,
+`itemGroup`, cost fields — an edit to those on a locked SO still goes nowhere.
 
 The amendment-mode banner and the two-lane "submitted" notice also live in that
 module. They were duplicated per surface and had drifted in both wording and

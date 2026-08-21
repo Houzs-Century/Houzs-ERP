@@ -103,3 +103,56 @@ describe('soAmendmentToPdfInput', () => {
     expect(out.routing?.isMixed).toBe(false);
   });
 });
+
+/* mig 0317 — the delivery-fee reduction. The discount is the request (the unit
+   stays derived), so the printed document must carry it as its own row: a page
+   showing only "Qty 1 · RM 250.00" on both sides reads as no change at all. */
+describe('soAmendmentToPdfInput — the discount row (mig 0317)', () => {
+  const base = {
+    amendment: { amendment_no: '2990-SO-2608-020/A2', status: 'REQUESTED', reason: null, created_at: '2026-08-21', requested_by_name: 'YH' },
+    salesOrder: { doc_no: '2990-SO-2608-020', revision: 1 },
+    customerName: 'Hee Wai loon',
+  };
+
+  it('a discount-only fee edit prints as a Discount before/after row', () => {
+    const out = soAmendmentToPdfInput({
+      ...base,
+      lines: [{
+        change_type: 'SPEC', new_item_code: 'SVC-DELIVERY', new_qty: 1,
+        new_unit_price_sen: 25000, new_discount_sen: 12500,
+        old_snapshot: { item_code: 'SVC-DELIVERY', qty: 1, unit_price_sen: 25000, discountSen: 0 },
+      }],
+    });
+    const disc = out.changes.find((r) => r.field === 'Discount')!;
+    expect(disc).toBeTruthy();
+    expect(disc.before).toBe('RM 0.00');
+    expect(disc.after).toBe('RM 125.00');
+    expect(disc.kind).toBe('CHANGE');
+  });
+
+  it('an untouched discount prints no Discount row', () => {
+    const out = soAmendmentToPdfInput({
+      ...base,
+      lines: [{
+        change_type: 'QTY', new_item_code: 'SVC-DELIVERY', new_qty: 2,
+        new_unit_price_sen: 25000,
+        old_snapshot: { item_code: 'SVC-DELIVERY', qty: 1, unit_price_sen: 25000, discountSen: 1500 },
+      }],
+    });
+    expect(out.changes.map((r) => r.field)).not.toContain('Discount');
+  });
+
+  it('a zeroed discount prints as a clear, not as a blank cell', () => {
+    const out = soAmendmentToPdfInput({
+      ...base,
+      lines: [{
+        change_type: 'SPEC', new_item_code: 'SVC-DELIVERY', new_qty: 1,
+        new_unit_price_sen: 25000, new_discount_sen: 0,
+        old_snapshot: { item_code: 'SVC-DELIVERY', qty: 1, unit_price_sen: 25000, discountSen: 1500 },
+      }],
+    });
+    const disc = out.changes.find((r) => r.field === 'Discount')!;
+    expect(disc.before).toBe('RM 15.00');
+    expect(disc.after).toBe('RM 0.00');
+  });
+});

@@ -103,8 +103,7 @@ import {
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines,
-} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -476,44 +475,6 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
   remark:         d.remark,
   lineDeliveryDate:           d.lineDeliveryDate ?? null,
   lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
-});
-
-/* Serialised signature of exactly the fields an AMENDMENT LINE can carry — the
-   five the CreateAmendmentLine payload has room for, and no more.
-
-   Owner 2026-07-16 ("完全看不出有什麼變動申請？"): buildAmendmentLines used to test
-   dirtiness with lineCommitSig, which covers the 13 fields a line PATCH
-   persists. Nine of those (lineDeliveryDate, remark, description, uom,
-   itemGroup, discount, cost, …) have NO channel on an amendment, so a line
-   dirty only in one of them was recorded as a SPEC change whose new_* equalled
-   its own old_snapshot exactly — a card the approver reads as identical on both
-   sides. The mass-producer was the header Delivery Date cascade
-   (cascadeDeliveryDateToLines), which rewrites lineDeliveryDate on EVERY
-   non-overridden line the moment the header date input changes: a header-only
-   edit therefore recorded a phantom SPEC row for every line on the order. That
-   exact cascade-dirt was already carved out of saveEdit (2990 PR #718); the
-   amendment builder never got the same treatment.
-
-   Both sides are draftFromItem output for an untouched line — including the
-   canonicalizeVariants pass — so normalisation never false-positives. Comparing
-   the draft against the raw item instead WOULD: draftFromItem canonicalises
-   POS sofa aliases while the item's stored blob is raw.
-
-   REMARK joined the list on 2026-08-11 (mig 0280). It is one of the nine fields
-   named above as having "no channel" — and that was the whole defect, not a
-   design: an operator amended a locked SO purely to type "Please take back Cody
-   Bedframe (King Size) 2 units" onto a SVC-ADDON line, and BOTH halves of this
-   comment worked against them. The payload had no room for the text, and this
-   signature scored the line as unmoved, so a remark-only edit produced no
-   amendment at all — Save reported success and nothing was requested. The
-   column now exists, so the field belongs in the signature that decides whether
-   there is something to request. The other eight still have no channel. */
-const amendmentLineSig = (d: SoLineDraft): string => JSON.stringify({
-  itemCode:       d.itemCode,
-  qty:            d.qty,
-  unitPriceSen: d.unitPriceSen,
-  variants:       d.variants ?? null,
-  remark:         d.remark ?? '',
 });
 
 export const SalesOrderDetail = () => {
@@ -1083,6 +1044,12 @@ export const SalesOrderDetail = () => {
            the apply from rewriting a remark this session never touched. */
         ...(((draft.remark ?? '') !== (orig.remark ?? ''))
           ? { newRemark: draft.remark ?? '' }
+          : {}),
+        /* mig 0317 — the discount rides only when it moved (the fee cell's one
+           lever on a locked SO). Sent-when-unchanged would let an approval
+           overwrite a discount booked on the line since the request. */
+        ...((Math.round(draft.discountSen) !== Math.round(orig.discountSen))
+          ? { newDiscountSen: Math.max(0, Math.round(draft.discountSen)) }
           : {}),
         // Old snapshot for the before/after diff — the pre-edit line values.
         oldSnapshot: {
@@ -4154,6 +4121,9 @@ const AmendmentDiffModal = ({
                             {chg.remark && (old.remark ?? '').trim() ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...strikeIf(true) }}>“{old.remark}”</div>
                             ) : null}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={strikeIf(true)}>Discount {fmtRm(old.discountSen ?? 0, currency)}</div>
+                            ) : null}
                           </div>
                         )}
                       </td>
@@ -4176,6 +4146,12 @@ const AmendmentDiffModal = ({
                             {chg.remark ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...emphasiseIf(true) }}>
                                 {(l.new_remark ?? '').trim() ? `“${l.new_remark}”` : 'Remark cleared'}
+                              </div>
+                            ) : null}
+                            {/* mig 0317 — the requested discount: on a fee line it is the request. */}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={emphasiseIf(true)}>
+                                {Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount ${fmtRm(l.new_discount_sen ?? 0, currency)}` : 'Discount cleared'}
                               </div>
                             ) : null}
                           </div>
