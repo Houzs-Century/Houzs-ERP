@@ -21,20 +21,22 @@ thought about and routed away ("DELIVERED is the POD screen's job, so it is neve
 offered here"); SIGNED was left on the ladder, and the reasoning that removed
 DELIVERED applies to it just as well.
 
-**Fix.** NOT DONE. Recorded so the gap is visible rather than accidental. It is
-an explicit allowlist entry in
-`frontend/src/vendor/scm/lib/do-status-evidence.test.tsx`, carrying this
-reasoning, so a sixth raw writer still fails that test while this known one does
-not masquerade as clean.
+**Fix. RESOLVED 2026-08-21** by the first candidate remedy below — the owner
+decided to remove "Mark signed" system-wide (Option A), so the answer to the
+"owner question" flagged here is settled. The `IN_TRANSIT → SIGNED` "Mark Signed"
+rung is dropped from `MobileModuleDetail`'s DO ladder (it now stops at
+DISPATCHED → "Mark In Transit"), the desktop/list "Mark signed" advance is
+removed from `do-next-step.ts` (`doAdvanceStep` offers only DRAFT → Confirm), and
+`doCloseWithoutEvidenceWarning` is deleted. SIGNED / DELIVERED are now written
+ONLY by the driver's Proof-of-Delivery screen, which signs the delivery — so the
+no-evidence close is gone. `do-status-evidence.test.tsx`'s allowlist comment is
+updated to record the closure.
 
-Two candidate remedies, neither chosen here:
+The candidate remedies were:
   - drop the `IN_TRANSIT → SIGNED` rung from the mobile shell entirely, the way
-    DELIVERED already was, leaving the POD screen as the only close; or
+    DELIVERED already was, leaving the POD screen as the only close **← chosen**; or
   - give the action table an optional per-row hook override so DO status rows
     route through `useUpdateMfgDeliveryOrderStatus` like every other surface.
 
-The first is smaller and matches the decision already recorded in that file. It
-removes an action drivers may be using, so it is an owner question, not a
-unilateral fix.
-
-**Ref.** fix/pod-evidence-and-service-actions, 2026-08-21.
+**Ref.** feat/txn-workflow-unify, 2026-08-21 (owner-chosen removal). Original
+record under fix/pod-evidence-and-service-actions, 2026-08-21.

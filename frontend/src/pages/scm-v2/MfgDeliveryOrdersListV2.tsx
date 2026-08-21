@@ -50,7 +50,6 @@ import { NextStepNote } from "../../components/NextStepNote";
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
-  doCloseWithoutEvidenceWarning,
   siTransferBlockReason,
 } from "../../vendor/scm/lib/do-next-step";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -625,16 +624,13 @@ function DetailDrawer({
                   The third verb, "Reopen", is gone entirely: the server refuses
                   every transition out of CANCELLED (`do_cancelled_final`), so it
                   could not once have worked. Full account: do-next-step.ts. */}
-              {canWrite && (
+              {canWrite && advanceStep && (
                 <Button
                   variant="secondary"
                   icon={<CheckCircle2 size={14} />}
                   onClick={onAdvance}
-                  disabled={!advanceStep}
-                  title={advanceReason ?? undefined}
-                  aria-describedby={advanceReason ? "do-drawer-advance-reason" : undefined}
                 >
-                  {advanceStep?.label ?? "Mark signed"}
+                  {advanceStep.label}
                 </Button>
               )}
               {canWrite && (
@@ -980,9 +976,9 @@ export function MfgDeliveryOrdersListV2() {
   const doAdvance = (r: DoRow) => {
     const step = doAdvanceStep(r.status);
     if (!step) return;
-    /* Named, not refused — the reasoning lives with the sentence. */
-    const w = doCloseWithoutEvidenceWarning(step, r);
-    if (w && !window.confirm(`${w}\n\nMark ${r.do_number} delivered anyway?`)) return;
+    /* Only DRAFT → Confirm remains (owner 2026-08-21 removed "Mark signed"), so
+       there is no delivery-close to warn about here — the driver's Proof-of-
+       Delivery screen is what closes a delivery with its signature. */
     updateStatus.mutate(
       { id: r.id, status: step.status },
       { onSuccess: () => setSelected(null) }
