@@ -141,6 +141,33 @@ downstream lock (§0.7). `DRAFT → CONFIRMED` additionally runs the confirm gat
 (salesperson + venue + every line a real catalog SKU with its required variant
 axes) and returns an aggregated `422 validation_failed`.
 
+### 0.1a What the LIST offers on each status (2026-08-21)
+
+The Sales Order list's row-drawer CTA is a switch on the STORED status, and its
+last branch returns nothing — so a status it does not name gets no primary
+button at all.
+
+| stored status | primary button |
+|---|---|
+| `DRAFT` | **Confirm** |
+| every deliverable status — `CONFIRMED`, `IN_PRODUCTION`, `READY_TO_SHIP`, `SHIPPED`, `DELIVERED`, `INVOICED`, `CLOSED` | **Transfer to Delivery Order**, when the caller may operate a DO (absent, never disabled, when they may not) |
+| `CANCELLED` | **Reopen** |
+| `ON_HOLD` | none |
+
+**The deliverable arm reads `soCanRaiseDo(row.status)`** from the vendored
+`shared/so-deliverable-states.ts` — the same predicate the delivery-order route
+enforces with. It was `s === "confirmed"` until 2026-08-21, an allow-list of one
+against the server's deny-list of three, so the button went ABSENT the moment
+`recomputeSoStockAllocation` promoted an order to `READY_TO_SHIP` — which it
+does by itself when the goods land. Owner-reported as a difference between the
+two companies; the predicate carries no company term and never did.
+`docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
+
+**The desktop DETAIL page offers no transfer at all** — `SalesOrderDetailV2.tsx`
+has no `transferToLabel('do')` call. The other desktop routes to a delivery
+order are the Delivery Planning board's context menu and
+`/scm/delivery-orders/from-so`.
+
 ### 0.2 What the automatic advance/regress actually keys on
 
 `recomputeSoStockAllocation` (`scm/lib/so-stock-allocation.ts`) is the only

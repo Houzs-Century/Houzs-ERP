@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { soCanRaiseDo } from '../shared/so-deliverable-states';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
@@ -2664,14 +2665,12 @@ async function soRemainingByItemId(
    i.e. CONFIRMED or beyond. A DRAFT (never-confirmed), CANCELLED, or ON_HOLD SO
    is NOT committed, so shipping goods against it (writing an OUT stock movement)
    is wrong. Mirrors the purchasing-side rule that a GRN's parent PO must be
-   SUBMITTED / PARTIALLY_RECEIVED (grns.ts /outstanding-po-items). New SOs are
-   CONFIRMED on insert (only asDraft lands DRAFT), so the normal deliver flow is
-   unaffected — this only blocks a draft / on-hold / cancelled source. The block
-   set is a DENY-list (not an allow-list) so any legitimate forward status
-   (CONFIRMED, IN_PRODUCTION, DELIVERED, …) stays deliverable.
-   OWNER FLAG: ON_HOLD is treated as NOT deliverable — an order paused mid-flight
-   should not ship until it is taken off hold. */
-const SO_UNDELIVERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']);
+   SUBMITTED / PARTIALLY_RECEIVED (grns.ts /outstanding-po-items).
+
+   THE SET MOVED to shared/so-deliverable-states.ts on 2026-08-21. It was ALSO
+   hand-written, as an allow-list of ONE value, in the Sales Order list's CTA —
+   so the button vanished on READY_TO_SHIP, which the allocator writes by itself
+   when the goods land. Behaviour here is unchanged; that header has the trace. */
 async function firstUndeliverableSo(
   sb: any,
   soDocNos: Array<string | null | undefined>,
@@ -2683,7 +2682,7 @@ async function firstUndeliverableSo(
     const st = (r.status ?? '').toUpperCase();
     // A row with no readable status is left to fall through (never over-block);
     // an unknown doc_no simply isn't returned here (FK rejects it downstream).
-    if (SO_UNDELIVERABLE_STATUSES.has(st)) return { docNo: r.doc_no, status: st };
+    if (!soCanRaiseDo(st)) return { docNo: r.doc_no, status: st };
   }
   return null;
 }

@@ -414,6 +414,27 @@ Refusals the operator sees, in the order they fire:
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
 
+> **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
+> The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD}` in
+> `backend/src/scm/shared/so-deliverable-states.ts`, with `soCanRaiseDo(status)`
+> as the predicate; this router imports it instead of declaring its own `Set`,
+> and the frontend runs a byte-identical vendored twin
+> (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
+> `so-deliverable-states.canonical.test.ts`).
+>
+> **It is a DENY-list and it must stay one.** Every forward status — CONFIRMED,
+> IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED, INVOICED — is deliverable,
+> because this business ships one order in several batches. The Sales Order
+> list's row-drawer CTA had written the same rule as an ALLOW-list of one value
+> (`s === "confirmed"`), so the Transfer button was absent on READY_TO_SHIP —
+> a status `recomputeSoStockAllocation` writes BY ITSELF when the goods land.
+> `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
+>
+> A blank or unreadable status returns `true` on purpose, on both sides: the
+> server is the gate, the predicate only decides whether to OFFER, and offering
+> something the server then refuses in plain language beats hiding something it
+> would have accepted.
+
 > **"Has this delivery counted?" is ONE predicate now (2026-08-20).**
 > `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES` live in
 > `backend/src/scm/shared/do-shipped-states.ts`, with a PostgREST literal

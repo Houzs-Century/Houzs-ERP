@@ -137,8 +137,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/mfg-purchase-orders.ts backend/src/scm/shared/hr-commission.ts",
-      "why": "THE SO THRESHOLD — DRAFT/CANCELLED/ON_HOLD. Two of the three are the same question (SO_UNORDERABLE_STATUSES refuses a PO, SO_UNDELIVERABLE_STATUSES refuses a DO) and are PINNED equal by backend/tests/duplicatedDecisionPins.test.ts. The third, COMMISSION_EXCLUDED_STATUSES, is a DIFFERENT question — which orders earn commission — and its own header explains why DRAFT is on it. Same members, two questions: exactly the judgement this field exists to record."
+      "key": "CANCELLED,DRAFT,ON_HOLD|backend/src/scm/routes/mfg-purchase-orders.ts backend/src/scm/shared/hr-commission.ts backend/src/scm/shared/so-deliverable-states.ts frontend/src/vendor/shared/so-deliverable-states.ts",
+      "why": "THE SO THRESHOLD — DRAFT/CANCELLED/ON_HOLD: two questions, three homes plus one vendored twin. The DELIVERY arm moved out of routes/delivery-orders-mfg.ts into shared/so-deliverable-states.ts on 2026-08-21 and is vendored to the frontend, because it was ALSO hand-written there as an allow-list of ONE value ('confirmed') — so the Transfer button vanished on READY_TO_SHIP, a status the stock allocator writes by itself the moment the goods land. That pair is a VENDORED TWIN refereed byte-for-byte by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts, not a second decision. SO_UNORDERABLE_STATUSES (refuses a PO) asks the same question as soCanRaiseDo (refuses a DO) and the two stay PINNED equal by backend/tests/duplicatedDecisionPins.test.ts. COMMISSION_EXCLUDED_STATUSES is a DIFFERENT question — which orders earn commission — and its own header says why DRAFT is on it. Same members, two questions: exactly the judgement this field records. See docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md"
     },
     {
       "check": "D1",
@@ -309,11 +309,6 @@
       "check": "D1",
       "key": "AIR_COMPRESSOR,ALTERNATOR,BATTERY,BRAKE_PADS,GEARBOX,OTHER,STARTER,TYRE|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: COMPONENT_TYPES, COMPONENT_TYPE_LABELS. Cost of divergence is a blank chip, not a wrong number."
-    },
-    {
-      "check": "D1",
-      "key": "ALL,ATTENTION,FAILED,PENDING,REQUEUED,SENT,SKIPPED|backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STATES, AC_FILTER_STATES. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",

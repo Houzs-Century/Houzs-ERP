@@ -61,6 +61,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -708,12 +709,11 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (s === "confirmed") {
+                if (soCanRaiseDo(row.status)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
-                  /* Was "Deliver" until 2026-08-17: the SO already reports a
-                     "Delivered" STATUS, so an action of the same name blurred
-                     the two. Statuses report; buttons act. */
+                  /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
+                     "Delivered" STATUS, and statuses report while buttons act. */
                   return (
                     <Button
                       variant="primary"

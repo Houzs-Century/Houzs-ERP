@@ -51,7 +51,7 @@
 import { describe, expect, test } from "vitest";
 
 import poRouterSrc from "../src/scm/routes/mfg-purchase-orders.ts?raw";
-import doRouterSrc from "../src/scm/routes/delivery-orders-mfg.ts?raw";
+import soDeliverableSrc from "../src/scm/shared/so-deliverable-states.ts?raw";
 import grnRouterSrc from "../src/scm/routes/grns.ts?raw";
 import inventoryRouterSrc from "../src/scm/routes/inventory.ts?raw";
 import procurementLearningSrc from "../src/services/agents/procurement-learning.ts?raw";
@@ -161,7 +161,12 @@ describe("SO 'done' has three live answers and the count must not change", () =>
 // ─────────────────────────────────────────────────────────────────────────────
 describe("the SO threshold: a PO and a DO refuse the same orders", () => {
   const unorderable = oneSet(poRouterSrc, "SO_UNORDERABLE_STATUSES", "mfg-purchase-orders.ts");
-  const undeliverable = oneSet(doRouterSrc, "SO_UNDELIVERABLE_STATUSES", "delivery-orders-mfg.ts");
+  /* MOVED 2026-08-21 out of delivery-orders-mfg.ts into shared/so-deliverable-states.ts,
+     because the same rule was ALSO hand-written in the SO list as an allow-list of one
+     value and the Transfer button vanished on READY_TO_SHIP. This pin follows the set to
+     its new home rather than being deleted with the old one — the PO and DO thresholds
+     still have to agree, and now one of them has a single home to agree FROM. */
+  const undeliverable = oneSet(soDeliverableSrc, "SO_UNDELIVERABLE_STATUSES", "shared/so-deliverable-states.ts");
 
   test("both are exactly DRAFT, CANCELLED, ON_HOLD", () => {
     expect(unorderable).toEqual(["CANCELLED", "DRAFT", "ON_HOLD"]);
