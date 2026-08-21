@@ -149,9 +149,11 @@ export async function verifySessionToken(
   }
   if (!valid) return { ok: false, reason: 'bad-signature' };
 
-  let claims: SessionClaims;
+  // JSON.parse can yield null (a signed "null" payload), so the type says so
+  // and the `?.` below is a real guard, not decoration.
+  let claims: SessionClaims | null;
   try {
-    claims = JSON.parse(dec.decode(payloadBytes)) as SessionClaims;
+    claims = JSON.parse(dec.decode(payloadBytes)) as SessionClaims | null;
   } catch {
     return { ok: false, reason: 'malformed' };
   }
