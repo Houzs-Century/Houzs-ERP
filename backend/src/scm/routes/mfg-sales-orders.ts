@@ -101,6 +101,7 @@ import { buildOneShotMints, type OneShotMintReq } from '../lib/one-shot-mint';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
@@ -2740,57 +2741,37 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       if (row.branding) (salesOrder as Record<string, unknown>).first_item_branding = row.branding;
     }
   }
-  /* Brand letterhead resolution (owner 2026-07) — stamp the R2 key of the
-     brand logo the SO PDF should print IN PLACE OF the company logo (the
-     company letterhead stays the fallback when this is null). Brands +
-     their logos live in public.project_brands (Project Maintenance →
-     Brands; logo_r2_key, migration-pg 0069), read via c.env.DB — same
-     public-schema hop as the venue lookup above. Rules:
-       1. Any line whose item_group contains SOFA → the brand named
-          "ZANOTTI" (case-insensitive), but only if it has a logo.
-       2. Else match the FIRST item's description prefix against the
-          active brand names (longest name wins) → that brand's logo key.
-       3. Else null.
+  /* Brand letterhead resolution (owner 2026-07; company-scoped 2026-08-21) —
+     stamp the R2 key of the brand logo the SO PDF should print IN PLACE OF the
+     company logo (the company letterhead stays the fallback when this is
+     null). Brands + their logos live in public.project_brands (Project
+     Maintenance → Brands; logo_r2_key, migration-pg 0069), read via c.env.DB —
+     same public-schema hop as the venue lookup above.
+
+     COMPANY-SCOPED, and that is the whole point of the 2026-08-21 change: this
+     read had NO company predicate and the sofa rule hardcoded the name
+     'ZANOTTI', so a "2990 HOME SDN. BHD." Sales Order printed HOUZS's mark
+     (doc 2990-SO-2607-026; 69 orders in that state). `activeCompanySql`
+     degrades to no predicate only on a genuinely unresolved / single-company
+     context, and the rule itself refuses to attribute a house brand it cannot
+     identify — see lib/brand-letterhead.ts, which carries the rule and its
+     tests, and shared/so-branding-label.ts, which is where the owner's
+     equations live for BOTH this and the grid label.
+
      Best-effort: any failure stamps null and the PDF keeps the company
      letterhead — a PDF must never fail because of a logo. */
   {
     let brandLogoKey: string | null = null;
     try {
       const brandRows = await c.env.DB.prepare(
-        `SELECT name, logo_r2_key FROM project_brands WHERE active = 1`
+        `SELECT name, logo_r2_key FROM project_brands WHERE active = 1${activeCompanySql(c)}`
       ).all<{ name: string; logo_r2_key: string | null }>();
-      /* Dual-read logoR2Key ?? logo_r2_key — the pg driver camelCases
-         result columns (#1 recurring bug). */
-      const brands = ((brandRows.results ?? []) as Array<Record<string, unknown>>)
-        .map((r) => ({
-          name: String(r.name ?? '').trim(),
-          logoKey: (() => {
-            const v = (r.logoR2Key ?? r.logo_r2_key) as string | null | undefined;
-            const s = typeof v === 'string' ? v.trim() : '';
-            return s || null;
-          })(),
-        }))
-        .filter((b) => b.name);
-      const hasSofa = itemRows.some((it) =>
-        String((it as { item_group?: string | null }).item_group ?? '').toUpperCase().includes('SOFA'),
-      );
-      if (hasSofa) {
-        const zanotti = brands.find((b) => b.name.toUpperCase() === 'ZANOTTI' && b.logoKey);
-        if (zanotti) brandLogoKey = zanotti.logoKey;
-      }
-      if (!brandLogoKey) {
-        const firstDesc = String(
-          ((itemRows[0] ?? {}) as { description?: string | null }).description ?? '',
-        ).trim().toUpperCase();
-        if (firstDesc) {
-          let best: { name: string; logoKey: string | null } | null = null;
-          for (const b of brands) {
-            if (!firstDesc.startsWith(b.name.toUpperCase())) continue;
-            if (!best || b.name.length > best.name.length) best = b;
-          }
-          brandLogoKey = best?.logoKey ?? null;
-        }
-      }
+      brandLogoKey = resolveBrandLetterheadKey({
+        brands: (brandRows.results ?? []) as Array<Record<string, unknown>>,
+        itemGroups: itemRows.map((it) => (it as { item_group?: string | null }).item_group ?? null),
+        firstDescription: ((itemRows[0] ?? {}) as { description?: string | null }).description ?? null,
+        companyCode: c.get('companyCode') ?? null,
+      });
     } catch { brandLogoKey = null; }
     (salesOrder as Record<string, unknown>).resolvedBrandLogoKey = brandLogoKey;
   }
