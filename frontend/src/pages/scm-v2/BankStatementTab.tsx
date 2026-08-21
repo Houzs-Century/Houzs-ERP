@@ -73,7 +73,11 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
             /* Say what was JOINED and what was LEFT OUT. Both are places a
                reader could otherwise think the file was misread. */
             + (r.joinedPairs > 0 ? ` · ${r.joinedPairs} credit(s) had their charge taken back separately and were joined` : '')
-            + (r.skippedLines > 0 ? ` · ${r.skippedLines} row(s) carried no transaction` : ''),
+            + (r.skippedLines > 0 ? ` · ${r.skippedLines} row(s) carried no transaction` : '')
+            /* A re-upload settling half its own lines is a surprise even when
+               every one of them is right, so it is said here and not only
+               findable inside the statement. */
+            + (r.alreadyRecorded > 0 ? ` · ${r.alreadyRecorded} were already recorded and have been left out` : ''),
         });
         onOpen(r.statementId);
       },

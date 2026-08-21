@@ -522,11 +522,22 @@ describe('uploading an overlapping period again', () => {
     expect(again.ok).toBe(true);
     expect(again.kinds.DUPLICATE).toBe(1);
 
+    /* And it arrives SETTLED — the owner: 当我重新上传他应该是 ignore 已经 recon
+       了的 transaction. Nothing is left to press on a movement whose entry
+       already exists. */
+    expect(again.alreadyRecorded).toBe(1);
+
     const d2 = await (await app.request(`/bank/statements/${again.statementId}`)).json() as any;
     const dup = d2.lines.find((l: any) => l.kind === 'DUPLICATE');
     expect(dup.reference).toBe('00113107');
+    expect(dup.state).toBe('IGNORED');
     expect(dup.note).toMatch(/already recorded/);
-    expect(dup.note).toMatch(/Leave it out unless the bank really paid twice/);
+
+    /* So it is not in the work, and not in the difference either. */
+    expect(d2.lines.filter((l: any) => l.state === 'OPEN').some((l: any) => l.reference === '00113107')).toBe(false);
+    const list = await (await app.request('/bank/statements')).json() as any;
+    const listed = list.statements.find((x: any) => x.id === again.statementId);
+    expect(listed.open_count).toBe(d2.lines.length - 1);
   });
 
   test('the exact same file is refused outright, so nothing is re-checked', async () => {

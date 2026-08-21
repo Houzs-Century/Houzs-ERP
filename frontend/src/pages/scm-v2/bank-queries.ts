@@ -156,6 +156,9 @@ export const useUploadBankStatement = () => {
     mutationFn: (body: { accountCode: string; fileName: string; content: string; statementMonth?: string | null }) =>
       authedFetch<{
         ok: boolean; statementId: number; lines: number; joinedPairs: number; skippedLines: number;
+        /** Movements this account had already recorded from an earlier upload —
+            settled on arrival, nothing left to press. */
+        alreadyRecorded: number;
         periodFrom: string; periodTo: string; inSen: number; outSen: number;
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;

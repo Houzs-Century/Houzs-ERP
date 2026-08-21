@@ -171,7 +171,13 @@ describe("request correlation transport inventory", () => {
 
     expect(calls).toEqual(EXPECTED_RAW_FETCH_CALLS);
     expect(result.flatMap((entry) => entry.unsafeReferences)).toEqual([]);
-  }, 15_000); // Deliberately parses the entire source tree; keep the larger budget local to this gate.
+    /* 45s, raised from 15s on 2026-08-20. This gate walks EVERY .ts/.tsx under
+       src/ and the tree keeps growing, so the budget is a function of repo size
+       and not of anything the test is asserting — measured at 16.8s on an idle
+       machine, which made the suite fail about half the time. Nothing about the
+       inventory itself was relaxed: the two expectations below are still exact
+       equality, so a new raw fetch anywhere still fails this. */
+  }, 45_000);
 
   test("the two non-API exemptions remain compile-time-constrained static assets", () => {
     const versionSource = readFileSync(resolve(process.cwd(), "src/hooks/useVersionCheck.ts"), "utf8");

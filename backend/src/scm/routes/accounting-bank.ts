@@ -210,8 +210,21 @@ export const bankUpload = guard(async (c) => {
       kind: d.kind,
       /* Stated, not left to the column default. Every read in this module asks
          what state a line is in, and a row whose state depends on a default
-         declared in another file is a row that can come back without one. */
-      state: 'OPEN',
+         declared in another file is a row that can come back without one.
+
+         A DUPLICATE arrives already settled — the owner: 当我重新上传他应该是
+         ignore 已经 recon 了的 transaction. Nothing is left for him to press on
+         a movement whose entry already exists; it goes straight under "already
+         dealt with", carrying the sentence that says which entry that was.
+
+         Safe because the match is reference AND day AND amount against a line
+         already POSTED — and if a bank ever genuinely paid the same amount
+         twice on the same reference and day, the reconciliation catches it: an
+         IGNORED line leaves the statement's movements, so opening + movements
+         would no longer reach the closing balance the FILE prints, and the
+         consistency check refuses to publish a difference it cannot account
+         for. */
+      state: already ? 'IGNORED' : 'OPEN',
       acquirer_code: d.acquirerCode,
       trading_date: d.tradingDate,
       merchant_no: d.merchantNo,
@@ -242,6 +255,10 @@ export const bankUpload = guard(async (c) => {
     lines: movements.length,
     joinedPairs: parsed.lines.length - movements.length,
     skippedLines: parsed.skippedLines,
+    /* Said on the upload itself, not only findable inside the statement: a
+       re-upload that quietly settles half its own lines is a surprise, even
+       when every one of them is right. */
+    alreadyRecorded: counts.DUPLICATE ?? 0,
     periodFrom: parsed.periodFrom,
     periodTo: parsed.periodTo,
     inSen: parsed.inSen,
