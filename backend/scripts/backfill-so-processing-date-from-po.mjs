@@ -80,7 +80,18 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   process.exit(1);
 }
 
-const ymd = (d) => (d == null ? null : String(d).slice(0, 10));
+/* postgres.js hands back a JS Date for a `date` column, and String(aDate) is
+   "Thu Jun 11 2026 ..." — sliced to ten characters that is "Thu Jun 11", which
+   matches no date pattern. The first dry run died on exactly that ("Invalid
+   time value") before writing anything, which is what a dry run is for. Take
+   the calendar day off the Date itself, in UTC: a `date` column carries no
+   timezone and a local-time read can slide it by a day. */
+const ymd = (d) => {
+  if (d == null) return null;
+  if (d instanceof Date) return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  const t = String(d).trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+};
 const minusOneDay = (d) => {
   const t = new Date(`${ymd(d)}T00:00:00Z`);
   t.setUTCDate(t.getUTCDate() - 1);
