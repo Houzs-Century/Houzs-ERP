@@ -15,6 +15,7 @@ fails when one appears in CODE.
 | Concept | Say this | Not this | Declared in |
 | --- | --- | --- | --- |
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
+| **Delivery Date** | `customer_delivery_date` / `customerDeliveryDate` | — | `backend/src/scm/shared/so-date-pair.ts` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
 | **Item code (SKU reference)** | `item_code` | ~~`material_code`~~<br>~~`product_code`~~ | `backend/src/scm/routes/mfg-products.ts` |
@@ -30,6 +31,12 @@ fails when one appears in CODE.
 The date the order is prepared on. It had SEVEN names; migration 0286 retired the column `internal_expected_dd`, which no longer exists — code naming it queries nothing and postgres fails the WHOLE statement with 42703. The camelCase PAYLOAD key `internalExpectedDd` is a DIFFERENT thing and is NOT retired: the status route still accepts it from old clients on purpose. `proceeded_at` is a SECOND STORAGE the application no longer reads, but the column is still there and diagnostics may read it. It is NOT a production date.
 
 Entitled to spell a retired name in code: `scripts/lib/so-processing-date.mjs`, `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`, `src/scm/shared/so-processing-date.ts`.
+
+### Delivery Date
+
+The date the customer is promised the goods. ONE column, and until 2026-08-21 it was shown under FOUR different labels on seven screens — "Customer Delivery Date" on the Sales Order list and both Consignment Note screens, "Delivery date" on the SO detail, the SI detail, the DO list and mobile, "Delivery Date" on the SO form. The owner, 2026-08-21: "为什么我外面的 listing 写着 customer delivereydate，里面却是 delivery date？这种应该要统一的吧" — and he chose the name: Delivery Date, everywhere. It drifted because the concept was never registered here while its partner Processing Date was, which is why the pair could be half-governed. Paired with Processing Date by the both-or-neither rule (soDatePairRefusal): an order carries both dates or neither.
+
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`.
 
 ### Transfer (document conversion)
 
