@@ -507,16 +507,35 @@ Two things happen here that are easy to miss:
    `projects.approve`-holder and standalone agreement lanes still fall back to
    the section chip.
 4. **Sales Director "My Pending" is exactly three duties** (owner 2026-07-23):
-   approve submitted Stock Out Transfer Records (`STOCK_OUT_AWAITING_APPROVAL`),
-   set the Sales PIC (`SALES_PIC_EMPTY` — `pic_id` NULL, dangling, or the
-   HOUZS CENTURY house login id 1 that imports stamp as a placeholder), and set
-   the Sales Attending reps (`SALES_ATTENDING_EMPTY`). The two staffing lanes
-   are gated on `CONTRACT_CLEAR` — the project's CONTRACT section has no open
-   item — so contract-stage projects stay the BD's pending, not the directors'
-   (before the gate, every far-future imported event flooded their list; 110
-   rows on 2026-07-23). The same CONTRACT gate applies to the Sales PIC's own
+   approve submitted stock documents, set the Sales PIC (`SALES_PIC_EMPTY` —
+   `pic_id` NULL, dangling, or the HOUZS CENTURY house login id 1 that imports
+   stamp as a placeholder), and set the Sales Attending reps
+   (`SALES_ATTENDING_EMPTY`). Since 2026-08-21 (ledger 0490) the stock lane is
+   TITLE-DRIVEN from the approval keys the director explicitly holds —
+   `stock_transfer.approve` → Stock Out Transfer Record, `stock_in.approve` →
+   Stock In Transfer Record (`pending_director.stock_titles`, built in
+   `routes/projects.ts` my_pending mapping; the old Stock-Out-only
+   `STOCK_OUT_AWAITING_APPROVAL` constant is gone). The owner / BD
+   approve-holder branches likewise widen `pending_approve` with explicitly
+   held stock/agreement keys, so a submitted Stock In finally reaches a lane
+   (before 0490 it reached nobody's). The two staffing lanes are gated on
+   `CONTRACT_CLEAR` — the project's CONTRACT section has no open item — so
+   contract-stage projects stay the BD's pending, not the directors' (before
+   the gate, every far-future imported event flooded their list; 110 rows on
+   2026-07-23). The same CONTRACT gate applies to the Sales PIC's own
    attending lane. All in the `pendingOr` block, `services/projects.ts` around
-   `:1447`.
+   `:1447`. Three related 0489/0490 rules, same date:
+   - **Uploads to a gated row auto-submit server-side** (attachments PUT):
+     a gated, `pending`, not-in-review row flips to `pending_review` when a
+     file lands, whichever client uploaded it — mobile never called
+     `/review submit`, so phone uploads used to sit invisible to approvers.
+   - **Keyless na/pending on a gated row is role-badge-scoped**: the
+     `projects.write` exemption no longer extends it to other functions'
+     rows (`projects.manage` still passes). Mirrored in the desktop
+     `setItemStatus` guard. The Purchaser role (330) also lost
+     `projects.write` — Sim/Farra are tick-only, fully badge-scoped.
+   - **`my_pending_titles` excludes in-review rows**, so the purchaser card
+     stops naming a document that is already with its approver.
 5. **My Pending follows the timeline** (owner 2026-07-23): when any pending
    lane is active and no explicit `sort_by` is given, the list orders
    soonest event first (`start_date ASC`, nulls last) instead of the

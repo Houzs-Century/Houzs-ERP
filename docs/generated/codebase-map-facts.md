@@ -107,14 +107,14 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4563 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 1 | 195 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11881 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11864 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1642 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1057 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
-| `backend/src/scm/routes/po-amendments.ts` | 6 | 652 |
+| `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
@@ -176,14 +176,14 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1614 files, 609010 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1621 files, 610327 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15018 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11881 |
-| `frontend/src/pages/ServiceCases.tsx` | 8843 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11864 |
+| `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5628 |
 | `frontend/src/pages/Team.tsx` | 5607 |
@@ -191,16 +191,16 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5002 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4563 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4362 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4375 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `backend/src/scm/routes/grns.ts` | 3572 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
 | `backend/src/routes/assr.ts` | 3344 |
 | `backend/src/services/projects.ts` | 3101 |
-| `frontend/src/pages/MailCenter/Inbox.tsx` | 3012 |
+| `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
 ## 4. Frontend desktop routes
 
@@ -373,7 +373,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAmendments.tsx` | 147 |
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 153 |
-| `frontend/src/mobile/MobileAnnouncements.tsx` | 1352 |
+| `frontend/src/mobile/MobileAnnouncements.tsx` | 1355 |
 | `frontend/src/mobile/MobileApp.tsx` | 1065 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
@@ -397,9 +397,9 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4362 |
-| `frontend/src/mobile/MobilePOD.tsx` | 551 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4375 |
+| `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
@@ -407,7 +407,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileSODetail.tsx` | 2116 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 845 |
-| `frontend/src/mobile/MobileScan.tsx` | 1465 |
+| `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileSearch.tsx` | 285 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
 | `frontend/src/mobile/MobileSkuPicker.tsx` | 256 |

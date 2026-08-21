@@ -120,7 +120,8 @@ export function ProjectChat({
         await api.post(`/api/projects/${projectId}/read`, {});
         notifs.reload();
       } catch {
-        // Non-critical; a failed read just means the dot lingers.
+        // silent-write-ok: a read receipt. A failure only leaves the unread dot
+        // up, which is the safe direction and claims nothing.
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

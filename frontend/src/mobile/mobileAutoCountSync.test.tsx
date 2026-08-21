@@ -140,9 +140,11 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
 
   it("carries BOTH filter strips, each chip with its count", async () => {
     await mount(busy);
-    expect(await screen.findByRole("button", { name: /Everything\s*5/ })).toBeTruthy();
-    expect(chip(/Needs attention\s*2/)).toBeTruthy();
-    expect(chip(/Not accepted\s*1/)).toBeTruthy();
+    /* Four status tabs now (owner 2026-08-21). "Not accepted" is the merged
+       stuck bucket = attention (failed 1 + skipped 1 = 2). */
+    expect(await screen.findByRole("button", { name: /All\s*5/ })).toBeTruthy();
+    expect(chip(/Waiting\s*1/)).toBeTruthy();
+    expect(chip(/Not accepted\s*2/)).toBeTruthy();
     expect(chip(/Every type\s*3/)).toBeTruthy();
     expect(chip(/Sales orders\s*1/)).toBeTruthy();
     expect(chip(/Delivery orders\s*1/)).toBeTruthy();
@@ -159,8 +161,8 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
 
   it("asks the server again when a status chip is clicked", async () => {
     await mount(busy);
-    await userEvent.click(await screen.findByRole("button", { name: /Held back\s*1/ }));
-    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=skipped");
+    await userEvent.click(await screen.findByRole("button", { name: /Not accepted\s*2/ }));
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
   });
 });
 
@@ -348,7 +350,7 @@ describe("MobileAutoCountSync — a thousand documents", () => {
 
   it("keeps everything one click away", async () => {
     await mount(busy);
-    await userEvent.click(await screen.findByRole("button", { name: /Everything\s*5/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /All\s*5/ }));
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
   });
 

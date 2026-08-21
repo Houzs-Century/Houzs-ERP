@@ -2016,19 +2016,25 @@ function TasklistSectionView({
 // Per-photo remark (owner 2026-07-16): each attachment carries its own caption,
 // edited inline under its file chip and saved via PATCH /checklist/attachments/:id.
 // Owns its state so a parent re-render doesn't clobber an in-progress edit.
-function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean }) {
+const REMARK_UNSAVED = { fontSize: 11, color: "#B8331F", paddingLeft: 2, paddingTop: 2 } as const;
+
+export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean }) {
   const [cap, setCap] = useState(att.caption ?? "");
   const [saved, setSaved] = useState(att.caption ?? "");
   const [saving, setSaving] = useState(false);
+  /* The typed text stays on screen after a refused PATCH, so the box looks
+     exactly like a saved one. Blur has already happened — the person tapped
+     away — and leaving the page loses what they wrote. */
+  const [failed, setFailed] = useState(false);
   const save = async () => {
     const v = cap.trim();
     if (v === saved.trim()) return;
-    setSaving(true);
+    setSaving(true); setFailed(false);
     try {
       await api.patch(`/api/projects/checklist/attachments/${att.id}`, { caption: v });
       setSaved(v);
     } catch {
-      /* keep the text so the user can retry on next blur */
+      setFailed(true);
     } finally {
       setSaving(false);
     }
@@ -2041,16 +2047,19 @@ function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean 
     ) : null;
   }
   return (
-    <textarea
-      className="fld-i"
-      value={cap}
-      disabled={saving}
-      rows={2}
-      onChange={(e) => setCap(e.target.value)}
-      onBlur={() => void save()}
-      placeholder="Add remark…"
-      style={{ fontSize: 12, padding: "5px 8px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-    />
+    <>
+      <textarea
+        className="fld-i"
+        value={cap}
+        disabled={saving}
+        rows={2}
+        onChange={(e) => { setCap(e.target.value); setFailed(false); }}
+        onBlur={() => void save()}
+        placeholder="Add remark…"
+        style={{ fontSize: 12, padding: "5px 8px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+      />
+      {failed && <div style={REMARK_UNSAVED}>Not saved. Tap out of the box to try again.</div>}
+    </>
   );
 }
 
@@ -2059,19 +2068,20 @@ function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean 
 // standalone remark fillable WITHOUT uploading a file. Saved to the item's
 // `notes` via PATCH /checklist/:id. (Was on Weekend Activity/Deco earlier that
 // day; owner moved it here.)
-function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolean }) {
+export function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolean }) {
   const [val, setVal] = useState(it.notes ?? "");
   const [saved, setSaved] = useState(it.notes ?? "");
   const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false); // see AttachRemark
   const save = async () => {
     const v = val.trim();
     if (v === saved.trim()) return;
-    setSaving(true);
+    setSaving(true); setFailed(false);
     try {
       await api.patch(`/api/projects/checklist/${it.id}`, { notes: v });
       setSaved(v);
     } catch {
-      /* keep the text so the user can retry on next blur */
+      setFailed(true);
     } finally {
       setSaving(false);
     }
@@ -2090,11 +2100,12 @@ function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolean }) {
         value={val}
         disabled={saving}
         rows={2}
-        onChange={(e) => setVal(e.target.value)}
+        onChange={(e) => { setVal(e.target.value); setFailed(false); }}
         onBlur={() => void save()}
         placeholder="Add remark…"
         style={{ fontSize: 12, padding: "6px 9px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
       />
+      {failed && <div style={REMARK_UNSAVED}>Not saved. Tap out of the box to try again.</div>}
     </div>
   );
 }
@@ -3181,7 +3192,9 @@ async function autoSubmitReviewable(itemId: number, title: string | null | undef
   try {
     await api.post(`/api/projects/checklist/${itemId}/review`, { action: "submit" });
   } catch {
-    /* non-fatal — the approver can still submit via re-upload */
+    /* silent-write-ok: the UPLOAD already succeeded and is on screen. This
+       only delays the amber PENDING badge, and the approver can still submit
+       via re-upload, so there is nothing for the uploader to act on. */
   }
 }
 

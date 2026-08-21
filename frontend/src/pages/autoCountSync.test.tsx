@@ -155,8 +155,8 @@ const busy = payload({
 describe("AutoCountSync — is anything stuck, first", () => {
   it("names the documents that need attention in the headline", async () => {
     await mount(busy);
-    expect(await screen.findByText(/2 documents need your attention/)).toBeTruthy();
-    expect(screen.getAllByText(/in the ERP and not in the account book/i).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/2 documents are not in the account book/)).toBeTruthy();
+    expect(screen.getAllByText(/not in the account book/i).length).toBeGreaterThan(0);
   });
 
   it("says sending is switched off instead of reporting a stopped sync as healthy", async () => {
@@ -178,12 +178,12 @@ describe("AutoCountSync — is anything stuck, first", () => {
 describe("AutoCountSync — the counts are on something you can click", () => {
   it("puts every status on a chip with the server's exact count", async () => {
     await mount(busy);
-    expect(await screen.findByRole("button", { name: /Everything\s*5/ })).toBeTruthy();
-    expect(chip(/Needs attention\s*2/)).toBeTruthy();
-    expect(chip(/Not accepted\s*1/)).toBeTruthy();
-    expect(chip(/Held back\s*1/)).toBeTruthy();
+    /* Four tabs now (owner 2026-08-21). "Not accepted" is the merged stuck
+       bucket = attention (failed 1 + skipped 1 = 2). */
+    expect(await screen.findByRole("button", { name: /All\s*5/ })).toBeTruthy();
+    expect(chip(/Waiting\s*1/)).toBeTruthy();
+    expect(chip(/Not accepted\s*2/)).toBeTruthy();
     expect(chip(/In AutoCount\s*1/)).toBeTruthy();
-    expect(chip(/Replaced\s*1/)).toBeTruthy();
   });
 
   it("offers all six document types, spelled out, each with its own count", async () => {
@@ -200,8 +200,11 @@ describe("AutoCountSync — the counts are on something you can click", () => {
   });
 
   it("asks the server again when a status chip is clicked, and recounts the types", async () => {
+    /* Click "In AutoCount" (sent), NOT "Not accepted": the page now DEFAULTS to
+       the Not accepted (attention) tab, so clicking it would be a no-op and never
+       ask the server again. In AutoCount is a real state change from the default. */
     apiGet.mockImplementation((url: string) =>
-      Promise.resolve(url.includes("state=failed")
+      Promise.resolve(url.includes("state=sent")
         ? payload({
           rows: [rows[0]!],
           counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
@@ -217,16 +220,16 @@ describe("AutoCountSync — the counts are on something you can click", () => {
     );
     expect(await screen.findByRole("button", { name: /Sales orders\s*2/ })).toBeTruthy();
 
-    await userEvent.click(chip(/Not accepted\s*1/));
+    await userEvent.click(chip(/In AutoCount\s*1/));
 
-    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=failed");
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=sent");
     /* The type counts are of the rows now on screen, so they MOVED — that is the
        point of putting them on the chips rather than on a tile. */
     expect(await screen.findByRole("button", { name: /Sales orders\s*1/ })).toBeTruthy();
     expect(chip(/Delivery orders\s*0/)).toBeTruthy();
     /* The status counts did NOT move: they are the server's, exact and
        whole-company, regardless of what is being listed. */
-    expect(chip(/Everything\s*5/)).toBeTruthy();
+    expect(chip(/All\s*5/)).toBeTruthy();
   });
 
   it("filters the list by type without asking the server for one type", async () => {
@@ -238,8 +241,8 @@ describe("AutoCountSync — the counts are on something you can click", () => {
   });
 
   it("names both filters over the list", async () => {
-    await mount(busy, "/autocount-sync?state=skipped&docType=DO");
-    expect(await screen.findByText("Held back · Delivery orders")).toBeTruthy();
+    await mount(busy, "/autocount-sync?state=attention&docType=DO");
+    expect(await screen.findByText("Not accepted · Delivery orders")).toBeTruthy();
   });
 });
 
@@ -393,8 +396,8 @@ describe("AutoCountSync — no coding words anywhere", () => {
 
 describe("AutoCountSync — filters and failure", () => {
   it("reads the state filter out of the URL", async () => {
-    await mount(payload(), "/autocount-sync?state=failed");
-    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=failed");
+    await mount(payload(), "/autocount-sync?state=attention");
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
   });
 
   it("ignores a hand-edited state the server would refuse", async () => {
@@ -578,15 +581,18 @@ describe("AutoCountSync — a thousand documents", () => {
   it("opens on the documents that need attention, not on everything", async () => {
     await mount(busy);
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
-    /* `selector: "span"` picks the heading over the list rather than the chip
-       of the same name — the chip proves the filter EXISTS, the heading proves
-       it is the one in force. */
-    expect(await screen.findByText("Needs attention", { selector: "span" })).toBeTruthy();
+    /* "Not accepted" now names BOTH the filter chip and the in-force heading
+       (the 4-tab simplification merged the old "Needs attention" heading wording
+       into the same label as the tab). Both are spans, so a single-match query is
+       ambiguous; asserting at least one is present keeps the intent — the label
+       is on screen — while line 583 already proves the ATTENTION filter is the one
+       asked for. */
+    expect((await screen.findAllByText("Not accepted", { selector: "span" })).length).toBeGreaterThan(0);
   });
 
   it("keeps everything one click away", async () => {
     await mount(busy);
-    await userEvent.click(await screen.findByRole("button", { name: /Everything\s*5/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /All\s*5/ }));
     /* No `state` on the query is how the route is asked for everything. */
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
   });
@@ -794,15 +800,9 @@ describe("AutoCountSync — history is not half the list", () => {
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(15);
   });
 
-  /* The Replaced chip exists to show exactly these documents. Folding them
-     there would answer the chip with an empty page. */
-  it("makes them the list when the reader picks Replaced", async () => {
-    await mount(fifteen, "/autocount-sync?state=requeued");
-    await screen.findByText("HC-DO-2608-001");
-    expect(document.querySelectorAll("[data-ac-row]").length).toBe(15);
-    expect(screen.queryByRole("button", { name: /kept as a record/ })).toBeNull();
-  });
-
+  /* The dedicated "Replaced" tab was removed 2026-08-21 (four-tab simplification).
+     Replaced documents are history and now appear folded under "All" — the test
+     below covers that folded presentation. */
   it("does not tell a reader to try another filter when the matches are all history", async () => {
     await mount(payload({
       counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 2, attention: 0, total: 2 },
