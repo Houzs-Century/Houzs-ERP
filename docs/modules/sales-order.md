@@ -792,14 +792,26 @@ NULL. Never reintroduce `?? null` on that parameter.
 
 **HAZARD 2 — `pwp_codes` is keyed `(company_id, code)`, and the writes BURN a
 voucher.** Mig 0188 re-keyed the table, so a write keyed on `code` alone reaches
-whichever company's row sorts first. Three paths do this and all three are
+whichever company's row sorts first. Six paths do this and all six are
 company-filtered:
 
 | path | what an unfiltered write does |
 | --- | --- |
 | the claim (bulk / create) | burns the OTHER company's voucher |
 | the rollback | un-burns the OTHER company's voucher |
-| the TBC sofa reward swap | hands the OTHER company's code back to stock |
+| the TBC sofa reward release / re-point | hands the OTHER company's code back to stock |
+| the TBC exchange DELETEs (sofa + non-sofa) | **DESTROYS the OTHER company's voucher** |
+| the trigger / redeemed re-stamps (both exchanges + SO create) | re-points the OTHER company's voucher at a SKU that is not on its order |
+| the kept-code reads that size the mint | mints the wrong NUMBER of replacement vouchers |
+
+> This table said **three** paths until 2026-08-21 and listed only the claim
+> side. The exchange paths — the ones that DELETE — were carrying `code` alone,
+> the sofa DELETE sixty lines under a correctly-keyed release in the same
+> function. Eight statements were fixed; a guide that undercounts a hazard is
+> what let them sit. `backend/tests/pwpCodeCompanyKey.test.ts` now fails the
+> build on a code-keyed `pwp_codes` statement with no `company_id`, so this
+> table cannot go stale in that direction again. Entry:
+> `docs/bugs/0496-voucher-delete-on-both-exchange-paths-was-keyed-on-code-alon.md`.
 
 Where the company cannot be resolved these refuse — `409 company_unresolved` on a
 route, a thrown error on the command path. **Claiming nothing is the safe

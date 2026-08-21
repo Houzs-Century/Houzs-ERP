@@ -1369,6 +1369,18 @@ async function stockOutDoLinesFromRacks(
   if ((already ?? 0) > 0) return;
 
   const companyCol = companyId != null ? { company_id: companyId } : {};
+  /* The SAME company, used as a FILTER and not only as a stamp. `companyId` was
+     being written onto the movement rows while every rack read/write below ran
+     unbounded — and the rack a line consumes from is CALLER-SUPPLIED
+     (`delivery_order_items.rack_id`, off the request body). Service-role client,
+     mig 0061 RLS with zero policies: the predicate is the whole boundary, so a
+     rack uuid from the other company's warehouse resolved and its placements
+     were decremented. Both columns are NOT NULL in prod (rack_items mig 0083,
+     racks mig 0089), so this can never silently drop a legitimate row.
+     Written as a wrapper because `companyId` is nullable and
+     `.eq('company_id', null)` is a malformed filter, not "no company". */
+  const companyFilter = <T>(q: T): T =>
+    companyId != null ? (q as { eq(col: string, value: number): T }).eq('company_id', companyId) : q;
   const touchedRacks = new Set<string>();
 
   for (const it of items) {
@@ -1385,12 +1397,12 @@ async function stockOutDoLinesFromRacks(
     const explicitRackId = (it.rack_id as string | null) ?? null;
     let rackRows: Array<{ id: string; rack: string | null; warehouse_id: string | null }> = [];
     if (explicitRackId) {
-      const { data } = await sb.from('warehouse_racks')
-        .select('id, rack, warehouse_id').eq('id', explicitRackId).limit(1);
+      const { data } = await companyFilter(sb.from('warehouse_racks')
+        .select('id, rack, warehouse_id').eq('id', explicitRackId)).limit(1);
       rackRows = (data ?? []) as typeof rackRows;
     } else {
-      const { data: whRacks } = await sb.from('warehouse_racks')
-        .select('id, rack, warehouse_id').eq('warehouse_id', warehouseId);
+      const { data: whRacks } = await companyFilter(sb.from('warehouse_racks')
+        .select('id, rack, warehouse_id').eq('warehouse_id', warehouseId));
       rackRows = (whRacks ?? []) as typeof rackRows;
     }
     if (rackRows.length === 0) continue; // warehouse has no racks — nothing to move
@@ -1398,9 +1410,9 @@ async function stockOutDoLinesFromRacks(
     const rackById = new Map(rackRows.map((r) => [r.id, r]));
 
     // Placements of this product on the candidate rack(s), oldest first (FIFO).
-    const { data: placements } = await sb.from('warehouse_rack_items')
+    const { data: placements } = await companyFilter(sb.from('warehouse_rack_items')
       .select('id, rack_id, qty, stocked_in_date')
-      .in('rack_id', rackIds).eq('item_code', itemCode)
+      .in('rack_id', rackIds).eq('item_code', itemCode))
       .order('stocked_in_date', { ascending: true });
     const placementRows = (placements ?? []) as Array<{ id: string; rack_id: string; qty: number; stocked_in_date: string }>;
 
@@ -1410,9 +1422,9 @@ async function stockOutDoLinesFromRacks(
       if (remaining <= 0) break;
       const take = Math.min(p.qty, remaining);
       if (take >= p.qty) {
-        await sb.from('warehouse_rack_items').delete().eq('id', p.id);
+        await companyFilter(sb.from('warehouse_rack_items').delete().eq('id', p.id));
       } else {
-        await sb.from('warehouse_rack_items').update({ qty: p.qty - take }).eq('id', p.id);
+        await companyFilter(sb.from('warehouse_rack_items').update({ qty: p.qty - take }).eq('id', p.id));
       }
       outByRack.set(p.rack_id, (outByRack.get(p.rack_id) ?? 0) + take);
       remaining -= take;
