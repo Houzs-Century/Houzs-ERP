@@ -1151,3 +1151,14 @@ jobs:
       - run: node backend/scripts/check-company-scope.mjs --check
       # No-growth guard: the baseline file itself may not gain an entry vs main.
       - run: node backend/scripts/check-company-scope.mjs --check --ratchet-against origin/main
+      # SECOND CLASS, SAME JOB (2026-08-21). check-company-scope reads SUPABASE
+      # BUILDER statements and acquits a whole handler once any scope helper
+      # appears in it, over a HAND-WRITTEN list of fifteen tables. That combination
+      # could not see the brand-letterhead defect: a RAW `SELECT ... FROM
+      # project_brands` with no predicate, inside a handler that scopes its main
+      # query. Folding both fixes into that script was measured and rejected -
+      # 12 findings/0 writes becomes 76/22, and its --strict mode exists to hold
+      # WRITE findings at zero. So the raw-SQL class gets its own script and its
+      # own baseline, and the sibling's invariant stays intact.
+      - run: node backend/scripts/check-master-read-scope.mjs --check
+      - run: node backend/scripts/check-master-read-scope.mjs --check --ratchet-against origin/main

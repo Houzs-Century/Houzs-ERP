@@ -11,6 +11,10 @@
 // gets CHARGED?" Contact details are not that — forcing them through an
 // approval queue means people stop updating them, and then the delivery driver
 // has a phone number that does not work.
+// PARTIAL REVERSAL (Owner 2026-08-21): customer name / phone / email are now
+// CONTROLLED after all — they ride the DELIVERY-lane amendment (one Logistics
+// signature, applied instantly), which keeps the queue concern answered while
+// putting the change on the record. See the customer-info rows below.
 //
 // The split ALREADY existed before this file, but as THREE hand-maintained
 // literals that only prose kept in step:
@@ -208,15 +212,53 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
       + 'the lock is the standing rule. This row gates the sales-reachable '
       + 'header PATCH and lets the amendment carry it.',
   },
+  /* Customer info (owner 2026-08-21): "改动走 SO Amendment 双通道，需要加上更新
+     客户信息" — name / phone / email join the CONTROLLED set and ride the
+     DELIVERY lane. This PARTIALLY REVERSES the 2026-07-17 "contact details stay
+     free" ruling for these three fields; the emergency-contact trio, customer
+     type, building type and note remain FREE. The DELIVERY lane is one
+     signature applied instantly by Logistics, which answers the original
+     concern (updates stalling in a queue → drivers dialling dead numbers). */
+  {
+    column: 'debtor_name',
+    payloadKey: 'debtorName',
+    label: 'Customer name',
+    cls: 'CONTROLLED',
+    reason:
+      'Owner 2026-08-21: a customer-info change on a locked SO is a Logistics-'
+      + 'approved amendment. The column is NOT NULL, so the amendment create '
+      + 'route refuses a blank requested name rather than letting the approve '
+      + 'fail on the constraint.',
+  },
+  {
+    column: 'phone',
+    payloadKey: 'phone',
+    label: 'Phone',
+    cls: 'CONTROLLED',
+    reason:
+      'Owner 2026-08-21: rides the DELIVERY-lane amendment with Customer name — '
+      + 'the number the delivery crew dials, changed with a signature once the '
+      + 'order is locked.',
+  },
+  {
+    column: 'email',
+    payloadKey: 'email',
+    label: 'Email',
+    cls: 'CONTROLLED',
+    reason:
+      'Owner 2026-08-21: completes the customer-contact block (name / phone / '
+      + 'email) so the whole block moves through one channel once the SO is '
+      + 'locked.',
+  },
 ];
 
 /* WHY FREE IS THE DEFAULT, AND WHAT THAT COSTS
    -------------------------------------------
-   The free bucket is "every patchable column not named above": customer name,
-   phone, email, customer type, customer SO ref, salesperson, building type,
-   venue, branding, note, emergency contact + relationship, and the payments
-   collection. That matches the owner's ruling and matches how the header PATCH
-   has always behaved.
+   The free bucket is "every patchable column not named above": customer type,
+   customer SO ref, salesperson, building type, venue, branding, note,
+   emergency contact + relationship, and the payments collection. That matches
+   the owner's ruling and matches how the header PATCH has always behaved.
+   (Customer name / phone / email LEFT this bucket 2026-08-21 — rows above.)
 
    It is a RESIDUE, not a per-field decision. One entry still deserves the
    owner's eye rather than my silence:

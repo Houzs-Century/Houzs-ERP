@@ -32,6 +32,14 @@ describe('classifyHeaderKey', () => {
     expect(classifyHeaderKey('replacementDisposal')).toBe('DELIVERY');
   });
 
+  it('routes the customer-info block to DELIVERY (owner 2026-08-21)', () => {
+    // The lane whose label has always read "delivery / customer info" finally
+    // carries customer info: name / phone / email sign with Logistics.
+    expect(classifyHeaderKey('debtorName')).toBe('DELIVERY');
+    expect(classifyHeaderKey('phone')).toBe('DELIVERY');
+    expect(classifyHeaderKey('email')).toBe('DELIVERY');
+  });
+
   it('throws on an unknown key instead of guessing a lane', () => {
     expect(() => classifyHeaderKey('salesLocation')).toThrow(/no lane/);
     expect(() => classifyHeaderKey('customerName')).toThrow(/no lane/);

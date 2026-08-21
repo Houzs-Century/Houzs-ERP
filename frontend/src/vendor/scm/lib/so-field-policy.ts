@@ -134,6 +134,30 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
     cls: 'CONTROLLED',
     reason: 'The disposal add-on — changes the delivery job. Logistics\' own Delivery Planning drawer still writes it directly (they are the lane approver).',
   },
+  /* Customer info (owner 2026-08-21) — name / phone / email join CONTROLLED and
+     ride the DELIVERY lane. Partial reversal of the 2026-07-17 "contact details
+     stay free" ruling; emergency contacts / customer type / note remain FREE. */
+  {
+    column: 'debtor_name',
+    payloadKey: 'debtorName',
+    label: 'Customer name',
+    cls: 'CONTROLLED',
+    reason: 'Owner 2026-08-21: customer-info changes on a locked SO are a Logistics-approved amendment. NOT NULL — the create route refuses a blank requested name.',
+  },
+  {
+    column: 'phone',
+    payloadKey: 'phone',
+    label: 'Phone',
+    cls: 'CONTROLLED',
+    reason: 'Owner 2026-08-21: rides the DELIVERY-lane amendment with Customer name.',
+  },
+  {
+    column: 'email',
+    payloadKey: 'email',
+    label: 'Email',
+    cls: 'CONTROLLED',
+    reason: 'Owner 2026-08-21: completes the customer-contact block — one channel once locked.',
+  },
 ];
 
 /** payloadKeys an amendment may carry, in table order. */

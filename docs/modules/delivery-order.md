@@ -61,17 +61,75 @@ nothing attached.
 | Mobile shell action bar | No | **Known open** — "Mark Signed" writes `SIGNED` (which counts as delivered) with no evidence. `docs/bugs/0481`. |
 
 Evidence is **allowed everywhere and required nowhere**, on purpose. The office
-legitimately closes deliveries it did not attend — 2990's imported deliveries
-have no POD step at all — the server itself drops a bad GPS reading rather than
-refusing the write, and the standing rule for this system is to loosen rather
-than restrict. The defect was never the permissiveness; it was that no screen
-said which of the two things you were about to do.
+legitimately closes deliveries it did not attend — measured 2026-08-21, EVERY
+closed delivery in production is one of these, and 2990's source system has no
+POD step to carry over in the first place — the server itself drops a bad GPS
+reading rather than refusing the write, and the standing rule for this system is
+to loosen rather than restrict. The defect was never the permissiveness; it was
+that no screen said which of the two things you were about to do.
 
 Census of the historical population: `backend/scripts/check-pod-evidence.mjs`,
 dispatchable via the **DO integrity check (read-only)** workflow. It counts
 `SIGNED + DELIVERED + INVOICED` (all three are closed) and reports signature
 BYTE LENGTH, because `signature_data IS NOT NULL` overstates the evidence — the
 pre-`hasSignature` blank-pad bug stored a valid but empty PNG on every delivery.
+Four more sections were added on 2026-08-21, each because the one before it
+would have read the same on a different world: the WHOLE table rather than the
+closed slice; `scm.consignment_delivery_orders` and `public.trip_stops`, the two
+other tables in this database with proof-of-delivery columns; whether a closed
+row was created already-closed by an import (`migrated_no_stock`, mig 0276); and
+every closed row listed in closing order with its company NAME.
+
+### What the census actually answers (run 32459661813, 2026-08-21)
+
+**No delivery order has ever carried a signature, a photo or a GPS fix** — any
+status, either company, all time, in all three tables. Not one row.
+
+`scm.delivery_orders` holds **39 rows in total**, all of them `2990's Home`:
+25 `DISPATCHED` (newest created 2026-08-20), 12 `DELIVERED`, 2 `CANCELLED`.
+There are **no Houzs delivery orders at all**.
+
+**The zero is disuse, not breakage.** The only twelve rows ever closed were
+created `DISPATCHED` over four weeks and flipped to `DELIVERED` inside a
+**single minute** on 2026-07-24 — the exact set and fingerprint of
+`backend/scripts/backfill-2990-delivered-dos.mjs`, which exists because 2990's
+source system has no "delivered" step on a DO at all. No driver closed them and
+no screen closed them, so nothing was skipped and there is nothing to backfill.
+
+The corroboration that MobilePOD's Confirm has never fired in production: the
+backend has persisted `signature_data` since 2026-07-14, and until the
+`hasSignature` fix on 2026-08-14 that screen sent a blank PNG on **every**
+confirm. One POD confirm anywhere in those five weeks would have left a non-null
+value. There are none.
+
+**Why nobody opens it, stated plainly and not as a complaint about drivers.**
+`DISPATCHED` is already a member of `DO_SHIPPED_STATES` *and* of
+`SI_TRANSFERABLE_DO_STATES` (`backend/src/scm/shared/do-shipped-states.ts`), so
+the moment a DO is dispatched the stock is out, the SO counts the lines as
+delivered, and the Sales Invoice can be raised. Every rung above it —
+`IN_TRANSIT`, `SIGNED`, `DELIVERED`, and therefore the whole POD capture — is
+optional, and the desktop's one-click control for it is *labelled* "Mark
+signed". Capturing proof buys the office nothing the system asks for. That is a
+business decision to take, not a defect to fix.
+
+**What the census cannot tell you, ever:** which of the five closing screens was
+used. `patchDeliveryOrderStatusHandler` writes no `entity_audit_log` row, so
+that fact is not in this database. Do not infer it from these counts.
+
+**Nobody is being chased about it, and that was measured rather than assumed.**
+Exactly one thing CONSUMES these columns instead of writing them — the Delivery
+Agent's `POD_CHASE` proposal (`backend/src/services/agents/delivery-agent.ts`),
+which lists deliveries closed 1 to 90 days ago with neither photo nor signature
+and is ON by default. Every closed delivery here qualifies and none could ever
+be satisfied, so the obvious worry was that it had been raising unfixable
+proposals for a month. It has not: `delivery_agent_proposals` holds **no
+`POD_CHASE` row of any status, ever**. Section 6 of the census is that count.
+
+**What a non-null column would still not prove.** The signature is stored inline
+(base64 PNG in `signature_data`), so a non-null value there IS the image. The
+PHOTO is not: `pod_r2_key` is an R2 object key, written after the upload but in
+a separate round trip, so a non-null key is evidence an upload was reported, not
+that the object is in the bucket.
 
 Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and

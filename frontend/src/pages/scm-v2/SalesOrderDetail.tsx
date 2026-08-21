@@ -3207,6 +3207,12 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        surface doesn't collect, so omitting them is the correct shape. */
     address1:             form.address1,
     address2:             form.address2,
+    /* Customer info joined the frozen set 2026-08-21 (owner: "需要加上更新
+       客户信息") — a name/phone/email change on a locked SO rides the
+       DELIVERY-lane amendment instead of saving directly. */
+    debtorName:           form.customerName,
+    phone:                form.phone,
+    email:                form.email,
   };
   const lockedHeaderOriginal = {
     processingDate:   header.processing_date ?? '',
@@ -3216,6 +3222,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     city:                 header.city ?? '',
     address1:             header.address1 ?? '',
     address2:             header.address2 ?? '',
+    debtorName:           header.debtor_name ?? '',
+    phone:                header.phone ?? '',
+    email:                header.email ?? '',
   };
 
   /* The EXACT body the direct half sends in amendment mode; trySave and

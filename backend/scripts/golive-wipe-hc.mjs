@@ -19,14 +19,49 @@
    users, roles, ...) are on the KEEP list and are never touched. Any live table
    that is on NEITHER list is reported as UNSURE and left alone (default KEEP).
 
-   ── DOCUMENT NUMBERS: THERE IS NO COUNTER TO RESET ─────────────────────────
-   Verified in scm/lib/doc-no.ts: running numbers (HC-SO-2608-001, ...) are
-   minted as max(suffix)+1 over the rows that already exist for the month — there
-   is NO sequence table and NO per-company counter row anywhere (so_settings /
-   app_config are key/value config, not counters). So deleting HC's document rows
-   IS the reset: with zero surviving HC rows in a month, the next mint reads
-   max=0 and hands out 001. The plan prints the current highest HC number per
-   document family as evidence of what resets.
+   ── DOCUMENT NUMBERS: THERE IS A COUNTER NOW, AND YOU MUST CHOOSE ─────
+   THIS PARAGRAPH USED TO SAY THE OPPOSITE, and the old text is quoted here
+   because it is the reason this script appears in a COE:
+
+     "running numbers (HC-SO-2608-001, ...) are minted as max(suffix)+1 over the
+      rows that already exist for the month -- there is NO sequence table and NO
+      per-company counter row anywhere. So deleting HC's document rows IS the
+      reset: with zero surviving HC rows in a month, the next mint reads max=0
+      and hands out 001."
+
+   That was true, and it is what broke. The AED_HOUZS account book is NOT wiped
+   and permanently holds every number the ERP ever exported to it, so a reset to
+   001 re-issued HC-SO-2608-001/002, HC-PO-2608-001 and HC-PI-2608-001, which
+   AutoCount refused with `Primary Key Error`. docs/doc-number-reissue-coe.md.
+
+   Since migration 0316 the counter is scm.doc_number_counters and it only ever
+   goes UP. Deleting rows no longer resets anything. So the reset is now an
+   EXPLICIT INPUT and apply REFUSES without it, instead of happening as an
+   invisible side effect of a DELETE:
+
+     DOC_COUNTERS=keep   numbering CONTINUES upward. The safe answer, and the
+                         only one that cannot collide with the account book.
+     DOC_COUNTERS=reset  numbering restarts at 001. Needs a SECOND confirmation
+                         phrase, and prints every counter row it will delete
+                         together with the evidence that set it -- which for the
+                         HC 2608 series literally reads "AED_HOUZS holds
+                         HC-SO-2608-001 and -002 since 2026-08-14". Choosing
+                         reset with that sentence on screen is a decision; the
+                         old behaviour was not one.
+
+   A script whose documented behaviour has quietly stopped being true is the
+   exact defect this change exists to remove, so it fails loudly instead.
+
+   ── THE EXPORT LOG IS NOT WIPED ANY MORE ──────────────────────
+   scm.autocount_outbox was on the CLEAR list. It is the ERP's ONLY record of
+   what it has sent to AutoCount, so wiping it left the account book as the only
+   party that remembered -- which is why the queue could truthfully report
+   "never sent" for numbers the book demonstrably held, and why the diagnosis
+   cost a day. It is on KEEP now. Its HC rows SURVIVE, and any HC row still
+   `pending` is marked `skipped` INSIDE the wipe transaction with a reason, so
+   the queue stops trying to send documents that no longer exist. The memory is
+   kept; only the intent to send is cancelled.
+
 
    ── SAFETY MODEL ───────────────────────────────────────────────────────────
    The DB client is service-role (RLS bypassed), so the company_id predicate is
@@ -58,6 +93,15 @@
      0 HC rows on the CLEAR tables (already wiped) and is a no-op that still
      passes the fresh-connection assertions — the deletes match nothing, the
      2990-unchanged and KEEP-unchanged checks stay green, and it exits 0.
+     A second apply with DOC_COUNTERS=keep leaves the counters exactly where the
+     first left them; with DOC_COUNTERS=reset it deletes the HC counter rows the
+     mints since the first run re-created, which is the same request answered
+     again and not a compounding one. The export-log cancel is idempotent too:
+     there is nothing left `pending` to cancel.
+     A first apply no longer needs a second run to pass. It used to: our own
+     AFTER DELETE audit trigger wrote rows back into a CLEAR table faster than
+     the single pass removed them (run 32455489040, `scm.mfg_so_item_deletions
+     still has 4 HC rows`). The sweep below fixes that.
    =========================================================================== */
 
 import fs from 'node:fs';
@@ -80,6 +124,28 @@ const ident = /^[a-z_][a-z0-9_]*$/; // every identifier below is hardcoded; asse
 
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
+  process.exit(2);
+}
+
+/* THE DOCUMENT-NUMBER DECISION. Since migration 0316 deleting rows does NOT
+   reset numbering, so apply must be told what to do about the counter. There is
+   deliberately NO default: defaulting to keep would silently stop doing what
+   this script's header promised for months, and defaulting to reset would
+   silently re-arm the 2026-08-20 collision. Both are the same defect — a
+   behaviour nobody chose. */
+const DOC_COUNTERS_TABLE = 'scm.doc_number_counters';
+const DOC_COUNTERS = (process.env.DOC_COUNTERS || '').toLowerCase();
+const DOC_COUNTERS_RESET_PHRASE = 'RESET DOCUMENT NUMBERS TO 001';
+if (APPLY && !['keep', 'reset'].includes(DOC_COUNTERS)) {
+  bad(`MODE=apply requires DOC_COUNTERS=keep or DOC_COUNTERS=reset.`);
+  bad(`  keep  — document numbers CONTINUE upward. Deleting rows no longer resets them (migration 0316).`);
+  bad(`  reset — document numbers restart at 001. Also needs CONFIRM_DOC_COUNTERS="${DOC_COUNTERS_RESET_PHRASE}".`);
+  bad(`  Reset is what re-issued HC-SO-2608-001/002 into a book that already held them on 2026-08-20.`);
+  bad(`  Run MODE=plan first: it prints every counter row and the evidence that set it.`);
+  process.exit(2);
+}
+if (APPLY && DOC_COUNTERS === 'reset' && process.env.CONFIRM_DOC_COUNTERS !== DOC_COUNTERS_RESET_PHRASE) {
+  bad(`DOC_COUNTERS=reset requires CONFIRM_DOC_COUNTERS="${DOC_COUNTERS_RESET_PHRASE}"`);
   process.exit(2);
 }
 
@@ -182,7 +248,11 @@ const CLEAR = [
   ['scm', 'journal_entry_lines', 'gl'],
   ['scm', 'journal_entries', 'gl'],
   // ── Integration outbox (ERP -> AutoCount) ──
-  ['scm', 'autocount_outbox', 'integration'],
+  /* scm.autocount_outbox is NOT here — see the header. It is the ERP's only
+     record of what it has EXPORTED to a book that is never wiped, so deleting
+     it destroys the evidence needed to detect this script's own side effects.
+     It is on KEEP, and its HC pending rows are CANCELLED (not deleted) inside
+     the wipe transaction. */
   // ── POS transient drafts ──
   ['scm', 'pos_carts', 'pos'],
 ];
@@ -212,6 +282,11 @@ const DOC_HEADERS = [
    preservation. This is the confident master set; anything live that is on
    neither CLEAR nor KEEP is reported as UNSURE and also left alone. */
 const KEEP = new Set([
+  /* The ERP's memory of what it sent to AutoCount. KEPT ON PURPOSE — see the
+     header. Its HC `pending` rows are cancelled in the wipe transaction so the
+     drain stops chasing deleted documents, which is a status change, not a
+     forgetting. */
+  'scm.autocount_outbox',
   // Catalog / product masters
   'scm.products', 'scm.mfg_products', 'scm.product_models', 'scm.product_size_variants',
   'scm.product_compartments', 'scm.product_fabrics', 'scm.product_bundles',
@@ -430,7 +505,7 @@ async function main() {
   }
 
   // ── 4. Document-number evidence (what resets to 001) ─────────────────────
-  note(`\n=== DOCUMENT NUMBERS — highest HC number today (resets to 001 after wipe; there is NO counter table) ===`);
+  note(`\n=== DOCUMENT NUMBERS — highest HC number today ===`);
   for (const [schema, table, label, cands] of DOC_HEADERS) {
     const key = `${schema}.${table}`;
     if (!liveSet.has(key)) { note(`  ${label.padEnd(4)} ${key.padEnd(30)} (table absent)`); continue; }
@@ -442,7 +517,47 @@ async function main() {
       SELECT count(*)::int AS n, max(${sql(qi(col))}) AS max_no
         FROM ${sql(qi(schema))}.${sql(qi(table))} WHERE company_id = ${HC_ID}`;
     const { n, max_no } = rows[0];
-    note(`  ${label.padEnd(4)} ${key.padEnd(30)} HC rows=${String(n).padStart(7)}  highest=${max_no ?? '(none)'}  -> next mint 001`);
+    note(`  ${label.padEnd(4)} ${key.padEnd(30)} HC rows=${String(n).padStart(7)}  highest=${max_no ?? '(none)'}`);
+  }
+
+  /* ── 4b. THE COUNTER ITSELF — what actually decides the next number ──────
+     Printed with the EVIDENCE that set each row, because the reset decision is
+     made while reading this. A row whose source says "AED_HOUZS holds
+     HC-SO-2608-001 and -002 since 2026-08-14" is telling the operator exactly
+     what a reset would hand out again. */
+  const countersLive = liveSet.has(DOC_COUNTERS_TABLE);
+  note(`\n=== DOCUMENT-NUMBER COUNTER (${DOC_COUNTERS_TABLE}) ===`);
+  let hcCounters = [];
+  if (!countersLive) {
+    note(`  ABSENT — migration 0316 has not applied here. Numbers are still derived from`);
+    note(`  surviving rows, so deleting them DOES reset the series to 001, and can re-issue`);
+    note(`  a number the AutoCount book already holds. docs/doc-number-reissue-coe.md.`);
+  } else {
+    const all = await sql`SELECT series, next_n, seed_source FROM scm.doc_number_counters ORDER BY series`;
+    hcCounters = all.filter((r) => String(r.series).startsWith('HC-'));
+    note(`  ${all.length} series total, ${hcCounters.length} of them HC.`);
+    for (const r of hcCounters) {
+      note(`  HC  ${String(r.series).padEnd(18)} next number = ${String(r.next_n).padStart(5)}   ${r.seed_source ?? '(no source recorded)'}`);
+    }
+    note(`  Deleting HC document rows does NOT move any of these. That is the fix for the`);
+    note(`  2026-08-20 re-issue, and it is why apply now needs DOC_COUNTERS=keep|reset.`);
+  }
+
+  /* ── 4c. THE EXPORT LOG — kept, and what will be cancelled ────────── */
+  const outboxLive = liveSet.has('scm.autocount_outbox');
+  note(`\n=== EXPORT LOG (scm.autocount_outbox) — KEPT, not wiped ===`);
+  let hcPending = 0;
+  let hcOutboxTotal = 0;
+  if (!outboxLive) {
+    note(`  table absent in this database.`);
+  } else {
+    const [{ total: obTotal }] = await sql`SELECT count(*)::int AS total FROM scm.autocount_outbox WHERE company_id = ${HC_ID}`;
+    const [{ pend }] = await sql`SELECT count(*)::int AS pend FROM scm.autocount_outbox WHERE company_id = ${HC_ID} AND status = 'pending'`;
+    hcPending = Number(pend);
+    hcOutboxTotal = Number(obTotal);
+    note(`  ${obTotal} HC row(s) — ALL SURVIVE. ${hcPending} still 'pending' and would be marked 'skipped'`);
+    note(`  (their documents are about to be deleted). The record of what was SENT is never removed:`);
+    note(`  AutoCount is not wiped, so the ERP must not forget what it told AutoCount.`);
   }
 
   // ── 5. KEEP sample — proof of preservation ───────────────────────────────
@@ -520,8 +635,13 @@ async function main() {
   // ── 8. PLAN EXIT ─────────────────────────────────────────────────────────
   if (!APPLY) {
     note(`\n=== PLAN COMPLETE — nothing was written. ===`);
-    note(`  Would delete ${total} HC rows across ${resolved.length} CLEAR tables; reset ${DOC_HEADERS.length} doc-number families to 001.`);
-    note(`  To execute: MODE=apply CONFIRM="${CONFIRM_PHRASE}"`);
+    note(`  Would delete ${total} HC rows across ${resolved.length} CLEAR tables.`);
+    note(`  Document numbers would NOT reset by themselves — ${countersLive ? `the ${hcCounters.length} HC counter row(s) above decide that` : 'the counter table is absent here'}.`);
+    note(`  ${hcPending} HC outbox row(s) would be marked 'skipped'; NONE would be deleted.`);
+    note(`  To execute, numbering CONTINUES upward (recommended):`);
+    note(`    MODE=apply CONFIRM="${CONFIRM_PHRASE}" DOC_COUNTERS=keep`);
+    note(`  To execute AND restart numbering at 001 — re-read the counter rows above first:`);
+    note(`    MODE=apply CONFIRM="${CONFIRM_PHRASE}" DOC_COUNTERS=reset CONFIRM_DOC_COUNTERS="${DOC_COUNTERS_RESET_PHRASE}"`);
     await sql.end({ timeout: 5 });
     return;
   }
@@ -563,6 +683,89 @@ async function main() {
       // The plan counted `total`; a mismatch means the world moved under us.
       // Roll the whole wipe back rather than commit a partial one.
       throw new Error(`expected to delete ${total}, deleted ${deletedTotal} — rolling back the entire wipe`);
+    }
+
+    /* ── SWEEP: this script's own DELETEs put rows BACK on the CLEAR list ────
+       Migration 0302 installs trg_mfg_so_item_delete_audit, an AFTER DELETE ON
+       scm.mfg_sales_order_items trigger that writes one audit row per deleted
+       line into scm.mfg_so_item_deletions — which is itself a CLEAR table, and
+       is emptied EARLIER in the topological order (it is a child, and children
+       go first). So the pass above deletes the audit rows, then deletes the
+       items, and the trigger writes the audit rows straight back.
+
+       MEASURED, not theorised: run 32455489040 (2026-08-21) committed its wipe
+       and then failed its own verification with
+       `scm.mfg_so_item_deletions still has 4 HC rows` — exactly the 4 SO items
+       the same transaction had deleted. Nothing was corrupt and the 2990 guard
+       was green; the FIRST apply simply always failed and always needed a
+       second run, which is a verification answering a different question from
+       the one it appears to answer.
+
+       Fixed generically rather than by special-casing that one table: sweep the
+       CLEAR set until a pass deletes nothing. Any future AFTER DELETE trigger
+       writing into a CLEAR table converges the same way. Three passes is a
+       ceiling, not an expectation — one sweep has always been enough, and a
+       trigger that refills faster than we can empty it is a REFUSAL, not
+       something to keep retrying. */
+    let sweptTotal = 0;
+    let sweeps = 0;
+    for (; sweeps < 3; sweeps += 1) {
+      let swept = 0;
+      for (const r of deleteOrder) {
+        const del = await tx`DELETE FROM ${tx(qi(r.schema))}.${tx(qi(r.table))} WHERE company_id = ${HC_ID}`;
+        if (del.count) {
+          swept += del.count;
+          deletedByTable.set(`${r.schema}.${r.table}`, (deletedByTable.get(`${r.schema}.${r.table}`) ?? 0) + del.count);
+        }
+      }
+      if (swept === 0) break;
+      sweptTotal += swept;
+      note(`  sweep ${sweeps + 1}: ${swept} row(s) written BACK by our own AFTER DELETE triggers, removed`);
+    }
+    if (sweeps >= 3) {
+      throw new Error('CLEAR tables still refilling after 3 sweeps — a trigger is writing rows faster than they are deleted; rolling back');
+    }
+    deletedTotal += sweptTotal;
+    if (sweptTotal) note(`  total after ${sweeps} sweep(s): ${deletedTotal} rows`);
+
+    /* ── THE EXPORT LOG: CANCEL, never delete ───────────────────────────────
+       scm.autocount_outbox is on KEEP now (see the header). Its documents are
+       gone, so a row still `pending` would have the drain chasing a document
+       that no longer exists — but DELETING the row is what left AutoCount as
+       the only party that remembered what we had sent. Cancel the intent, keep
+       the memory. */
+    if (outboxLive) {
+      const cancelled = await tx`
+        UPDATE scm.autocount_outbox
+           SET status = 'skipped',
+               last_error = ${`go-live wipe ${new Date().toISOString()}: source document deleted, send cancelled`},
+               updated_at = now()
+         WHERE company_id = ${HC_ID} AND status = 'pending'`;
+      note(`  export log: ${cancelled.count} pending HC row(s) marked 'skipped'; 0 deleted (${hcOutboxTotal} HC rows kept).`);
+    }
+
+    /* ── THE COUNTER: whatever the operator chose, in the same transaction ──
+       DOC_COUNTERS is required in apply mode (see the gates at the top), so
+       there is no default branch here and no silent behaviour.
+
+       reset deletes ONLY series that are unambiguously HC: `HC-…` and the bare
+       `JE-…` HOUZS journal series (HOUZS JEs are historically bare — see
+       jePrefixForCode in scm/lib/doc-no.ts). It NEVER touches `2990-…`, and it
+       NEVER touches `TRIP-…`, which carries no company prefix because it is ONE
+       sequence shared by both companies — resetting it would renumber 2990's
+       trips, which this script exists to guarantee it does not do. Legacy bare
+       `SO-…`/`PO-…` HOUZS series from before 2026-08-07 are left alone too:
+       they are past months and nothing mints into them. */
+    if (countersLive) {
+      if (DOC_COUNTERS === 'reset') {
+        const gone = await tx`
+          DELETE FROM scm.doc_number_counters
+           WHERE series LIKE 'HC-%' OR series LIKE 'JE-%'`;
+        note(`  doc-number counters: RESET — ${gone.count} HC series deleted; the next mint of each starts at 001.`);
+        note(`  Anything the AutoCount book already holds in those series WILL be offered to it again.`);
+      } else {
+        note(`  doc-number counters: KEPT — ${hcCounters.length} HC series continue upward. Deleting rows did not move them.`);
+      }
     }
 
     // ── IN-TRANSACTION 2990 GUARD — the cascade safety net ─────────────────
@@ -629,11 +832,51 @@ async function main() {
     }
     note(`  KEEP-sample tables changed: ${keepDrift} (want 0)`);
 
+    /* (d) THE EXPORT LOG SURVIVED, and nothing is left pending.
+       Asserted as a SHAPE, not a count: the rows must still be there AND carry
+       no `pending`. A count alone would pass on an empty table, which is
+       exactly the state this assertion exists to make impossible again. */
+    if (outboxLive) {
+      const obRows = await check`
+        SELECT status, count(*)::int AS n
+          FROM scm.autocount_outbox WHERE company_id = ${HC_ID}
+         GROUP BY status ORDER BY status`;
+      const byStatus = new Map(obRows.map((r) => [String(r.status), Number(r.n)]));
+      const kept = [...byStatus.values()].reduce((a, b) => a + b, 0);
+      if (kept !== hcOutboxTotal) {
+        problems.push(`EXPORT LOG LOST ROWS: ${hcOutboxTotal} HC outbox rows before, ${kept} after — the ERP's record of what it sent to AutoCount must survive a wipe`);
+      }
+      if ((byStatus.get('pending') ?? 0) !== 0) {
+        problems.push(`export log still has ${byStatus.get('pending')} pending HC row(s) whose documents were just deleted`);
+      }
+      note(`  export log HC rows: ${kept} kept (want ${hcOutboxTotal}), pending ${byStatus.get('pending') ?? 0} (want 0) — ${[...byStatus].map(([k, v]) => `${k}=${v}`).join(' ')}`);
+    }
+
+    /* (e) THE COUNTER matches what the operator ASKED FOR — again a shape.
+       keep: every HC series is still present at exactly the number it held
+       before the wipe. reset: no HC series remains, so each restarts at 001. */
+    if (countersLive) {
+      const after = await check`SELECT series, next_n FROM scm.doc_number_counters WHERE series LIKE 'HC-%' OR series LIKE 'JE-%' ORDER BY series`;
+      const afterMap = new Map(after.map((r) => [String(r.series), Number(r.next_n)]));
+      if (DOC_COUNTERS === 'reset') {
+        if (after.length !== 0) problems.push(`DOC_COUNTERS=reset but ${after.length} HC counter row(s) remain: ${after.map((r) => r.series).join(', ')}`);
+        note(`  doc-number counters after RESET: ${after.length} HC series remain (want 0)`);
+      } else {
+        for (const r of hcCounters) {
+          const now = afterMap.get(String(r.series));
+          if (now === undefined) problems.push(`DOC_COUNTERS=keep but counter ${r.series} DISAPPEARED`);
+          else if (now < Number(r.next_n)) problems.push(`DOC_COUNTERS=keep but counter ${r.series} went BACKWARDS: was ${r.next_n}, now ${now}`);
+        }
+        note(`  doc-number counters after KEEP: ${hcCounters.length} HC series still at or above their pre-wipe number (want ${hcCounters.length})`);
+      }
+    }
+
     if (problems.length) {
       bad(`VERIFICATION FAILED:\n${problems.map((p) => `    - ${p}`).join('\n')}`);
       process.exit(1);
     }
-    note(`\n  ALL ASSERTIONS PASSED: HC CLEAR tables empty, 2990 unchanged, KEEP sample unchanged.`);
+    note(`\n  ALL ASSERTIONS PASSED: HC CLEAR tables empty, 2990 unchanged, KEEP sample unchanged,`);
+    note(`  export log intact with nothing pending, doc-number counters ${DOC_COUNTERS === 'reset' ? 'RESET as requested' : 'KEPT as requested'}.`);
     note(`  Backup is in ${BACKUP_DIR} (also uploaded as a workflow artifact).`);
   } finally {
     await check.end({ timeout: 5 });

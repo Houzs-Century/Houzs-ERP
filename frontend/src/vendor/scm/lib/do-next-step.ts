@@ -198,10 +198,17 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
  * WHY A SENTENCE AND NOT A REFUSAL. Three measured reasons, all pointing the
  * same way:
  *
- *   · The office legitimately closes deliveries it did not attend. 2990's
- *     imported deliveries have no POD at all, and the HOUZS AutoCount
- *     carry-overs were inserted as literal 'DELIVERED'. A hard gate would make
- *     a whole tenant's backlog unclosable.
+ *   · The office legitimately closes deliveries it did not attend. Every closed
+ *     delivery in production today is one of these: all twelve were flipped
+ *     DISPATCHED -> DELIVERED in a single minute on 2026-07-24 by
+ *     backend/scripts/backfill-2990-delivered-dos.mjs, because 2990's source
+ *     system has no "delivered" step on a DO at all. A hard gate would have
+ *     made that whole backlog unclosable.
+ *     (This bullet used to add "and the HOUZS AutoCount carry-overs were
+ *     inserted as literal 'DELIVERED'". Measured 2026-08-21, run 32457160124:
+ *     there are no Houzs delivery orders and no row carries migrated_no_stock,
+ *     so that had not happened. The reason to loosen stands on the 2990 half;
+ *     the Houzs half was a claim nobody had checked.)
  *   · The SERVER already decided this. `patchDeliveryOrderStatusHandler` DROPS
  *     an out-of-range GPS fix rather than 409-ing it, in as many words: "a bad
  *     sensor reading must never be the reason a driver cannot close a

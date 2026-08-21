@@ -92,11 +92,11 @@ describe('so-field-policy — frontend mirror matches the backend source of trut
   });
 
   it('classifies the owner-ruled free-edit fields as FREE', () => {
-    // The owner's ruling that STANDS: contact details + note stay free-edit
-    // (2026-07-17 — "contact details in an approval queue stop being updated").
-    // The delivery ADDRESS left this list 2026-07-27 (two-lane phase 2): it is
-    // now a Logistics-approved amendment field — see the CONTROLLED test below.
-    for (const key of ['phone', 'email', 'debtorName', 'note']) {
+    // What remains free after the 2026-08-21 customer-info reversal: note,
+    // emergency contacts, customer type. The delivery ADDRESS left this list
+    // 2026-07-27 (two-lane phase 2); customer name / phone / email left it
+    // 2026-08-21 ("需要加上更新客户信息") — see the CONTROLLED test below.
+    for (const key of ['note', 'emergencyContactName', 'customerType']) {
       expect(soHeaderFieldClass(key)).toBe('FREE');
     }
   });
@@ -107,6 +107,9 @@ describe('so-field-policy — frontend mirror matches the backend source of trut
       // Two-lane phase 2 (owner 2026-07-27): the address block + disposal note.
       'address1', 'address2', 'address3', 'address4',
       'shipToAddress', 'billToAddress', 'installToAddress', 'replacementDisposal',
+      // Customer info (owner 2026-08-21): the contact block rides the
+      // DELIVERY-lane amendment once the SO is locked.
+      'debtorName', 'phone', 'email',
     ]) {
       expect(soHeaderFieldClass(key)).toBe('CONTROLLED');
     }

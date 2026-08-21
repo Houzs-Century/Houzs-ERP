@@ -75,6 +75,12 @@ class FakeQuery {
  *  costing-layer outage without module mocking. */
 function harness(tables: Record<string, Row[]>, breakTable?: string) {
   const app = new Hono();
+  /* scm.doc_number_counters, in memory. The JE number this handler mints comes
+     from scm.next_doc_no_n (migration 0316), so a fake PostgREST that does not
+     answer it is modelling a database without the function — which now REFUSES
+     rather than quietly minting from the live max, on purpose. Same arithmetic
+     as the real one: GREATEST(counter, floor + 1), and it only goes up. */
+  const counters = new Map<string, number>();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
       from: (t: string) => {
@@ -102,6 +108,13 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
             data: [{ applied_sen: calc.skipped ? 0 : calc.appliedSen, new_paid_sen: pi.paid_sen, new_status: pi.status }],
             error: null,
           };
+        }
+        if (fn === 'next_doc_no_n') {
+          const series = String(args.p_series);
+          const floor = Math.max(0, Number(args.p_floor ?? 0));
+          const n = Math.max(counters.get(series) ?? 0, floor + 1);
+          counters.set(series, n + 1);
+          return { data: n, error: null };
         }
         return { data: null, error: { message: `unexpected rpc ${fn}` } };
       },
