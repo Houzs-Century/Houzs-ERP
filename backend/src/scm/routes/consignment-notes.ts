@@ -48,6 +48,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 
 export const consignmentNotes = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentNotes.use('*', supabaseAuth);
@@ -251,8 +252,24 @@ async function resolveNoteLineWarehouses(
     .filter((x): x is string => !!x))];
   const soWh = new Map<string, string | null>();
   if (soItemIds.length > 0) {
-    const { data: soRows } = await sb.from('consignment_sales_order_items')
-      .select('id, warehouse_id').in('id', soItemIds);
+    /* Company-scoped since 2026-08-21 (audit A3): these line ids arrive from the
+       caller on the create path, the client is service-role (no RLS), and this
+       read decides the SHIP-FROM warehouse — unscoped, a foreign CO line id
+       deducted stock out of the other company's warehouse under this company's
+       stamp. The create/add-line handlers now refuse foreign ids outright
+       (assertSourceLinesInCompany); this predicate is the depth behind them, so
+       a foreign id that slips through any future path resolves NO warehouse and
+       falls back to this company's own. Error bound: an unreadable row must not
+       silently become "use the fallback warehouse". */
+    const { data: soRows, error: soErr } = await sb.from('consignment_sales_order_items')
+      .select('id, warehouse_id').in('id', soItemIds)
+      .eq('company_id', companyId ?? -1);
+    if (soErr) {
+      /* Degrade to the fallback (this company's own warehouse), never to a
+         foreign one — and say so, instead of the old bare-destructure silence. */
+      // eslint-disable-next-line no-console
+      console.error('[consignment-notes] CO-line warehouse read failed — lines fall back to the header/default warehouse:', soErr.message);
+    }
     for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
       soWh.set(r.id, r.warehouse_id ?? null);
     }
@@ -701,6 +718,26 @@ consignmentNotes.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the GRN/DR/DO trio always
+     guarded this and the consignment clone never did. Two caller-supplied
+     inputs crossed the tenant boundary unchecked: the CO line ids (which
+     resolve the ship-from WAREHOUSE and the unit cost — a foreign id deducted
+     stock out of the other company's warehouse under this company's stamp),
+     and the free-text consignment_so_doc_no (which document-flow then traced
+     across tenants). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_sales_order_items',
+      items.map((it) => (it.soItemId ?? it.consignmentSoItemId) as string | undefined));
+    if (!xl.ok) return c.json(xl.body, xl.status);
+    const soDocNo = (body.consignmentSoDocNo as string) ?? (body.soDocNo as string) ?? null;
+    if (soDocNo) {
+      const { data: co, error: coErr } = await scopeToCompany(
+        sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', soDocNo), c).maybeSingle();
+      if (coErr) return c.json({ error: 'source_check_failed', reason: coErr.message }, 500);
+      if (!co) return c.json({ error: 'consignment_order_not_found', docNo: soDocNo }, 404);
+    }
+  }
+
   /* DROPPED vs DO: the soft short-stock confirmStockShort gate, the SO-remaining
      over-pick guard, and the sofa no-batch / incomplete-set ship guards — a
      loaner has no ordered-qty cap and ships whatever is on the shelf. */
@@ -766,7 +803,7 @@ consignmentNotes.post('/', async (c) => {
     const sourceCostByOrderItem = await sourceUnitCostByItemId(
       sb, 'consignment_sales_order_items',
       items.map((it: Record<string, unknown>) => (it.soItemId ?? it.consignmentSoItemId) as string | undefined),
-    );
+    activeCompanyId(c) ?? null);
     const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByOrderItem));
     const { error: iErr } = await sb.from('consignment_delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('consignment_delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -869,9 +906,16 @@ consignmentNotes.post('/:id/items', async (c) => {
   const { data: header } = await scopeToCompanyId(sb.from('consignment_delivery_orders').select('id, status, warehouse_id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
+  /* Same cross-company line guard as the create path (2026-08-21, audit A3). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_sales_order_items',
+      [(it.soItemId ?? it.consignmentSoItemId) as string | undefined]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'consignment_sales_order_items', [(it.soItemId ?? it.consignmentSoItemId) as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('consignment_delivery_order_items').insert({ company_id: activeCompanyId(c), ...row }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* The ITEM select echoes the stored line back — cost/margin included. A

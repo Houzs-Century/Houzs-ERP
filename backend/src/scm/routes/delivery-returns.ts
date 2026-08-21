@@ -1130,7 +1130,7 @@ deliveryReturns.post('/', async (c) => {
      a silent "book at cost 0" (#632). */
   const sourceCostByDoItem = await sourceUnitCostByItemId(
     sb, 'delivery_order_items', items.map((it: Record<string, unknown>) => it.doItemId as string | undefined),
-  );
+    activeCompanyId(c) ?? null);
   const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByDoItem));
   const { error: iErr } = await sb.from('delivery_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -1538,7 +1538,7 @@ deliveryReturns.post('/:id/items', async (c) => {
 
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'delivery_order_items', [it.doItemId as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);

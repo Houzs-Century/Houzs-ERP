@@ -39,6 +39,14 @@ export async function sourceUnitCostByItemId(
   sb: any,
   table: string,
   ids: Array<string | null | undefined>,
+  /* REQUIRED, not defaulted (2026-08-21, audit A3) — these ids are
+     caller-supplied and this read runs on the service-role client, so without
+     the predicate a foreign line id resolved the OTHER tenant's stored cost
+     onto this company's document. Every source line table here carries a
+     NOT NULL company_id (mig 0083). Pass null ONLY to deliberately skip the
+     predicate; an optional param would be forgotten into exactly the hole
+     this closes. */
+  companyId: number | null,
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const wanted = [...new Set(ids.filter((x): x is string => !!x))];
@@ -47,7 +55,11 @@ export async function sourceUnitCostByItemId(
   // can't truncate and leave later lines falling back to the client's echo.
   const { data } = await chunkIn<{ id: string; unit_cost_sen: number | null }>(
     wanted,
-    (batch, from, to) => sb.from(table).select('id, unit_cost_sen').in('id', batch).range(from, to),
+    (batch, from, to) => {
+      let q = sb.from(table).select('id, unit_cost_sen').in('id', batch);
+      if (companyId != null) q = q.eq('company_id', companyId);
+      return q.range(from, to);
+    },
   );
   for (const r of (data ?? []) as Array<{ id: string; unit_cost_sen: number | null }>) {
     out.set(r.id, Number(r.unit_cost_sen ?? 0));
