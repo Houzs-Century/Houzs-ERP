@@ -2,9 +2,9 @@
 
 **Symptom.** Two separate silent-refusal bugs shipped on 2026-08-21 while
 `frontend/scripts/check-silent-mutations.mjs` reported `0 SILENT`: six Fleet
-Health writes (`docs/bugs/0489-fleet-health-refused-six-writes-in-silence-under-a-comment-c.md`)
-and the Post GRN / Post Purchase Invoice commits
-(`docs/bugs/0490-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`).
+Health writes (`docs/bugs/0489-fleet-health-refused-six-writes-in-silence-under-a-comment-c.md`,
+PR #2602) and the Post GRN / Post Purchase Invoice commits (PR #2605, whose own
+ledger entry lands with it).
 On the phone, a PMS photo caption and a checklist remark typed on blur were
 discarded by a refused PATCH with the typed text still on screen, so the box
 looked exactly like a saved one.
