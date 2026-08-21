@@ -31,6 +31,7 @@ import {
   refusalText, payableOf,
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
+import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -123,36 +124,113 @@ const WaitingForMoney = () => {
       )}
 
       {shown.length > 0 && (
-        <table style={table}>
+        <table className={grid.grid}>
           <thead>
-            <tr style={headRow}>
-              <th style={cell}>Acquirer</th><th style={cell}>Statement</th><th style={cell}>Period</th>
-              <th style={num}>It should pay</th><th style={num}>Received</th><th style={num}>Still owed</th><th style={cell} />
+            <tr>
+              <th>Statement</th>
+              <th>The transactions it is waiting to be paid for</th>
+              <th className={grid.num}>Net</th>
+              <th className={grid.num}>Still owed</th>
             </tr>
           </thead>
-          <tbody>
-            {shown.map((b) => {
-              const left = outstandingOf(b);
-              return (
-                <tr key={b.id} style={rowLine}>
-                  <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
-                  <td style={cell}>{b.file_name}</td>
-                  <td style={cell}>{b.period_from} → {b.period_to}</td>
-                  <td style={num}>{fmt(payableOf(b))}</td>
-                  <td style={num}>{(b.received_sen ?? 0) === 0 ? '—' : fmt(b.received_sen)}</td>
-                  <td style={{ ...num, fontWeight: left === 0 ? undefined : 700, color: left === 0 ? good : undefined }}>
-                    {left === 0 ? 'all in' : fmt(left)}
-                  </td>
-                  <td style={cell}>
-                    <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {shown.map((b) => (
+            <StatementLines key={b.id} batch={b} owed={outstandingOf(b)} onOpen={() => setBatchId(b.id)} />
+          ))}
         </table>
       )}
     </div>
+  );
+};
+
+/* ── What one statement is actually waiting to be paid FOR ──────────────────
+   The owner, on a list that named the file and nothing else — the same thing
+   he said of the merchant screen and then again here: 这里 pending bank
+   statement matching 的也显示 detail 哦.
+
+   A file name is not a transaction. He is chasing RM 3,743.04 from Maybank,
+   and what tells him whether that is right is the sale behind it: whose it
+   was, which day it was swiped, what the card machine charged. So the
+   statement names itself once down the side, and its own lines fill the rest —
+   the same shape as the merchant screen, because it is the same act read from
+   the other end. */
+
+const StatementLines = ({ batch, owed, onOpen }: {
+  batch: SettlementBatch; owed: number; onOpen: () => void;
+}) => {
+  const q = useSettlementBatch(batch.id);
+  const rows = q.data?.rows ?? [];
+  const span = Math.max(1, rows.length);
+
+  const head = (
+    <td className={grid.report} rowSpan={span}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span className={styles.codeChip}>{batch.acquirer_code}</span>
+        <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
+      </div>
+      <div className={grid.sub}>{batch.period_from} → {batch.period_to}</div>
+      <div className={grid.sub}>
+        should pay {fmt(payableOf(batch))}
+        {(batch.received_sen ?? 0) !== 0 ? ` · received ${fmt(batch.received_sen)}` : ''}
+      </div>
+      <button type="button" style={{ ...btn(owed !== 0), marginTop: 6 }} onClick={onOpen}>
+        {owed === 0 ? 'Open' : 'Record the money'}
+      </button>
+    </td>
+  );
+
+  const owedCell = (
+    <td className={grid.num} rowSpan={span}
+      style={{ fontWeight: owed === 0 ? undefined : 700, color: owed === 0 ? good : undefined }}>
+      {owed === 0 ? 'all in' : fmt(owed)}
+    </td>
+  );
+
+  if (rows.length === 0) {
+    return (
+      <tbody>
+        <tr>
+          {head}
+          <td colSpan={2}>
+            <span style={softText}>{q.isLoading ? 'Reading its transactions…' : 'This statement has no lines.'}</span>
+          </td>
+          {owedCell}
+        </tr>
+      </tbody>
+    );
+  }
+
+  return (
+    <tbody>
+      {rows.map((r, i) => {
+        /* Always an array — settlementBatchDetail maps every row with
+           `linked: linksByRow.get(id) ?? []`. Empty means the line claimed no
+           payment, which is a state to SHOW, not to guard against. */
+        const links = r.linked;
+        return (
+        <tr key={r.id}>
+          {i === 0 && head}
+          <td>
+            <div>
+              {r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}
+              {/* WHOSE sale it was, not just which document — the thing that
+                  makes a number checkable rather than merely displayed. */}
+              {links.length > 0 && (
+                <> · <b>{links.map((l) => l.doc_no ?? l.payment_id).join(' + ')}</b></>
+              )}
+            </div>
+            <div className={grid.sub}>
+              {links.length > 0
+                ? [...new Set(links.map((l) => l.customer_name).filter(Boolean))].join(', ') || 'gross ' + fmt(r.gross_sen)
+                : 'no sale linked'}
+              {r.fee_sen !== 0 ? ` · fee ${fmt(r.fee_sen)}` : ''}
+            </div>
+          </td>
+          <td className={grid.num}>{fmt(r.net_sen)}</td>
+          {i === 0 && owedCell}
+        </tr>
+        );
+      })}
+    </tbody>
   );
 };
 

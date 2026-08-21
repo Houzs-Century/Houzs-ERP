@@ -50,7 +50,11 @@ vi.mock('./settlement-queries', () => ({
         ...OWED,
         receipts: [{ id: 9, received_on: '2026-08-18', amount_sen: 281858, bank_ref: null, note: null, je_no: 'JE-2608-0017', created_by: 'Ah Chew' }],
       },
-      rows: [{ id: 7, bucket: 'MATCHED', confirmed_at: '2026-08-17T00:00:00Z' }],
+      rows: [{
+        id: 7, bucket: 'MATCHED', confirmed_at: '2026-08-17T00:00:00Z',
+        txn_date: '2026-08-16', ref: '663554', gross_sen: 180000, fee_sen: 2700, net_sen: 177300,
+        linked: [{ settlement_row_id: 7, payment_source: 'SOPAY', payment_id: 'm9', doc_no: 'SO-2608-020', amount_sen: 180000, customer_name: 'Chong Wei Ming' }],
+      }],
     },
     isLoading: false,
   }),
@@ -85,7 +89,10 @@ describe('the statements waiting for money', () => {
     /* The headline total and the one owed statement's line — same number, so
        both must be on screen. */
     expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
-    expect(screen.getByText('RM 7,046.45')).toBeTruthy();       // what it should pay
+    /* The statement's own total now sits inside its cell, beside the lines it
+       is waiting to be paid for (owner: 这里 pending bank statement matching 的也
+       显示 detail 哦). */
+    expect(screen.getByText(/should pay RM 7,046.45/)).toBeTruthy();
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
     expect(screen.queryByText('mbb-aug.csv')).toBeNull();
 
@@ -107,7 +114,8 @@ describe('the statements waiting for money', () => {
 
   test('a statement shows its credits, takes another, and can undo one', () => {
     draw();
-    fireEvent.click(screen.getByText('Open'));
+    /* The button says what pressing it is FOR while money is outstanding. */
+    fireEvent.click(screen.getByText('Record the money'));
     expect(screen.getByText(/RM 4,227.87 still to come of RM 7,046.45/)).toBeTruthy();
     expect(screen.getByText('JE-2608-0017')).toBeTruthy();
     expect(screen.getByText('Ah Chew')).toBeTruthy();
@@ -158,5 +166,24 @@ describe('paid, not yet in the bank', () => {
     expect(screen.getByText('over 30 days')).toBeTruthy();
     // 46 days on GHL — the number the operator is meant to chase.
     expect(screen.getByText('46')).toBeTruthy();
+  });
+});
+
+/* 这里 pending bank statement matching 的也显示 detail 哦 (owner, 2026-08-20).
+   A file name is not a transaction: what tells him whether RM 4,227.87 is the
+   right thing to chase is the sale behind it. */
+describe('a statement waiting for money shows what it is waiting FOR', () => {
+  test('names the transaction, the reference and the customer, not just the file', () => {
+    draw();
+    expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
+    /* The line inside it. The statement's period repeats the date, so the
+       reference is what identifies the transaction here. */
+    expect(screen.getByText('663554')).toBeTruthy();
+    expect(screen.getByText('SO-2608-020')).toBeTruthy();
+    expect(screen.getByText(/Chong Wei Ming/)).toBeTruthy();
+    /* And what the card machine kept, so the net is checkable rather than
+       merely displayed. */
+    expect(screen.getByText(/fee RM 27.00/)).toBeTruthy();
+    expect(screen.getByText('RM 1,773.00')).toBeTruthy();
   });
 });
