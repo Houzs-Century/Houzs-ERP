@@ -35,9 +35,43 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
-| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status`. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
-| Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). |
-| Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | |
+| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + GPS, through the **shared hook** (`useUpdateMfgDeliveryOrderStatus`, `evidence` parameter). It used a raw `authedFetch` until 2026-08-21; see "Who may attach proof of delivery" below. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
+| Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). Posts **`asDraft: true`** → the DO lands DRAFT and the operator confirms it; the phone never ships. Same shape as the wizard's GRN arm. CTA reads "Create draft Delivery Order". |
+| Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | Driver run-sheet. "Take POD photo — complete" **navigates to Mobile POD** (`onPod`); it does not write a status. It used to PATCH `DELIVERED` directly with no evidence, while telling the driver to "open the order afterwards to attach the POD photo" — which MobilePOD refuses once the DO is delivered. |
+| Mobile "Delivery details" card | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | Split out of the run-sheet on 2026-08-21 (that file sits under a 2,449-line ceiling). Edits the HC delivery fields via `PATCH /delivery-planning/:type/:id/fields`. The DO-execution half — time window, arrival/departure, shipout, port, `delivery_substatus` — writes the **latest DO** and is hidden until one exists; the SO-context half writes the SO header and needs no DO. `replacement_disposal` is the one field that does not always take the direct write: on a locked SO it is refused 409 `so_locked_processing` and is raised as an SO Amendment instead. Rules and rationale in `docs/modules/delivery-tms.md` §1. |
+
+### Who may attach proof of delivery (2026-08-21)
+
+`delivery_orders` carries six evidence columns — `signature_data`, `pod_r2_key`,
+`pod_lat`, `pod_lng`, `pod_accuracy_m`, `pod_located_at` — and the status PATCH
+has accepted all six since migration 0249, writing each **only when present** so
+a plain status change never blanks a POD already on the row.
+
+Reaching them from the client is the shared hook's `evidence` parameter
+(`DoDeliveryEvidence` in `vendor/scm/lib/delivery-order-queries.ts`). Before that
+parameter existed the hook was typed `{ id, status }`, which is why MobilePOD
+bypassed it with a raw fetch and why every other surface closed deliveries with
+nothing attached.
+
+| Surface | Captures evidence? | On closing without it |
+|---|---|---|
+| Mobile POD | **Yes** — pad, photo, GPS | Confirm says "No customer signature has been captured." Still allowed. |
+| Mobile planning board | Routes to Mobile POD | n/a — it no longer writes a status |
+| Desktop detail / list drawer | No — the office is not at the door | `window.confirm` carrying `doCloseWithoutEvidenceWarning`. Still allowed. |
+| Mobile shell action bar | No | **Known open** — "Mark Signed" writes `SIGNED` (which counts as delivered) with no evidence. `docs/bugs/0481`. |
+
+Evidence is **allowed everywhere and required nowhere**, on purpose. The office
+legitimately closes deliveries it did not attend — 2990's imported deliveries
+have no POD step at all — the server itself drops a bad GPS reading rather than
+refusing the write, and the standing rule for this system is to loosen rather
+than restrict. The defect was never the permissiveness; it was that no screen
+said which of the two things you were about to do.
+
+Census of the historical population: `backend/scripts/check-pod-evidence.mjs`,
+dispatchable via the **DO integrity check (read-only)** workflow. It counts
+`SIGNED + DELIVERED + INVOICED` (all three are closed) and reports signature
+BYTE LENGTH, because `signature_data IS NOT NULL` overstates the evidence — the
+pre-`hasSignature` blank-pad bug stored a valid but empty PNG on every delivery.
 
 Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and
@@ -100,7 +134,7 @@ still need `edit` on `scm.sales.delivery`.
 | GET | `/so-source/:docNo` | `:2425` | SO header fields for the convert form. |
 | GET | `/:id` | `:2451` | Header + items + `has_children` + `lifecycle_state` + crew. |
 | POST | `/` | `:2591` | Create. `asDraft: true` → DRAFT (no stock); else born DISPATCHED. |
-| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. |
+| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. Same `asDraft` rule as `POST /` — **omitting the field means DISPATCHED**, i.e. stock OUT + SO synced to delivered + customer email. Callers that want a reviewable document must send it explicitly. |
 | PUT | `/:id/crew` | `:3314` | Driver / helper / lorry assignment + snapshot. |
 | PATCH | `/:id` | `:3450` | Header edit (+ SO amend-field mirror). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
@@ -181,11 +215,16 @@ still need `edit` on `scm.sales.delivery`.
   **DISPATCHED** (`:2785`) and stock is deducted immediately (`:2842-2855`). The
   create path also fires `syncSoDeliveredFromDo` and the customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
-- **Header PATCH** (`:3450`). Locked once a DR/SI exists (`:3544`). Strips the
-  three amend fields out of the DO update and mirrors them onto the parent SO
-  instead, writing a separate audit row on the **SO's** timeline
-  (`prepareSoAmendMirrorAudit`, `:221-260`). `delivery_substatus` is whitelisted
-  against `HC_SUBSTATUS_VALUES` (`:209-212`).
+- **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
+  live DR/SI no longer freezes the whole header — only the columns that child
+  snapshots freeze (`DO_IDENTITY_LOCK_COLS` in `lib/do-audit-fields.ts` =
+  `debtor_code` / `debtor_name` / `currency` / `sales_location` / `branding`),
+  via `changedLockedCols` (`shared/header-inherited-lock.ts`) + `doHasDownstream`,
+  409 `do_identity_locked`. The DO's own delivery dates, dispatch/POD, addresses
+  and notes stay editable with a child present. Strips the three amend fields out
+  of the DO update and mirrors them onto the parent SO instead, writing a separate
+  audit row on the **SO's** timeline (`prepareSoAmendMirrorAudit`, `:221-260`).
+  `delivery_substatus` is whitelisted against `HC_SUBSTATUS_VALUES` (`:209-212`).
 - **Line add** (`:3636`). Item-code guard, then `doHasDownstream`. If the DO is
   already shipped, the new line ships immediately via resync, so a stock
   availability check runs first unless the caller passes `confirmShortStock`
@@ -210,7 +249,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 **Status vocabulary — read `backend/src/scm/shared/do-shipped-states.ts`, not
@@ -224,6 +263,43 @@ sets out here, which made it one more copy of a list that already stood in
 eleven files — and copies of this particular list had already drifted: the
 delivery agent's was missing `COMPLETED`, so its DO pipeline silently omitted
 that bucket.
+
+**The frontend twin, and who actually holds it.** The browser cannot import from
+`backend/src`, so `frontend/src/vendor/shared/do-shipped-states.ts` is a
+byte-identical vendored copy. It is held there by
+`frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`, NOT by
+`check-shared-mirrors.mjs --strict` — that script defers to a text heuristic
+which an unrelated test satisfied, so a corrupted twin passed it at 0 DIVERGED.
+See BUG-HISTORY "A mirror pin that was refereeing a different pair".
+
+**`SI_TRANSFERABLE_DO_STATES`** lives in the same file and is the server's answer
+to "may this delivery be invoiced" — every CONFIRMED delivery, `LOADED`
+included, and the gate is enforced at both Sales-Invoice entry points rather
+than only in the client. `docs/modules/sales-invoice.md` carries the three 409
+codes.
+
+**THE OWNER RULED ON `LOADED`, 2026-08-20 — 不要拦 —— 人自己知道.** Asked directly
+whether the system should refuse to invoice a delivery still marked LOADED, he
+said no: 「发票是invoice？等送完货了我们才自己convert to invoice啊」 /
+「我们自己开啊 manually开的不是吗」. The invoice is raised by hand, by someone who
+knows whether the goods arrived, so the system does not second-guess them.
+
+Read this before "unifying" the two status sets, because they differ by exactly
+LOADED and look like one rule written twice:
+
+| question | declaration | LOADED |
+| --- | --- | --- |
+| may this be BILLED? | `DO_NOT_INVOICEABLE_STATES` = DRAFT, CANCELLED | **invoiceable** |
+| have the goods LEFT? | `DO_NOT_DELIVERED_STATES` = DRAFT, LOADED, CANCELLED | not delivered |
+
+The Pending engine (`do-line-remaining.ts`) takes a REQUIRED
+`DoPendingBasis` of `'invoiceable' | 'delivered'` so no caller inherits the wrong
+one. **#2485's own justification does not reach LOADED** — it argued "stock was
+already deducted at dispatch", true of DISPATCHED/IN_TRANSIT and false of LOADED.
+The rule holds because the owner chose it, not because that argument covered it;
+`backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
+DELIVERED exclusion is still intact.
+
 
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
@@ -256,7 +332,7 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
+| `LOADED` | `PATCH /:id/status` ("Mark loaded") | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
@@ -268,10 +344,48 @@ Refusals the operator sees, in the order they fire:
 |---|---|
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
-| over-delivery re-check on first ship | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) — and until 2026-08-20 a LOADED DO tripped this against ITSELF, see below |
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
+
+> **"Has this delivery counted?" is ONE predicate now (2026-08-20).**
+> `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES` live in
+> `backend/src/scm/shared/do-shipped-states.ts`, with a PostgREST literal
+> (`DO_NOT_DELIVERED_IN_LIST`) and a `.mjs` mirror for the audits, all BUILT
+> from one array. The set is `DO_PRESHIP_STATES` + CANCELLED = the exact
+> complement of `DO_STOCK_OUT_STATES` over the eight-label vocabulary.
+>
+> It was written by hand in NINE places and every one read `{CANCELLED, DRAFT}`:
+> `lib/do-unlinked-coverage.ts` (twice), `lib/so-delivery-sync.ts`,
+> `lib/so-stock-allocation.ts`, `lib/do-line-remaining.ts` (twice),
+> `routes/inventory.ts`, `routes/delivery-orders-mfg.ts` and
+> `scripts/check-do-integrity.mjs`. LOADED is PRE-SHIP — the inventory OUT only
+> fires on ENTRY to a shipped state — so all nine counted a delivery that is
+> still on the lorry, and the confirm gate one row above then refused a LOADED
+> DO against its own lines whenever `2 x own_qty > ordered_qty`, which is every
+> full delivery. Goods on the lorry, button returns 409; and because the OUT had
+> not fired, stock on hand read too high, MRP did not reorder, and the way out
+> an operator reaches for is cancel-and-re-raise — the path that minted the
+> DO-005 duplicate delivery.
+>
+> `routes/unbilled-deliveries.ts` was the tell: the one consumer that had LOADED
+> right, and it had it right BY HAND.
+>
+> **PROVEN 2026-08-20** (`check-do-integrity.mjs` R4/R4b against production, run
+> 32368212535): **0** delivery orders are in LOADED in either company and **0**
+> would be refused, so nothing was stuck when this was fixed. Not proof the state
+> is unreachable — the column is `DEFAULT 'LOADED' NOT NULL` and
+> `PATCH /:id/status` accepts every `DO_STATUSES` member.
+>
+> `routes/delivery-planning.ts` keeps the two-state pair ON PURPOSE: it asks
+> which DO is the LIVE one for an order so a board write lands somewhere, not
+> whether it shipped, and a LOADED delivery IS live. The reason is written
+> beside the exemption in `backend/tests/doDeliveredOneHome.test.ts` rather than
+> at the two sites, because that router is already over its file-size ceiling
+> and a ceiling may only fall. That test is also what stops the tenth copy — it
+> scans for the hand-typed pair per MATCH (a window about delivery orders), not
+> per file, self-tests its own regexes first, and names that one exemption.
 
 `delivery_substatus` is a SEPARATE column with its own whitelist (Pending
 Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not
@@ -364,13 +478,38 @@ about-to-ship qty exceeds its live remaining. This closes the DRAFT door: the
 create-path cap is gated `if (body.asDraft !== true)`, so a DRAFT DO lands its
 full qty uncapped — without this recheck, confirming it (or a second full draft)
 shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
-`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
-stay uncapped, exactly as at create.
+`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`).
+
+Since 2026-08-20 (PR #2522) the same block ALSO runs the unlinked check
+(`findOverDeliveredUnlinkedItems`, keyed by `item_code`), so an unlinked line
+for an item the named SO already fully delivered is refused too — see the
+now-CLOSED blind-spot note below. A genuinely ad-hoc unlinked line (a code the
+SO never ordered) still stays uncapped, exactly as at create.
+
+> **Unlinked-line blind spot at this same chokepoint — CLOSED (wired 2026-08-20,
+> PR #2522).** `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with
+> NONE contributes nothing to the linked tally and is invisible to it, even
+> though it still ships stock. That is the `2990-DO-2607-005` shape: six lines,
+> all `so_item_id = null`, none counted against `2990-SO-2606-019`, so the
+> order's own goods went out twice (`docs/unlinked-line-duplicate-coe.md`). The
+> **create** and **add-line** paths already refused this (`findUnlinkedSoLines`);
+> the **CONFIRM** path now does too. The Status PATCH builds
+> `unlinkedByItemCode` from the DO's lines WITHOUT `so_item_id`, computes
+> `openByItemCode` by aggregating `soDeliverableRemaining` for the header's named
+> SO per ordered `item_code` (that engine excludes DRAFT + CANCELLED deliveries,
+> so THIS draft being confirmed is already out of the tally), and calls
+> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)` alongside
+> the existing linked check — returning **409 `over_delivery`** on either. An
+> unlinked line is flagged only when the named SO ordered that item code AND has
+> no open qty left, so a legitimate partial / multi-DO split still ships and an
+> ad-hoc line the SO never ordered is never flagged. Pinned end-to-end by
+> `backend/tests/doOverDeliveryUnlinkedRoute.test.ts` (the pure guard by
+> `lib/do-over-delivery.test.ts`).
 
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 (`:832-839`), and a partial UNIQUE index as the hard backstop against a race. It
-collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
+collapses identical `(warehouse_id, item_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
 
 **The index, verbatim.** Until migration **0279** this was prod-only DDL that
@@ -380,7 +519,7 @@ appeared in no file in the repo — read live from `pg_indexes` on 2026-08-11
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE (source_doc_type = 'DO'::text)
 ```
 
@@ -394,7 +533,7 @@ no-op against production) so the schema can be read from the repo again.
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source_v2
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key,
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key,
                COALESCE(correction_seq, 0))
   WHERE (source_doc_type = 'DO'::text)
 ```
@@ -644,7 +783,7 @@ order's goods and took nothing off its remaining — which is how
 The rule is deliberately narrow: an unlinked line is refused **only when the
 named SO already orders that item code**. A replacement part or a sample riding
 along on the same trip still passes, because it is not bypassing anything.
-| Shipped statuses (frontend) | the line editor renders read-only | `DeliveryOrderDetailV2.tsx:1362` — `["dispatched","in_transit","signed","delivered","invoiced"]` |
+| Shipped statuses (frontend) | the line editor renders read-only | `DeliveryOrderDetailV2.tsx:1376` — `DO_SHIPPED_STATES`, imported from `vendor/shared/do-shipped-states` since 2026-08-18. It used to be a hand-typed `["dispatched","in_transit","signed","delivered","invoiced"]` on this line while the transfer button sixteen lines above gated on a NARROWER hand-typed pair — one file holding two answers to "has this shipped". |
 
 **Amendment path — no, not on the DO itself.** There is no `do_revisions` table
 and no revision counter (verified: no such table is referenced anywhere in
@@ -694,7 +833,8 @@ into a duplicate line.
 | Server pagination opt-in | `useMfgDeliveryOrdersPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:325`) |
 | Detail fields | `pages/scm-v2/DeliveryOrderDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:241` |
 | Status ladder / who may advance it | `DeliveryOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:480-494`, gated by `useMayOperateDoc` (`:454`) → `canOperateDeliveryOrders` (`frontend/src/auth/salesAccess.ts:200`) — the SAME helper the desktop uses |
-| SO→DO conversion | `pages/scm-v2/DeliveryOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "do"`) |
+| SO→DO conversion | `pages/scm-v2/DeliveryOrderFromSo.tsx` (picker → `DeliveryOrderNewV2.tsx`, which owns the "Save as draft" toggle) | `mobile/MobileConvertWizard.tsx` (`target: "do"`) — one screen, always `asDraft: true` |
+| Convert-to-DO from the planning board | `vendor/scm/lib/delivery-planning-queries.ts` `useConvertSosToDo` | `mobile/MobileDeliveryPlanning.tsx` — **both** carry an `Idempotency-Key`; desktop keys per SO doc_no (one mount converts many), mobile per mount (one mount is one stop) |
 | Proof of delivery / collect payment | `DeliveryOrderDetailV2.tsx` payments panel | `mobile/MobilePOD.tsx` |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/delivery-order-queries.ts` | `mobile/sharedInvalidate.ts:69` (`DO_ROOTS` + `STOCK_ROOTS`) |
 
@@ -822,3 +962,26 @@ absence is a known gap rather than a silent one:
   (`delivery-orders-mfg.ts:640-768`): it logs divergences to
   `entity_audit_log` and binds nothing — stored-link resolution still decides.
   (PR #1681 to flip it live is DRAFT, owner-gated.)
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

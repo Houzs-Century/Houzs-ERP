@@ -53,8 +53,11 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import styles from './SalesOrderDetail.module.css';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
@@ -63,14 +66,6 @@ const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
-/* Commander 2026-05-29 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg +
-   Gap (mirrors GrnNew / SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* Commander 2026-05-29 — manual PI lines whose product is a bedframe/sofa get
@@ -118,6 +113,7 @@ type DraftLine = {
 
 export const PurchaseInvoiceNew = () => {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [params] = useSearchParams();
   const grnId    = params.get('grnId');
   // fromPicks = arrived from the GRN→PI review picker: build ONLY the ticked
@@ -502,6 +498,11 @@ export const PurchaseInvoiceNew = () => {
         // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
         await post.mutateAsync(createRes.id);
       }
+      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — and on a purchase
+         invoice the field most likely to be missing is the SUPPLIER'S OWN
+         invoice number, which is the one accounts will ask about. Same shared
+         frame as every other surface. Never blocks; the liability is booked. */
+      await notifyAcNotSent(notify, createRes, 'Purchase invoice');
       setDialog({
         title: `PI ${createRes.invoiceNumber} created`,
         body: asDraft
@@ -752,11 +753,8 @@ export const PurchaseInvoiceNew = () => {
               setLine(l.rid, { variants: (() => {
                 const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
                 // Auto-compute bedframe Total Height = Divan + Leg + Gap.
-                if (l.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-                  const d = parseInches(variants.divanHeight);
-                  const lg = parseInches(variants.legHeight);
-                  const g = parseInches(variants.gap);
-                  variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+                if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
+                  variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                 }
                 return variants;
               })() });

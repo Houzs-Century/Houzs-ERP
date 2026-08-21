@@ -55,6 +55,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -64,13 +65,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return `${currency} ${(v / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`;
-};
-
-/* T12 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg + Gap. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 type HeaderDraft = {
@@ -163,16 +157,20 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const [savingDraft, setSavingDraft] = useState(false);
 
   const hasChildren = Boolean(grn?.has_children);
+  /* Owner 2026-08-20 (§8 GAP-1) — a PC Return no longer freezes the whole header.
+     hardLocked (not POSTED) gates Edit + own-stage fields; lockedDueToChildren (a
+     live PC Return) freezes only supplier / currency + the LINES. */
+  const hardLocked = grn ? grn.status !== 'POSTED' : true;
   const isLocked = grn ? (grn.status !== 'POSTED' || hasChildren) : true;
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setLineDrafts({});
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
 
   /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
      until 2026-08-17, so the loading render called fewer hooks than the loaded
@@ -244,6 +242,9 @@ export const PurchaseConsignmentReceiveDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));
+    /* When a PC Return exists the LINES are locked, so a Received-Date edit must
+       NOT fan into the line drafts (would 409 on the locked line PATCH). */
+    if (lockedDueToChildren) return;
     if (k === 'receivedAt') {
       setLineDrafts((prev) => {
         const next = { ...prev };
@@ -264,11 +265,8 @@ export const PurchaseConsignmentReceiveDetail = () => {
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
       const variants: Record<string, unknown> = { ...(cur.variants ?? {}), [key]: value };
-      if (cur.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(cur.itemGroup) && isTotalHeightPart(key)) {
+        variants.totalHeight = computeTotalHeight(cur.itemGroup, variants);
       }
       return { ...prev, [it.id]: { ...cur, variants } };
     });
@@ -386,7 +384,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
               </Button>
             )}
             {!isEditing ? (
-              <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+              <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -402,7 +400,8 @@ export const PurchaseConsignmentReceiveDetail = () => {
 
       {lockedDueToChildren && (
         <div className={styles.bannerWarn}>
-          <strong>Locked</strong> — has a downstream document. Delete it first to edit.
+          <strong>Has a PC Return.</strong> Its supplier, currency and line items are locked — cancel the
+          return to change them. Received date, delivery-note ref and notes are still editable.
         </div>
       )}
 
@@ -411,7 +410,8 @@ export const PurchaseConsignmentReceiveDetail = () => {
         grn={grn}
         draft={headerView}
         onField={setHeaderField}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -678,15 +678,18 @@ export const PurchaseConsignmentReceiveDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  grn, draft, onField, locked, isEditing = true,
+  grn, draft, onField, locked, identityLocked = false, isEditing = true,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   grn: any;
   draft: HeaderDraft;
   onField: (k: keyof HeaderDraft, v: string) => void;
   locked: boolean;
+  identityLocked?: boolean;
   isEditing?: boolean;
 }) => {
+  // Inherited fields (supplier / currency) freeze on a hard lock OR a live PC Return.
+  const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   const warehousesQ = useWarehouses();
@@ -733,7 +736,7 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.supplierId} disabled={inheritedLocked}
                 onChange={(e) => onField('supplierId', e.target.value)}>
                 <option value="">— Pick supplier —</option>
                 {sortByText(suppliers).map((s) => (
@@ -746,7 +749,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.currency} disabled={inheritedLocked}
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>

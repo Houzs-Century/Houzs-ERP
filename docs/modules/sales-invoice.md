@@ -93,6 +93,35 @@ SOs; writes need `edit` on `scm.sales.invoices`.
 | POST | `/` | `:797` | Create. `asDraft: true` → DRAFT (no GL); else posts revenue at `:946`. |
 | POST | `/from-dos` | `:985` | Line-level batch convert from DO picks. |
 | POST | `/:id/items/from-do/:doId` | `:1216` | Append another DO's lines onto an existing invoice. |
+
+**Which deliveries may be invoiced — the server's answer, since 2026-08-18.** Both
+entry points above call `siTransferRefusal` (`scm/lib/do-line-remaining.ts`),
+which reads the one declaration `SI_TRANSFERABLE_DO_STATES`
+(`scm/shared/do-shipped-states.ts`). Before it, the rule lived only in clients and
+had four disagreeing spellings — this route refused just `CANCELLED`, so anything
+else went through from the API or a phone while the desktop greyed the button out.
+Three 409s, and the codes matter to API callers:
+
+| code | when |
+|---|---|
+| `do_cancelled` | the delivery was cancelled — raise a new one |
+| `do_not_confirmed` | still a DRAFT; #2485 keeps Confirm a prerequisite |
+| `do_not_transferable` | any other status, `INVOICED` included (nothing writes it, so the label means "somebody set it") |
+
+`LOADED` is deliberately NOT refused. #2485 widened the rule to every CONFIRMED
+delivery on 2026-08-19; #2557 took LOADED back out of the server's PICKER on
+2026-08-20 as a side effect of a stock fix, leaving the button offered and the
+lines unavailable; and the owner settled it the same day — **不要拦 ——
+人自己知道**, 「我们自己开啊 manually开的不是吗」. The invoice is raised by hand
+by someone who knows whether the goods arrived, so the system does not
+second-guess them. The picker, this gate and the write-path cap all now read
+the `'invoiceable'` basis of `do-line-remaining.ts`, so they cannot disagree
+again; `backend/tests/loadedStaysInvoiceable.test.ts` fails by name if LOADED is
+re-excluded. NOTE that #2485's argument — "stock was already deducted at
+dispatch" — is false for LOADED: the rule stands on the owner's choice, not on
+that reasoning. The batch path's `DO_HEADER` projection must keep selecting `status`;
+it did not at first, and the guard then refused every batch invoice
+(`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:1426` / `:1515` / `:1632` | Line CRUD (frozen once issued). |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:1685` / `:1777` / `:1850` | Payments ledger. |
@@ -169,6 +198,11 @@ posting.
   with `sent_at` / `confirmed_at` NULL and **commits nothing** — no AR/GL, no
   customer credit (`:872-876`). A non-draft create calls `postSiRevenue` at
   `:946`.
+- **Create from DO lines** (`POST /from-dos`, `createSalesInvoiceFromDoLinesHandler`).
+  Same `asDraft` contract, read strictly (`body.asDraft === true`) and landed at
+  `status: isDraft ? 'DRAFT' : 'SENT'`, with `invoice_date` forced to
+  `todayMyt()`. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
+  the ruling below.
 - **Confirm** (DRAFT → SENT, inside the status handler at `:1958-2005`). Stamps
   `sent_at` + `confirmed_at` with a `.eq('status','DRAFT')` race gate (`:1969-1971`),
   posts revenue (`:1978`, idempotent), then auto-applies any customer credit.
@@ -288,6 +322,41 @@ before recording payments` (`not_payable`).
 > for both SI and PI. **No backend path writes it and it is in no enum** — it is a
 > dead label. The live pill relabelings that DO fire are `SENT` → "Issued",
 > `SUBMITTED` / `POSTED` → "Confirmed", `DISPATCHED` → "Shipped".
+
+### THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE (owner ruling, 2026-08-20)
+
+His words: **「以电脑为准 —— 手机也先出草稿」** — the desktop is the standard, and
+the phone drafts first too.
+
+**What the phone did until this ruling.** `MobileConvertWizard`'s DO→SI arm
+posted `{ picks }` and nothing else. `POST /from-dos` reads `asDraft` strictly,
+so an absent flag is not a neutral default — it is `status: 'SENT'`, with
+`sent_at` and `confirmed_at` stamped, revenue posted, and `invoice_date` forced
+to today. **Three taps on a phone therefore ISSUED a customer-facing invoice**:
+no due date, no terms, no review, and no way back except cancelling a document
+the customer may already have been given.
+
+**Why that was a defect and not merely a difference.** The desktop cannot reach
+that endpoint at all — it goes `SalesInvoiceFromDo` → `SalesInvoiceNew` → `POST /`
+with a ~30-key header form, which IS the review step. (`useConvertDosToSi` in
+`vendor/scm/lib/sales-invoice-queries.ts` exists and has zero consumers.) So one
+surface made issuing an invoice a deliberate act and the other made it a
+side effect of transferring lines.
+
+**What it does now.** The SI arm sends `asDraft: true`, mirroring the GRN arm of
+the same wizard, which had already reasoned its way to the same answer for
+stock: post the draft, let the operator confirm it from the document. Confirm
+(DRAFT → SENT) is the single AR/revenue-writing chokepoint, exactly as
+`PATCH /:id/post` is for a GRN's stock.
+
+**The operator can still see and issue it.** The mobile detail screen already
+offers `Confirm Invoice` on a DRAFT (`mobile/MobileModuleDetail.tsx`,
+`sales-invoices` status actions: DRAFT → SENT, plus Cancel), and the wizard
+returns to the convert home screen exactly as it does for the draft GRN — no
+navigation assumed a sent invoice, so nothing else had to move.
+
+Pinned by `frontend/src/mobile/mobileConvertDraftInvoice.test.tsx`, which drives
+the real wizard and asserts the POSTED BODY, not the source text.
 
 ---
 
@@ -470,7 +539,7 @@ a warning, not a block.
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
-| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** (a straight transfer, no edit step) |
+| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** with **`asDraft: true`** (a straight transfer, no edit step — so it DRAFTS, see below) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
 
 `canOperateSalesInvoices` matters here for the same reason as on the DO: Sales
@@ -514,3 +583,26 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

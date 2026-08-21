@@ -5,6 +5,11 @@ name: Venue showroom parking check (read-only)
 # showroom's venue_name, and their venue fill rate — so an empty venue reads as
 # either "backfillable (rep is parked)" or "by design (rep not parked)".
 #
+# Owner 2026-08-19: "我们的 Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟
+# 着看到自己公司的" — the second step measures the cross-company leak that
+# ruling names: how many showroom venues each company's picker listed with no
+# company predicate (BEFORE) vs with one (AFTER), and which rows were foreign.
+#
 # SELECT only — no writes. The verdict is the output.
 on:
   workflow_dispatch:
@@ -31,3 +36,10 @@ jobs:
       - run: node scripts/check-venue-showroom-parking.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Company scope of the venue/showroom masters — BEFORE/AFTER counts per
+      # company for GET /api/projects/venues?includeShowrooms=1.
+      - run: node scripts/check-showroom-venue-scope.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

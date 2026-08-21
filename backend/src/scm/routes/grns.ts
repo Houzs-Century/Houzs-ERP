@@ -9,19 +9,15 @@ import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '..
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { buildGrnCancelReversals } from '../lib/grn-cancel-reversal';
+import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
-  await enqueueEdit(c.get('supabase'), {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docId: id,
-    retire,
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
-}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -40,6 +36,7 @@ import {
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -51,18 +48,13 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    another company's PO would post the stock IN, and its cost, into the active
    company's inventory and books.
 
-   Returns the refusal payload for the first offending PO, or null when every
-   referenced PO belongs to the active company (unresolved degrades to allowed,
-   like the rest of the scoping helpers). The two declared converters
+   Called inline via crossCompanySourceRefusal — the file-local wrapper this note
+   used to sit on was one line of delegation and went 2026-08-18. Returns the
+   refusal for the first offending PO, or null when every referenced PO is the
+   active company's (unresolved degrades to allowed). The two declared converters
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
-async function firstCrossCompanyPo(
-  sb: any,
-  c: any,
-  poIds: Array<string | null | undefined>,
-): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
-}
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -72,7 +64,6 @@ import { readStatusCounts } from '../lib/status-counts';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { eager } from '../lib/concurrency';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -123,19 +114,6 @@ const GRN_AUDIT_SELECT =
    line in hand but not the parent. Best-effort by design: the writer is
    fail-open, so an unresolved doc number costs the row its human key and
    nothing else. */
-async function loadGrnAuditMeta(
-  sb: Variables['supabase'],
-  grnId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('grns')
-      .select('grn_number, company_id, status').eq('id', grnId).maybeSingle();
-    const row = (data ?? null) as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.grn_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
 
 /**
  * Record the CREATE of a GRN that has SURVIVED its handler.
@@ -1155,41 +1133,28 @@ grns.get('/', async (c) => {
   // fully_returned).
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const ids = rows.map((g) => g.id);
-  /* PERF: takes only `rows`, known two waves earlier; discarded if grn_items fails. */
-  const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
-  const coverageProm = eager(Promise.all([
-    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
-    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
-  ]));
   // Migration 0106 — collect each GRN's lines for the lock/convert flags.
   const linesByGrn = new Map<string, Array<{ qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>>();
   // Owner 2026-07-02 — "Transfer To" list column: map each grn_item → its GRN so
   // the per-line downstream (PI/PR) can be rolled up to a per-GRN doc-number set.
   const grnByItem = new Map<string, string>();
-  /* Each GRN's OWN line codes — the Assigned-SO / Delivered header cells below
-     roll up ONLY these SKUs (header ≡ ∪(drill lines), 2026-08-02): a partial-
-     receipt GRN must not inherit its parent PO's assignments for SKUs it never
-     received. */
-  const codesByGrn = new Map<string, Set<string>>();
+  /* The per-GRN line-code roll-up (Assigned-SO / Delivered) moved to the deferred
+     enrichment endpoint (grns-list-enrichment.ts), which rebuilds codesByGrn
+     itself — so this read no longer fetches item_code. It still feeds linesByGrn
+     (lock/convert flags) and grnByItem (downstream PI/PR roll-up). */
   if (ids.length > 0) {
-    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
+    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
       .from('grn_items')
-      .select('id, grn_id, item_code, qty_accepted, invoiced_qty, returned_qty')
+      .select('id, grn_id, qty_accepted, invoiced_qty, returned_qty')
       .in('grn_id', ids)
       .order('id')
       .range(from, to));
     if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
-    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
+    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
       const arr = linesByGrn.get(li.grn_id) ?? [];
       arr.push({ qty_accepted: li.qty_accepted, invoiced_qty: li.invoiced_qty, returned_qty: li.returned_qty });
       linesByGrn.set(li.grn_id, arr);
       if (li.id) grnByItem.set(li.id, li.grn_id);
-      const code = (li.item_code ?? '').trim();
-      if (code) {
-        const set = codesByGrn.get(li.grn_id) ?? new Set<string>();
-        set.add(code);
-        codesByGrn.set(li.grn_id, set);
-      }
     }
   }
   // Per-GRN downstream: aggregate the per-line PI/PR breakdown into one deduped
@@ -1210,50 +1175,21 @@ grns.get('/', async (c) => {
       downstreamByGrn.set(grnId, acc);
     }
   }
-  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolved from the SAME
-     per-SKU precedence engine the drill-down uses — computeMrp runs once —
-     then rolled up over THIS GRN'S OWN line codes only (header ≡ ∪(drill
-     lines), 2026-08-02): the drill matches assignments into the GRN's lines by
-     item_code, so a partial-receipt GRN's header must not show parent-PO
-     assignments its lines cannot explain. */
-  /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
-     per CODE, filtered the same way. One wave, same poIds (issued above). */
-  const [originsByPo, deliveredByPoCode] = (await coverageProm)();
-  const grns = rows.map((g) => {
-    const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
-    const grnCodes = codesByGrn.get(g.id) ?? new Set<string>();
-    const origins = (poId ? originsByPo.get(poId) ?? [] : [])
-      .filter((o) => grnCodes.has(o.itemCode));
-    const summary = summarizeOrigins(origins);
-    // Delivered: distinct DOs across the GRN's own codes (qty summed per DO).
-    const doAgg = new Map<string, DeliveredDo>();
-    if (poId) {
-      const byCode = deliveredByPoCode.get(poId);
-      if (byCode) {
-        for (const code of grnCodes) {
-          for (const d of byCode.get(code) ?? []) {
-            const prev = doAgg.get(d.doNo);
-            if (prev) prev.qty += d.qty;
-            else doAgg.set(d.doNo, { ...d });
-          }
-        }
-      }
-    }
-    return {
-      ...g,
-      // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
-      total_sen: (g.total_sen as number | null | undefined) ?? 0,
-      downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
-      ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
-      assigned_sos: summary.assignedSos,
-      assigned_so_linked: summary.sourceLinked,
-      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
-         holds for the provenance slot too. */
-      assigned_so_provenance: summary.provenanceSos,
-      delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
-    };
-  });
+  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
+     OMITTED here — not blanked (C16). Resolving them ran a company-wide
+     computeMrp on this critical path (resolvePoSoCoveragePerSkuForPos), the
+     list's dominant cost (~4s). The client heals them a beat after render via
+     GET /grns/list-mrp-enrichment (routes/grns-list-enrichment.ts +
+     lib/listMrpEnrichment.ts), rolling up over each GRN's own line codes exactly
+     as this handler did. downstream + the lock/convert flags stay inline (cheap,
+     non-MRP). */
+  const grns = rows.map((g) => ({
+    ...g,
+    // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
+    total_sen: (g.total_sen as number | null | undefined) ?? 0,
+    downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
+    ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
+  }));
   if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
   return c.json({ grns });
 });
@@ -1555,6 +1491,8 @@ grns.post('/', async (c) => {
       acceptedByPoItem.set(poItemId, (acceptedByPoItem.get(poItemId) ?? 0) + accepted);
     }
     if (acceptedByPoItem.size > 0) {
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
+      if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
         .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
@@ -1602,7 +1540,7 @@ grns.post('/', async (c) => {
      carry an explicit warehouse — the intentional manual-receipt flow still
      works, it just can't land stock nowhere-in-particular. */
   {
-    const x = await firstCrossCompanyPo(sb, c, [(body.purchaseOrderId as string | undefined) ?? null]);
+    const x = await crossCompanySourceRefusal(sb, c, 'purchase_orders', [(body.purchaseOrderId as string | undefined) ?? null], 'po_number');
     if (x && 'loadError' in x) return refuseWithoutWriting(c, { error: 'load_failed', reason: x.loadError }, 500);
     if (x) return refuseWithoutWriting(c, x.blocked, 409);
   }
@@ -2021,8 +1959,9 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      FullTransfers the array or groups the named line keys per source document.
      The "one transfer, one source document" limit this used to skip on belongs
      to the primitive's key array, never to the target. */
-  if (poList.length) {
-    await enqueueConvert(sb, {
+  /* The receipt IS in the accounts; these are fields on it that are NOT — the
+     other verdict, on #2499's key and shape. */
+  const ac = poList.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'po_to_gr',
       from: poList.map((po) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: po.id })),
@@ -2031,12 +1970,11 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
       docNo: h.grn_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
-  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
+  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 grns.post('/from-pos', createGrnFromPosHandler);
 
@@ -2403,8 +2341,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
        it names every purchase order it received against. The bucket is grouped
        by supplier, so all its sources share one creditor. */
     const bucketPoIds = bucket.poIds.size ? [...bucket.poIds] : (bucket.primaryPoId ? [bucket.primaryPoId] : []);
-    if (bucketPoIds.length) {
-      await enqueueConvert(sb, {
+    const bucketAc = bucketPoIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'po_to_gr',
         from: bucketPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: id })),
@@ -2413,8 +2350,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
         docNo: h.grn_number,
         docId: h.id,
         createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
+    }) : null;
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
@@ -2426,6 +2362,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       ...(postFailReason ? { postError: postFailReason } : {}),
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),
       ...(bucketRecountError ? { recountError: bucketRecountError } : {}),
+      // PER BUCKET: each bucket IS its own receipt, with its own gaps.
+      ...(bucketAc?.problems.length ? { acNotSent: bucketAc.problems } : {}),
     });
   }
 
@@ -2464,13 +2402,22 @@ grns.post('/from-po-items', createGrnsFromPoItemsHandler);
    Steps 2+3 are best-effort (mirrors postGrnAndRollup's best-effort write) — a
    movement/rollback failure does not un-cancel the GRN.
    NOTE: grns has no cancelled_at column, so we set status + updated_at only. */
-grns.patch('/:id/cancel', async (c) => {
+/* Second GRN route in the PG command txn: the CANCELLED flip, the reversing
+   stock OUT, the rack reversal, the audit rows, the AutoCount cancel and the
+   allocation request commit together or not at all. 503s without DATABASE_URL
+   by design. `sb` is the TRANSACTIONAL client - the body must not reach for
+   c.get('supabase'). The body stays INSIDE the route on purpose: several checks
+   scan grns.ts by route block, and hoisting it to a named handler moved it out
+   of their sight. docs/modules/grn.md 7c. */
+grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as the line DELETE below.
+  sb: any,
+) => {
   /* Surfaced in the response, like the POST path's movementErrors/recountError.
      The GRN stays CANCELLED either way; what changes is that a failed reversal
      or recount no longer reports a clean 200. */
   const cancelErrors: string[] = [];
   const id = c.req.param('id');
-  const sb = c.get('supabase');
   const user = c.get('user');
 
   /* Cancelling reverses stock and re-opens a PO, so it must never reach another
@@ -2580,42 +2527,17 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
+  /* Set only where the reversal was actually attempted, so the DURABLE enqueue
+     below can sit OUTSIDE this best-effort catch and still fire on exactly the
+     condition the old inline recompute did. */
+  let stockReversed = false;
   try {
     const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
-      /* Migration 0120 — the original IN stamped batch_no = source PO number so a
-         sofa set's components share a dye lot. The reversing OUT must consume that
-         EXACT batch. Resolve EACH line's OWN batch from its source PO
-         (purchase_order_item_id → PO number) — deterministic per line, so two lines
-         of the same product/variant from different POs each reverse their own dye
-         lot, instead of a per-bucket collapse that kept only the last batch.
-         Manual lines (no PO link) stay un-batched → plain FIFO, as before. */
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
-      const movements = lineList
-        /* Mirrors the POST filter. Without it the cancel writes an OUT for a
-           freight line that never had an IN — a permanent negative on-hand for a
-           non-stock SKU. */
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
-        .filter((it) => (it.qty_accepted ?? 0) > 0)
-        .map((it) => {
-          const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
-          const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
-          return {
-            movement_type: 'OUT' as const,
-            warehouse_id: warehouseId,
-            item_code: it.item_code,
-            variant_key,
-            product_name: it.material_name,
-            qty: it.qty_accepted,
-            source_doc_type: 'GRN' as const,
-            source_doc_id: id,
-            source_doc_no: head.grn_number,
-            performed_by: user.id,
-            // Only carry batch_no when the IN had one (omit → non-batched lines stay plain FIFO).
-            ...(batch_no != null ? { batch_no } : {}),
-            notes: 'GRN cancelled — reversing receipt',
-          };
-        });
+      const movements = buildGrnCancelReversals(lineList, batchByItem, {
+        warehouseId, grnId: id, grnNumber: head.grn_number, performedBy: user.id,
+      });
       if (movements.length > 0) {
         /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
            — so the enclosing best-effort catch caught nothing, and discarding the
@@ -2628,15 +2550,16 @@ grns.patch('/:id/cancel', async (c) => {
             'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
           );
         }
-        /* GRN cancel pulled stock back out → other READY SOs that relied on
-           this stock may need to regress. Re-walk allocation. Best-effort. */
-        try {
-          const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-          await recomputeSoStockAllocation(sb);
-        } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-cancel failed:', e); }
+        stockReversed = true;
       }
     }
   } catch { /* best-effort: never un-cancel on a movement failure */ }
+  /* DURABLE: GRN cancel pulled stock back out, so other READY SOs that relied
+     on it may need to regress. The request commits with the OUT above, and it
+     is NOT inside that best-effort catch — a failed enqueue must fail the
+     cancel, because "stock pulled back, allocation never re-walked" is the
+     exact state this transaction exists to make unreachable. grn.md 7c. */
+  if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
@@ -2678,7 +2601,7 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
-});
+}));
 
 /* ════════════════════════════════════════════════════════════════════════
    GRN PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
@@ -2706,24 +2629,27 @@ grns.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
-  /* Multi-company: the service-role client bypasses RLS, so an app-level
-     predicate is the ONLY isolation. The GET at :1382 was scoped by the
-     2026-08-10 audit; this PATCH — the write — was not, on either its read or
-     its UPDATE, so a GRN id from the other company could be loaded here and
-     edited. Reads were hardened then and writes were left, which is the
-     systemic half of that audit. */
+  /* Multi-company: the service-role client bypasses RLS, so the app-level
+     predicate is the ONLY isolation. This PATCH's read + UPDATE were unscoped
+     until the 2026-08-10 audit hardened them (the GET was done first). */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
-  /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
-     also the BEFORE half of every from->to pair recorded at the end of the
-     handler. An audit entry carrying only the new value does not answer "what
-     changed". One read serves both — the relocation block below reads its
-     warehouse / status / rate out of the same row it always did. */
+  /* GRN_AUDIT_SELECT (not just the relocation's columns): this row is also the
+     BEFORE half of every audit from->to pair, and the relocation reads its
+     warehouse / status / rate out of the same row. One read serves all three. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
     .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+
+  /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1; grn-inherited-lock.ts):
+     supplier + costing basis freeze once a live PI/PR exists. Runs before the
+     relocation block so a locked edit writes nothing. */
+  const grnHeaderLocked = grnHeaderInheritedChanges(body, before, GRN_AUDIT_FIELDS);
+  if (grnHeaderLocked.length > 0 && (await grnHasDownstream(sb, id))) {
+    return refuseWithoutWriting(c, grnHeaderInheritedRefusal(grnHeaderLocked), 409);
+  }
 
   /* Before the relocation block below, which writes inventory movements — those
      are a real stock change, so the last honest refusal point is above them, not
@@ -2734,14 +2660,11 @@ grns.patch('/:id', async (c) => {
   });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  /* Warehouse relocation — a posted GRN already pushed its IN stock into the OLD
-     warehouse. If the operator changes the warehouse, just rewriting the header
-     field would strand the stock in the old warehouse while the header claims the
-     new one. So physically move it: OUT of the old warehouse + IN to the new one,
-     carrying the same cost + source-PO batch. Same downstream-consumption guard as
-     cancel — if the old-warehouse stock was already shipped/used, block (can't
-     relocate phantom qty). Best-effort allocation re-walk after, since per-
-     warehouse buckets changed. */
+  /* Warehouse relocation — a posted GRN pushed its IN stock into the OLD
+     warehouse, so a warehouse change must physically move it: OUT of old + IN to
+     new, same cost + source-PO batch. Same downstream-consumption guard as cancel
+     (block if the old-warehouse stock was already shipped); best-effort alloc
+     re-walk after. */
   if (body.warehouseId !== undefined) {
     const c0 = (beforeRow ?? null) as unknown as { grn_number: string; status: string | null; warehouse_id: string | null; exchange_rate?: string | number | null } | null;
     const oldWh = c0?.warehouse_id ?? null;
@@ -2914,7 +2837,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
-  await queueAcGrnEdit(c, id);
+  await queueAcGrnEdit(c, sb, id);
   return c.json({ grn: data });
 });
 
@@ -2948,8 +2871,7 @@ grns.post('/:id/items', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
@@ -2999,6 +2921,8 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId]);
+    if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],
@@ -3166,7 +3090,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3198,8 +3122,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
@@ -3208,19 +3131,17 @@ grns.patch('/:id/items/:itemId', async (c) => {
       message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
   }
 
-  /* The audited columns as well as the ones the stock/money logic below reads:
-     this row is also the BEFORE half of every from->to pair recorded after the
-     update lands. `variants` and `purchase_order_item_id` are business-logic
-     only and are deliberately not in GRN_LINE_AUDIT_FIELDS — variants render
-     into description2, which IS audited. */
+  /* Audited columns + the ones the stock/money logic reads; also the BEFORE half
+     of every from->to audit pair. `variants` / `purchase_order_item_id` are
+     business-logic only (not in GRN_LINE_AUDIT_FIELDS — variants render into the
+     audited description2). */
   const { data: prevRow } = await sb.from('grn_items')
     .select(GRN_LINE_AUDIT_SELECT + ', variants, purchase_order_item_id')
     .eq('id', itemId).maybeSingle();
   if (!prevRow) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
-  /* Cast through `unknown`: a .select() built from a concatenated string infers
-     as GenericStringError on the SupabaseClient<any> the scm client is, so the
-     row shape only exists after this. Project-wide pattern (see ITEM / HEADER
-     elsewhere in this file). */
+  /* Cast through `unknown`: a concatenated-string .select() infers as
+     GenericStringError on the scm client, so the row shape only exists after
+     this (project-wide pattern). */
   const prev = prevRow as unknown as Record<string, unknown>;
 
   // The editable quantity is qty_received (also keep qty_accepted in lockstep).
@@ -3239,9 +3160,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const qtyReceived = parsedQty.nums.qty as number;
 
   /* Over-receipt guard on edit — a PO-linked line can't be raised past the PO
-     line's headroom = qty - (received_qty - this line's current receipt). The
-     stored received_qty already includes this line, so we add its old qty back
-     before comparing. Manual (no PO link) lines are uncapped. */
+     line's headroom; stored received_qty already includes this line, so add its
+     old qty back before comparing. Manual (no PO link) lines are uncapped. */
   {
     const poItemId = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
@@ -3263,7 +3183,10 @@ grns.patch('/:id/items/:itemId', async (c) => {
     patchCode: it.itemCode,
   });
   if (repoint) return refuseWithoutWriting(c, repoint, 409);
-
+  // Inherited-field lock — a PO-linked GRN line's item/variant is read-only
+  // (owner 2026-08-20; grn-inherited-lock.ts). Cancel the GRN, edit the PO.
+  const grnLockChanges = grnInheritedFieldChanges(prev as GrnLinePrev, it as GrnLinePatch, buildVariantSummary);
+  if (grnLockChanges.length > 0) return refuseWithoutWriting(c, grnInheritedLockedRefusal(grnLockChanges), 409);
   const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : ((prev as { discount_sen: number }).discount_sen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
@@ -3464,7 +3387,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ ok: true });
 });
 
@@ -3474,9 +3397,18 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-grns.delete('/:id/items/:itemId', async (c) => {
+/* First GRN route in the PG command txn: line delete, stock OUT, audit, outbox
+   and allocation request commit together or not at all. 503s without
+   DATABASE_URL by design. `sb` is the TRANSACTIONAL client - the body must not
+   reach for c.get('supabase'). The body stays INSIDE the route on purpose:
+   several checks scan grns.ts by route block, and hoisting it to a named
+   handler moved it out of their sight. docs/modules/grn.md 7c. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as mfg-sales-orders' command handlers.
+  sb: any,
+) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
-  const sb = c.get('supabase'); const user = c.get('user');
+  const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
     const { data: own, error: ownErr } = await scopeToCompany(
@@ -3494,8 +3426,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
@@ -3592,6 +3523,10 @@ grns.delete('/:id/items/:itemId', async (c) => {
     //     this lands; the FIFO trigger consumes the line's lot + computes COGS.
     //     Best-effort — a movement failure never blocks the delete.
     if ((l.qty_accepted ?? 0) > 0) {
+      /* Same reason as the cancel route's flag: the enqueue below must not sit
+         inside this best-effort catch. It did until 2026-08-20, and the comment
+         beside it claimed the opposite. BUG-HISTORY 2026-08-20. */
+      let stockReversed = false;
       try {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
@@ -3622,17 +3557,16 @@ grns.delete('/:id/items/:itemId', async (c) => {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out → re-walk SO allocation. */
-          try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-delete failed:', e); }
+          stockReversed = true;
         }
       } catch { /* best-effort */ }
+      /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+         enqueue must fail the delete. docs/modules/grn.md 7c. */
+      if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
     }
   }
 
   await recomputeGrnTotals(sb, grnId);
-  await queueAcGrnEdit(c, grnId, retire);
+  await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-});
+}));

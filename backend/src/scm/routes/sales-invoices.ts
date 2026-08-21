@@ -55,7 +55,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -833,12 +833,12 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
   // enumerated every company's delivery orders into this picker.
-  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c), 'invoiceable');
   // NOT `{ lines: [] }` — an empty picker claims every delivered line is already
   // invoiced, and a failed read may not make that claim. Refuse to render.
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
   if (candidates.doIds.length === 0) return c.json({ lines: [] });
-  const remaining = await doLineRemaining(sb, candidates.doIds);
+  const remaining = await doLineRemaining(sb, candidates.doIds, 'invoiceable');
   if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
   const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   return c.json({ lines });
@@ -1062,7 +1062,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
       .map((r) => (r as { do_item_id?: string | null }).do_item_id)
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
-      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds, 'invoiceable');
       /* Recheck unreadable -> roll back, and never under the race message.
          lib/do-line-remaining.ts's header argues the trade-off in full. */
       if (!recheck.ok) {
@@ -1210,7 +1210,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
-  const remainingResult = await doLineRemaining(sb, doIds);
+  const remainingResult = await doLineRemaining(sb, doIds, 'invoiceable');
   /* Pre-write refusal — every qty below is capped by `line.remaining`, and an
      empty map surfaced as a 404 blaming the pick for a database error. */
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
@@ -1255,10 +1255,9 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   const distinctDoNumbers = [...new Set(sortedPicks.map((l) => l.doNumber))].sort();
 
   const DO_HEADER =
-    'id, do_number, company_id, so_doc_no, debtor_code, debtor_name, customer_delivery_date, ' +
+    'id, status, do_number, company_id, so_doc_no, debtor_code, debtor_name, customer_delivery_date, ' +
     'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
-    'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
-    'address1, address2, city, state, postcode, phone, currency, ' +
+    'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, address1, address2, city, state, postcode, phone, currency, ' +
     'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship';
   // HEADER half of the same source document — same predicate as the lines.
   const { data: doHeaderRow, error: hLoadErr } = await scopeToCompany(sb
@@ -1269,6 +1268,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   if (hLoadErr) return c.json({ error: 'load_failed', reason: hLoadErr.message }, 500);
   if (!doHeaderRow) return c.json({ error: 'delivery_order_not_found' }, 404);
   const head = doHeaderRow as unknown as Record<string, unknown>;
+  const badDo = siTransferRefusal(head.status as string | null); if (badDo) return c.json(badDo, 409);
 
   const nowIso = new Date().toISOString();
   const phoneRaw = head.phone as string | null;
@@ -1358,7 +1358,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       .map((r) => (r as { do_item_id?: string | null }).do_item_id)
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
-      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds, 'invoiceable');
       // Recheck unreadable -> roll back, under the honest reason (as POST / above).
       if (!recheck.ok) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
@@ -1390,8 +1390,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
      delivery orders names them all; AcSyncService takes FromDocNos. What this
      used to skip on was the primitive's single-source key array, which the
      service now works around by grouping per source document. */
-  if (doIds.length) {
-    await enqueueConvert(sb, {
+  const ac = doIds.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'do_to_iv',
       from: doIds.map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
@@ -1400,13 +1399,12 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       docNo: h.invoice_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */
   if (isDraft) {
-    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0 }, 201);
+    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
   }
 
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
@@ -1447,7 +1445,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   }
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied }, 201);
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 salesInvoices.post('/from-dos', createSalesInvoiceFromDoLinesHandler);
 
@@ -1482,7 +1480,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   const { data: doHeader } = await scopeToCompany(sb.from('delivery_orders')
     .select('id, status, do_number, company_id').eq('id', doId), c).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
-  if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
+  const bad = siTransferRefusal((doHeader as { status: string }).status); if (bad) return c.json(bad, 409);
 
   /* Same refusal as /from-dos: a delivery carried over from AutoCount is
      invoiced by the migrated-invoice converter, never appended by hand. This
@@ -1510,7 +1508,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
      ceiling became a silent 200 with nothing appended. Refuse before both. */
   if (doItemsErr) return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
-  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string), 'invoiceable');
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
   const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb

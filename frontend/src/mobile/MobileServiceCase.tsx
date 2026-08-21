@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatDate, formatDateTime } from "../lib/utils";
 import { createPortal } from "react-dom";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -8,9 +7,10 @@ import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { UploadDropZone, clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesStaff } from "../auth/salesAccess";
+import { isSalesStaff, isSalesNonDirector } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { MobileVirtualList } from "./MobileVirtualList";
+import { MobileMyCaseDetail } from "./MobileMyCaseDetail";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
@@ -26,7 +26,37 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
-import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
+import { splitCategories } from "../lib/assrProductCategories";
+import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
+import { type SoHit, SoSearchField, useSoSearch } from "./MobileAssrSoField";
+/* Pure row readers + formatters. Extracted so this screen could take the
+   category picker and the survey-email field without growing past its recorded
+   size ceiling, and so they became testable on their own. `prettyStage` went
+   with them, which is why ASSR_STAGE_LABEL is imported THERE and not here —
+   assr-stage-labels.canonical.test.ts follows that hop deliberately. */
+import {
+  type Any,
+  cap,
+  caseNo,
+  cellEllipsis,
+  customer,
+  dm,
+  dtm,
+  get,
+  prettyStage,
+  priorityOf,
+  resolutionLabel,
+  slaText,
+  stageOf,
+  statusOf,
+} from "./assr-case-fields";
+// Shared with the desktop page. The issue-category list keeps its LOCAL NAME so
+// the intake sheet another branch is editing stays untouched.
+import {
+  ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
+  ASSR_NOTE_AUDIENCES,
+  type AssrNoteAudience as NoteAudience,
+} from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
 
 // The core /api/assr route (NOT scm). The list returns
@@ -46,7 +76,6 @@ import "./mobile.css";
 // Inspection is no longer a stage (mig 0105): Inspect by + the QC-issue
 // fields live inside Under Verification.
 
-type Any = Record<string, any>;
 
 // ── Theme C colour tokens (design SC_T) ───────────────────────────
 const INK = "#11140f";
@@ -96,13 +125,6 @@ const PHASE_DEFS: { name: string; keys: string[] }[] = [
 // PATCH /:id accepts these column values; the mobile edit controls write
 // the same field names + values the desktop InlineEdit controls do.
 const PRIORITY_OPTIONS = ["low", "normal", "high", "urgent"] as const;
-const ISSUE_CATEGORY_OPTIONS = [
-  "Product defect",
-  "Incorrect item delivered",
-  "Missing / short item",
-  "Warranty / service request",
-  "Installation / assembly issue",
-] as const;
 const RESOLUTION_OPTIONS = [
   "replace_unit",
   "supplier_repair",
@@ -123,16 +145,6 @@ const QC_RESULT_OPTIONS = [
   { value: "fail", label: "Fail" },
   { value: "na", label: "N/A" },
 ] as const;
-// Timeline note audience buckets (mig 0108) — the /:id/notes endpoint
-// accepts these four; "system" is reserved for auto events and rejected
-// server-side. Only "customer" is visible outside the team (portal).
-const NOTE_AUDIENCE_OPTIONS = [
-  { value: "service", label: "Service" },
-  { value: "customer", label: "Customer" },
-  { value: "supplier", label: "Supplier" },
-  { value: "sales", label: "Sales" },
-] as const;
-type NoteAudience = (typeof NOTE_AUDIENCE_OPTIONS)[number]["value"];
 // Print copy variants — desktop opens /api/assr-print/:id?variant=…
 const PRINT_VARIANTS = [
   { value: "customer", label: "Customer copy" },
@@ -151,19 +163,6 @@ const PRIORITY_META: Record<string, { label: string; color: string }> = {
   urgent: { label: "Urgent", color: "#B71C1C" },
 };
 
-// ── field readers (dual-read camelCase / snake_case) ──────────────
-const get = (r: Any, ...keys: string[]) => {
-  for (const k of keys) {
-    const v = r?.[k];
-    if (v !== undefined && v !== null && v !== "") return v;
-  }
-  return undefined;
-};
-const caseNo = (r: Any) => get(r, "assrNo", "assr_no", "docNo", "doc_no") ?? "—";
-const customer = (r: Any) => get(r, "customerName", "customer_name") ?? "—";
-const stageOf = (r: Any) => String(get(r, "stage") ?? "");
-const priorityOf = (r: Any) => String(get(r, "priority") ?? "normal").toLowerCase();
-const statusOf = (r: Any) => String(get(r, "status") ?? "");
 const issueOf = (r: Any) => get(r, "complaintIssue", "complaint_issue");
 const hoursToDeadline = (r: Any): number | null => {
   const v = get(r, "hoursToDeadline", "hours_to_deadline");
@@ -250,62 +249,23 @@ function useAssignableUsers(): PicUser[] {
   return Array.isArray(data) ? data : [];
 }
 
-// SO typeahead — mirrors desktop CreatePanel: GET /api/assr/search-so?q=…
-// returns { results: [{ doc_no, ref, debtor_name, phone, doc_date,
-// sales_agent }] } (min 2 chars server-side). Debounced client-side.
-type SoHit = Any;
-function useSoSearch(q: string): { results: SoHit[]; loading: boolean } {
-  const needle = q.trim();
-  const { data, isFetching } = useQuery({
-    queryKey: ["mobile-assr-so-search", needle],
-    enabled: needle.length >= 2,
-    staleTime: 30_000,
-    queryFn: ({ signal }) =>
-      api.get<{ results?: SoHit[] }>(`/api/assr/search-so?q=${encodeURIComponent(needle)}`, { signal }),
-  });
-  return { results: data?.results ?? [], loading: isFetching };
-}
 
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-// Human labels for the resolution_method slugs (mirrors desktop).
-const RESOLUTION_LABELS: Record<string, string> = {
-  replace_unit: "Replace Unit",
-  supplier_repair: "Supplier Service",
-  field_service_own: "On Site Service (Own Team)",
-  field_service_supplier: "On Site Service (Supplier)",
-  return_visit: "2nd Services",
-};
-const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
-/* The `voided` literal is gone: STAGES has no row for a terminal alt-outcome so
-   mobile carried the word itself. STAGES still answers the ORDER question. */
-const prettyStage = (stage: string) =>
-  ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
-// Numeric DD/MM/YYYY (+ HH:mm) via the shared formatter — house rule, and it
-// UTC-tags bare SQLite timestamps so they don't shift by the device timezone.
-const dm = (d: string | null | undefined) => formatDate(d);
-const dtm = (d: string | null | undefined) => formatDateTime(d);
-// Human overdue / due-in from hours-to-deadline (drives the SLA banner).
-const slaText = (h: number | null): { label: string; overdue: boolean } | null => {
-  if (h == null || !isFinite(h)) return null;
-  if (h < 0) {
-    const days = Math.floor(-h / 24);
-    return { label: days >= 1 ? `${days} days overdue` : `Overdue ${Math.abs(Math.round(h))}h`, overdue: true };
-  }
-  const days = Math.floor(h / 24);
-  return { label: days >= 1 ? `Due in ${days} days` : `Due in ${Math.round(h)}h`, overdue: false };
-};
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
  *  (Overview / Stage / Info / Timeline) + new-case sheet, all wired to
- *  the core /api/assr backend. */
+ *  the core /api/assr backend. A non-director Sales rep opens the READ-ONLY
+ *  detail instead (owner 2026-07-23), keeping the list + create sheet as on
+ *  desktop. The predicate is IMPORTED; the why is in MobileMyCaseDetail. */
 export function MobileServiceCase({ onBack, startNew = false }: { onBack?: () => void; startNew?: boolean }) {
+  const { user } = useAuth();
   const [openId, setOpenId] = useState<number | null>(null);
   // `startNew` (from the Orders FAB "+ New Service Case") opens the create sheet
   // straight away.
   const [showNew, setShowNew] = useState(startNew);
 
   if (openId != null) {
-    return <CaseDetail id={openId} onBack={() => setOpenId(null)} />;
+    const Detail = isSalesNonDirector(user) ? MobileMyCaseDetail : CaseDetail;
+    return <Detail id={openId} onBack={() => setOpenId(null)} />;
   }
   return (
     <>
@@ -755,6 +715,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const issueCatOptions = useLookupNames("issue-categories", ISSUE_CATEGORY_OPTIONS as readonly string[]);
   const resolutionOptions = useLookupSlugs("resolution-methods", RESOLUTION_OPTIONS as readonly string[]);
   const priorityOptions = useLookupSlugs("priorities", PRIORITY_OPTIONS as readonly string[]);
+  /* The SAME admin-maintained lookup the desktop detail page reads. No local
+     fallback list on purpose: an empty lookup must read as "nothing configured
+     yet", never as a hardcoded taxonomy the admin cannot change. */
+  const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
 
   const { data, isLoading, error } = useQuery({
@@ -1318,12 +1282,29 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   open
                   busy={busy}
                   fields={[
-                    // Prototype's "Product category" field → the REAL, whitelisted
-                    // assr_cases.service_category column (desktop ServiceCases.tsx
-                    // edits this same key). There is NO product_category column
-                    // server-side, so writing that key would silently no-op and
-                    // never read back — we bind to service_category instead.
-                    { key: "service_category", label: "Product category", value: get(c, "serviceCategory", "service_category"), type: "text" },
+                    /* Prototype's "Product category" field → the REAL, whitelisted
+                       assr_cases.service_category column (desktop ServiceCases.tsx
+                       edits this same key). There is NO product_category column
+                       server-side, so writing that key would silently no-op and
+                       never read back — we bind to service_category instead.
+
+                       CHIPS, not free text. This was `type: "text"` until
+                       2026-08-21, which let anyone type into a MAINTAINED lookup
+                       (assr_product_categories, mig 0112). The value survived in
+                       the display string and got no assr_case_categories row, so
+                       it became its own bucket in desktop's filter AND left the
+                       case uncategorised for reporting — a quiet double loss.
+                       Prefer the detail payload's own list, exactly as desktop
+                       does, and fall back to splitting the flat string for a
+                       cached or older response. */
+                    {
+                      key: "service_category",
+                      label: "Product category",
+                      value: (data?.service_categories as string[] | undefined)?.join(", ")
+                        ?? get(c, "serviceCategory", "service_category"),
+                      type: "chips",
+                      chipOptions: productCategoryOptions,
+                    },
                   ]}
                   onSave={(body) => patchCase(body, "Couldn't save product info")}
                   headSlot={
@@ -1679,14 +1660,16 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     })}
                   </div>
                 )}
-                {/* audience picker — service / customer / supplier / sales (mig 0108) */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                  {NOTE_AUDIENCE_OPTIONS.map((o) => (
+                {/* audience picker (mig 0108). WRAPS 2x2: the labels now say what
+                    HAPPENS ("Customer-visible") not just which bucket ("Customer"),
+                    and .sochip is nowrap — four across a 375px phone overflowed. */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {ASSR_NOTE_AUDIENCES.map((o) => (
                     <button
                       key={o.value}
                       onClick={() => setNoteAudience(o.value)}
                       className={`sochip${noteAudience === o.value ? " on" : ""}`}
-                      style={{ flex: 1 }}
+                      style={{ flex: "1 1 45%" }}
                     >
                       {o.label}
                     </button>
@@ -1888,13 +1871,14 @@ function NoteSheet({ onClose, onSave, saving }: {
   const [audience, setAudience] = useState<NoteAudience>("service");
   return (
     <SheetShell title="Add note" onClose={onClose}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        {NOTE_AUDIENCE_OPTIONS.map((o) => (
+      {/* Wraps 2x2 for the same reason as the Timeline tab's picker above. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {ASSR_NOTE_AUDIENCES.map((o) => (
           <button
             key={o.value}
             onClick={() => setAudience(o.value)}
             className={`sochip${audience === o.value ? " on" : ""}`}
-            style={{ flex: 1 }}
+            style={{ flex: "1 1 45%" }}
           >
             {o.label}
           </button>
@@ -1998,7 +1982,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   // chosen SO. `soPicked` guards the dropdown so it hides after selection.
   const [soQuery, setSoQuery] = useState("");
   const [soPicked, setSoPicked] = useState<SoHit | null>(null);
-  const { results: soResults, loading: soLoading } = useSoSearch(soPicked ? "" : soQuery);
+  const { results: soResults, loading: soLoading, error: soError } = useSoSearch(soPicked ? "" : soQuery);
   // Affected products — MULTISELECT with per-product qty (owner 2026-07:
   // sometimes 1 product, sometimes several). The backend create endpoint
   // already accepts an `items` array of { item_code, item_description, qty }
@@ -2013,6 +1997,13 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   // ticket ref. Maps to assr_cases.ref_no; when left blank the create
   // endpoint falls back to the SO's pre-printed Ref (input.ref_no ?? ctx.Ref).
   const [issueNo, setIssueNo] = useState("");
+  /* Customer email — assr_cases.customer_email, and the address the
+     satisfaction survey is sent to. `backend/src/routes/assr.ts` resolves the
+     CSAT recipient as `email_for_survey || customer_email` when a case reaches
+     `completed`, so a case raised WITHOUT one has no survey address at all and
+     somebody has to go back and fill it in. Desktop's intake has captured this
+     since it was written; the phone never sent the key, on any path. */
+  const [customerEmail, setCustomerEmail] = useState("");
   // Complaint date (assr_cases.complained_date) — owner ruling (2026-07):
   // it is stamped automatically to today (MYT) and is NOT user-editable.
   // Fixed value, no setter — kept as YYYY-MM-DD (the format the backend's
@@ -2124,6 +2115,10 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
         // Empty string must NOT reach the server — it would beat the
         // `?? context.Ref` SO-reference fallback.
         ref_no: issueNo.trim() || null,
+        // Survey address. `|| null` for the same reason as ref_no: the backend
+        // trims-or-nulls defensively, and an empty string in this column reads
+        // as "an address was captured" to every later screen.
+        customer_email: customerEmail.trim() || null,
         // Complaint date — the backend defaults this to today (MYT) when
         // omitted; we always send the (defaulted-to-today, user-editable)
         // value so the intake date is honoured. Sent as YYYY-MM-DD.
@@ -2253,7 +2248,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                     {soQuery.trim().length >= 2 && (
                       <div style={{ marginTop: 5, border: `1px solid ${DIM}`, borderRadius: 10, overflow: "hidden", maxHeight: 190, overflowY: "auto" }} className="hz-scroll">
                         {soLoading && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>Searching…</div>}
-                        {!soLoading && !soResults.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
+                        {!soLoading && (soError || !soResults.length) && <div style={{ fontSize: 11, color: soError ? "#b42318" : GREY, padding: "9px 11px" }}>{soError ?? "No matching sales orders."}</div>}
                         {soResults.map((hit, i) => (
                           <button
                             key={String(get(hit, "docNo", "doc_no")) + i}
@@ -2401,6 +2396,22 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                   className="fld-i money"
                 />
               </label>
+              <label className="fld">
+                <span className="fld-l">Customer email</span>
+                <input
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  placeholder="customer@example.com"
+                  className="fld-i"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                <span style={{ fontSize: 10.5, color: GREY, marginTop: 4 }}>
+                  Where the satisfaction survey goes when the case is completed.
+                </span>
+              </label>
               {/* Complaint date — assr_cases.complained_date. Owner ruling:
                   automatic + read-only, always today (MYT). Rendered as a
                   disabled field so the user cannot change it; the fixed
@@ -2474,8 +2485,6 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   );
 }
 
-// ── shared inline helpers ─────────────────────────────────────────
-const cellEllipsis: React.CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
 
 // ── small building blocks ─────────────────────────────────────────
 
@@ -2594,49 +2603,14 @@ type EditField = {
   key: string;
   label: string;
   value: any;
-  type: "text" | "textarea" | "date" | "select" | "so";
+  type: "text" | "textarea" | "date" | "select" | "so" | "chips";
   options?: { value: string; label: string }[];
+  /* `chips` only: the maintained lookup's names. The draft still holds the
+     comma-joined DISPLAY string (so the generic dirty-check below keeps
+     working), and save() converts it back to the ARRAY the endpoint wants —
+     see the comment there for why the wire shape has to be an array. */
+  chipOptions?: string[];
 };
-
-// SO input with the create-sheet's typeahead (Nick 2026-07-14 — editing
-// the SO must search like the create form). Picking a hit fills the
-// draft; EditableAcc's Save then PATCHes doc_no and the backend
-// re-matches customer info. Unknown values (post-disconnect SOs) still
-// save as typed.
-function SoSearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [focused, setFocused] = useState(false);
-  const { results, loading } = useSoSearch(focused ? value : "");
-  const open = focused && value.trim().length >= 2 && (loading || results.length > 0);
-  return (
-    <div style={{ position: "relative" }}>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setTimeout(() => setFocused(false), 150)}
-        placeholder="SO #, reference, or customer name…"
-        className="fld-i money"
-        style={{ width: "100%", boxSizing: "border-box" }}
-      />
-      {open && (
-        <div className="hz-scroll" style={{ position: "absolute", left: 0, right: 0, top: "100%", marginTop: 4, zIndex: 30, border: `1px solid ${DIM}`, borderRadius: 10, background: "#fff", maxHeight: 190, overflowY: "auto", boxShadow: "0 10px 24px -10px rgba(17,24,16,.35)" }}>
-          {loading && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>Searching…</div>}
-          {!loading && !results.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
-          {results.map((hit, i) => (
-            <button
-              key={String(get(hit, "docNo", "doc_no")) + i}
-              onMouseDown={(e) => { e.preventDefault(); onChange(String(get(hit, "docNo", "doc_no") ?? "")); setFocused(false); }}
-              style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "#fff", padding: "9px 11px", cursor: "pointer" }}
-            >
-              <div className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(hit, "docNo", "doc_no"))}</div>
-              <div style={{ fontSize: 11, color: MUTED, ...cellEllipsis }}>{String(get(hit, "debtorName", "debtor_name") ?? "—")}{get(hit, "phone") ? ` · ${formatPhone(get(hit, "phone"))}` : ""}</div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function EditableAcc({
   title,
@@ -2686,7 +2660,19 @@ function EditableAcc({
     const body: Record<string, any> = {};
     for (const f of fields) {
       const next = (draft[f.key] ?? "").trim();
-      if (next !== (initial[f.key] ?? "")) body[f.key] = next === "" ? null : next;
+      if (next === (initial[f.key] ?? "")) continue;
+      if (f.type === "chips") {
+        /* ARRAY, never the joined string — this is the half the phone got
+           wrong. `resolveCategories` keeps an unrecognised token in the
+           display string but writes it no `assr_case_categories` row, so a
+           free-typed value both fragments the desktop filter and leaves the
+           case uncategorised for every report. Sending the picked list is
+           what desktop does and what keeps the join table honest. An empty
+           pick is [] — a real "no categories", not null. */
+        body[f.key] = splitCategories(next);
+        continue;
+      }
+      body[f.key] = next === "" ? null : next;
     }
     if (Object.keys(body).length === 0) { setEditing(false); return; }
     await onSave(body);
@@ -2728,18 +2714,27 @@ function EditableAcc({
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
+                ) : f.type === "chips" ? (
+                  <MobileAssrCategoryChips
+                    options={f.chipOptions ?? []}
+                    value={splitCategories(draft[f.key] ?? "")}
+                    disabled={busy}
+                    onChange={(nextList) =>
+                      setDraft((d) => ({ ...d, [f.key]: nextList.join(", ") }))
+                    }
+                  />
                 ) : f.type === "so" ? (
                   <SoSearchField
                     value={draft[f.key] ?? ""}
                     onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
                   />
+                ) : f.type === "date" ? (
+                  /* DateField, never a native one (OS-locale bug). Was a DYNAMIC
+                     type={...}, so it escaped the sweep AND its gate. */
+                  <DateField fullWidth className="fld-i" value={draft[f.key] ?? ""} onChange={(iso) => setDraft((d) => ({ ...d, [f.key]: iso }))} />
                 ) : (
-                  <input
-                    type={f.type === "date" ? "date" : "text"}
-                    value={draft[f.key] ?? ""}
-                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                    className="fld-i"
-                  />
+                  <input type="text" className="fld-i" value={draft[f.key] ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))} />
                 )}
               </label>
             ))}

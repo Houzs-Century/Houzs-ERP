@@ -1,6 +1,6 @@
 > ## Corrections — 2026-08-12 code-read sweep
 >
-> 1. PIC_GRACE_DAYS is 30, not 4 (projectAcl.ts:90, widened 2026-07-31).
+> 1. ~~PIC_GRACE_DAYS is 30~~ — OBSOLETE 2026-08-19: the PIC/brand row-level ACL (`projectAcl.ts` [gone]), including the grace window, was removed. See Axis 2.
 > 2. isFinanceViewer admits projects.finance.view holders before the director test (pmsAccess.ts:335-344); financeHiddenForUser inherits that.
 > 3. stock_transfer.approve/agreement.approve are NOT dead: pmsAccess.ts:260-261 grants WF_SENSITIVE visibility; permissions.ts:216-232 EXPLICIT_APPROVAL_KEYS gate checklist tick/status/review (projects.ts:3815,:3845,:3878).
 > 4. The catalogue also carries stock_in.approve and projects.finance.view (permissions.ts:34-49).
@@ -123,6 +123,27 @@ The showroom merge is **opt-in** (`backend/src/routes/projects.ts:960-962`):
 showroom rows get synthetic ids `showroom:<uuid>` (`:987`) and are de-duplicated
 case-insensitively against the project venues (`:972-978`, `:996`). There is no
 mobile venue-management screen; the mobile venue surface is the SO form.
+
+**BOTH halves of that merge are company-scoped** — the showroom half only since
+2026-08-20. This paragraph used to say "`GET /venues` filters by the active
+company" a few lines below and that was true of the `project_venues` half ONLY:
+the showroom half read `scm.warehouses WHERE is_showroom = true AND is_active =
+true` with no `company_id` predicate, so every company's venue picker listed
+every company's showrooms. Measured on prod before the fix: HOUZS's picker
+carried 2990's `PJ SHOWROOM` / venue `2990s PJ`. Owner's ruling — *"客人开单不能
+看到 2990 的展厅啊…我们的 Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着
+看到自己公司的"*. The showroom SELECT now carries
+`activeCompanySql(c, "company_id")`, and `backend/tests/showroomVenueCompanyScope.test.ts`
+fails if either half loses its predicate. `GET /staff/showrooms`
+(`backend/src/scm/routes/staff.ts`) had already scoped its copy of the same list;
+this was the half that was missed.
+
+The SO **active-venue autofill** carries the same lock since the same date:
+`GET /mfg-sales-orders/active-venue` maps the resolved venue TEXT onto a
+`project_venues` id by name, and that lookup is now scoped too — venue names are
+not unique across the two masters, so an unscoped match could hand one company
+the other's venue id. A name this company does not master still resolves to
+`venueId: null` with the TEXT standing, which is the documented fallback.
 
 **Venue writes are company-scoped** (fix `fix/venue-save-company-scope`,
 2026-07-24), the same lock the sibling `/brands` handlers already carry.
@@ -256,18 +277,17 @@ here, and it is highly regular:**
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
+**The attachment stream (`GET /attachments/:key{.+}`) sends
+`X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
+content-type cannot be MIME-sniffed into html/svg — parity with
+`mail-center.ts`'s INLINE_SAFE serve.
+
 **`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
-caller (2026-08-14).** The `activeCompanySql` predicate used to sit inside the
-`isScopedProjectUser` branch, with a comment recording the rest as "deferred,
-tracked separately" — which meant that for the majority of `projects.write`
-holders (anyone not scope-to-PIC) no company predicate was evaluated anywhere on
-the path, and `patchFinance`'s `UPDATE project_finance … WHERE project_id = ?`
-reached the other company. `patchFinance` also CREATES the row when it is
-missing, so a cross-company id with no snapshot got one written rather than
-falling through to "No changes", and `recomputeAutoCostLines` then ran on it.
-The project is now loaded scoped first, for everyone, and the PIC rule is applied
-to the row that load returned; out of company answers `404 Not found`, the same
-as a nonexistent id.
+caller (2026-08-14).** The project is loaded with the `activeCompanySql`
+predicate first, so a cross-company id answers `404 Not found` before
+`patchFinance` (which CREATES the snapshot row when missing) can run. The former
+PIC gate on this write was removed 2026-08-19 (Axis 2); company scope + the
+`projects.write` / finance gates remain.
 
 **The P&L drill-down applies the same filters as its total (2026-08-14).**
 `backend/src/routes/finance.ts` builds one `FROM … WHERE` fragment per source
@@ -399,9 +419,10 @@ is a read gated by a ROLE permission (`projects.read`), and `POST /:id/read` is 
 write gated by a page-access level. See §5.
 
 Related routes elsewhere:
-- `backend/src/routes/projects_print.ts:124` `GET /:id` — **no middleware gate**;
-  the ACL is inline at `:146` (`canSeeProject` OR attendee). The comment at
-  `:133-137` records that this path previously bypassed the ACL entirely.
+- `backend/src/routes/projects_print.ts` `GET /:id` — **no middleware gate**;
+  the row-level gate is the company-scoped `getProjectDetail` load (a
+  cross-company id prints "Not found"). The former `canSeeProject` PIC/brand
+  gate was removed 2026-08-19 (Axis 2).
 - `backend/src/routes/finance.ts:220`, `:390` — `GET /api/finance/pnl` and
   `/pnl/bucket`, gated on `projects.read`. `finance.ts:10` flags that
   `projects.read` alone gates a route that reads `project_finance_lines` cost.
@@ -411,11 +432,12 @@ Related routes elsewhere:
   `archived_at IS NULL`: archiving a project does NOT archive its finance lines, so
   without the join a removed project reports forever (RM 6.29M of RM 69.25M when
   measured 2026-07-29, PR #1401).
-- `backend/src/routes/notifications.ts:56` `GET /` — **no permission gate at
-  all**, deliberately (`:45-55`: a Sales user who lacks the `projects.read`
-  matrix permission still needs a bell). Scoped by `getProjectScope` at `:63`
-  with an early empty return at `:64-71`.
-- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+- `backend/src/routes/notifications.ts` `GET /` — **no permission gate at
+  all**, deliberately (a Sales user who lacks the `projects.read` matrix
+  permission still needs a bell). Scoped by COMPANY only
+  (`allowedCompanyIds`); the former `getProjectScope` PIC/brand filter was
+  removed 2026-08-19 (Axis 2).
+- `backend/src/routes/events.ts` [gone] — **deleted on main** (`45d73689`: no frontend,
   ungrantable permissions, PMS covers it). It was the manual setup/dismantle
   calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
   calendar. Kept here because the absence is the fact worth knowing.
@@ -427,11 +449,11 @@ Related routes elsewhere:
 
 ### The list handler
 
-`backend/src/routes/projects.ts:722` → `listProjects` in
-`backend/src/services/projects.ts`. It resolves `getProjectScope(user)` (`:727`),
-maps ~25 query params, and passes the scope down as `pic_scope` / `brand_scope` /
-`attendee_user_id` (`:820-823`). `per_page` defaults to 50, capped at 200
-(`services/projects.ts:1628`).
+`backend/src/routes/projects.ts` `GET /` → `listProjects` in
+`backend/src/services/projects.ts`. It maps ~25 query params and passes
+`company_id` (active company) + crew `assigned_user_id` down. The former
+`pic_scope` / `brand_scope` / `attendee_user_id` ACL params were removed
+2026-08-19 (see Axis 2). `per_page` defaults to 50, capped at 200.
 
 Two things happen here that are easy to miss:
 
@@ -536,36 +558,56 @@ renders — the chip falls back). Service / Exchange keeps the older single
 dropdown). Because the picked helper names land in the crew JSON, a Grab-assigned
 helper still matches the `assigned_to_me` / calendar `setup_crew` name arm.
 
+### Stock transfers and their tasklist mirror
+
+`POST /:id/stock-transfers` (`services/projects.ts` `createStockTransfer`)
+writes `project_stock_transfers` **and** mirrors the row into the tasklist:
+`syncStockTransferTask` creates one `project_checklist` row linked by the notes
+marker `auto:stock_transfer=<id>`, so a transfer is visible next to the rest of
+the project's work. Confirm / unconfirm / delete re-sync or drop that row.
+
+**The mirror row's title AND its `due_date` both come from one field,
+`transferred_at`.** A blank one therefore used to produce a `due_date NULL` row
+titled bare `"Stock OUT"` — invisible to the tasklist's date column, the Gantt
+and every due-date rollup — and PERMANENTLY so, because
+`redateChecklistFromOffsets` deliberately skips `notes LIKE 'auto:%'` rows (their
+date follows the transfer, not the project schedule).
+
+Since 2026-08-21 a missing `transferred_at` **defaults to today** (`todayMyt()`,
+date-only) rather than being refused — default-never-refuse, the owner's standing
+rule for this system. `todayMyt()` and not a raw UTC slice: Workers run in UTC,
+so before 08:00 MYT a plain `toISOString()` files the transfer under yesterday.
+The default is applied at CREATION only; `syncStockTransferTask` still renders a
+legacy NULL row honestly rather than inventing a date for history.
+
+**Mobile does not reach this endpoint at all.** `MobilePMS.tsx` files stock-out
+records as CHECKLIST-TASK attachments (`uploadStockOut` →
+`PUT /checklist/:taskId/attachments` + auto-submit for review), which is why the
+project-level transfers list reads empty on the phone. A `uploadTransfer` helper
+that did POST here lost its only call site on 2026-07-17 (`034e9a335`) and was
+deleted as dead on 2026-08-21.
+
 ### The calendar handler
 
-`:3756`. `seeAll` is the whole rule (`:3795-3798`):
+Since the PIC/brand ACL removal (2026-08-19) the rule is simply:
 
 ```
-const seeAll =
-  !!user && !crewScoped &&
-  (isAdmin || getPmsRole(user, { pic_id: null }) === "DIRECTOR" || scope === null);
+const seeAll = !!user && !crewScoped;
 ```
 
-- `isAdmin` = holds `*`.
-- **DIRECTOR** sees the whole calendar — owner ruling 2026-07-05, reusing the PMS
-  role classification so it stays position-driven rather than a hardcoded string
-  here (`:3779-3784`).
-- `scope === null` (an unscoped non-admin: logistics, ops, purchasing) also sees
-  everything — owner ruling 2026-07-06, restoring behaviour that the
-  2026-07-05 assignment-scoping had removed (`:3785-3790`).
+- Every authenticated **non-crew** caller sees the whole company calendar
+  (the SQL still carries the active-company predicate `activeCompanySql(c,
+  "p.company_id")`).
 - `crewScoped` (helpers, storekeepers, storekeeper supervisors — **and drivers**,
   owner 2026-07-23, on THIS route only: `crewScoped = isCrewScopedUser(user) ||
-  isScopedDriver`, `:4880-4886`) **drops out of the see-all lane** and gets
-  a crew-assignment arm instead — owner ruling 2026-07-21 (`:3791-3793`).
+  isScopedDriver`) **drops out of the see-all lane** and gets a crew-assignment
+  arm instead — owner ruling 2026-07-21.
 
-Non-see-all callers get OR'd arms: crew (6 FK columns plus a
-`setup_crew`/`dismantle_crew` JSON name match, `:3805-3817`), scoped PIC + brand
-(`:3822-3828`), unscoped-non-admin PIC-self (`:3832`), and the attendee arm
-(`project_sales_attendees → sales_reps.user_id`, `:3836-3841`). With no arms it
-fails closed on ` AND 1 = 0` (`:3849`).
-
-> Divergence worth knowing: the **calendar's scoped arm has no grace-window
-> predicate**, while the list's does. See `PIC_GRACE_DAYS` below.
+Crew-scoped callers get OR'd arms: the crew arm (6 FK columns plus a
+`setup_crew`/`dismantle_crew` JSON name match) and the attendee arm
+(`project_sales_attendees → sales_reps.user_id`). With no arms it fails closed
+on ` AND 1 = 0`. The former scoped-PIC+brand arm and unscoped PIC-self arm were
+removed with the ACL.
 
 ---
 
@@ -617,37 +659,44 @@ only by `requirePageAccess("projects.list")`. So
 `projects.list = edit` lets you read, and nothing more. (There is no permission
 key spelled `projects:edit`; the colon form is a page-access *level*, not a key.)
 
-### Axis 2 — row visibility: org fields + a role flag + brands, NOT the matrix
+### Axis 2 — row visibility: COMPANY only (PIC/brand ACL removed 2026-08-19)
 
-`backend/src/services/projectAcl.ts` is the single source, and every read-ACL
-below keys off the same predicate.
+**REMOVED — owner decision 2026-08-19.** There used to be a two-dimensional
+row-level ACL here (PIC one-hop + brand allow-list + a 30-day grace window).
+The service that implemented it — `services/projectAcl.ts`, which was **deleted**
+in this change — exported `getProjectScope` / `canSeeProject` /
+`projectAccessLevel` / `isScopedProjectUser` / `scopeNotExpiredSql`. It scoped a
+Sales rep to projects where they (or their manager) were the PIC AND whose brand
+sat in their `user_brands` list.
 
-`isScopedProjectUser(user)` (`:30-34`) — two ways to be scoped:
-1. the role carries `scope_to_pic`;
-2. `isSalesUser(user) && !isDirectorUser(user)` — added 2026-07-15 because some
-   Sales positions have roles *without* `scope_to_pic`, so `getProjectScope`
-   returned `null` and the list applied no ACL at all, **fail-OPENing a non-PIC,
-   non-director rep to every project** (`:21-28`).
+That whole file (`backend/src/services/projectAcl.ts` [gone]) and every predicate that
+keyed off it were **deleted / removed**. Within a company, **any user with the
+projects page permission now sees EVERY one of that company's projects**,
+regardless of PIC or brand. Row visibility is governed only by:
 
-`getProjectScope(user)` (`:56-63`) returns `{ pic_ids, brands }` or `null`.
-`null` means **unfiltered** — admins, ops and finance run unscoped queries
-(`:49-51`). `pic_ids` is `[user.id, user.manager_id]` (the one-hop PIC rule);
-`brands` is `user.brand_scope`, the union of the user's own and their manager's
-`user_brands` rows (`services/auth.ts:280-298`).
+1. **the projects page-access gate** (Axis 1 — `requirePageAccess`), and
+2. **company scope** — the `company_id` / `activeCompanySql` predicate every
+   project read carries. This widened visibility WITHIN a company; it did not
+   touch the company boundary (a 2990 user still cannot see a HOUZS project).
 
-`canSeeProject` (`:122-146`) is the hard gate, and it fails closed five ways:
-outside the grace window (`:133`), null effective PIC (`:135`), PIC outside the
-one-hop line (`:137`), **empty brand list** (`:143`), **project with no brand**
-(`:144`). The last two are deliberate: a scoped user whose department has no
-brands sees nothing, which forces admins to configure department brands
-explicitly.
+The write side moved with it: the create/patch PIC restriction, the
+`canPicProjectBrand` brand-on-PIC gate, and the `PATCH /:id/finance` PIC gate
+were all removed. A `projects.write` holder may now edit any project in their
+active company; the company predicate + the `projects.write` / `projects.finances`
+gates remain.
 
-`PIC_GRACE_DAYS = 30` (`projectAcl.ts:80`) — widened from 4 on 2026-07-31 ("karjiun cannot see project"): the defect-upload and purchaser loop run well past four days, and the PIC must stay on the event while they do. A scoped PIC keeps a project until 30 days after it
-ends, then it drops out of their list and detail. The predicate is
-`scopeNotExpiredSql` (`:91`); unscoped roles are unaffected.
+`AuthUser.brand_scope` is now always `null` (vestigial — the signed-session
+claims contract in `session-pass.ts` was left unchanged rather than reshaped in
+the same change). **Crew scoping is a SEPARATE axis and is unaffected:**
+helpers / storekeepers / drivers still see only the events they are crewed on
+(`isCrewScopedUser`).
 
-`effectivePicId` (`:78-81`) falls back to `created_by`, so projects created
-before migration 039 stay visible to their creator's team without a backfill.
+> `user_brands` and `GET/PUT /api/users/:id/brands` were **kept** — they still
+> feed the DIRECTOR approval-lane brand split (`approverBrandBlocked` in
+> `services/projectGates.ts`, owner 2026-08-10), which is a different axis from
+> project visibility. Note the per-user brand-assignment UI (`UserBrandsPanel`
+> in `frontend/src/pages/Team.tsx`) was removed, so those approval-split brands
+> no longer have an edit surface; existing rows persist.
 
 ### Axis 3 — write authority: the ROLE permission matrix
 
@@ -937,28 +986,66 @@ indexes only.
 
 ## 8. Who can see / do what — summary
 
+Since 2026-08-19 (PIC/brand ACL removed) the top three rows collapse: any
+non-crew user with projects page access sees the whole company set.
+
 | Actor | Projects list & detail | Calendar | Finances | Writes |
 |---|---|---|---|---|
 | `*` (owner / IT) | everything | whole calendar | yes | everything |
-| DIRECTOR positions (`Super Admin`, `Sales Director`, `Finance Manager`) | **every** project's full detail (`projectAcl.ts:5-11`) | whole calendar (`projects.ts:3779-3784`) | yes, if `projects.finances` level allows | per their role permissions |
-| Unscoped non-admin staff (logistics, ops, purchasing) | unfiltered | whole calendar (`:3785-3790`) | per page level | per role |
-| Scoped Sales rep | PIC one-hop **AND** department brand **AND** within `PIC_GRACE_DAYS` of the end date, OR on the Sales Attending list | their assigned venues/projects only — **no grace predicate here** | money columns are blanked server-side (`projects.ts:845-853`) | per role |
-| Crew (Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`CREW_SCOPED_POSITIONS`, `:3720`) | only events they are crewed on (`:3791-3793`) | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
-| Driver | **not** forced on the LIST — drivers are crew-scoped on the CALENDAR only (`:4880-4886`) | only events they are crewed on, calendar | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
-| Anyone holding `projects.write` | escapes crew scoping entirely (`:2820`) | | | |
+| Any non-crew user with `projects.list` | **all projects in their active company** (no PIC/brand filter) | whole company calendar | per page level | per role |
+| Crew (Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`CREW_SCOPED_POSITIONS`) | only events they are crewed on | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Driver | **not** forced on the LIST — drivers are crew-scoped on the CALENDAR only | only events they are crewed on, calendar | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Anyone holding `projects.write` | escapes crew scoping entirely | | | |
 
 Enforcement points, in one place:
 
 - **Page entry** — `requirePageAccess(...)` on every read route
-  (`middleware/auth.ts:414-437`), resolved from POSITION by
-  `services/positionPolicy.ts` via `services/auth.ts:328-344`. Frontend mirror:
-  `PageGuard` (`frontend/src/auth/PageGuard.tsx:35-75`).
-- **Row visibility** — `services/projectAcl.ts`: `getProjectScope` (list,
-  calendar, notifications), `canSeeProject` (detail, print),
-  `projectAccessLevel` (render tier).
+  (`middleware/auth.ts`), resolved from POSITION by
+  `services/positionPolicy.ts` via `services/auth.ts`. Frontend mirror:
+  `PageGuard` (`frontend/src/auth/PageGuard.tsx`).
+- **Row visibility** — COMPANY scope only (`company_id` / `activeCompanySql`).
+  The former PIC/brand ACL (`services/projectAcl.ts` [gone]) was removed
+  2026-08-19 — see Axis 2.
 - **Within-project sections** — `services/pmsAccess.ts` `getPmsAccess`.
 - **Writes** — `requirePermission` / `requireAnyPermission` against
   `roles.permissions`.
+
+### The four project-detail ACTION controls, and the rule each one must ask
+
+Added 2026-08-20. Every control below is a live write button on the project
+detail page. Desktop rendered all four with no permission condition at all (or
+on a key the route does not read), so the operator clicked and got a raw 403;
+mobile gated each of them. The desktop gate is now the rule the SERVER enforces,
+and the two composite predicates live once, in `frontend/src/auth/salesAccess.ts`.
+
+| Control | Route | Server rule | Desktop gate | Mobile gate |
+|---|---|---|---|---|
+| Archive / Restore | `POST /:id/archive`, `POST /:id/unarchive` | `projects.manage` | `can("projects.manage")` | `canManage` |
+| Status dropdown | `PATCH /:id` | `projects.write` | `can("projects.write") && canEditDetail` | `canWrite && access.canEdit` |
+| + Total Sales | `PATCH /:id/finance` | `projects.write` + `denyFinance` | `canWriteProjectFinance(user, can)` | `canWrite`, inside the finance-visible snapshot |
+| + Quick Log / + New Sale | `POST /api/sales/entries` | `requirePageAccess("sales")` | `canLogSalesEntry(salesLevel)` | same helper |
+
+Three traps this table exists to stop:
+
+- **`disabled` is not a gate.** The Archive and Restore menu items each carried a
+  `disabled` derived from `archived_at` — that is STATE. A state condition next
+  to a missing permission condition reads, at a glance, as if the control were
+  gated.
+- **The sales READ rule is not the sales WRITE rule.** `GET /api/sales/entries`
+  is `requirePageAccessOrSalesView`, whose extra arm admits Sales staff and
+  directors by ORG POSITION; `POST /entries` is plain `requirePageAccess`. A
+  Sales Director therefore READS the list and cannot WRITE to it, so the two
+  gates on this one panel must not share a predicate.
+- **`sales.write` gates nothing here.** It was the desktop condition on both
+  write buttons and is a term in neither route, so it was wrong in both
+  directions at once: it showed "+ Total Sales" to a rep the finance gate
+  refuses, and hid it from a finance user holding `projects.write`.
+
+`canWriteProjectFinance` mirrors `denyFinance` -> `financeHiddenForUser`
+(`position_id == null` OR `project_finance_viewer`), NOT the per-project
+`_access.pms.canFinancial` flag. The flag is the DIRECTOR-only section tier and
+is a strict subset: it excludes the granular `projects.finance.view` holders
+(the BD role, owner 2026-07-23) that the write route accepts.
 
 ### Desktop and mobile files that must change together
 
@@ -966,6 +1053,7 @@ Enforcement points, in one place:
 |---|---|---|
 | Project list, cards, filters | `pages/Projects.tsx:949` `ProjectsListView` | `mobile/MobilePMS.tsx` |
 | Project detail, checklist, crew, photos, defects | `pages/Projects.tsx:4756` / `:5919` | `mobile/MobilePMS.tsx` (same file) |
+| Defect-file action timeline (Done / Replace + remark) | `pages/Projects.tsx` `TaskAttachmentRow` `saveAction` | `mobile/MobilePmsDefectActions.tsx` — extracted from `MobilePMS.tsx` 2026-08-21 so the save path is renderable in a test; both surfaces must SURFACE a refusal |
 | Calendar | `pages/Projects.tsx:3034` | `mobile/MobileCalendar.tsx` |
 | Finances profitability analytics (group tables, rental column, drill-down) | `pages/Projects.tsx` `ProjectsAnalyticsView` / `BreakdownCard` | **no mobile counterpart** (mobile PMS is single-project detail only) |
 | Gantt | `components/ProjectGantt.tsx` | `mobile/MobileGantt.tsx` (rendered from `MobilePMS.tsx:1603`) |
@@ -974,6 +1062,35 @@ Enforcement points, in one place:
 | Maintenance masters (brands, event types, organizers, venues) | `pages/ProjectMaintenance.tsx` | **no mobile counterpart** |
 | Venue resolution | — | — shared server-side in `backend/src/scm/lib/venue-binding.ts`; neither client re-implements it |
 | Director / sales cohort names | `backend/src/services/pmsAccess.ts` | `frontend/src/auth/salesAccess.ts` — must stay in lockstep, test-pinned |
+| P&L category labels | — | — shared in `vendor/scm/lib/pms-ledger-categories.ts`; neither surface labels a category itself |
+| Which checklist rows carry Approve/Reject | — | — shared in `vendor/scm/lib/pms-reviewable-titles.ts` |
+| Project STATUS values + payment-pill labels | — | — shared in `vendor/scm/lib/pms-project-status.ts`; each surface keeps only its own palette |
+
+#### The shared PMS vocabularies, and why they are shared
+
+`pms-status.ts` (workflow STAGE) was the first of these; three more joined it on
+2026-08-21 after a desktop-vs-mobile audit found each one hand-written twice:
+
+| Module | Owns | What the duplication had already cost |
+|---|---|---|
+| `pms-ledger-categories.ts` | the P&L picker lists + `ledgerCategoryLabel` | desktop mapped the slugs, mobile ran a generic `humanize()` — one P&L row read "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone |
+| `pms-reviewable-titles.ts` | `isReviewableTitle` | desktop tested a Set of seven EXACT titles, mobile a PREFIX regex claiming to mirror it — "3D Design (Revision 2)" got the approve/reject workflow on the phone and none on the PC |
+| `pms-project-status.ts` | status values/labels + payment-pill labels | values agreed, but the `fully_paid` pill read "Fully paid" on desktop and "Paid" on mobile |
+
+**The rule for all four is the same:** only the value→label contract is shared.
+Each surface keeps its OWN visual map — desktop Tailwind chip/ring classes and a
+calendar hex, mobile inline styles — so the two can never disagree about WHICH
+values exist or what they are called, while neither dictates the other's palette.
+
+**`isReviewableTitle` is a PREFIX rule, and that was a choice.** The prefix
+matcher is a strict SUPERSET of the old exact set (proved in
+`pms-vocabulary.test.ts`: every one of the seven matches its own prefix), so
+adopting it removed review controls from nobody. What changed is that DESKTOP now
+shows submit/approve/reject on suffixed rows — "3D Design (Revision 2)",
+"Agreement — signed copy" — which mobile already did. Chosen because staff type
+these titles by hand and the owner's standing philosophy for this system is to
+loosen rather than restrict. **Flagged for the owner**; if he wants exactness
+instead, the matcher changes in one place and both surfaces follow.
 
 ---
 
@@ -1040,3 +1157,31 @@ Watch, in rough order of size:
 
 No load test or measured latency figure exists for this module; every claim above
 is structural, read from the code.
+
+## Child rows are NOT reached through their parent — the gate that assumes they are (2026-08-18)
+
+`routes/projects.ts` carried a header claiming child tables "are ALWAYS read
+through their parent `project_id`", and migration 0292's prose repeated it. It is
+true only where the URL carries the parent. `PATCH`/`DELETE /finance/lines/:lineId`,
+`/checklist/:itemId`, `/checklist/attachments/:attId`, `/sections/:sectionId`,
+`/defects/:defectId`, `/sales-reports/:reportId`, `/team/:teamId`,
+`/attachments/:attId` and the three `/stock-transfers/:tid` routes have no parent
+in the path and no middleware supplying one — each was a bare `WHERE id = ?`
+against a service-role client.
+
+`backend/src/routes/lib/project-company-gate.ts` is the boundary now, and it has
+exactly two shapes:
+
+- **`refuseForeignChild(c, table, id)`** — for a child addressed by its own id.
+  Tables that HAVE `company_id` (`project_checklist`, its sections / attachments
+  / comments per mig 0093, and `project_finance_lines` per 0170) are checked on
+  that column; tables that do not (`project_stock_transfers`, `project_defects`,
+  `project_sales_reports`, `project_team`, `project_attachments`) go through
+  `EXISTS (SELECT 1 FROM projects p WHERE p.id = t.project_id …)`.
+- **`refuseForeignProject(c, id)`** — for the `/:id/<child>` CREATE routes, which
+  bind `:id` as `project_id` on the INSERT.
+
+Both answer **404**, deliberately the same answer as a missing row, and both
+DEGRADE to a no-op when `activeCompanySql` yields "" (pre-migration / D1 test
+mirror / cold-start). `project_event_types` and `project_organizers` are shared
+masters with no `company_id` at all and are deliberately NOT gated.

@@ -8,7 +8,8 @@
 // honest answer is structural, not incidental.
 //
 // The frontend does NOT import the backend's rule modules — it VENDORS COPIES
-// of them (frontend/src/vendor/shared/* against backend/src/scm/shared/*). Some
+// of them (frontend/src/vendor/shared/* and frontend/src/vendor/scm/lib/*
+// against backend/src/scm/shared/* and backend/src/scm/lib/*). Some
 // of those pairs carry a byte-identical canonical test (phone.ts has
 // phone.canonical.test.ts, and it is the reason phone normalisation has never
 // drifted). Most do not. A copy with no drift test is a rule with two homes and
@@ -49,7 +50,16 @@ import { fileURLToPath } from "node:url";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(backendRoot, "..");
-const BE = path.join(backendRoot, "src", "scm", "shared");
+/* BOTH rule directories, not just scm/shared. The frontend vendors from
+   `vendor/shared` AND `vendor/scm/lib`, and this side only ever looked at
+   scm/shared — so every scm/lib pair (rate-rule-taxonomy, costing-enabled,
+   slip) was invisible to the one check whose whole job is finding a rule with
+   two homes. Widening it is one line and it immediately picked up three pairs
+   that had never been compared. */
+const BE_DIRS = [
+  path.join(backendRoot, "src", "scm", "shared"),
+  path.join(backendRoot, "src", "scm", "lib"),
+];
 const FE_DIRS = [
   path.join(repoRoot, "frontend", "src", "vendor", "shared"),
   path.join(repoRoot, "frontend", "src", "vendor", "scm", "lib"),
@@ -112,12 +122,47 @@ function balanced(text, openIdx) {
   return null;
 }
 
+/* Index of the `{` that opens a function BODY, skipping a RETURN-TYPE
+   ANNOTATION that itself contains braces.
+
+   `text.indexOf("{", afterName)` was the whole of this, and it is wrong for
+   every function whose return type carries a brace. `rulesByCategory(): Array<{
+   category: RateRuleCategory; types: RateRuleType[] }>` sliced the TYPE and
+   never reached the body — so the pair reported DIVERGED because one side's
+   type alias is spelled `RateRuleTypeT`, while two genuinely different bodies
+   under one identical annotation would have read COSMETIC. Both directions are
+   wrong and the second is the dangerous one: a verdict computed over the wrong
+   text must never read as a pass.
+
+   A `{` that OPENS A TYPE is always preceded by `:`, `<`, `(`, `,`, `|`, `&` or
+   `=>`; a `{` that opens a BODY is preceded by `)`, `>`, `]`, `}` or an
+   identifier. Skip the former (balanced), return the latter. */
+function bodyStart(text, from) {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let j = i - 1;
+    while (j >= 0 && /\s/.test(text[j])) j--;
+    const prev = text[j];
+    const isArrow = prev === ">" && text[j - 1] === "=";
+    if (isArrow || prev === ":" || prev === "<" || prev === "(" || prev === "," || prev === "|" || prev === "&") {
+      const grp = balanced(text, i);
+      if (!grp) return -1;
+      i += grp.length - 1;
+      continue;
+    }
+    return i;
+  }
+  return -1;
+}
+
 function exportedBodies(text) {
   const out = new Map();
 
   // 1. export function foo(...) { ... }  /  export async function foo(...)
   for (const m of text.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
-    const open = text.indexOf("{", m.index + m[0].length);
+    const paren = m.index + m[0].length - 1;
+    const params = balanced(text, paren);
+    const open = params === null ? -1 : bodyStart(text, paren + params.length);
     const body = open === -1 ? null : balanced(text, open);
     if (body) out.set(m[1], clean(body));
   }
@@ -178,10 +223,25 @@ function exportedBodies(text) {
     );
     process.exit(2);
   }
+  /* THE RETURN TYPE THAT CARRIES A BRACE. This is the form the extractor was
+     silently getting wrong, so it is asserted directly: what comes back must be
+     the BODY, and two functions whose bodies agree must compare equal even when
+     their return-type aliases are spelled differently. Without this probe the
+     comparison happily reports on a type annotation and calls it behaviour. */
+  const braced = (t) =>
+    exportedBodies(`export function rulesByCategory(): Array<{ category: C; types: ${t}[] }> {\n  return LIST.filter((x) => x.ok);\n}\n`).get("rulesByCategory");
+  if (!braced("A") || !/return LIST\.filter/.test(braced("A"))) {
+    console.error("check-shared-mirrors: self-test FAILED - a braced RETURN TYPE was sliced instead of the function body. Not reporting.");
+    process.exit(2);
+  }
+  if (braced("A") !== braced("B")) {
+    console.error("check-shared-mirrors: self-test FAILED - two identical bodies compared unequal because their return-type aliases differ. Not reporting.");
+    process.exit(2);
+  }
 }
 
 const rows = [];
-for (const f of fs.readdirSync(BE).filter(isRule)) {
+for (const { dir: BE, name: f } of BE_DIRS.flatMap((d) => fs.readdirSync(d).filter(isRule).map((name) => ({ dir: d, name })))) {
   const base = f.replace(/\.ts$/, "");
   const beText = norm(fs.readFileSync(path.join(BE, f), "utf8"));
   const feHit = FE_DIRS.map((d) => path.join(d, f)).find((p) => fs.existsSync(p));
@@ -233,7 +293,7 @@ if (jsonOut) {
 } else {
   const count = (s) => rows.filter((r) => r.status === s).length;
   console.log(
-    `${rows.length} rule modules in backend/src/scm/shared.\n` +
+    `${rows.length} rule modules in backend/src/scm/shared + backend/src/scm/lib.\n` +
       `  ${count("DIVERGED")} DIVERGED     a function BOTH sides define behaves differently. THE ANSWER.\n` +
       `  ${count("TESTED")} TESTED       diverges, but a drift test referees the pair\n` +
       `  ${count("NO-OVERLAP")} NO-OVERLAP   share ZERO exported symbols - NOT compared, read by hand\n` +

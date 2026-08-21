@@ -7,7 +7,7 @@ export const REAL_SCHEMA_CONTRACT_VERSION = "2026-07-21.1";
 
 export const SO_LIST_COLUMNS = [
   "doc_no", "transfer_to", "so_date", "branding", "debtor_code", "debtor_name",
-  "agent", "sales_location", "ref", "po_doc_no", "venue", "venue_id",
+  "agent", "sales_location", "ref", "venue", "venue_id",
   "address1", "address2", "address3", "address4", "phone",
   "mattress_sofa_sen", "bedframe_sen", "accessories_sen", "others_sen",
   "service_sen", "local_total_sen", "balance_sen",
@@ -15,8 +15,7 @@ export const SO_LIST_COLUMNS = [
   "others_cost_sen", "service_cost_sen", "total_cost_sen",
   "total_revenue_sen", "total_margin_sen", "margin_pct_basis", "line_count",
   "currency", "status", "remark2", "remark3", "remark4", "note",
-  "sales_exemption_expiry", "customer_id", "customer_po",
-  "customer_po_id", "customer_po_date", "customer_so_no", "hub_id", "hub_name",
+  "sales_exemption_expiry", "customer_id", "customer_so_no", "hub_id", "hub_name",
   "customer_state", "customer_country", "customer_delivery_date",
   "processing_date", "linked_do_doc_no", "ship_to_address", "bill_to_address",
   "install_to_address", "subtotal_sen", "overdue", "email", "customer_type",

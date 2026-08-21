@@ -708,9 +708,11 @@ describe('parseIncludeUndated — a truthy-looking value must never be silently 
        drawn from it did not. What the owner could not see was never the ROWS; it
        was that rows were being withheld at all, because the page said nothing.
        Hiding is legitimate here: this is the ordering worklist and an undated
-       line is not orderable. Hiding SILENTLY is what was broken, and the banner
-       is what fixes it — mrpUndatedBanner.test.tsx pins that the count is on
-       screen in BOTH directions, so a future flip cannot restore the silence.
+       line is not orderable. Hiding SILENTLY is what was broken. The page-level
+       banner was the 2026-08-16 answer; the owner deleted it on 2026-08-20
+       (「黄色的也delete掉」), so what ends the silence now is the always-visible
+       "Show no-date" checkbox plus the per-row "No date" tag —
+       frontend mrpUndated.test.tsx pins both, and pins the banner's absence.
 
        Requiring a delivery date was considered and rejected for a separate
        reason that still holds: a forced date gets a FAKE one typed into it, and

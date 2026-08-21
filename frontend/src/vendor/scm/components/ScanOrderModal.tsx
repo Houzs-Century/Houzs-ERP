@@ -74,9 +74,11 @@ import { sortByText } from '../lib/sort-options';
 import { compressForOcr } from '../../shared/image-compress';
 import {
   normalizeJobs,
+  normalizeScanSalespeople,
   isActiveJob,
   jobTs,
   hhmm,
+  SCAN_SALESPEOPLE_PATH,
   type ScanJob,
   type ScanJobsResp,
 } from '../lib/scan-jobs';
@@ -228,7 +230,6 @@ export type ExtractedSlip = {
   locationMatch: OptionMatch | null;
   lines: ExtractedLine[];
 };
-type SalespeopleResp = { success: boolean; data: { salespeople: string[] } };
 /* POST /scan-so/enqueue — 202 the instant the photos land, BEFORE any OCR. */
 type EnqueueResp = { job_id: string; status: string };
 
@@ -296,8 +297,8 @@ export const ScanOrderModal = ({ onClose }: Props) => {
 
   useEffect(() => {
     let alive = true;
-    authedFetch<SalespeopleResp>('/scan-so/salespeople')
-      .then((r) => { if (alive) setKnownReps(r.data.salespeople); })
+    authedFetch<unknown>(SCAN_SALESPEOPLE_PATH)
+      .then((r) => { if (alive) setKnownReps(normalizeScanSalespeople(r)); })
       .catch(() => { /* datalist is a convenience — field stays free-text */ });
     return () => { alive = false; };
   }, []);

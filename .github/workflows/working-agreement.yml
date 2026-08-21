@@ -1,4 +1,4 @@
-# The three MANDATORY owner rules at the top of CLAUDE.md, enforced.
+# The four MANDATORY owner rules at the top of CLAUDE.md, enforced.
 #
 # Until this workflow existed they lived only in prose, and prose is skipped by
 # whoever is in a hurry — which, at 316 commits a day, is everyone. Measured on
@@ -47,7 +47,8 @@ jobs:
       # test file next to the first is the obvious thing to write, and it would
       # never have run. (`node --test scripts/lib/` is NOT the fix: on node 22 a
       # bare directory is resolved as a module and dies MODULE_NOT_FOUND.)
-      # Measured: this runs 30 tests across 2 files, and exits 1 when any fails.
+      # Measured 2026-08-20: this runs 55 tests across 2 files, and exits 1 when any
+      # fails. Re-measure rather than trusting the number.
       - name: Test the gate
         run: node --test scripts/lib/*.test.mjs
       - name: Check the working agreement

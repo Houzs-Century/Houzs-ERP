@@ -49,6 +49,7 @@ import {
   useUploadSoItemPhoto,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { AuditHistoryPanel } from '../../components/audit/AuditHistoryPanel';
 import type { AuditFieldChange, AuditLogEntry } from '../../components/audit/audit-labels';
 import { SO_AUDIT_LABELS } from './so-audit-labels';
@@ -60,8 +61,8 @@ import {
   amendmentEligible as soAmendmentEligible,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
-import { parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
@@ -538,32 +539,32 @@ export const SalesOrderDetail = () => {
      scm.staff row (e.g. the owner). Used only as the first (id) match key + a
      name fallback in selfStaffMatch below. */
   const { staff: currentStaff } = useAuth();
-  /* Owner 2026-07-13 — mirror SalesOrderNew's `selfStaffMatch`: resolve the
-     logged-in Houzs user against the loaded staff roster (id → email → name) so
-     the Add-Payment "Collected By" defaults to the person recording it. The
-     2990 auth bridge reports id:null for the owner, so PaymentsTable's internal
-     `auth.staff?.id` fallback left "Collected By" as "—" on the SO detail. No
-     roster match ⇒ undefined ⇒ PaymentsTable keeps "—" (non-regressive). */
+  /* Owner 2026-07-13 — resolve the signed-in user against the staff roster so
+     Add-Payment's "Collected By" defaults to the person recording it. No match
+     ⇒ undefined ⇒ PaymentsTable keeps "—".
+
+     THE LADDER IS THE SHARED ONE NOW, and that is a BEHAVIOUR CHANGE, not a
+     pure refactor: this page had no `user_id` rung at all (bridge-id → email →
+     name), while resolveSelfStaff tries `user_id` first — the key the backend
+     itself joins on, present on 102 of 140 staff rows against email's 18. So
+     people previously unmatched (IT Admin: user_id 4, email NULL) now match,
+     and where the two disagree `user_id` wins. Changes only this picker's
+     DEFAULT, overridable, writes nothing. Full account: docs/bugs/0483. */
   const staffQ = useStaff();
   const staffList = useMemo(
     () => (staffQ.data ?? []).filter((s) => s.active),
     [staffQ.data],
   );
-  const selfStaffMatch = useMemo(() => {
-    const byId = currentStaff?.id
-      ? staffList.find((s) => s.id === currentStaff.id)
-      : undefined;
-    if (byId) return byId;
-    const email = (currentUser?.email ?? '').trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? '').trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const name = (currentUser?.name ?? currentStaff?.name ?? '').trim().toLowerCase();
-    return name
-      ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
-      : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name]);
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffId: currentStaff?.id,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
   const createAmendment = useCreateAmendment();
   const supplierConfirm = useSupplierConfirm();
   const approveSo = useApproveSo();
@@ -1034,16 +1035,7 @@ export const SalesOrderDetail = () => {
            at once in a POPUP the owner can't miss (owner 2026-07-18: he wanted a
            modal listing all reasons, not a banner to scroll to). Anything else
            keeps the inline banner. */
-        const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-        if (problems && problems.length > 0) {
-          notify({
-            title: saveProblemsTitle(problems.length),
-            body: <SaveProblemsList problems={problems} />,
-            tone: 'error',
-          });
-        } else {
-          setSaveError(e instanceof Error ? e.message : 'Something went wrong.');
-        }
+        void notifySaveProblems(notify, e, setSaveError);
       });
   };
 
@@ -1056,9 +1048,6 @@ export const SalesOrderDetail = () => {
      amendment then flows through the supplier-confirm / approve gates before it
      re-derives the SO — direct line writes on a PO'd SO would break the supplier
      copy, which is exactly what this workflow prevents. */
-  /* A 0 typed here is a price, not an unresolved one — the wire cannot tell them
-     apart, so say which (see erpLineTrust). Both the PATCH and a staged ADD. */
-  const zeroPriceClaim = (sen: number) => (sen === 0 ? { zeroPriceIntended: true } : {});
 
   const buildAmendmentLines = (): CreateAmendmentLine[] => {
     const out: CreateAmendmentLine[] = [];
@@ -1512,7 +1501,9 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      ...zeroPriceClaim(d.unitPriceSen),
+      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
+         it must not silently re-price it (a qty-only edit sends the price too). */
+      ...zeroPriceClaim(d.unitPriceSen, true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
@@ -1537,7 +1528,10 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      ...zeroPriceClaim(d.unitPriceSen),
+      /* UNCHANGED behaviour: this staged ADD has claimed every 0 since #2425.
+         BUG-HISTORY 2026-08-20 records the open question about an unpriced SKU
+         reaching this path; deliberately not touched here. */
+      ...zeroPriceClaim(d.unitPriceSen, true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,

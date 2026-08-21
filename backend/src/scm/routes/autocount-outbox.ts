@@ -44,7 +44,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { readWritebackScope, WRITEBACK_KEY } from '../lib/autocount-writeback-flag';
 import {
@@ -54,6 +54,7 @@ import {
   REQUEUE_NOTE_PREFIX,
   acNeedsAttention,
   acOutboxState,
+  acRowCanSendNow,
   acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
@@ -61,6 +62,7 @@ import {
   AC_REQUEUE_MEANING,
   acRequeueAccepted,
   requeueOutboxRow,
+  sendOutboxRowNow,
 } from '../lib/autocount-requeue';
 
 export const autocountOutbox = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -249,6 +251,11 @@ function present(raw: Row) {
        DtlKeys for an item-map problem (#2094). This is a HINT and not the gate:
        POST /:id/requeue re-reads the row and can still refuse. */
     can_requeue: acRowIsRequeueable(String(raw.op ?? ''), status, lastError),
+    /* The WAITING row's own control, decided in the same place and for the same
+       reason. Disjoint from can_requeue by construction — one is true only of a
+       stopped row, the other only of a waiting one — so a row never offers two
+       buttons that would both mean "send it". */
+    can_send_now: acRowCanSendNow(status, lastError, Number(raw.attempts ?? 0)),
     ac_doc_no: (raw.ac_doc_no as string | null) ?? null,
     created_at: (raw.created_at as string | null) ?? null,
     updated_at: (raw.updated_at as string | null) ?? null,
@@ -300,8 +307,41 @@ export const listAutocountOutboxHandler = async (
      things either side of it, and the page must not make the reader guess which.
      The RAW value is reported next to the verdict for the same reason the health
      check does: a typo like 'On ' is visible rather than hidden behind the word
-     "off". */
+     "off".
+
+     THE SWITCH IS A COMPANY ALLOW-LIST, AND THIS LINE USED TO FORGET THAT.
+     `scm.autocount_writeback` takes 'off' / 'all' / a comma-separated list of
+     company ids, and every one of the eight enqueue gates asks the question the
+     right way — `isWritebackEnabled(sb, companyId)`. This report was the ONLY
+     caller in the backend that read the scope bare and then published
+     `on: scope !== 'off'`, i.e. "is it on for ANYBODY". With the live value set
+     to one company, the OTHER organisation's operator was told, on this page,
+     that sending was switched on FOR HIS COMPANY and that saving a document
+     would queue it. Neither was true: his queue is company-scoped (see
+     scopeToCompany below), so it is permanently empty, and nothing errors. The
+     comment above already said this page "must not make the reader guess" which
+     side of the switch an empty queue is on — for one of the two organisations
+     it was answering with the wrong side.
+
+     Two facts now, because they are two different questions and the page needs
+     both: `scope` still reports what the switch SAYS (unchanged — an admin has
+     to be able to see the whole allow-list), and `on` reports whether it covers
+     THIS company, which is what governs whether this reader's next save queues
+     anything. The sibling flag built on the same parser never had the bug —
+     write-freeze-status.ts prints "company 1, 3" rather than "this company". */
   const scope = await readWritebackScope(sb);
+  const writebackCompanyId = activeCompanyId(c);
+  /* Mirrors isWritebackEnabled's own arithmetic (lib/autocount-writeback-flag.ts).
+     Not a call to it, because a REPORT and an ENQUEUE want opposite answers when
+     the company is unresolved: the enqueue must refuse (never write into a live
+     account book on a guess), while this page must not claim the switch is off
+     on the strength of a company it could not resolve. Unresolved is carried as
+     null and rendered as its own sentence. */
+  const writebackOn: boolean | null =
+    scope === 'off' ? false
+    : scope === 'all' ? true
+    : writebackCompanyId == null ? null
+    : scope.includes(Number(writebackCompanyId));
   const { data: flagRow, error: flagErr } = await sb
     .from('app_config').select('value').eq('key', WRITEBACK_KEY).maybeSingle();
   /* THE ERROR IS BOUND AND BRANCHED ON, not discarded. supabase-js does not
@@ -470,7 +510,8 @@ export const listAutocountOutboxHandler = async (
          absent, empty, 'off', or anything it cannot parse all mean nothing is
          queued and nothing is sent. */
       value: flagValue,
-      on: scope !== 'off',
+      /* ON FOR THIS COMPANY — not "on for anybody". See the derivation above. */
+      on: writebackOn,
       scope: scope === 'off' ? 'off' : scope === 'all' ? 'all' : scope.join(','),
     },
     /* EVERY ONE OF THESE IS A COUNT OF DOCUMENTS. They no longer sum to the
@@ -539,6 +580,85 @@ autocountOutbox.get('/', listAutocountOutboxHandler);
  * Only the four things that are genuinely wrong with the CALL — no permission,
  * no company, no id, an unreadable queue — carry a non-200.
  */
+/**
+ * PUSH ONE WAITING DOCUMENT TO AUTOCOUNT NOW.
+ *
+ * A SECOND DOOR TO ONE MECHANISM, not a second mechanism. It shares this file's
+ * permission keys, the strict company resolver, the response contract and the
+ * outcome vocabulary with the re-queue handler beside it; what differs is the
+ * lib call, because dispatching a row that is already queued and inserting a
+ * fresh row for a refused one are genuinely different acts with different
+ * answers (`sendOutboxRowNow`'s own doc comment argues this in full).
+ *
+ * ITS OWN ROUTE RATHER THAN A BRANCH INSIDE /requeue, for one reason that
+ * outlives the tidiness argument: the two have different CONCURRENCY contracts.
+ * A re-queue must not take an exclusive claim — it writes a new row and never
+ * dispatches — while this one must, every time, or two presses put two documents
+ * in a licensed account book. Folding them together would have put a rule that
+ * only applies to half the traffic inside a handler that serves all of it.
+ *
+ * A REFUSAL IS STILL HTTP 200, exactly as the re-queue's is. The caller asked a
+ * question and got an answer; only a call that could not be answered at all is a
+ * non-200. The page renders both on the row that was pressed.
+ */
+export const sendNowAutocountOutboxHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  /* THE SAME KEYS AS SEND AGAIN, and deliberately not a new permission. Both
+     buttons do the one thing the key is about — put an ERP document into the
+     live account book — and inventing a second key would mean an operator could
+     hold the right to send a refused document but not a waiting one, a
+     distinction nobody could explain and nobody asked for. */
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json(
+      {
+        error: 'forbidden',
+        message:
+          'Sending a document to AutoCount writes into the live account book, '
+          + `so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+      },
+      403,
+    );
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const rowId = (c.req.param('id') ?? '').trim();
+  if (!rowId) return c.json({ error: 'invalid_row_id' }, 400);
+
+  const sb = c.get('supabase');
+  const result = await sendOutboxRowNow(c.env, sb, { rowId, companyId: co.companyId });
+
+  if (!acRequeueAccepted(result.outcome)) {
+    // eslint-disable-next-line no-console
+    console.warn('[autocount-outbox] send-now not accepted', result.outcome, result.docNo, result.detail);
+  }
+
+  const body = {
+    accepted: acRequeueAccepted(result.outcome),
+    code: result.outcome,
+    message: AC_REQUEUE_MEANING[result.outcome],
+    row_id: result.rowId,
+    doc_type: result.docType,
+    doc_no: result.docNo,
+    op: result.op,
+    new_row_id: null,
+    /* WHAT THE ACCOUNT BOOK SAID, on the outcomes where it said something. A
+       send-now that reached AutoCount and was refused carries the book's own
+       words, and those are the whole diagnosis — the same standing as
+       `still-refused` on the re-queue path. */
+    reason:
+      result.outcome === 'send-now-refused'
+      || result.outcome === 'send-now-retrying'
+      || result.outcome === 'send-now-waiting'
+        ? (result.detail || null)
+        : null,
+  };
+  if (result.outcome === 'row-not-found') return c.json(body, 404);
+  if (result.outcome === 'read-failed') return c.json(body, 500);
+  return c.json(body, 200);
+};
+
 export const requeueAutocountOutboxHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
 ) => {
@@ -594,5 +714,6 @@ export const requeueAutocountOutboxHandler = async (
 };
 
 autocountOutbox.post('/:id/requeue', requeueAutocountOutboxHandler);
+autocountOutbox.post('/:id/send-now', sendNowAutocountOutboxHandler);
 
 export default autocountOutbox;

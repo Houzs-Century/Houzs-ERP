@@ -29,6 +29,7 @@ import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import {
   useCreateSalesInvoice, useAddSalesInvoicePayment,
   useMfgDeliveryOrderDetail, useDeliveryOrderPayments,
@@ -433,6 +434,12 @@ export const SalesInvoiceNew = () => {
               body: res.priceWarningMessage,
             });
           }
+          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — an invoice raised
+             from a delivery order is TRANSFERRED into AutoCount, and the
+             transfer route applies a narrower set of header fields than an edit
+             does. Said before either exit, so the early return below cannot
+             swallow it. Never blocks: the invoice exists. */
+          await notifyAcNotSent(notify, res, 'Invoice');
           if (!staged) {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
             return;

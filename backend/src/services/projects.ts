@@ -1,6 +1,5 @@
 import type { Env } from "../types";
 import { recomputeAutoCostLines } from "./projectCostRates";
-import { scopeNotExpiredSql } from "./projectAcl";
 import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
@@ -1245,20 +1244,6 @@ export interface ListProjectsFilters {
   include_archived?: boolean;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  /** ACL allow-list. If present, only projects with pic_id IN this list
-   *  are returned. Empty array means "nothing" (scoped user with no PIC
-   *  in their line → zero results, which is correct). */
-  pic_scope?: number[];
-  /** Brand allow-list — paired with pic_scope for sales-dept scoping
-   *  (migration 048). Empty array means the scoped user has no brand
-   *  coverage → zero results. Undefined means no brand ACL applies. */
-  brand_scope?: string[];
-  /** Scoped rep's own user id. When set (only for scope_to_pic reps,
-   *  paired with pic_scope), OR-in the sales-attendee arm so a rep on a
-   *  project's Sales Attending list sees it even when they aren't the PIC
-   *  — mirrors the /calendar/events attendee arm (mig 087). Undefined for
-   *  admins / directors / unscoped roles (they never carry pic_scope). */
-  attendee_user_id?: number;
   /** "My pending tasks" filter (role-based). When set, only return
    *  projects that have at least one PENDING checklist item with this
    *  role_label (e.g. "BD", "PURCHASER", "DRIVER", "SALES PIC",
@@ -1803,48 +1788,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     const like = `%${f.search}%`;
     binds.push(like, like, like, like, like, like);
   }
-  // Row-level ACL for a scoped rep (pic_scope present ⇒ getProjectScope was
-  // non-null, i.e. a scope_to_pic sales/CS rep). Mirrors BOTH the
-  // /calendar/events assignment scoping AND services/projectAcl.canSeeProject
-  // so the list, the calendar, and the detail all agree on what a scoped rep
-  // may see (no row that 404s on open; no openable row missing from the list):
-  //   · PIC arm      — the project's PIC (COALESCE(pic_id, created_by) for
-  //                    legacy pre-039 rows) is in their [self, manager] line
-  //                    AND the project's brand is in their department allow-list
-  //                    AND the project is still inside the PIC grace window.
-  //                    This is exactly canSeeProject's inPicLine + brand + grace.
-  //   · Attendee arm — they are on the project's Sales Attending list
-  //                    (project_sales_attendees → sales_reps.user_id, mig 087) —
-  //                    the same linkage the calendar's attendee arm uses.
-  //                    Unconditional (no brand / grace gate), exactly like the
-  //                    calendar: being an attendee is itself an assignment.
-  // Fail-closed: a scoped rep with neither a PIC line nor an attendee record
-  // yields an empty OR set → `1 = 0` → an empty list, never the full list.
-  if (f.pic_scope) {
-    const scopeArms: string[] = [];
-    if (f.pic_scope.length > 0 && f.brand_scope && f.brand_scope.length > 0) {
-      // Fall back to created_by when pic_id is NULL so legacy projects
-      // (pre-migration 039) still attach to their creator's team. Brand-less
-      // projects are intentionally invisible to scoped users — admins fix by
-      // setting the brand. Grace: PIC visibility expires PIC_GRACE_DAYS after
-      // the project ends (owner: "完了的四天之后").
-      scopeArms.push(
-        `(COALESCE(p.pic_id, p.created_by) IN (${f.pic_scope.map(() => "?").join(",")})` +
-        ` AND ${scopeNotExpiredSql}` +
-        ` AND p.brand IS NOT NULL AND p.brand IN (${f.brand_scope.map(() => "?").join(",")}))`
-      );
-      binds.push(...f.pic_scope, ...f.brand_scope);
-    }
-    if (f.attendee_user_id != null) {
-      scopeArms.push(
-        `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
-        ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +
-        ` WHERE psa.project_id = p.id AND sr.user_id = ?)`
-      );
-      binds.push(f.attendee_user_id);
-    }
-    where.push(scopeArms.length ? `(${scopeArms.join(" OR ")})` : "1 = 0");
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
+  // within a company, any user with the projects permission sees ALL that
+  // company's projects. Visibility is governed only by the projects page-access
+  // gate and the company predicate (p.company_id above); crew scoping
+  // (assigned_user_id) is a separate axis and stays.
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const page = f.page && f.page > 0 ? f.page : 1;
@@ -2920,6 +2868,22 @@ export async function createStockTransfer(
   input: CreateStockTransferInput,
   userId: number
 ) {
+  // A transfer with no date DEFAULTS to today; it is never refused. Both the
+  // mirror task's due_date and its title come from this one field, so a blank
+  // one used to produce a `due_date NULL` row titled bare "Stock OUT" —
+  // invisible to the tasklist's date column, the Gantt and every due-date
+  // rollup, and permanently so, because redateChecklistFromOffsets skips
+  // `notes LIKE 'auto:%'` rows on purpose (their date follows the transfer,
+  // not the project schedule).
+  //
+  // Default-never-refuse is the owner's standing rule for this system — the
+  // same shape the PO expected-date and the journal entry-date already use.
+  // todayMyt() and NOT toISOString(): Workers run in UTC, so before 08:00 MYT
+  // a raw UTC slice files the transfer under YESTERDAY, every morning shift.
+  //
+  // DATE-ONLY on purpose. We know the day; we do not know the time, and a
+  // silently invented 00:00 is a worse answer than an honest date.
+  const transferredAt = input.transferred_at?.trim() || todayMyt();
   const r = await env.DB.prepare(
     `INSERT INTO project_stock_transfers
        (project_id, direction, transferred_at, record_r2_key, file_name, mime_type, notes, created_by)
@@ -2928,7 +2892,7 @@ export async function createStockTransfer(
     .bind(
       input.project_id,
       input.direction,
-      input.transferred_at ?? null,
+      transferredAt,
       input.record_r2_key ?? null,
       input.file_name ?? null,
       input.mime_type ?? null,
@@ -2944,7 +2908,7 @@ export async function createStockTransfer(
     transferId,
     projectId: input.project_id,
     direction: input.direction,
-    transferredAt: input.transferred_at ?? null,
+    transferredAt,
     confirmedAt: null,
     userId,
   });

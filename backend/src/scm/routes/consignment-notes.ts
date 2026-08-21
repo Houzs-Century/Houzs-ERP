@@ -38,6 +38,8 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { CN_LOCK_COLS, CN_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -54,6 +56,11 @@ consignmentNotes.use('*', supabaseAuth);
    A Consignment Note locks (no line edit / no CANCELLED transition) once it has
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
+/* Header field-level lock — column set + labels from the ONE rulebook
+   (shared/document-policy.ts); mirrors the DO. */
+const CN_IDENTITY_LOCK_COLS = CN_LOCK_COLS;
+const CN_IDENTITY_LABELS = CN_LOCK_LABELS;
+
 async function noteHasDownstream(sb: any, noteId: string): Promise<{ error: string; message: string } | null> {
   const { count: crCount, error: crErr } = await sb.from('consignment_delivery_returns')
     .select('id', { head: true, count: 'exact' })
@@ -817,9 +824,22 @@ consignmentNotes.patch('/:id', async (c) => {
   coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  /* Header is locked once a Consignment Return exists. */
-  const headerLock = await noteHasDownstream(sb, id);
-  if (headerLock) return c.json(headerLock, 409);
+  /* Header lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1): once a Consignment
+     Return exists only the columns it inherits (customer + currency + location +
+     branding) freeze; the Note's own delivery dates, dispatch and notes stay
+     editable. Mirrors the DO. */
+  {
+    const { data: before, error: bErr } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
+      .select('debtor_code, debtor_name, currency, sales_location, branding').eq('id', id), co.companyId).maybeSingle();
+    if (bErr) return c.json({ error: 'update_failed', reason: bErr.message }, 500);
+    const locked = before ? changedLockedCols(CN_IDENTITY_LOCK_COLS, updates, before as Record<string, unknown>) : [];
+    if (locked.length > 0 && (await noteHasDownstream(sb, id))) {
+      return c.json(identityLockedRefusal({
+        error: 'cn_identity_locked', fields: locked, labels: CN_IDENTITY_LABELS,
+        what: 'Consignment Note', child: 'Consignment Return', ownFields: 'delivery dates, dispatch details and notes',
+      }), 409);
+    }
+  }
 
   const { data, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);

@@ -43,7 +43,7 @@ async function activeCompanyEmailIdentity(
 }
 import { getDb } from "../db/client";
 import { resolveDatabaseUrl } from "../db/pg";
-import { allowedCompanyIds } from "../scm/lib/companyScope";
+import { allowedCompanyIds } from "../scm/lib/companyScope";  import { targetWithinActorCompanies } from "./lib/actor-company-gate";
 import {
   departments,
   invitations,
@@ -916,15 +916,15 @@ app.get("/:id/profile-pic", async (c) => {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
 
-  // Measured 2026-08-01: /team fetches one of these per member (43 of them,
-  // ~1s each behind the connection limit), and at a flat max-age=300 every
-  // visit past five minutes re-fetched all of them. Avatar.tsx already sends
-  // the R2 key as ?k=, so a matching url can safely be pinned — see
-  // lib/avatar-cache.ts for why the equality check is load-bearing.
+  // Measured 2026-08-01: /team fetches one per member (43, ~1s each behind the
+  // connection limit); a flat max-age=300 re-fetched all past 5 min. Avatar.tsx
+  // sends the R2 key as ?k= so a matching url pins — see lib/avatar-cache.ts.
   headers.set(
     "cache-control",
     avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
   );
+  // nosniff: block MIME-sniffing the server content-type into html/svg (parity: mail-center INLINE_SAFE).
+  headers.set("X-Content-Type-Options", "nosniff");
   return new Response(obj.body, { headers });
 });
 
@@ -2092,7 +2092,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
     .from(users)
     .where(eq(users.id, id))
     .limit(1);
-  if (rows.length === 0) return c.json({ error: "User not found" }, 404);
+  if (rows.length === 0) return c.json({ error: "User not found" }, 404);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (rows[0].status !== "active") {
     return c.json({ error: "User is not active — only active members can be viewed as" }, 400);
   }
@@ -2135,7 +2135,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
  * docs/modules/team-members.md section 5. Rate-limited on the TARGET.
  */
 app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseInt(c.req.param("id"), 10);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const me = c.get("user");
 
@@ -2246,7 +2246,7 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
  * re-enroll. The self-service disable (with a code) lives in routes/totp.ts.
  */
 app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseInt(c.req.param("id"), 10);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
 
   const db = getDb(c.env);

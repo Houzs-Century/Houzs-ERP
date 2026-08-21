@@ -39,6 +39,7 @@ import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scm
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
+import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText, sortByNumeric, byText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -50,8 +51,10 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
@@ -533,22 +536,16 @@ export const PurchaseOrderNew = () => {
   /* PR #126 — Patch only the variants bag for a line. Used by per-category
      editors so other line fields (qty, price, supplier SKU) stay untouched.
      Commander 2026-05-29: bedframe Total Height is NOT a manual pick — it's
-     AUTO-COMPUTED = Divan + Leg + Gap (mirrors SoLineCard), so we recompute it
-     here whenever one of those three changes. */
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
+     AUTO-COMPUTED = Divan + Leg + Gap, recomputed whenever one of those three
+     changes. The arithmetic AND the "what if all three are blank" answer live
+     in vendor/shared/total-height.ts — this screen used to carry its own copy,
+     one of sixteen. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants };
     }));
@@ -593,19 +590,35 @@ export const PurchaseOrderNew = () => {
       notify({ title: 'Pick a Creditor (supplier) first.', tone: 'error' });
       return;
     }
-    // PR #157 — Commander 2026-05-26: "这些没有 expected delivery date 和
-    // purchase location，为什么能生成 PO 呢？" Both fields are required on
-    // submit — they fan out to per-line warehouse + delivery date and are
-    // needed downstream for GRN. Defense-in-depth: API also rejects missing.
-    if (!expectedAt) {
-      notify({ title: 'Expected Delivery date is required.', tone: 'error' });
-      return;
-    }
+    // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO.
+    // A blank is accepted and the API defaults it to today (it still fans out to
+    // per-line delivery date). Purchase Location stays required (per-line warehouse
+    // = stock location, an integrity field).
     if (!purchaseLocationId) {
       notify({ title: 'Purchase Location is required.', tone: 'error' });
       return;
     }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    /* PO variant gate (owner 2026-08-20). A supplier cannot make a sofa/bedframe
+       without the spec, so CONFIRMING a PO requires the core variant axes
+       (fabric / gaps / divan+leg+seat height) on every such line; Special Orders
+       stays OPTIONAL. Reuses the SAME missingRequiredVariants rule as the SO
+       proceed-gate so the two surfaces can never drift. A DRAFT skips it. All
+       gaps are collected and shown together (owner: never one-at-a-time). */
+    if (!asDraft) {
+      const variantGaps = validLines
+        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.category, l.variants, l.itemCode) }))
+        .filter((x) => x.miss.length > 0);
+      if (variantGaps.length > 0) {
+        notify({
+          title: 'Complete the product options before confirming this PO:',
+          body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n')
+            + '\n\nThe supplier needs these to know what to make. (Special Orders stay optional.)',
+          tone: 'error',
+        });
+        return;
+      }
+    }
     const items: NewPoItem[] = validLines.map((l) => ({
       materialKind:   l.materialKind,
       itemCode:   l.itemCode,
@@ -658,7 +671,16 @@ export const PurchaseOrderNew = () => {
       create.mutate(
         confirmOverConvert ? { ...basePayload, confirmOverConvert } : basePayload,
         {
-          onSuccess: (res) => navigate(`/scm/purchase-orders/${res.id}`),
+          onSuccess: async (res) => {
+            /* THE ACCOUNTS MAY HAVE REFUSED IT, and nothing said so before
+               2026-08-19: the reason went into a queue behind a permission key
+               buyers do not hold. BEFORE the navigation, so the page change
+               cannot swallow it. Never blocks — the order exists and the remedy
+               (a creditor code, a duplicate item to retire) is master data this
+               buyer does not own. */
+            await notifyAcNotSent(notify, res, 'Purchase order');
+            navigate(`/scm/purchase-orders/${res.id}`);
+          },
           onError: async (err) => {
             const e = err as { status?: number; body?: string } | null;
             if (
@@ -790,8 +812,8 @@ export const PurchaseOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Expected Delivery <span className={styles.req}>*</span></span>
-              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput} required/>
+              <span className={styles.fieldLabel}>Expected Delivery <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>(defaults to today)</span></span>
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             {/* Mig 0026 — supplier-revised header delivery dates. Optional; the

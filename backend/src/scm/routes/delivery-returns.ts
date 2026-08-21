@@ -644,7 +644,9 @@ async function reopenSoFromReturn(
    remaining_to_invoice — invoiced units can't be returned + vice-versa.
    Cancelling a return releases its qty back to Pending. */
 async function doReturnableRemaining(sb: any, doIds: string[]): Promise<DoRemainingResult> {
-  return doLineRemaining(sb, doIds);
+  /* 'delivered' — goods still on the lorry never left, so nothing can come
+     back. The owner's 2026-08-20 ruling widened the INVOICE pool only. */
+  return doLineRemaining(sb, doIds, 'delivered');
 }
 
 /* Over-return guard for the bulk create POST. Every DO-linked line must respect
@@ -835,7 +837,7 @@ deliveryReturns.get('/', async (c) => {
 deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
-  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c), 'delivered');
   /* Same reasoning as the invoiceable picker: an empty list is a claim that
      nothing delivered is still returnable, and a failed read is not entitled to
      make it. Refuse to render. */

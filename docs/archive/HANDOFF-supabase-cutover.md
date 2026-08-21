@@ -143,7 +143,7 @@ Revert `wrangler.toml` to the D1 binding (re-add `[[d1_databases]]`, remove
 - `/sync-wiki` to record this architecture change in the Obsidian wiki.
 
 ## Do NOT
-- Do NOT commit `backend/houzs-d1-full.sql` or `backend/.dev.vars` (data +
+- Do NOT commit `backend/houzs-d1-full.sql` [generated] or `backend/.dev.vars` (data +
   password — both gitignored; keep it that way).
 - Do NOT move `better-sqlite3` / `sql.js` from devDependencies into
   dependencies — they are native and would break the Worker build.

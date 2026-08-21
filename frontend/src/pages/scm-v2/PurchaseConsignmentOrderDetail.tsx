@@ -49,7 +49,7 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
-import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
+import { useFabricTrackingsLite } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
   computeMfgPoUnitCost,
@@ -67,6 +67,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -163,7 +164,7 @@ export const PurchaseConsignmentOrderDetail = () => {
     enabled: !poSupplierId || !supplierMaintQ.data?.data,
   });
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  const fabrics = useFabricTrackings().data ?? [];
+  const fabrics = useFabricTrackingsLite().data ?? [];
 
   const categoryForCode = (code: string): string | undefined =>
     allSkus.find((p) => p.code === code)?.category.toLowerCase();
@@ -176,16 +177,23 @@ export const PurchaseConsignmentOrderDetail = () => {
   const [savingDraft, setSavingDraft] = useState(false);
 
   const hasChildren = Boolean(po?.has_children);
-  const isLocked = po ? (!(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') || hasChildren) : true;
-  const lockedDueToChildren = po ? ((po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && hasChildren) : false;
+  const editableStatus = po ? (po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') : false;
+  /* Owner 2026-08-20 (§8 GAP-1) — a PC Receive no longer freezes the whole header.
+     hardLocked (non-editable status) gates the Edit button + own-stage fields;
+     lockedDueToChildren (a live PC Receive) freezes only supplier / currency /
+     purchase location + the LINES. `isLocked` (= hard OR children) still gates
+     lines + inherited fields. */
+  const hardLocked = po ? !editableStatus : true;
+  const isLocked = po ? (!editableStatus || hasChildren) : true;
+  const lockedDueToChildren = po ? (editableStatus && hasChildren) : false;
 
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setEditLines([]);
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
 
   /* Seed/clear the whole-line drafts (T12) — entering Edit populates a PcLineCard
      draft for EVERY current line; leaving Edit wipes them. */
@@ -328,6 +336,10 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(po)), [k]: v }));
+    /* When a PC Receive exists the LINES are locked, so a header date edit must
+       NOT fan down into the line drafts — that would dirty a locked line and Save
+       would 409 on the line PATCH (owner 2026-08-20, §8 GAP-1). */
+    if (lockedDueToChildren) return;
     // Header Expected Delivery cascades to every line's delivery date.
     if (k === 'expectedAt') {
       setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined })));
@@ -351,22 +363,15 @@ export const PurchaseConsignmentOrderDetail = () => {
       priceTouched:   false,
     });
 
-  /* Patch one variant key + auto-compute bedframe Total Height, mirroring
-     Create's setVariant. Editing a variant re-arms the cost auto-recompute. */
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
+  /* Patch one variant key + auto-compute bedframe Total Height (from
+     vendor/shared/total-height.ts — the one home, no longer a copy of
+     Create's). Editing a variant re-arms the cost auto-recompute. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants, priceTouched: false };
     }));
@@ -549,7 +554,7 @@ export const PurchaseConsignmentOrderDetail = () => {
               </Button>
             )}
             {!isEditing ? (
-              <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+              <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -565,8 +570,8 @@ export const PurchaseConsignmentOrderDetail = () => {
 
       {lockedDueToChildren && (
         <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
-          <strong>Locked — has a Purchase Consignment Receive.</strong>{' '}
-          Cancel or delete the downstream receive to edit this order again.
+          <strong>Has a Purchase Consignment Receive.</strong>{' '}
+          Its supplier, currency, purchase location and line items are locked — cancel the downstream receive to change them. Dates and notes are still editable.
         </div>
       )}
 
@@ -575,7 +580,8 @@ export const PurchaseConsignmentOrderDetail = () => {
         po={po}
         draft={headerView}
         onField={setHeaderField}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -705,15 +711,21 @@ export const PurchaseConsignmentOrderDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  po, draft, onField, locked, isEditing = true,
+  po, draft, onField, locked, identityLocked = false, isEditing = true,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   po: any;
   draft: HeaderDraft;
   onField: (k: keyof HeaderDraft, v: string) => void;
+  /** Hard lock — a non-editable status: every field read-only. */
   locked: boolean;
+  /** A live PC Receive exists: the inherited fields (supplier / currency /
+   *  purchase location) freeze; the PCO's own dates + notes stay editable
+   *  (owner 2026-08-20, §8 GAP-1). */
+  identityLocked?: boolean;
   isEditing?: boolean;
 }) => {
+  const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   const warehousesQ = useWarehouses();
@@ -770,7 +782,7 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.supplierId} disabled={inheritedLocked}
                 onChange={(e) => onField('supplierId', e.target.value)}>
                 <option value="">— Pick supplier —</option>
                 {sortByText(suppliers).map((s) => (
@@ -783,7 +795,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.currency} disabled={inheritedLocked}
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
@@ -811,7 +823,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={inheritedLocked}
                 onChange={(e) => onField('purchaseLocationId', e.target.value)}>
                 <option value="">— No default —</option>
                 {sortByText(warehouses.filter((w) => w.is_active)).map((w) => (

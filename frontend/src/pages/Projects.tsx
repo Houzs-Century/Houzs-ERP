@@ -101,10 +101,13 @@ import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
-import { ACCESS_RANK } from "../types";
+import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
+import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
+import { PROJECT_STATUS_OPTIONS, paymentPillOptions, type ProjectStatus as SharedProjectStatus } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -123,6 +126,7 @@ import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPr
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 
 // ── Types (module-local) ─────────────────────────────────────
 // Kept in this file until something else imports them. Promoting to
@@ -144,7 +148,7 @@ type ChecklistStatus = "pending" | "done" | "na" | "blocked";
 // mig 088 — boss-facing lifecycle, drives the calendar tint and replaces
 // the old Go Live button. Independent from `stage` which keeps driving
 // the internal workflow + section tracker.
-type ProjectStatus = "confirmed" | "pending" | "cancelled";
+type ProjectStatus = SharedProjectStatus;
 
 interface ProjectRow {
   id: number;
@@ -805,11 +809,16 @@ const stageVariant = pmsStageVariant;
 // blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
 // `chip`/`ring` are the matching pill tints used by the list view + the
 // status dropdown.
-const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string; hex: string; chip: string; ring: string }> = [
-  { value: "confirmed", label: "Confirmed", hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  { value: "pending",   label: "Pending",   hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  { value: "cancelled", label: "Cancelled", hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
-];
+// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
+// shared with mobile. Only the palette is desktop's — mobile styles inline, so
+// the value->label contract is the part that must not drift (the same split
+// pms-status.ts uses for stages).
+const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
+  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
+  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
+  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
+};
+const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
 
 const STATUS_BY_VALUE: Record<ProjectStatus, typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
   (acc, s) => ({ ...acc, [s.value]: s }),
@@ -1402,10 +1411,9 @@ function ProjectsListView() {
     !!user?.permissions?.includes("*") ||
     /\b(super admin|sales director|finance manager)\b/i.test(_pos);
   const _isDriver = /\bdriver\b/i.test(_pos);
-  // Helpers/storekeepers are FORCE-scoped to their assigned events server-side
-  // (isCrewScopedUser in backend); drivers are not (they opt in).
-  const _isForceScopedCrew = /\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos);
-  const _isCrew = _isDriver || _isForceScopedCrew;
+  // Helpers/storekeepers are FORCE-scoped server-side, drivers are not (they opt
+  // in). The predicate — and why it moved here — is in auth/crewScope.ts.
+  const _isCrew = _isDriver || isCrewScopedUser(user);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const cohortTickOnly = can("projects.checklist.tick") && !can("projects.write");
@@ -6333,6 +6341,9 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
+            {/* Both items POST /:id/archive|/unarchive = projects.manage. Their
+                `disabled` is STATE, never permission; the button carries the gate. */}
+            {can("projects.manage") && (
             <div className="relative">
               <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
                 {p.archived_at ? "Restore" : "Archive"} <ChevronDown size={12} />
@@ -6383,6 +6394,7 @@ function ProjectDetailContent({
                 </>
               )}
             </div>
+            )}
             <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
@@ -6401,7 +6413,9 @@ function ProjectDetailContent({
               ]}
               onPrint={projectPrint.handlers.onPrint}
             />
-            {!p.archived_at && (
+            {/* PATCH /:id = projects.write; canEditDetail is the PMS-EDIT term
+                mobile also carries (owner 2026-07-20) and was never applied here. */}
+            {can("projects.write") && canEditDetail && !p.archived_at && (
               <ProjectStatusSelect
                 value={p.status}
                 disabled={transitioning}
@@ -6421,8 +6435,6 @@ function ProjectDetailContent({
         ) : undefined
       }
     >
-      {/* DetailLayout owns the loading/error chrome — keep this no-op for legacy in-page loading hint */}
-      {false && <div className="hidden">noop</div>}
       {detail.loading && (
         <div className="space-y-4 p-6">
           <Skeleton className="h-6 w-1/3" />
@@ -6498,7 +6510,6 @@ function ProjectDetailContent({
                 projectId={id}
                 projectCode={p.code}
                 projectName={p.name}
-                canWrite={can("sales.write")}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
                 onTotalSaved={() => detail.reload()}
@@ -8739,17 +8750,10 @@ const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-synced/15 text-synced" },
 };
 
-// The submit/approve/reject review workflow applies ONLY to these
-// checklist items. Every other row shows no review controls.
-const REVIEWABLE_TITLES = new Set([
-  "Agreement / Quotation",
-  "Stock Out Transfer Record",
-  "Stock In Transfer Record",
-  "Display Floor Plan",
-  "3D Design",
-  "2D Design",
-  "Exchange List",
-]);
+// Which rows carry the submit/approve/reject workflow is decided by
+// isReviewableTitle (pms-reviewable-titles.ts), shared with mobile. It is a
+// PREFIX rule: this Set of seven EXACT titles used to withhold the workflow
+// from "3D Design (Revision 2)" on desktop while mobile granted it.
 
 // Documents that are view-only: a medium preview opens (image → lightbox,
 // other files → inline new tab) and there's no download button.
@@ -8871,7 +8875,7 @@ function DocRow({
   // Free-text remark notes on this document (excludes the review decision trail).
   const remarkNotes = comments.filter((c) => c.kind !== "submit" && c.kind !== "reject" && c.kind !== "approve" && c.kind !== "amend" && c.body);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
   const latest = attachments[0];
   // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
   // VERSION to the approve/reject decision made while it was the newest file, so
@@ -9662,7 +9666,7 @@ function ChecklistRow({
       toast?.success("Uploaded");
       // Reviewable items auto-submit on upload so the approver's
       // Approve/Reject reappear (and a prior decision is superseded).
-      if (REVIEWABLE_TITLES.has(item.title)) {
+      if (isReviewableTitle(item.title)) {
         await onReview("submit", {});
       }
       // Floorplan → read the m² automatically (owner 2026-08-04: "once display
@@ -9716,16 +9720,13 @@ function ChecklistRow({
     new Date(item.due_date) < new Date(todayInAppTz());
   const reviewBadge = item.review_status ? REVIEW_BADGES[item.review_status] : null;
   const awaitingReview = item.review_status === "pending_review" || item.review_status === "amended";
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
 
   // mig 090 — payment / deposit rows render as multi-state pills instead
   // of the done/pending circle. pill_value is stored via the standard
   // checklist PATCH; the row's status stays 'na' (off the progress bar).
   if (item.pill_kind) {
-    const opts: [string, string][] =
-      item.pill_kind === "rental_payment"
-        ? [["none", "N/A"], ["unpaid", "Pending"], ["fully_paid", "Fully paid"]]
-        : [["none", "N/A"], ["unpaid", "Pending"], ["refunded", "Refunded"]];
+    const opts = paymentPillOptions(item.pill_kind);
     const cur = item.pill_value || "unpaid";
     // Terminal pill values (N/A, FULLY PAID, REFUNDED) = treat the row as done:
     // green check + greyed title. Only PENDING ("unpaid") stays "not done".
@@ -10276,11 +10277,10 @@ function AddChecklistItem({
 }
 
 // ── Datetime field (inline commit on blur) ───────────────────
-// The existing InlineEdit only supports text/date/number. This is a
-// thin analog for datetime-local values so the logistics schedule
-// section can edit start/end times without extra round-trips.
+// InlineEdit supports only text/date/number; this is the logistics analog, and
+// NOT the shared DateTimeField also imported here — they differ in CONTRACT.
 
-function DateTimeField({
+function LogisticsDateTimeField({
   label,
   value,
   onSave,
@@ -10639,10 +10639,10 @@ function AddStockTransferForm({
         New {direction === "out" ? "OUT" : "RETURN"} transfer
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <input
-          type="datetime-local"
+        <DateTimeField
+          aria-label="Transferred at"
           value={transferredAt}
-          onChange={(e) => setTransferredAt(e.target.value)}
+          onChange={setTransferredAt}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
         <input
@@ -11402,7 +11402,7 @@ function LogisticsCrewSection({
         />
       )}
       <div>
-        <DateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
+        <LogisticsDateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
       </div>
       <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} />
       <div className="my-3 border-t border-dashed border-border" />
@@ -11418,7 +11418,7 @@ function LogisticsCrewSection({
         readOnly={readOnly}
         emptyHint="Leave empty if same as setup"
         headerExtra={
-          <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
+          <LogisticsDateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
       {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
@@ -11527,12 +11527,12 @@ function LogisticsScheduleSection({
         driverName={setupDriverName}
       />
       <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup Start"
           value={project.setup_start_at}
           onSave={(v) => patch({ setup_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup End"
           value={project.setup_end_at}
           onSave={(v) => patch({ setup_end_at: v })}
@@ -11613,12 +11613,12 @@ function LogisticsScheduleSection({
           driverName={dismantleDriverName}
         />
         <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle Start"
           value={project.dismantle_start_at}
           onSave={(v) => patch({ dismantle_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle End"
           value={project.dismantle_end_at}
           onSave={(v) => patch({ dismantle_end_at: v })}
@@ -12659,7 +12659,6 @@ function ProjectSalesEntriesSection({
   projectId,
   projectCode,
   projectName,
-  canWrite,
   canManage,
   currentTotalSales,
   onTotalSaved,
@@ -12668,7 +12667,6 @@ function ProjectSalesEntriesSection({
   projectId: number;
   projectCode: string | null;
   projectName: string;
-  canWrite: boolean;
   canManage: boolean;
   currentTotalSales: number | null;
   onTotalSaved: () => void;
@@ -12677,18 +12675,18 @@ function ProjectSalesEntriesSection({
   const dialog = useDialog();
   const auth = useAuth();
   const meId = auth.user?.id;
-  // Sales-section visibility (owner 2026-07): mirror the backend read gate
-  // (requirePageAccessOrSalesView("sales")) exactly so the query fires iff it
-  // would be authorised — the "sales" page-access matrix ≥ partial OR a
-  // code-keyed Sales-staff / director. A Sales Director (no matrix "sales" row)
-  // now qualifies and gets data; a user who genuinely can't access sales
-  // neither renders this section nor fires the request (off, not hide) — no
-  // render-then-403.
+  // Three gates, three DIFFERENT server rules — they were two, and the write
+  // half asked for the flat sales.write key, which neither write route reads.
+  //   view  GET  /api/sales/entries        requirePageAccessOrSalesView("sales")
+  //   log   POST /api/sales/entries        requirePageAccess("sales")
+  //   total PATCH /api/projects/:id/finance  projects.write + denyFinance
+  // The org-position arm belongs to the READ gate only (owner 2026-07: a Sales
+  // Director has no matrix "sales" row and must still see the list), so it is
+  // ORed on canViewSales alone — off, not hide, and no render-then-403.
   const salesLevel = usePageAccess("sales");
-  const canViewSales =
-    ACCESS_RANK[salesLevel] >= ACCESS_RANK["partial"] ||
-    isSalesStaff(auth.user) ||
-    isDirectorUser(auth.user);
+  const canLogSale = canLogSalesEntry(salesLevel);
+  const canSetTotalSales = canWriteProjectFinance(auth.user, auth.can);
+  const canViewSales = canLogSale || isSalesStaff(auth.user) || isDirectorUser(auth.user);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<SalesEntry | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -12877,7 +12875,7 @@ function ProjectSalesEntriesSection({
           >
             <Download size={11} /> Export
           </button>
-          {canWrite && (
+          {canSetTotalSales && (
             <button
               onClick={() => {
                 setQtValue(
@@ -12896,7 +12894,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Total Sales
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setQuickLogOpen((v) => !v)}
               className={cn(
@@ -12910,7 +12908,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Quick Log
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setCreating(true)}
               className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-accent/40 bg-accent-soft/60 px-2 text-[10.5px] font-semibold text-accent hover:bg-accent hover:text-white"
@@ -13035,7 +13033,7 @@ function ProjectSalesEntriesSection({
           compact
           message="No sales drafted yet for this exhibition."
           cta={
-            canWrite
+            canLogSale
               ? { label: "Draft your first sale", onClick: () => setCreating(true) }
               : undefined
           }
@@ -13088,7 +13086,7 @@ function ProjectSalesEntriesSection({
                           <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
                             Quick log
                           </span>
-                          {canWrite && (
+                          {canLogSale && (
                             <button
                               onClick={() => setEditing(e)}
                               className="text-[10px] font-semibold text-accent hover:underline"
@@ -13261,54 +13259,9 @@ function Stat({
 // computed client-side so edits feel instant; the backend keeps
 // project_finance in sync for list-view rollups.
 
-// Mirrors backend/src/services/projects.ts → LEDGER_COST_CATEGORIES.
-// Backend accepts arbitrary strings on write; this list is the picker
-// surface only. 2026-05-08 — boss's Financial Snapshot model split
-// COGS into product sub-categories and transport into rate-driven
-// fee + actual logistics cost. Legacy `cogs` and `transport` slugs
-// stay in the picker so old data is still pickable on edit but new
-// rows should pick from the sub-categories.
-const LEDGER_COST_CATS = [
-  "rental",
-  "cogs", "cogs_matt_sofa", "cogs_bedframe", "cogs_accessories",
-  "setup",
-  "transport", "transport_fee", "transport_setup_dismantle",
-  "commission", "merchandise",
-  "contractor", "license", "deposit", "permit",
-  "accommodation", "staffing", "marketing", "misc",
-];
-const LEDGER_INCOME_CATS = ["sales", "deposit_refund", "rebate", "other_income"];
-
-function catLabel(cat: string): string {
-  switch (cat) {
-    case "cogs":
-      return "COGS";
-    case "cogs_matt_sofa":
-      return "COGS — Matt/Sofa";
-    case "cogs_bedframe":
-      return "COGS — Bedframe";
-    case "cogs_accessories":
-      return "COGS — Accessories";
-    case "transport":
-      return "Transport";
-    case "transport_fee":
-      return "Transport Fee";
-    case "transport_setup_dismantle":
-      return "Transport Setup & Dismantle";
-    case "contractor":
-      return "Contractor";
-    case "license":
-      return "License";
-    case "deposit":
-      return "Deposit paid";
-    case "deposit_refund":
-      return "Deposit refund";
-    case "other_income":
-      return "Other income";
-    default:
-      return cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, " ");
-  }
-}
+// The picker lists and their labels live in pms-ledger-categories.ts, shared
+// with mobile — which used to humanize() the slugs, so one P&L row read
+// "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone.
 
 function FinanceLedgerSection({
   projectId,
@@ -13386,7 +13339,7 @@ function FinanceLedgerSection({
           kind: "cost",
           category,
           amount: nextAmount,
-          description: `${catLabel(category)} (snapshot)`,
+          description: `${ledgerCategoryLabel(category)} (snapshot)`,
           r2_key: withReceipt?.r2_key ?? undefined,
           file_name: withReceipt?.file_name ?? undefined,
           mime_type: withReceipt?.mime_type ?? undefined,
@@ -14114,7 +14067,7 @@ function LedgerGroup({
                   tone === "synced" ? "bg-synced/10 text-synced" : "bg-err/10 text-err"
                 )}
               >
-                {catLabel(l.category)}
+                {ledgerCategoryLabel(l.category)}
               </span>
               <div className="min-w-0 flex-1">
                 <div
@@ -14291,7 +14244,7 @@ function AddFinanceLineForm({
     <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
         New {kind} line
-        {categoryDefault && ` · ${catLabel(categoryDefault)}`}
+        {categoryDefault && ` · ${ledgerCategoryLabel(categoryDefault)}`}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {!categoryDefault && (
@@ -14302,7 +14255,7 @@ function AddFinanceLineForm({
           >
             {categories.map((c) => (
               <option key={c} value={c}>
-                {catLabel(c)}
+                {ledgerCategoryLabel(c)}
               </option>
             ))}
           </select>
@@ -14437,11 +14390,11 @@ function EditFinanceLineRow({
         >
           {categories.map((c) => (
             <option key={c} value={c}>
-              {catLabel(c)}
+              {ledgerCategoryLabel(c)}
             </option>
           ))}
           {!categories.includes(line.category) && (
-            <option value={line.category}>{catLabel(line.category)}</option>
+            <option value={line.category}>{ledgerCategoryLabel(line.category)}</option>
           )}
         </select>
         <input

@@ -113,7 +113,11 @@ export async function doPendingItemCodesOf(
   if (error) return { ok: false, reason: error.message ?? 'delivery_order_items lookup failed' };
   const rows = (data ?? []) as Array<{ id: string; item_code: string | null }>;
   if (rows.length === 0) return { ok: true, codes: new Set() };
-  const remaining = await doRemainingByItemId(sb, rows.map((r) => r.id));
+  /* 'delivered' — UNCHANGED from what this shadow guard has always measured.
+     It asks whether a parent DO line still has open quantity, which is a stock
+     question, and the owner's 2026-08-20 ruling was about invoicing. Stated so
+     the next reader sees a decision rather than an oversight. */
+  const remaining = await doRemainingByItemId(sb, rows.map((r) => r.id), 'delivered');
   if (!remaining.ok) return { ok: false, reason: `remaining unreadable: ${remaining.reason}` };
   const out = new Set<string>();
   for (const r of rows) {
@@ -171,11 +175,56 @@ export async function siShadowRefusal(
   return { error: 'unlinked_do_line', message: message(offenders), itemCodes: offenders };
 }
 
+/**
+ * Every item_code on the source Consignment Note's lines — the parent of a
+ * Consignment Delivery Return (`consignment_delivery_returns.consignment_do_id`
+ * names the note; a linked return line carries `consignment_do_item_id`). Its
+ * lines live in `consignment_delivery_order_items`, keyed by
+ * `consignment_delivery_order_id`. Same fail-closed ParentCodes as its four
+ * siblings: `ok: false` is refused, never read as "the note carries nothing".
+ */
+export function cnItemCodesOf(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  consignmentDoId: string | null | undefined,
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'consignment_delivery_order_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'consignment_delivery_order_id',
+    parentId: consignmentDoId,
+  });
+}
+
+/**
+ * Every item_code on the source PC Receive's lines — the parent of a Purchase
+ * Consignment Return (`purchase_consignment_returns.pc_receive_id` names the
+ * receive; a linked return line carries `pc_receive_item_id`). Its lines live in
+ * `purchase_consignment_receive_items`, keyed by `pc_receive_id` (the column was
+ * `material_code` until mig 0307 unified it to `item_code`).
+ */
+export function pcReceiveItemCodesOf(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  pcReceiveId: string | null | undefined,
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'purchase_consignment_receive_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'pc_receive_id',
+    parentId: pcReceiveId,
+  });
+}
+
 export type UnlinkedEditChain =
   | 'grn'
   | 'purchase-return'
   | 'delivery-return'
-  | 'sales-invoice';
+  | 'sales-invoice'
+  | 'consignment-return'
+  | 'purchase-consignment-return';
 
 type ChainSpec = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +271,22 @@ const CHAINS: Record<UnlinkedEditChain, ChainSpec> = {
     consequence:
       'an unlinked line still bills the customer but takes nothing off the delivery, '
       + 'so the same delivered goods can be invoiced again',
+  },
+  'consignment-return': {
+    codesOf: cnItemCodesOf,
+    parentNoun: 'Consignment Note',
+    picker: 'Pick the item from the Consignment Note',
+    consequence:
+      'an unlinked line still brings the stock back in but counts against no note line, '
+      + 'so the same goods can be returned again',
+  },
+  'purchase-consignment-return': {
+    codesOf: pcReceiveItemCodesOf,
+    parentNoun: 'PC Receive',
+    picker: 'Pick the material from the PC Receive',
+    consequence:
+      'an unlinked line still sends the stock out but counts against no receive line, '
+      + 'so the same goods can be returned again',
   },
 };
 

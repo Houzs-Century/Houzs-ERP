@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
-import { getUserBySession, type AuthUser } from "../services/auth";
+import { getUserBySession, timingSafeEqualStr, type AuthUser } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
@@ -135,8 +135,8 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   // are trusted backend callers, never a POS tablet, and must keep pricing
   // freely.
   if (
-    (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) ||
-    (c.env.CONNECT_SERVICE_TOKEN && token === c.env.CONNECT_SERVICE_TOKEN)
+    (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) ||
+    (c.env.CONNECT_SERVICE_TOKEN && timingSafeEqualStr(token, c.env.CONNECT_SERVICE_TOKEN))
   ) {
     c.set("user", SERVICE_USER);
     c.set("userId", (SERVICE_USER as any).id ?? null);
@@ -368,8 +368,10 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   // isSalesUser), with NO matrix grant — is otherwise 403'd from the
   // Sales-Orders backend even though the FE (allowSales) shows it and every SO
   // route scopes them to own+downline (salesScope). Admit such a caller for the
-  // SALES-ORDERS AREA ONLY (the /mfg-sales-orders sub-router). Mirrors how
-  // assr.ts canAccessServiceCases OR-ins isSalesUser. Deliberately TIGHT — the
+  // SALES-ORDERS AREA ONLY (the /mfg-sales-orders sub-router). This used to say
+  // it mirrors how assr.ts canAccessServiceCases OR-ins isSalesUser; that stopped
+  // being true when Service Cases moved to the company grant, so the two gates
+  // now answer "who is a rep" differently ON PURPOSE. Deliberately TIGHT — the
   // path gate keeps procurement / warehouse / finance SCM areas closed to a
   // Sales rep with no explicit grant.
   if (c.req.path.includes("/mfg-sales-orders") && isSalesUser(user)) {

@@ -85,6 +85,10 @@ function harness(over: {
       from: (table: string) => new FakeQuery((tables[table] ||= [])),
       rpc: async () => ({ data: [{ applied: true, current_version: 2 }], error: null }),
     } as never);
+    /* The header PATCH became a STRICT company write (an unresolved company is
+       refused, not defaulted to Houzs by mig 0164's COALESCE). The fixture
+       carries the company its own row already has. */
+    c.set('companyId' as never, 1 as never);
     c.set('user' as never, { id: 'actor-1', user_metadata: { name: 'Test User' } } as never);
     c.set('companyCode' as never, (over.companyCode ?? 'HOUZS') as never);
     c.set('houzsUser' as never, {
@@ -160,22 +164,49 @@ describe('the proceed refusal names the condition that failed', () => {
     expect(JSON.stringify(body).toLowerCase()).not.toContain('deposit');
   });
 
-  test('a REAL deposit shortfall states what is paid, what is needed and the company %', async () => {
+  /* THE DEPOSIT NO LONGER REFUSES ANYTHING — owner ruling 2026-08-20,
+     「以电脑为准 —— 两边都不查」.
+
+     This test used to assert the opposite: a REAL shortfall (RM 100 paid on a
+     RM 1,000 order at 2990's 50%) produced a second problem naming the amount,
+     the requirement and the percentage, and the expectation was
+     `['Postcode', 'Deposit']`. That is the rule the owner removed, so the case
+     is kept and INVERTED rather than deleted — a genuine shortfall is the exact
+     input that must now sail through, and an inverted assertion on the same
+     fixture is the cheapest proof that it does.
+
+     Deliberately a REAL shortfall, not a zero-total order: the two tests above
+     already cover the vacuous case, and they would keep passing if the money
+     condition came back. This one would not. */
+  test('a REAL shortfall is NOT refused — only the postcode is named', async () => {
     const app = harness({
       header: { local_total_sen: 1000_00 },      // RM 1,000 order
       payments: [{ so_doc_no: 'SO-PROCEED-1', amount_sen: 100_00 }],  // RM 100 in
-      companyCode: '2990',                          // 2990's rule is 50%
+      companyCode: '2990',                          // 2990's old rule was 50%
     });
     const res = await proceed(app);
+    /* Still 422 — the POSTCODE is still missing, and the ruling removed one
+       condition, not the gate. */
     expect(res.status).toBe(422);
     const body = await res.json() as { problems: Array<{ field?: string; message: string }> };
-    /* The postcode is still missing, so both conditions are named — and each
-       says its own thing. */
-    expect(body.problems.map((p) => p.field)).toEqual(['Postcode', 'Deposit']);
-    const deposit = body.problems.find((p) => p.field === 'Deposit')!;
-    expect(deposit.message).toContain('RM 100');   // what is actually paid
-    expect(deposit.message).toContain('RM 500');   // 50% of RM 1,000
-    expect(deposit.message).toContain('50%');      // 2990's rule, not Houzs's 30%
+    expect(body.problems.map((p) => p.field)).toEqual(['Postcode']);
+    /* No money sentence anywhere in the body — not as a problem, not in the
+       summary `message`. 10% of the order is paid and nothing says so. */
+    expect(JSON.stringify(body).toLowerCase()).not.toContain('deposit');
+    expect(JSON.stringify(body)).not.toContain('50%');
+  });
+
+  /* The other half of the same ruling: with the postcode present, a shortfall
+     that used to be the ONLY refusal now saves. This is the case the owner
+     described — a hand-keyed order released for purchasing before the money
+     lands — and on the header PATCH path it had no waiver at all. */
+  test('a shortfall alone no longer refuses the Processing Date at all', async () => {
+    const app = harness({
+      header: { postcode: '43300', local_total_sen: 1000_00 },
+      payments: [{ so_doc_no: 'SO-PROCEED-1', amount_sen: 0 }],  // nothing paid
+      companyCode: '2990',
+    });
+    expect((await proceed(app)).status).toBe(200);
   });
 
   test('an order that clears every condition is NOT refused — the outcomes did not move', async () => {

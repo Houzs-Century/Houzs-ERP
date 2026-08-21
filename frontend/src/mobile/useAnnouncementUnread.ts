@@ -18,8 +18,10 @@ function useScopeUnread(scope: BannerScope): number {
     queryKey: announcementFeedKey(scope),
     queryFn: () =>
       api.get<BannerResponse>(`/api/announcements/banner?scope=${scope}`),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    // 3 min, not 30s: mobile bell/unread is not real-time chat, and the backend
+    // caches the banner per-user for 5 min, so this lands mostly on hits.
+    staleTime: 180_000,
+    refetchInterval: 180_000,
     enabled: !!user?.id,
   });
   const acked = new Set(data?.ackedIds ?? []);

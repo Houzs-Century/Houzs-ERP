@@ -113,6 +113,10 @@
       "reads": 1,
       "catches": 0
     },
+    "backend/src/scm/lib/grn-audit-meta.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/grn-rack-sync.ts": {
       "reads": 5,
       "catches": 0
@@ -286,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 50,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -318,7 +322,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 48,
+      "reads": 46,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
@@ -394,7 +398,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 13,
+      "reads": 12,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {
@@ -477,10 +481,6 @@
       "reads": 0,
       "catches": 1
     },
-    "frontend/src/components/Avatar.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
     "frontend/src/components/Layout.tsx": {
       "reads": 0,
       "catches": 1
@@ -510,14 +510,6 @@
       "catches": 2
     },
     "frontend/src/lib/tableLayouts.ts": {
-      "reads": 0,
-      "catches": 1
-    },
-    "frontend/src/mobile/MobileAnnouncements.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
-    "frontend/src/mobile/MobileInbox.tsx": {
       "reads": 0,
       "catches": 1
     },

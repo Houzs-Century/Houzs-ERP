@@ -186,7 +186,26 @@ jobs:
       # both counts; `--strict` fails on it for anyone who wants that.
       # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
       - run: npm run audit:bug-index
+      # The bug ledger is a DIRECTORY since 2026-08-20 (docs/bugs/, one file per
+      # entry). This gates the same failure the line above does — the generator
+      # dying — plus the invariant that makes the split work: one file is one
+      # entry, named NNNN-slug.md. Neither compares against a committed copy;
+      # there is no committed copy, which is the point.
+      - run: npm run audit:bug-history
+      # And the OTHER half of that split: nothing may put ledger content back at
+      # the old path. #2567 moved the layout and left it unguarded, and on
+      # 2026-08-21 the whole 24,000-line ledger was back on `main` with every
+      # check green — one PR's entry existed ONLY in the resurrected file.
+      # A branch forked before the split still carries `BUG-HISTORY.md
+      # merge=union` in ITS OWN .gitattributes, and a merge applies the
+      # attributes of the tree it runs in, so `git merge origin/main` keeps both
+      # sides and EXITS 0. Nothing on `main` can reach into that branch; what it
+      # can do is refuse the result, here, in a required check.
+      - run: npm run audit:bug-signpost
       - run: npm run audit:map
+      # Transaction-workflow drift tripwire: fails if any transaction document's
+      # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).
+      - run: npm run audit:workflow-consistency
       - run: npm run audit:doc-refs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
@@ -283,6 +302,57 @@ jobs:
       # and a NEW one fails until somebody decides about it. Stale entries print
       # and never fail — a gate that punishes the fix is a gate that stops fixes.
       - run: npm run audit:empty-state-claims
+      # The EIGHTH, and the one the owner asked for by name (2026-08-18): "同一条
+      # 规则两个家 … 然后系统也是要查看这些类型的问题". A business rule with more
+      # than one home. Not duplicated CODE — duplicated DECISIONS: two places
+      # independently answering the same business question, which then drift,
+      # and the failure is always a rule enforced at N-1 of N places where the
+      # missing one is invisible because nothing errors.
+      #
+      # Three detectors. D1 fingerprints every string-literal array and every
+      # named enum-keyed map and reports a fingerprint carried by two or more
+      # FILES — the class check-shared-mirrors declares itself blind to at its
+      # own lines 32-35 (a rule re-implemented under a different filename). D2
+      # compares those fingerprints pairwise and reports near misses (Jaccard
+      # >= 0.75, not identical), which is what sees N-1 of N: it fires today on
+      # the three live spellings of "which SO statuses are done" — FOUR, FIVE
+      # and SIX, two of them same-named constants with different contents inside
+      # routes/inventory.ts. D3 asserts a configured guard symbol appears inside
+      # the BALANCED-BRACE slice of each sibling route handler, which is the
+      # INSERT-guarded / EDIT-unguarded shape behind PR #2374 and the only one
+      # of the three that catches an ABSENCE.
+      #
+      # A REVIEWED ALLOWLIST, exactly like empty-state-claims above: 226 entries
+      # today, each with a reason a person wrote; a NEW hit fails until somebody
+      # decides about it, and a stale entry prints without failing. The script's
+      # own header is explicit about the four things it CANNOT see — chief among
+      # them the total-height family (sixteen copies that share every literal
+      # and differ only in control flow) and the two-member PO receivable
+      # threshold, both of which are covered by tests instead. Read it before
+      # treating a green run as proof of anything wider.
+      - run: npm run audit:duplicated-decisions
+      # The NINTH: ONE SYSTEM, TWO ORGANISATIONS (owner 2026-08-18, "两个公司不是
+      # 用着同一个系统吗？他们只是 Multi-Organization 关系而已啊"). A company may have
+      # its own DATA — documents, numbering prefix, branding — and a few rules the
+      # owner set himself. It may not have different CAPABILITIES by accident.
+      #
+      # A REVIEWED ALLOWLIST over lines that NAME a company. Every one is either
+      # removed or listed in scripts/data/company-divergence-allowlist.json with a
+      # reason AND whose decision it was; a new one fails until somebody decides.
+      # It catches the shapes a `company_id === <n>` grep does not — a rule
+      # expressed against BASE_COMPANY_CODE, or scoped by doc-number prefix, which
+      # is how the SO-PO edit lock is confined to one organisation without ever
+      # naming it.
+      #
+      # STATED PLAINLY BECAUSE A GREEN RUN MUST NOT BE OVER-READ: this would NOT
+      # have caught the bug it was written after. The DO→Sales-Invoice transfer
+      # button was gated on a hand-typed ["signed","delivered"] with no company
+      # term in it at all, and only fired on one organisation because that
+      # organisation's deliveries sit at DISPATCHED. What catches THAT class is
+      # one declaration per concept, mirrored and pinned — check-shared-mirrors
+      # above. This gate is the cheaper half, and it cannot see a config row that
+      # exists for one company and not the other.
+      - run: npm run audit:company-divergence
       # ONE DATE FORMAT (owner 2026-08-18: "全套系统的 date format 没有统一").
       # The rule was already written down TWICE and re-derived by hand ~30 more
       # times in four other spellings — a list page said 2026/08/16 while the
@@ -513,7 +583,33 @@ jobs:
   # below are what make the gate real. For a matrix dependency, `.result` is
   # 'success' only when every leg succeeded.
   backend:
-    needs: [backend-typecheck, backend-tests]
+    # `lint` is here since 2026-08-19, and that is the whole point of this job:
+    # a required context is the ONLY thing that blocks a merge, and a job missing
+    # from this list is a job that cannot. The linter shipped 2026-08-13 as its
+    # own job so a finding reports in ~1 minute instead of behind 334s of tests
+    # it does not depend on — a good reason that carried a side effect nobody
+    # wrote down, and the ratchet in eslint-ratchet.json has been held by
+    # nothing but goodwill ever since. The identical omission is documented two
+    # jobs down, where frontend-typecheck WAS added to the frontend roll-up for
+    # exactly this reason.
+    #
+    # `lint` is a MATRIX, so needs.lint.result is the verdict of BOTH legs
+    # together — GitHub cannot express a dependency on one leg. In practice only
+    # the frontend leg can fail today: the backend leg runs `-- --advisory` and
+    # exits 0 while its 16 over-ceiling pairs are paid down. When that flag comes
+    # off, the backend leg starts blocking here with no further change.
+    # file-size and e2e-contract join `lint` here for the same reason: a job
+    # absent from a roll-up's `needs` cannot block a merge, and both judge
+    # OBJECTIVE facts (a file grew past its ceiling; the e2e contract drifted),
+    # so there is no judgement call to leave with a human.
+    #
+    # backend-postgres is DELIBERATELY NOT HERE, and the number is this file's
+    # own: "backend-postgres  34 success  4 FAILURE" over the sample recorded
+    # above. Roughly one run in ten is red without the code being wrong. A gate
+    # that blocks one honest PR in ten gets routed around, then deleted - which
+    # is how secret-hygiene.yml died and let a credential back in. It stays
+    # advisory until that rate is fixed, and fixing the rate is the real task.
+    needs: [backend-typecheck, backend-tests, lint, file-size, e2e-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -530,8 +626,14 @@ jobs:
           }
           echo "backend-typecheck: ${{ needs.backend-typecheck.result }}"
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
+          echo "lint:              ${{ needs.lint.result }}"
           ok backend-typecheck "${{ needs.backend-typecheck.result }}"
+          echo "file-size:         ${{ needs.file-size.result }}"
+          echo "e2e-contract:      ${{ needs.e2e-contract.result }}"
           ok backend-tests "${{ needs.backend-tests.result }}"
+          ok lint "${{ needs.lint.result }}"
+          ok file-size "${{ needs.file-size.result }}"
+          ok e2e-contract "${{ needs.e2e-contract.result }}"
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
@@ -752,14 +854,29 @@ jobs:
       - run: npm ci
       - run: npm run check:test-focus
       - run: npm run typecheck
+      # Every raw `fetch` in src/ is one exact, named callsite; API traffic goes
+      # through correlatedFetch. This was a vitest test until 2026-08-21 and it
+      # TypeScript-parses the whole tree, which under the coverage provider took
+      # 17.4s against its own inline 15s budget and cost the local
+      # `vitest run --coverage` its report entirely. Uninstrumented, in a plain
+      # node process, the same scan is ~0.8s. Here rather than in
+      # frontend-checks so it stays off the instrumented suite's critical path.
+      - run: npm run check:raw-fetch
       # Zero-dependency node:test checks for the gate scripts' own logic.
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
+      - run: node --test scripts/check-raw-fetch-inventory.test.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.
       - run: node --test scripts/check-typecheck-gate.test.mjs
+      # Pins that `frontend-perf` stays on the PR path, stays in the `frontend`
+      # roll-up's needs AND its assertions, and that ci.yml keeps `merge_group`.
+      # It lives HERE, not in frontend-perf, on purpose: a checker inside the job
+      # it guards dies with that job. Proved red against all five ways the gate
+      # can silently un-fix itself before it was trusted.
+      - run: node --test scripts/check-perf-lab-gate.test.mjs
 
   frontend-build:
     needs: changes
@@ -831,6 +948,86 @@ jobs:
       - run: npm run check:sw
       - run: npm run test:smoke-script
 
+  # ── perf-lab: MOVED BACK FROM postsubmit.yml (2026-08-21) ─────────────────
+  # postsubmit.yml said, in its own header: "If either job starts failing on
+  # main, that is the signal to move it back to presubmit." It then did exactly
+  # that, and this is that move being honoured.
+  #
+  # WHAT HAPPENED. `typecheck:perf-local` failed 18 consecutive postsubmit runs
+  # (first 32390289786, head 80f4f9756 = the merge commit of #2568; last
+  # 32405172079) and blocked NOTHING, because postsubmit.yml triggers only on
+  # push to main — so it can only ever run AFTER the merge that broke it. The
+  # required contexts are `backend-typecheck`, `frontend`, `company-scope-ratchet`
+  # and `completeness-claim`; none of them covered this.
+  #
+  # WHY THE 2026-08-18 "37 success, 0 failure" EVIDENCE DID NOT PREDICT IT. That
+  # count is a measure of how often the gate FIRED, not of what it GUARDS. This
+  # is a second tsc PROJECT, not a laxer one: perf-lab/tsconfig.json extends
+  # ../tsconfig.app.json and narrows `types`, while frontend/tsconfig.json
+  # references only tsconfig.app.json + tsconfig.node.json. So `tsc -b` — the
+  # whole of `npm run typecheck` in frontend-typecheck — structurally CANNOT see
+  # perf-lab/. Nothing else in the repo typechecks these files. A quiet gate over
+  # an unguarded project is not evidence the project is safe.
+  #
+  # WHY ITS OWN JOB AND NOT A STEP IN frontend-typecheck. Measured on postsubmit
+  # run 32405631087: typecheck:perf-local 43s + Playwright 13s + install/checkout
+  # ≈ 92s for the job. Folding it into frontend-typecheck would add ~55s to a job
+  # that already sits on the frontend path, and would leave the browser suite
+  # homeless. In parallel it costs +0s of wall clock — see below — for one runner
+  # slot, and the slot is there: across the last 12 ci.yml runs (2026-08-21) the
+  # WORST job-level queue wait was 3s and runs carried 14-16 jobs against the
+  # 20-slot ceiling docs/ci-capacity-coe.md reasons from. Re-measure before
+  # assuming that is still true.
+  #
+  # THE +0s, from run 32404531239: `changes` finishes at +32s, so this job runs
+  # +34s..+126s. frontend-checks ends at +163s and backend-typecheck at +187s.
+  # This job finishes 37s inside the frontend path and 61s inside the run's true
+  # critical path, so it decides nothing about how long a PR waits.
+  #
+  # It is gated on `changes` like every other frontend job: perf-lab/ lives
+  # wholly under frontend/, and the `frontend` roll-up accepts `skipped` — see
+  # the note there. It inherits `merge_group` from this workflow's own trigger,
+  # which is not optional: a queue gate weaker than the PR gate would let this
+  # through again on the merge-group ref.
+  frontend-perf:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Non-skippable local Chromium proof for 10k list geometry/search state.
+      # This suite starts its own Vite lab and never depends on staging data,
+      # credentials, network timing, or optional environment variables.
+      - run: npm run typecheck:perf-local
+      # The browser is ~27s of download on every run and changes only when the
+      # Playwright dependency does, so it is keyed on the lockfile.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # `--with-deps` installs OS packages too, and those are NOT in the cached
+      # directory, so a cache hit still needs the system half.
+      - run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+      # This step had been DARK since 2026-08-20 15:43Z: a failing first step
+      # hides every step behind it, so 18 runs reported "frontend-perf failure"
+      # while the browser suite ran zero times. It passes 5/5. It moves WITH the
+      # typecheck, not instead of it.
+      - run: npm run test:perf-local
+
   file-size:
     runs-on: ubuntu-latest
     steps:
@@ -861,7 +1058,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build]
+    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -884,9 +1081,20 @@ jobs:
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
           echo "frontend-build:     ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"
+          # frontend-perf came back from postsubmit.yml on 2026-08-21. Adding the
+          # job WITHOUT this line is the precise bug being fixed — it would run,
+          # go red, and gate nothing, exactly as it did on main for 18 runs. The
+          # note above about frontend-typecheck is the same lesson; this is the
+          # second time, so treat the pair as the rule: a job absent from this
+          # list is advisory, and nothing will say so.
+          ok frontend-perf "${{ needs.frontend-perf.result }}"
+          # See the note on the `backend` roll-up: `lint` had no required context
+          # covering it at all, so the eslint ratchet could not block a merge.
+          ok lint "${{ needs.lint.result }}"
 
   e2e-contract:
     runs-on: ubuntu-latest
@@ -905,3 +1113,41 @@ jobs:
       # discovers every spec so a broken smoke contract cannot merge silently.
       - run: npm run typecheck
       - run: npm run test:list
+
+  # ── Company-scope RATCHET ─────────────────────────────────────────────────
+  # Locks the repo's most repeated defect class: a route handler that touches a
+  # row by id with NO company predicate. The SCM/Houzs supabase client is the
+  # SERVICE ROLE and bypasses RLS, so the hand-written company_id predicate is
+  # the ENTIRE tenant boundary (CLAUDE.md, "Company scope: the predicate is the
+  # only isolation").
+  #
+  # Grandfather baseline: backend/scripts/company-scope-baseline.json, keyed by
+  # file + route identity (never a line number), may only SHRINK. A NEW unscoped
+  # handler is not in it, so `--check` fails and names it; `--ratchet-against`
+  # closes the bypass of editing the JSON to add the new key in the same PR. The
+  # script is dependency-free (node:fs / node:path / node:child_process), so no
+  # `npm ci` — it runs before any install.
+  #
+  # NOT a required status check YET. It reports red but does not block a merge
+  # until the owner adds `company-scope-ratchet` to the main-protection ruleset
+  # (the one owner step is in the PR body). The sibling WRITE invariant
+  # (`check-company-scope --strict`, WRITE findings must stay 0) already runs
+  # inside the required `backend-typecheck` job.
+  company-scope-ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `--ratchet-against origin/main` needs history to reach a merge base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # actions/checkout leaves no remote-tracking ref for main on a PR run;
+      # the growth guard resolves its base as origin/main, so create it.
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      # Primary gate: the current unscoped set must be a SUBSET of the baseline.
+      - run: node backend/scripts/check-company-scope.mjs --check
+      # No-growth guard: the baseline file itself may not gain an entry vs main.
+      - run: node backend/scripts/check-company-scope.mjs --check --ratchet-against origin/main

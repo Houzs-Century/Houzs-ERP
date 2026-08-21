@@ -62,7 +62,30 @@
 // operator hunting for a duplicate that does not exist.
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST, DO_NOT_INVOICEABLE_IN_LIST, doCountsAsDelivered, doCountsAsInvoiceable } from '../shared/do-shipped-states';
+
+/* WHICH QUESTION THIS PENDING POOL IS BEING ASKED. The engine below serves two
+   callers that want DIFFERENT answers for exactly one status, LOADED:
+
+     'invoiceable' — may these lines be BILLED? Owner 2026-08-20: yes, even on
+                     the lorry; the invoice is raised by a person who knows.
+     'delivered'   — have these goods actually LEFT? Returns, the unbilled-money
+                     report and every stock sum ask this, and a LOADED DO has
+                     not: its inventory OUT has not fired (#2557).
+
+   REQUIRED, never defaulted, for the reason the companyId argument beside it is
+   (optional-param-noop sweep 2026-08-13): a basis a caller can omit is not a
+   basis, it is whichever answer the last editor happened to prefer — and this
+   rule has now been reversed twice, so the next caller must state which of the
+   two it means rather than inherit it. */
+export type DoPendingBasis = 'invoiceable' | 'delivered';
+
+/** Do this DO's lines belong in the Pending pool, for the question being asked?
+ *  The ONE place the two rulings meet, so neither can be applied by accident. */
+const inPendingPool = (basis: DoPendingBasis, status: string | null | undefined): boolean =>
+  basis === 'invoiceable' ? doCountsAsInvoiceable(status) : doCountsAsDelivered(status);
 import { paginateAll, chunkIn } from './paginate-all';
+import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 
 export type DoRemainingLine = {
   doItemId: string;
@@ -145,6 +168,7 @@ export const remainingUnavailableResponse = (reason: string) => ({
 export async function doLineRemaining(
   sb: any,
   doIds: string[],
+  basis: DoPendingBasis,
 ): Promise<DoRemainingResult> {
   const out = new Map<string, DoRemainingLine>();
   const ids = [...new Set(doIds.filter(Boolean))];
@@ -168,12 +192,14 @@ export async function doLineRemaining(
     id: string; do_number: string; status: string | null;
     debtor_code: string | null; debtor_name: string | null;
   }>) {
-    const st = (d.status ?? '').toUpperCase();
-    // LEAK GUARD (DRAFT, 2026-06-25 anchoring diff vs 2990) — a DRAFT DO has NOT
-    // shipped: it delivered nothing, so its lines must never become invoiceable /
-    // returnable (the "Pending" pool both downstream pickers read). Dropped
-    // alongside CANCELLED.
-    if (st === 'CANCELLED' || st === 'DRAFT') continue; // delivered nothing
+    // LEAK GUARD (2026-06-25 anchoring diff vs 2990) — a DO that delivered
+    // nothing must never reach the "Pending" pool the downstream pickers read.
+    // WHICH states those are depends on the question: a CANCELLED or DRAFT DO is
+    // out of both, and LOADED is out of the DELIVERED pool (its inventory OUT
+    // has not fired, #2557) but IN the INVOICEABLE one (owner 2026-08-20). See
+    // DoPendingBasis above — this guard used to answer only the first question,
+    // for every caller.
+    if (!inPendingPool(basis, d.status)) continue; // nothing to bill / nothing came back
     headerById.set(d.id, { do_number: d.do_number, debtor_code: d.debtor_code, debtor_name: d.debtor_name });
   }
   const activeDoIds = [...headerById.keys()];
@@ -334,6 +360,7 @@ export async function doLineRemaining(
 export async function doRemainingByItemId(
   sb: any,
   doItemIds: Array<string | null | undefined>,
+  basis: DoPendingBasis,
 ): Promise<DoRemainingQtyResult> {
   const ids = [...new Set(doItemIds.filter((x): x is string => !!x))];
   const out = new Map<string, number>();
@@ -344,7 +371,7 @@ export async function doRemainingByItemId(
     sb.from('delivery_order_items').select('delivery_order_id').in('id', batch).range(from, to));
   if (error) return { ok: false, reason: `delivery_order_items: ${error.message}` };
   const doIds = [...new Set((data as Array<{ delivery_order_id: string | null }>).map((r) => r.delivery_order_id).filter((d): d is string => !!d))];
-  const remaining = await doLineRemaining(sb, doIds);
+  const remaining = await doLineRemaining(sb, doIds, basis);
   if (!remaining.ok) return remaining;
   for (const id of ids) out.set(id, remaining.lines.get(id)?.remaining ?? 0);
   return { ok: true, remaining: out };
@@ -378,6 +405,7 @@ export async function resolveCandidateDoIds(
      `null` only where there genuinely is no company; that then reads as a
      decision instead of an oversight (optional-param-noop sweep 2026-08-13). */
   companyId: number | null | undefined,
+  basis: DoPendingBasis,
 ): Promise<CandidateDoIdsResult> {
   if (doIdsParam && doIdsParam.trim()) {
     return { ok: true, doIds: [...new Set(doIdsParam.split(',').map((d) => d.trim()).filter(Boolean))] };
@@ -388,7 +416,22 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-      .not('status', 'in', '("CANCELLED","DRAFT")');
+      /* WHICH DELIVERIES THIS PICKER OFFERS, per the question being asked. The
+         two lists differ on exactly one status and the owner has ruled on it:
+
+           invoiceable — DRAFT and CANCELLED only. A LOADED delivery IS offered
+             for invoicing (owner 2026-08-20, 不要拦 —— 人自己知道: the invoice is
+             raised by hand by someone who knows whether the goods arrived).
+             #2557 excluded it here as a side effect of its stock fix; that half
+             is reverted, its over-delivery half is untouched.
+           delivered   — DRAFT, LOADED and CANCELLED. The returnable picker keeps
+             this: goods still on the lorry never left, so nothing can come back.
+
+         This is the picker HALF of the rule; siTransferRefusal is the create
+         gate, and both now read the same declaration, so the picker cannot
+         advertise a delivery the create path then refuses — nor hide one it
+         would have accepted, which is the direction that was wrong. */
+      .not('status', 'in', basis === 'invoiceable' ? DO_NOT_INVOICEABLE_IN_LIST : DO_NOT_DELIVERED_IN_LIST);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);
   });
@@ -439,7 +482,12 @@ export async function checkSiOverRemaining(
     wanted.set(doItemId, (wanted.get(doItemId) ?? 0) + Number(it.qty ?? 0));
   }
   if (wanted.size === 0) return null;
-  const remaining = await doRemainingByItemId(sb, [...wanted.keys()]);
+  /* 'invoiceable' is not a choice this function makes — its NAME is the choice.
+     checkSiOverRemaining is the Sales-Invoice write-path cap, so it must measure
+     the same pool the create gate and the picker offer, or a LOADED delivery
+     would pass siTransferRefusal, appear in the picker, and then be refused
+     `over_remaining` against a ceiling computed as if it had delivered nothing. */
+  const remaining = await doRemainingByItemId(sb, [...wanted.keys()], 'invoiceable');
   if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
   const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
   for (const [doItemId, requested] of wanted) {
@@ -512,4 +560,47 @@ export function findOverInvoicedDoItems(
     if (r < 0) out.push({ doItemId: id, over: -r });
   }
   return out;
+}
+
+/* THE SERVER'S ANSWER TO "MAY THIS DELIVERY BE INVOICED", AND UNTIL 2026-08-18
+   THERE WAS NONE. The rule lived only in clients, so it had been re-derived four
+   times and the four disagreed:
+     · here — refused only CANCELLED, so the API and the mobile shell would
+       invoice anything else;
+     · resolveCandidateDoIds (do-line-remaining.ts) — everything except CANCELLED
+       and DRAFT;
+     · the desktop footer — a hand-typed ['signed','delivered'];
+     · the same page's line edit-lock — the five shipped states.
+   A restriction only one client enforces is not a restriction: the desktop
+   greyed the button out while the same transfer went through from a phone.
+
+   That narrowest spelling was also a MULTI-ORGANISATION defect rather than a
+   status one. It carries no company term and never did; it bit one organisation
+   because of DATA — 2990's source system has no "delivered" step, so its
+   deliveries sit at DISPATCHED, while HOUZS's AutoCount carry-overs arrived as
+   literal 'DELIVERED'. One build, one permission set, and 2990 was told the
+   transfer did not exist.
+
+   The owner ruled DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED on 2026-08-18; #2485
+   widened it next day to every CONFIRMED delivery, LOADED included.
+   SI_TRANSFERABLE_DO_STATES is that rule's one home and here it is ENFORCED.
+   BOTH Sales-Invoice entry points call it — POST /from-dos and the append
+   path — because a gate enforced on one of two doors is a gate with a hole.
+   The create path refused exactly CANCELLED before this function; it now also
+   refuses DRAFT (#2485 keeps Confirm a prerequisite) and INVOICED (nothing
+   writes it). LOADED is NOT refused: that would invent a new restriction. */
+export function siTransferRefusal(status: string | null | undefined): { error: string; reason: string } | null {
+  const s = String(status ?? '').trim().toUpperCase();
+  if ((SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(s)) return null;
+  if (s === 'CANCELLED') {
+    return { error: 'do_cancelled', reason: 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.' };
+  }
+  if (s === 'DRAFT') {
+    return { error: 'do_not_confirmed', reason: 'This delivery order is still a draft — confirm it before raising a Sales Invoice.' };
+  }
+  /* INVOICED lands here deliberately. routes/unbilled-deliveries.ts:13 measured
+     that nothing in this codebase ever writes it, so the label means "somebody
+     set it", not "this was billed" — the generic sentence states the gate, which
+     is true, rather than asserting a billing fact the flag cannot support. */
+  return { error: 'do_not_transferable', reason: `A Sales Invoice can only be raised from a confirmed delivery order (${SI_TRANSFERABLE_DO_STATES.join(', ')}).` };
 }

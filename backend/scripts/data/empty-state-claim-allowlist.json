@@ -108,6 +108,11 @@
     },
     {
       "file": "frontend/src/lib/autocountOutbox.ts",
+      "text": "\"sent-now\": \"Nothing more to do — it is in the account book already, not just queued.\",",
+      "why": "Not an empty state at all: it is the follow-up line for ONE outcome code the server returned for ONE row the operator just pressed. `sent-now` is only produced when AutoCount accepted the document and dispatchOne wrote the returned DocNo back, so the sentence rests on an affirmative answer from the account book, never on a query that came back with nothing."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.ts",
       "text": "requeued: \"Nothing more to do. It goes out with the next five-minute send.\",",
       "why": "Describes ONE outbox row the caller is looking at, not an absence: the row was replaced by a newer send, which is a fact about that row's own status column."
     },

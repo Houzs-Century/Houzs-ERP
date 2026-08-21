@@ -125,6 +125,35 @@ costs ~80s.
 > of before — accepted for a job with no failures on the record, and reversible:
 > if it fails on `main`, move it back.
 >
+> **RE-REVERSED for `frontend-perf` on 2026-08-21 (#2591). `scale-postgres-contract`
+> stays.** The reversibility clause above was not decoration — it was cashed three
+> days later. `frontend-perf` failed **18 consecutive** postsubmit runs (first
+> `32390289786`, head `80f4f9756` = the merge commit of #2568; last `32405172079`)
+> and blocked nothing, because postsubmit triggers only on push to `main`.
+>
+> **The lesson is about the EVIDENCE, not the decision.** "37 success, 0 failure"
+> measures how often a gate FIRED, never what it GUARDS. `frontend-perf` owned the
+> ONLY typecheck of `frontend/perf-lab/` — `perf-lab/tsconfig.json` extends
+> `../tsconfig.app.json` and narrows `types`, while `frontend/tsconfig.json`
+> references only `tsconfig.app.json` + `tsconfig.node.json`, so `tsc -b` cannot
+> reach it — and forty greens therefore meant "nobody has broken it yet", not
+> "nothing can break it". Proven on PR #2592, a deliberate re-break: the required
+> `frontend-typecheck` passed and `frontend-perf` failed **on the same tree**.
+>
+> Before moving any job here, ask what would be UNGUARDED if it never ran again.
+> If the answer is "an input nothing else checks", a pass count is the wrong
+> evidence. `scale-postgres-contract` survives that question — the scale fixture
+> is not the only thing exercising the pg schema.
+>
+> It cost +0s of wall clock to bring back. Measured on `32407322884` and
+> `32407903048`: the job runs ~92-114s in parallel and finishes 61-65s BEFORE
+> `frontend-checks`, which is the frontend critical path. Job-level queue wait
+> across the 12 runs before the change: worst 3s, median 2s, at 14-16 jobs — the
+> 20-slot ceiling was not binding. It is pinned by
+> `frontend/scripts/check-perf-lab-gate.test.mjs`, which fails if the job leaves
+> `ci.yml`, leaves the `frontend` roll-up's `needs` or its assertions, or if
+> `merge_group` leaves the triggers.
+>
 > Not everything moved. `backend-postgres` (34 success, **4 failure**, spanning
 > several pg test files at once — a broken tree, not a flake) and `file-size`
 > (2 real findings) stayed in presubmit. A job earns presubmit by having caught
@@ -136,7 +165,7 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
-| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | #2412 |
+| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` (`frontend-perf` RETURNED to `ci.yml` 2026-08-21, #2591 — see the re-reversal note above) | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | #2412 |
 | `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
 | `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
 | `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
@@ -288,10 +317,13 @@ it.** A CI run finishes when its slowest job finishes; that used to be
 > **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
 > story.** `frontend` was then split three ways and the Playwright browser
 > cached; on `origin/main` today `frontend` is a ROLL-UP job over
-> `frontend-checks`, `frontend-build` and (until 2026-08-18) `frontend-perf`
-> (`ci.yml`) — `frontend-perf` has since moved to `postsubmit.yml`, so the
-> roll-up now covers `frontend-checks`, `frontend-typecheck` and
-> `frontend-build` — not the one
+> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`). That
+> membership went out and came back: `frontend-perf` moved to `postsubmit.yml` on
+> 2026-08-18 and RETURNED on 2026-08-21 (#2591), so the roll-up covers
+> `frontend-checks`, `frontend-typecheck`, `frontend-build` and `frontend-perf`
+> again, plus `lint`. **Read the membership from `ci.yml`, not from here** — a job
+> absent from the roll-up's `needs` is advisory no matter what any doc says, which
+> is exactly the failure #2591 fixed. Not the one
 > serial block described below. The paragraph is kept because the ANALYSIS below
 > is what identified the two candidates that #2142 acted on — read it as the
 > diagnosis, not as the current shape of the job.

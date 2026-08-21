@@ -113,7 +113,7 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | POST | `/from-po-items` | `:1775` | Line-level multi-select convert; one GRN per source PO, each created DRAFT then posted via the shared helper. |
 | PATCH | `/:id/post` | `:1764` (handler `:1682`) | **The stock chokepoint**: DRAFT → POSTED. |
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
-| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. |
+| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PI/PR exists, `supplier_id` / `currency` / `exchange_rate` / `allocation_method` freeze (the invoice/return was billed/costed against them); `received_at` / `delivery_note_ref` / `warehouse_id` / `notes` stay editable. Rule in `backend/src/scm/lib/grn-inherited-lock.ts` (`grnHeaderInheritedChanges` + `GRN_HEADER_INHERITED_COLS`, whose columns are sourced from the ONE rulebook `shared/document-policy.ts` so they can't drift), 409 `grn_header_inherited_locked`. **The refusal's human LABELS come from the same rulebook** (`GRN_LOCK_LABELS`) as of 2026-08-20 — they used to be a second copy typed inside `grnHeaderInheritedRefusal`, so a column added to the rulebook would have read as a raw `allocation_method` here while its siblings said "cost allocation method". The FE (`GoodsReceivedDetail.tsx`) splits the same way — `identityLocked` disables supplier/currency, own-stage fields stay open. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
 
 ## 2a. The from-PO picker's read, and why an empty grid must name its cause
@@ -207,7 +207,7 @@ the money version of this shape, and it is closed on all three write paths — s
 `docs/unlinked-line-duplicate-coe.md` §5a.
 
 **3. On this side of the chain the same edit-path door is still open.**
-`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`PATCH /grns/:id/items/:itemId` rewrites a line's `item_code` and never calls
 `findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
 (correctly allowed) can afterwards be retyped onto one it does — the refused shape,
 assembled in two legal steps, with `purchase_order_item_id` still null so
@@ -349,7 +349,7 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 |-------|------|
 | `scm.grns` | GRN header. `grn_number` (UNIQUE), `purchase_order_id`, `supplier_id`, **`warehouse_id`** (where the IN lands), `received_at`, `delivery_note_ref`, `status`, `currency`, **`exchange_rate`**, **`allocation_method`**, `subtotal_sen` / `tax_sen` / `total_sen`, `posted_at`, `company_id`. |
 | `scm.grn_items` | GRN lines. `purchase_order_item_id` (the PO link that drives `received_qty`, the batch and the receiving warehouse), `material_kind/code/name`, `supplier_sku`, `qty_received`, **`qty_accepted`** (the qty that actually becomes stock), `qty_rejected`, `rejection_reason`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, **`allocated_charge_sen`**, **`invoiced_qty`** / **`returned_qty`** (downstream consumption), `delivery_date`, `rack_id`, variant columns. |
-| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `product_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
+| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `item_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
 | `scm.inventory_balances` | Read by `grnReverseWouldGoNegative` (`:788-792`) to decide whether a reversal is safe. |
 | `scm.purchase_order_items` | Upstream: `received_qty` is written by this module (`recomputePoReceived`, `:672`). |
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
@@ -539,6 +539,26 @@ the control people learn to tick without reading. It is deliberately NOT a
 button on the refusal dialog: one click waiving a whole receipt is the reflex
 the gate exists to prevent.
 
+**Both remedies exist on the phone too (2026-08-20).** They did not until then,
+and that is the shape of the defect: `zeroCostAck` appeared NOWHERE in
+`frontend/src/mobile`, `MobileModuleDetail.tsx`'s `grns` case offered only Post
+and Cancel, and `MobileConvertWizard.tsx`'s own copy of the message ended "open
+the receipt on desktop". A receiver on the warehouse floor got a correct,
+readable refusal naming two fixes and neither of them on the screen in their
+hand. The refusal itself rendered fine on both surfaces — the gap was the remedy.
+
+- `frontend/src/mobile/MobileGrnZeroCost.tsx` is the phone's remedy: the 409
+  opens a bottom sheet with ONE CARD PER REFUSED LINE carrying a unit-price box
+  and a "Received free" tick with its reason, then writes each through the same
+  `PATCH /scm/grns/:id/items/:itemId` and re-runs `PATCH /scm/grns/:id/post`.
+  The per-line rule above is preserved literally: there is no waive-all control,
+  and Post stays disabled until every listed line carries a price or a tick.
+- `frontend/src/vendor/scm/lib/zero-cost-refusal.ts` is the one reader of the
+  409 body. `authed-fetch.ts` composes the operator's sentence through it
+  (moved, not rewritten) and now also attaches `status` + the raw body to the
+  thrown error — parsing the refusal and discarding the parse is what left a
+  surface able to show it and nothing else.
+
 | surface | field | route |
 | --- | --- | --- |
 | create a receipt | `items[].zeroCostAck`, `items[].zeroCostReason` | `POST /scm/grns` |
@@ -644,6 +664,125 @@ failed read leaves the header unchanged instead of zeroing it.
 
 ---
 
+## 7b. The AutoCount outbox helper — and why its client is explicit
+
+`queueAcGrnEdit` is the thin wrapper every GRN write uses to tell AutoCount the
+document changed. Four call sites: the header PATCH, line add, line edit, line
+delete.
+
+It lives in **`backend/src/scm/lib/ac-grn-outbox.ts`**, not in `grns.ts`. It was
+moved out on 2026-08-20 because the file-size ratchet refused the growth its
+explanatory comment added — and the gate's own message names moving new code
+into a module as the way out, which is the better answer anyway: the next GRN
+route to be converted imports the same helper instead of re-deriving the rule.
+
+**Its signature is `(c, sb, id, retire)` and the `sb` is REQUIRED.** It used to
+read `enqueueEdit(c.get('supabase'), …)` — it reached past its caller for the
+ordinary PostgREST client.
+
+That is invisible and harmless while every caller is an ordinary route body. It
+stops being harmless the moment a caller runs inside `runScmPgCommand`: the GRN
+row would be written INSIDE the transaction while the outbox row committed
+OUTSIDE it, so a rollback leaves AutoCount instructed to edit a line that still
+exists. The two must land together or not at all.
+
+Required rather than optional is deliberate, per `CLAUDE.md`: a parameter that
+DECIDES something is never optional. This one decides which transaction the row
+belongs to, and optional would let a future transactional caller silently keep
+the wrong client with no compile error — the `optional-param-noop` class —
+`docs/bugs/0098-bug-class-optional-param-noop-an-optional-argument-that-deci.md`.
+
+Two checks watch this and both have already fired on it:
+`backend/tests/autocountWritebackCells.test.ts` pins the ARGUMENTS of all four
+call sites (a signature change cannot slip past), and `audit:ac-coverage`
+regenerates `docs/generated/autocount-coverage.md` from where the calls actually
+live.
+
+Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
+
+## 7c. Two GRN routes run in a TRANSACTION - line DELETE and CANCEL
+
+`DELETE /:id/items/:itemId` and `PATCH /:id/cancel` are each wrapped in
+`runScmPgCommand` (both 2026-08-20). They are the first two of the six GRN
+write paths to get there.
+
+### The line DELETE
+
+Everything it writes — the line delete, the reversing stock OUT, the entity
+audit, the AutoCount outbox row and the SO-allocation recompute request — **commits
+together or not at all**.
+
+**What that fixes.** The recompute used to be a best-effort call after the
+write: `recomputeSoStockAllocation(sb)` in a try/catch. A Worker that died
+between the stock reversal and that call left stock moved and SO lines still
+marked READY, with **no queue row and no retry** — wrong, silently, until an
+unrelated mutation happened to sweep. Now the queue row is written by
+`scheduleStockAllocationAfterCommand` inside the same transaction, so that state
+is unreachable.
+
+**What it costs, for BOTH routes.** `runScmPgCommand` answers **503
+`scm_pg_command_required`** where `DATABASE_URL` is absent. Deliberate: refusing
+is the honest failure when the alternative is half-writing a stock reversal.
+
+A second consequence to know before converting the next one: a NON-2xx response
+from the body also rolls the transaction back and is then returned unchanged
+(`if (!response.ok) throw new CommandRollback(response)` in
+`pg-supabase-transaction.ts`). So every `refuseWithoutWriting` in a converted
+route keeps its body, its status and its idempotency-release header, and any
+partial write it made is undone for free.
+
+**Where the body lives: INSIDE the route.** This paragraph used to say the body
+sat in a named `deleteGrnLineCommandHandler` above a one-line route. That was
+the FIRST attempt, reverted before merge: hoisting broke three checks, because
+`grnPreWriteRefusalsReleaseKey.test.ts` and `autocountWritebackCells.test.ts`
+scan `grns.ts` BY ROUTE BLOCK - delimited by lines starting `grns.<verb>(` - and
+a hoisted body sits outside every block they can see. Wrapping needs no hoist.
+Verify with `grep -rn "deleteGrnLineCommandHandler" backend/src`, which matches
+nothing. Two tests anchor on the route line rather than on a function name —
+`autocountWritebackCells.test.ts` for the outbox row and the retired-key read.
+
+**Proof.** `backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` drives real
+Postgres: commit leaves the line gone AND the request queued; a throw after the
+enqueue leaves **neither**; a throw before it leaves the line intact; and the
+queue stays a singleton across two deletes.
+
+### The CANCEL
+
+The second route through, same shape. What now commits as one unit: the atomic
+ACTIVE->CANCELLED status flip, the reversing stock OUT per line, the rack
+reversal, the CANCEL audit row, the AutoCount cancel outbox row (`enqueueCancel`
+already took its client explicitly) and the allocation-recompute request.
+
+**Its reversal-row builder moved out** to
+`backend/src/scm/lib/grn-cancel-reversal.ts`. The file-size ratchet charges
+GROWTH on `grns.ts`, which already sits ~90 lines above its ceiling, and the
+gate's own message names moving new code into a module as one of the two ways
+out - the same move `ac-grn-outbox.ts` made (7b). It is a MOVE, not a rewrite,
+and the two rules it carries are now pinned by
+`backend/tests/grnCancelReversals.test.ts`: a SERVICE line is never reversed,
+and each line reverses its OWN dye lot (mig 0120). Deliberately NOT shared with
+the line-DELETE reversal, which builds one row for one line and does not filter
+service lines - folding them together would silently change that behaviour.
+
+**The enqueue sits OUTSIDE the best-effort catch**, behind a `stockReversed`
+flag, so a failed enqueue fails the cancel. That is the point of the exercise:
+"stock pulled back, allocation never re-walked" is exactly the state the
+transaction exists to make unreachable, and a swallowed enqueue recreates it.
+The line DELETE shipped with its enqueue INSIDE that catch and a comment
+claiming otherwise; fixed the same day (`BUG-HISTORY.md` 2026-08-20).
+
+**Proof.** `backend/tests-pg/grnCancelAtomicity.pg.test.ts` drives real Postgres
+through the REAL shim, the REAL `writeMovements` and the REAL
+`enqueueStockAllocationRecompute`: commit leaves the GRN cancelled, the OUT
+written and the request queued; a throw after the enqueue leaves **none of the
+three**; a throw before it leaves the GRN POSTED; a FAILED enqueue takes the
+cancel down with it; and the queue stays a singleton.
+
+**The other four GRN routes are unchanged** and still best-effort — header
+PATCH, line add, line edit, and the create paths, with `postGrnHandler`
+deliberately last because it is the largest handler in the file. One PR each.
+`docs/ALLOCATION-DURABILITY-PLAN.md`.
+
 ## 8. Desktop and mobile files that must change together
 
 | Concern | Desktop | Mobile |
@@ -652,6 +791,7 @@ failed read leaves the header unchanged instead of zeroing it.
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
+| Zero-cost refusal → the remedy | the per-line "Received free" tick + price box on `GoodsReceivedDetail.tsx` | `mobile/MobileGrnZeroCost.tsx`, opened by `mobile/MobileModuleDetail.tsx`'s action footer. The 409 body is parsed once, by the SHARED `vendor/scm/lib/zero-cost-refusal.ts`, which `vendor/scm/lib/authed-fetch.ts` also uses for the sentence — so the message and the remedy cannot name different lines |
 | PO→GRN conversion + per-line received qty | `pages/scm-v2/GrnFromPo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "grn"`) — note the surfaces differ **by design**: desktop can pick lines, mobile converts the whole PO (`:60-61`), and mobile posts `asDraft:true` rather than the auto-posting `/from-pos` (`:370-374`) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/grn-queries.ts` (must include `['inventory']`) | `mobile/sharedInvalidate.ts:72` (`grns` roots + `STOCK_ROOTS`, which includes the SO roots) |
 
@@ -726,3 +866,26 @@ inventory: `docs/generated/`.
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

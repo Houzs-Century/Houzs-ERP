@@ -31,6 +31,7 @@ import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { readStatusCounts } from '../lib/status-counts';
 import type { Env, Variables } from '../env';
+import { chunkIn } from '../lib/paginate-all';
 
 export const fabricTracking = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -135,11 +136,39 @@ async function syncFabricToSellingLibrary(
     { onConflict: 'id', ignoreDuplicates: true },
   );
   if (serErr) return `fabric_library: ${serErr.message}`;
+  /* `ignoreDuplicates` is right — re-running an import must not stamp over a
+     series someone already curated. But 0089 records that fabric_library's PK is
+     the SERIES TEXT and is GLOBAL: it "can't gain company_id without a PK
+     redesign, so a 2990 import must use ids distinct from Houzs's". When the id
+     IS taken by another organisation, DO NOTHING means the caller's row never
+     lands, reads are company-scoped so it never appears, and NOTHING SAYS SO.
+     Naming it is the whole fix: the row genuinely cannot be written until the PK
+     is redesigned, so the honest outcome is to report, not to invent one. */
+  if (companyId != null) {
+    const { data: owner, error: ownerErr } = await sb.from('fabric_library')
+      .select('company_id').eq('id', series).maybeSingle();
+    if (ownerErr) return `fabric_library: ${ownerErr.message}`;  // fail closed — a blind read here would re-home the row
+    const ownerCo = (owner as { company_id?: number | null } | null)?.company_id;
+    if (ownerCo != null && ownerCo !== companyId) {
+      return `fabric_library: series "${series}" already belongs to another organisation. Fabric series ids are global (the id IS the series), so this import needs a distinct series code.`;
+    }
+  }
   const { error: colErr } = await sb.from('fabric_colours').upsert(
     { ...companyCol, fabric_id: series, colour_id: code, label: colourLabelOf(code, description), swatch_hex: null, active: true, sort_order: 0 },
     { onConflict: 'fabric_id,colour_id', ignoreDuplicates: true },
   );
   if (colErr) return `fabric_colours: ${colErr.message}`;
+  /* Same shape as the series below: composite PK (fabric_id, colour_id), also
+     named in 0089 as un-convertible, also DO NOTHING, also silent. */
+  if (companyId != null) {
+    const { data: cOwner, error: cOwnerErr } = await sb.from('fabric_colours')
+      .select('company_id').eq('fabric_id', series).eq('colour_id', code).maybeSingle();
+    if (cOwnerErr) return `fabric_colours: ${cOwnerErr.message}`;  // fail closed — see the series read above
+    const cCo = (cOwner as { company_id?: number | null } | null)?.company_id;
+    if (cCo != null && cCo !== companyId) {
+      return `fabric_colours: colour "${code}" under series "${series}" already belongs to another organisation. This pair is a global key, so the import needs a distinct code.`;
+    }
+  }
   return null;
 }
 
@@ -287,6 +316,43 @@ fabricTracking.post('/bulk-upsert', async (c) => {
   // Multi-company (mig 0061): stamp the active company on each upserted row.
   const cid = activeCompanyId(c);
   const stampedRows = cid != null ? dbRows.map((r) => ({ ...r, company_id: cid })) : dbRows;
+  /* REFUSE A ROW THAT IS ANOTHER COMPANY'S, RATHER THAN TAKING IT.
+     fabric_trackings.id is a GLOBAL text primary key and is derived from the
+     fabric CODE (see `const id =` above), so two companies importing the same
+     code address the same row. This upsert passes no `ignoreDuplicates`, which
+     makes it ON CONFLICT DO UPDATE — and `stampedRows` carries company_id, so the
+     merge did not merely overwrite the other company's row, it RE-HOMED it: the
+     original owner could no longer see it (GET / is company-scoped) or delete it
+     (DELETE /:id returns NOT_THIS_COMPANY). Silent, and only from a bulk import.
+
+     The two upserts below already knew this — both pass ignoreDuplicates: true.
+     This one did not. Blanket-adding it here would trade the overwrite for a
+     silent DROP, which is the other half of the same problem, so the conflicting
+     ids are named and refused instead.
+
+     0089 records why the id cannot simply gain a company column: these TEXT
+     primary keys ARE the code, and a PK redesign is the price of changing that.
+     Until then a company's import must use ids distinct from the other's, and
+     this is the check that says so out loud. */
+  const ids = stampedRows.map((r) => (r as { id: string }).id);
+  if (cid != null && ids.length > 0) {
+    const { data: foreign, error: foreignErr } = await chunkIn<{ id: string; company_id: number | null }>(
+      ids,
+      (batch, from, to) => sb.from('fabric_trackings')
+        .select('id, company_id').in('id', batch).neq('company_id', cid).order('id').range(from, to),
+    );
+    // fail closed — proceeding on a failed ownership read would re-home another company's rows
+    if (foreignErr) return c.json({ error: 'bulk_upsert_failed', reason: foreignErr.message, errors }, 500);
+    if (foreign && foreign.length > 0) {
+      const taken = foreign.map((r) => r.id).sort();
+      return c.json({
+        error: 'fabric_id_belongs_to_another_company',
+        reason: `${taken.length} fabric id(s) already exist under a different organisation and would have been overwritten: ${taken.slice(0, 20).join(', ')}${taken.length > 20 ? ` … and ${taken.length - 20} more` : ''}. Fabric ids are global (the id IS the code), so give these a distinct code.`,
+        ids: taken,
+        errors,
+      }, 409);
+    }
+  }
   const { error } = await sb.from('fabric_trackings').upsert(stampedRows, { onConflict: 'id' });
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message, errors }, 403);
@@ -349,6 +415,51 @@ fabricTracking.get('/', async (c) => {
           'po_outstanding_sen, last_month_usage_sen, one_week_usage_sen, ' +
           'two_weeks_usage_sen, one_month_usage_sen, shortage_sen, ' +
           'reorder_point_sen, supplier, supplier_code, lead_time_days, series, is_active',
+      ),
+    c,
+  )
+    .order('fabric_code', { ascending: true });
+
+  if (category && VALID_CATEGORIES.has(category)) {
+    q = q.eq('fabric_category', category);
+  }
+  if (search) {
+    const s = escapeForOr(search);
+    if (s) q = q.or(`fabric_code.ilike.%${s}%,fabric_description.ilike.%${s}%`);
+  }
+
+  const { data, error } = await q;
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ fabrics: data ?? [] });
+});
+
+/* GET /fabric-tracking/lite — the DISPLAY/PICK read.
+ *
+ * WHY THIS EXISTS (bug 2026-08-20). The full GET above returns procurement COST
+ * and STOCK (price_sen, soh_sen, *_usage_sen, shortage_sen, reorder_point_sen,
+ * supplier cost), so its guard correctly requires scm.procurement.products. But
+ * SoLineCard (the fabric dropdown on EVERY sales-order line) and the PC-Order
+ * detail need only the fabric NAME + PRICE TIERS to pick a fabric and price the
+ * line — and their pages are gated on scm.sales.* / scm.consignment.*, NOT
+ * products. So a salesperson/consignment user fired the full read and got a 403
+ * (surfaced by the client-error telemetry: [rbac 403] GET /fabric-tracking),
+ * leaving the fabric dropdown empty.
+ *
+ * This lite read returns ONLY the non-sensitive display + tier fields, so it is
+ * safe to expose via openReadPaths on the guard (see scm/index.ts). Cost/stock
+ * NEVER appear here, so opening it leaks nothing; the full read stays gated.
+ * Still company-scoped, exactly like the full read. */
+fabricTracking.get('/lite', async (c) => {
+  const category = c.req.query('category');
+  const search = c.req.query('search');
+  const supabase = c.get('supabase');
+
+  let q = scopeToCompany(
+    supabase
+      .from('fabric_trackings')
+      .select(
+        'id, fabric_code, fabric_description, supplier_code, fabric_category, ' +
+          'price_tier, sofa_price_tier, bedframe_price_tier, series, is_active',
       ),
     c,
   )

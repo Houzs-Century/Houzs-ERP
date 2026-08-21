@@ -91,6 +91,7 @@ import {
   type SoRevisionRow,
 } from '../../vendor/scm/lib/so-amendment-queries';
 import styles from './SalesOrderDetail.module.css';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -298,19 +299,29 @@ export const PurchaseOrderDetail = () => {
      confirming), alongside SUBMITTED / PARTIALLY_RECEIVED. A DRAFT never has a
      GRN child, so hasChildren can't lock it. RECEIVED / CANCELLED stay locked. */
   const isEditableStatus = po ? (po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') : false;
+  /* Owner 2026-08-20 (§8 GAP-1) — a GRN no longer freezes the WHOLE PO. The
+     lock is now field-level (matching the backend po-identity-lock):
+       · hardLocked — RECEIVED / CANCELLED: everything read-only, no Edit at all.
+       · lockedDueToChildren — a live GRN exists: only the INHERITED header
+         fields (supplier / currency / purchase location) + the LINES freeze; the
+         PO's own dates + notes stay editable. To change an inherited field,
+         cancel the GRN and edit the PO.
+     `isLocked` (= hard OR children) still gates the LINE editor + inherited
+     fields; `hardLocked` gates the Edit button + the PO-own header fields. */
+  const hardLocked = po ? !isEditableStatus : true;
   const isLocked = po ? (!isEditableStatus || hasChildren) : true;
   const lockedDueToChildren = po ? (isEditableStatus && hasChildren) : false;
 
-  /* If a PO locks while we're in Edit mode (e.g. it's Received / Cancelled
-     after a status change), drop back to View and discard the draft so the
-     page can never present editable controls on a locked PO. */
+  /* Only a HARD lock (Received / Cancelled) drops us out of Edit — a PO with a
+     GRN stays editable for its own-stage fields, so children must NOT kick us
+     back to View. */
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setEditLines([]);
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
 
   /* Seed/clear the whole-line drafts (owner 2026-06-19) — entering Edit
      populates a PoLineCard draft for EVERY current line; leaving Edit wipes
@@ -516,6 +527,13 @@ export const PurchaseOrderDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(po)), [k]: v }));
+    /* Owner 2026-08-20 (§8 GAP-1) — when a GRN exists the LINES are locked
+       (they were received), so a header date edit must NOT fan down into
+       editLines: doing so would mark a locked line "changed" and Save would
+       then 409 on the line PATCH. The header date still saves on its own; the
+       backend fills only still-NULL line slots server-side. So skip every
+       line cascade below while `lockedDueToChildren`. */
+    if (lockedDueToChildren) return;
     // Commander 2026-05-29 — header Expected Delivery cascades to every line's
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").
@@ -571,22 +589,15 @@ export const PurchaseOrderDetail = () => {
     });
 
   /* Patch one variant key + auto-compute bedframe Total Height (= Divan + Leg +
-     Gap), mirroring Create's setVariant. Editing a variant re-arms the cost
-     auto-recompute (priceTouched ← false) so the line re-prices off the new spec. */
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
+     Gap, from vendor/shared/total-height.ts — the one home, no longer a copy of
+     Create's). Editing a variant re-arms the cost auto-recompute
+     (priceTouched ← false) so the line re-prices off the new spec. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants, priceTouched: false };
     }));
@@ -1010,7 +1021,7 @@ export const PurchaseOrderDetail = () => {
               flips into draft mode; the button becomes the single "Save" that
               commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
-            <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+            <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
               <Pencil {...ICON} />
               <span>Edit</span>
             </Button>
@@ -1177,7 +1188,8 @@ export const PurchaseOrderDetail = () => {
         draft={headerView}
         onField={setHeaderField}
         onApplySupplierDateToAll={applySupplierDateToAll}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -1394,7 +1406,7 @@ export const PurchaseOrderDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  po, draft, onField, onApplySupplierDateToAll, locked, isEditing = true,
+  po, draft, onField, onApplySupplierDateToAll, locked, identityLocked = false, isEditing = true,
 }: {
   po: any;
   /** Draft header values (page-owned). In View these mirror the saved PO. */
@@ -1403,10 +1415,18 @@ const SupplierCard = ({
   onField: (k: keyof HeaderDraft, v: string) => void;
   /** Overwrite this supplier-date slot on EVERY line. Returns the line count. */
   onApplySupplierDateToAll: (k: SupplierDateKey) => number;
+  /** Hard lock — Received / Cancelled: every field read-only. */
   locked: boolean;
+  /** A live GRN exists: the INHERITED fields (supplier / currency / purchase
+   *  location) freeze because a GRN was received against them, but the PO's own
+   *  dates + notes stay editable (owner 2026-08-20, §8 GAP-1). */
+  identityLocked?: boolean;
   /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
+  // Inherited fields freeze on EITHER a hard lock or a live GRN; own fields on
+  // the hard lock only.
+  const inheritedLocked = locked || identityLocked;
   /* "Applied to N lines" acknowledgement. Deliberately an inline flash and not
      a NotifyDialog: the dialog is modal with an OK button, which would turn a
      one-tap batch into two taps for something the line cards show anyway. */
@@ -1477,6 +1497,16 @@ const SupplierCard = ({
             </div>
           </div>
         ) : (
+        <>
+        {identityLocked && (
+          <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
+            <span>
+              This PO has a Goods Receipt, so its <strong>supplier, currency, purchase location</strong> and
+              line items are locked — a GRN was received against them. Its dates and notes are still editable.
+              To change a locked field, cancel the GRN first, then edit the PO.
+            </span>
+          </div>
+        )}
         <div className={styles.formGrid4}>
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
@@ -1484,7 +1514,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.supplierId}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('supplierId', v)}
                 placeholder="— Pick supplier —"
                 options={sortByText(suppliers).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
@@ -1498,7 +1528,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.currency}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('currency', v)}
                 options={[
                   { value: 'MYR', label: 'MYR' },
@@ -1536,7 +1566,10 @@ const SupplierCard = ({
             <label className={styles.field} key={k}>
               <span className={styles.fieldLabelRow}>
                 <span className={styles.fieldLabel}>{SUPPLIER_DATE_LABEL[k]}</span>
-                {!locked && (
+                {/* "Apply to all" overwrites every LINE, which is locked once a
+                    GRN exists — hide it then, though the header date field stays
+                    editable (own-stage). */}
+                {!inheritedLocked && (
                   appliedFlash?.key === k ? (
                     <span className={styles.applyAllDone} role="status">
                       Applied to {appliedFlash.count} {appliedFlash.count === 1 ? 'line' : 'lines'}
@@ -1571,7 +1604,7 @@ const SupplierCard = ({
               <SearchableSelect
                 className={styles.fieldSelect}
                 value={draft.purchaseLocationId}
-                disabled={locked}
+                disabled={inheritedLocked}
                 onChange={(v) => onField('purchaseLocationId', v)}
                 options={[
                   { value: '', label: '— No default —' },
@@ -1587,6 +1620,7 @@ const SupplierCard = ({
               onChange={(e) => onField('notes', e.target.value)} />
           </label>
         </div>
+        </>
         )}
 
         {/* PR #75 — supplier-info auto-fill card. Read-only display sourced

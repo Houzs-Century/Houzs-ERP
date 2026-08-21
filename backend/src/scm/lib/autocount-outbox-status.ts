@@ -270,6 +270,33 @@ export function acParentlessCreateReason(missing: string): string {
 }
 
 /**
+ * What a document is going to the accounts WITHOUT — the note left on its own
+ * outbox row, at save time.
+ *
+ * THIS IS A NOTE ON A ROW THAT IS BEING SENT, not a refusal. `acNeedsAttention`
+ * reads the STATUS, so a `pending` row carrying one of these is not counted as
+ * needing anybody — the document is going, it is simply going incomplete. The
+ * page returns `reason` for every state (routes/autocount-outbox.ts:238), so
+ * this is visible on the row the moment the operator saves, which is the whole
+ * point: a delivery order that will reach the book with no reference and no date
+ * of its own is worth knowing about BEFORE the five-minute cron, not after.
+ *
+ * THE SENTENCES COME FROM `downstreamNotCarried`, which knows the difference
+ * between "the ERP has none of this" and "this route has no field for it". This
+ * function only frames them, the way `acParentlessCreateReason` frames its own —
+ * one home for wording that an owner reads.
+ *
+ * Returns null for a document that is carrying everything, so the row keeps a
+ * null `last_error` and nothing has to learn that an empty string means fine.
+ */
+export function acNotCarriedReason(notCarried: readonly string[]): string | null {
+  if (!notCarried.length) return null;
+  return 'sent, but not everything on it reached the accounts — '
+    + notCarried.join('; ')
+    + '. The document itself transferred; these are fields on it that did not.';
+}
+
+/**
  * Is this skip's reason the annotation the re-queue tool leaves behind?
  *
  * Deliberately a prefix test and not a `includes`: the annotation is prepended
@@ -394,6 +421,53 @@ export const AC_TRANSFER_OPS = [
  * health check reports the queue and never re-queues, so a copy there would be
  * a second home for a rule with no second reader.
  */
+/**
+ * Is a per-row "Send now" button worth OFFERING on this row?
+ *
+ * THE SIBLING OF `acRowIsRequeueable`, AND NOT A WIDENING OF IT. The two answer
+ * different questions and their answers are disjoint by construction: Send again
+ * asks "may this refusal be tried afresh", which is only ever true of a row that
+ * has STOPPED (failed or skipped); Send now asks "may this row, which is already
+ * going out, go out this instant instead of in five minutes", which is only ever
+ * true of a row that is still WAITING. No row can offer both, and that is the
+ * property that keeps the two buttons from meaning the same thing on screen.
+ *
+ * The owner asked for this by name — 「自动的 可是我要可以manual push」: keep the
+ * automatic sync and let a person push. Until now a waiting row had no control
+ * at all, because `acRowIsRequeueable` refuses `pending` structurally (a
+ * re-queue would INSERT a duplicate create) and so the operator could only wait
+ * for the cron.
+ *
+ * A HINT, NOT THE GATE — the same standing as its sibling. `sendOutboxRowNow`
+ * re-reads the row, re-checks the switch and takes an exclusive claim, and can
+ * still answer no for reasons this pure function cannot see. Nothing on the
+ * write path trusts this; it exists so the page does not offer a button whose
+ * answer is knowably no before it is pressed.
+ *
+ * The two structural noes:
+ *
+ *   not pending      a sent row is in the book, a failed row has given up and
+ *                    wants Send again, a skipped one never left the building.
+ *   attempts spent   the drain selects `attempts < MAX_ATTEMPTS`, so a pending
+ *                    row at the cap is stranded and a push would spend a call
+ *                    on the account book that cannot help it.
+ *
+ * NO OP RESTRICTION, deliberately, and this is where it differs most from its
+ * sibling. `acRowIsRequeueable` has to care which operation it is, because a
+ * re-queue must COMPOSE something and only some ops can be composed again. A
+ * send-now composes nothing — it dispatches the payload already sitting in the
+ * row, which is the same payload the sweep would have sent — so every operation
+ * the drain can dispatch, this can dispatch, including `edit` and `cancel`.
+ */
+export function acRowCanSendNow(
+  status: string,
+  lastError: string | null | undefined,
+  attempts: number,
+): boolean {
+  if (acOutboxState(status, lastError) !== 'pending') return false;
+  return attempts < AC_MAX_ATTEMPTS;
+}
+
 export function acRowIsRequeueable(
   op: string,
   status: string,

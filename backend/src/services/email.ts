@@ -532,9 +532,9 @@ export function inviteEmailHtml(p: {
   return `
     <div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
       <h2 style="margin:0 0 10px">You're invited to ${product}</h2>
-      <p>${p.inviterName} has invited you to join the ${product} workspace as <strong>${p.roleName}</strong>.</p>
+      <p>${escapeHtml(p.inviterName)} has invited you to join the ${product} workspace as <strong>${escapeHtml(p.roleName)}</strong>.</p>
       <p style="margin:24px 0">
-        <a href="${p.link}"
+        <a href="${escapeHtml(p.link)}"
            style="display:inline-block;padding:12px 22px;background:#a16a2e;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
           Accept invitation
         </a>
@@ -543,7 +543,7 @@ export function inviteEmailHtml(p: {
         You'll be asked to set your own password. If the button doesn't work,
         paste this link into your browser:
       </p>
-      <p style="color:#555;font-size:11px;word-break:break-all">${p.link}</p>
+      <p style="color:#555;font-size:11px;word-break:break-all">${escapeHtml(p.link)}</p>
       <p style="color:#777;font-size:12px">
         This invitation expires in ${p.expiresIn}. If you weren't expecting it,
         you can ignore this email.
@@ -639,14 +639,14 @@ export function resetEmailHtml(p: {
 }): string {
   const product = p.productName?.trim() || "Houzs ERP";
   const intro = p.requestedBy
-    ? `${p.requestedBy} has initiated a password reset for your ${product} account.`
+    ? `${escapeHtml(p.requestedBy)} has initiated a password reset for your ${product} account.`
     : `We received a request to reset the password for your ${product} account. If this was you, set a new password below.`;
   return `
     <div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
-      <h2 style="margin:0 0 10px">Hi ${p.name},</h2>
+      <h2 style="margin:0 0 10px">Hi ${escapeHtml(p.name)},</h2>
       <p>${intro}</p>
       <p style="margin:24px 0">
-        <a href="${p.link}"
+        <a href="${escapeHtml(p.link)}"
            style="display:inline-block;padding:12px 22px;background:#a16a2e;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
           Set new password
         </a>

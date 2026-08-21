@@ -79,6 +79,58 @@ a backfill would paper over it rather than fix it — find the failing row first
 
 ---
 
+## The sentinel — the half that does not wait to be asked
+
+`.github/workflows/autocount-pull-sentinel.yml` -> **AutoCount pull sentinel
+(read-only)**, every six hours. It reads the same three numbers as the health
+check and then, unlike the health check, it **exits non-zero on an alarm** so the
+job fails and the standard failed-workflow email goes out. That email is the only
+notifier this repo has, and it is the same channel `do-link-sentinel.yml` and
+`mirror-sentinel.yml` use.
+
+**Why both exist.** The health check above is a DIAGNOSTIC: manual dispatch,
+always exit 0, answering a question somebody already thought to ask. The cutover
+failure was invisible precisely because nobody knew to ask — the pull ran every
+five minutes for months, reported healthy runs, and moved nothing. A diagnostic
+cannot find that. A sentinel can.
+
+| exit | meaning |
+| --- | --- |
+| 0 | checkpoint current, rows arriving |
+| 1 | ALARM — checkpoint stale past 2 days, or nothing arrived in 30 days, or the checkpoint is missing/unparseable/in the future |
+| 2 | CANNOT ANSWER — no database, the query failed, or the mirror holds no timestamped rows at all |
+
+**Exit 2 fails the job on purpose.** A sentinel that cannot see must not report
+green; that is the `audit:map`-crashing-for-three-weeks shape. And an EMPTY
+mirror is refused rather than answered: zero rows makes "nothing arrived in 30
+days" trivially true, and reporting that as a stalled pull would send the next
+reader at the wrong system.
+
+The thresholds live in `backend/scripts/lib/autocount-pull-rules.mjs` as a pure
+function with `backend/scripts/lib/autocount-pull-rules.test.mjs` beside it, and
+the workflow runs that test before the sentinel. The 2-day staleness limit is
+taken from the health check rather than invented, so the two cannot drift apart.
+The 30-day arrival limit is deliberately far looser than any plausible quiet
+period and has NOT been calibrated against this book's live arrival distribution
+— the query to calibrate it is in the script's header.
+
+**`pull_checkpoint` carries no timezone**, and the first live dispatch is how
+that was learned: it printed `-1d behind`, because the stored
+`2026-08-19T20:35:34` was read as UTC while it is MYT — 7.5 hours "ahead" for a
+checkpoint half an hour old. The zone is NOT hardcoded from that one sample.
+Instead the comparison tolerates any real UTC offset (-12..+14), so up to 14h of
+slop rides on the 2-day limit, which really fires between ~1.4 and ~2.6 days. A
+checkpoint further ahead than any offset explains is a separate alarm, because
+the next `getSince()` would ask for a window starting in the future and skip
+everything before it.
+
+**What the sentinel cannot see:** whether the HISTORY is complete. The
+incremental pull asks `getSince(checkpoint)`, so an order last modified before
+the mirror's earliest checkpoint was never offered. That gap is invisible to
+every alarm here and is what the `?since=` windows above are for.
+
+---
+
 ## The trap this module was built around
 
 At the Postgres cutover the INSERT in `services/pull.ts` named seven columns the
@@ -92,3 +144,61 @@ The INSERT is fixed. What has **not** been built is anything that watches for th
 shape: *the pull ran, reported success, and moved nothing.* Until that exists,
 this class is found the way it was found this time — by a person who cannot do
 their job. See `BUG-HISTORY.md`, 2026-08-19.
+
+---
+
+## `GET /rest-page-ceiling` — the one number nobody had measured
+
+**Read-only. Gated on `*`** (not on the `system_health` page): the ladder below
+issues multi-thousand-row reads, so an unauthenticated or broadly-granted
+trigger would be a denial-of-service lever. It is the same gate this module's
+other heavy admin routes already carry.
+
+### What it answers
+
+`backend/src/scm/lib/paginate-all.ts` pages in `PAGE = 1000` windows and stops
+on the first page shorter than `PAGE`. Its header asserted that PostgREST caps a
+response at 1000 rows — **an assertion nothing had ever observed.** 52 files
+import `paginateAll`, and the number decides whether they are correct:
+
+| real ceiling | consequence |
+| --- | --- |
+| `>= PAGE` | the short-page stop is sound |
+| `< PAGE` | page one comes back short, the loop stops on it, and **every paged read in the tree truncates silently** |
+
+The response reports, per requested limit (500 / 1000 / 1001 / 5000): rows
+actually returned, the `Content-Range` total, and whether the edge capped.
+**The gap between those two numbers is the answer.** It also issues
+`paginateAll`'s own `.range(0, PAGE-1)` window and states a verdict —
+`CORRECT`, `TRUNCATES_SILENTLY`, or `UNKNOWN`.
+
+### Reading it honestly
+
+- A rung whose `contentRangeTotal` is `<=` its requested limit is marked
+  **`inconclusive`** and excluded from `ceiling`. That read ran out of *table*,
+  not out of *ceiling*, and counting it would manufacture a number.
+- `ceiling: null` / `status: "unknown"` is a real answer, not a failure. It
+  means no probe pushed past the table's own size.
+- `crossTable` re-asks the decisive `PAGE+1` of every other candidate table big
+  enough to answer, so agreement across tables is **shown** rather than argued
+  from "`db-max-rows` is server-level config".
+- It measures a **row** cap only. Response-size and URI-length limits are
+  different failures — see `URL_QUERY_BUDGET` in `paginate-all.ts` for the URI one.
+- **Counts only.** No row, id, document number or name reaches the payload.
+
+### Why it lives in the Worker
+
+`backend/src/db/supabase.ts` builds a real `createClient`, and every
+`sb.from(...)` in the SCM module is a PostgREST call — so the ceiling is a
+property of the **REST edge**, and only something holding `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY` can ask it. Those are **Worker** secrets and must
+stay that way: this repository is public, non-admin collaborators can read
+repository secrets, and the service-role key bypasses RLS on the single database
+both tenants share. `backend/scripts/probe-mrp-read-ceiling.mjs` was written to
+answer this from Actions and its REST half **never ran once** — it printed
+`SKIPPED` and the workflow reported success. Rewriting it over `DATABASE_URL`
+would have measured Postgres, which is not the thing in question.
+
+**To get the number:** deploy, sign in as an owner, and call the route. If it
+returns `TRUNCATES_SILENTLY`, `paginateAll` is wrong and that is its own fix,
+not a footnote to this one.

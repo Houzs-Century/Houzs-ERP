@@ -34,7 +34,7 @@
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig } from '../lib/mfg-products-queries';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
-import type { FabricTrackingRow } from '../lib/fabric-queries';
+import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
 import { MoneyInput } from './MoneyInput';
@@ -127,7 +127,7 @@ export const PcLineCard = ({
   /** Maintenance config (variant option pools). null until loaded. */
   maint: MaintenanceConfig | null;
   /** Fabric trackings (variant fabric dropdown). */
-  fabrics: FabricTrackingRow[];
+  fabrics: FabricLite[];
   /** Patch arbitrary line fields. */
   onChange: (patch: Partial<PcLineDraft>) => void;
   /** Adopt a supplier binding (fills code + name + SKU + price + category). */

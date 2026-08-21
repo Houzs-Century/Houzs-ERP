@@ -88,6 +88,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   remedy: null,
   needs_attention: false,
   can_requeue: false,
+  can_send_now: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -291,11 +292,47 @@ describe("acWritebackLine — the switch, without the setting it lives in", () =
     expect(acWritebackLine(payload({ writeback: { value: null, on: false, scope: "off" } })))
       .toContain("never been set");
   });
+
+  /* OFF FOR THIS COMPANY IS NOT OFF ALTOGETHER — the switch is a company
+     ALLOW-LIST, and until 2026-08-18 the server published "is it on for
+     anybody" under the name `on`. A reader in the company NOT on the list was
+     told sending was switched on FOR HIS COMPANY, and that saving a document
+     would queue it. Neither was true, his queue is company-scoped and stays
+     empty, and nothing errors. Same screen, same build, two organisations, and
+     one of them was reading a false sentence.
+
+     The old off-branch would have been just as wrong in the other direction: it
+     would have called a perfectly well-formed value a typo that "does not read
+     as on". Name the real situation instead. */
+  it("says on for ANOTHER company, not that the value is a typo", () => {
+    const line = acWritebackLine(payload({ writeback: { value: "1", on: false, scope: "1" } }));
+    expect(line).toContain("switched off for this company");
+    expect(line).toContain("another company");
+    expect(line).not.toContain("does not read as on");
+  });
+
+  it("pluralises when the allow-list names several companies", () => {
+    expect(acWritebackLine(payload({ writeback: { value: "1,3", on: false, scope: "1,3" } })))
+      .toContain("other companies");
+  });
+
+  /* NULL IS ITS OWN STATE. The server could not resolve which company the
+     reader is in, so it declines rather than guessing — and the page must
+     decline too. Rendering that as "switched off" would state as fact the very
+     thing that could not be established. */
+  it("declines to answer when the company could not be resolved", () => {
+    const line = acWritebackLine(payload({ writeback: { value: "1", on: null, scope: "1" } }));
+    expect(line).toContain("could not be checked");
+    expect(line).not.toContain("switched off");
+    const h = acHeadline(payload({ writeback: { value: "1", on: null, scope: "1" } }));
+    expect(h.text).toContain("could not be established");
+    expect(h.text).not.toContain("queues nothing");
+  });
 });
 
 describe("the refusal, in three parts", () => {
   it("gives a held-back document a headline, an explanation and a To fix", () => {
-    const c = acReasonCopy("skipped", "missing-location");
+    const c = acReasonCopy("skipped", "missing-location", null);
     expect(c?.headline).toMatch(/warehouse/i);
     expect(c?.explain.length).toBeGreaterThan(20);
     expect(c?.toFix).toMatch(/Send again/);
@@ -320,22 +357,22 @@ describe("the refusal, in three parts", () => {
   });
 
   it("says it has no words yet rather than guessing at a lookalike", () => {
-    expect(acReasonCopy("skipped", "a-class-written-next-month")).toBe(AC_UNRECOGNISED_COPY);
+    expect(acReasonCopy("skipped", "a-class-written-next-month", null)).toBe(AC_UNRECOGNISED_COPY);
   });
 
   it("gives a refused document the AutoCount copy, since the server does not classify those", () => {
-    expect(acReasonCopy("failed", null)).toBe(AC_FAILED_COPY);
+    expect(acReasonCopy("failed", null, null)).toBe(AC_FAILED_COPY);
   });
 
   /* A To fix line on a row that has already been sent again would send somebody
      to fix what is already fixed — the whole reason `requeued` exists. */
   it("gives a re-queued row no To fix, even though it still carries a kind", () => {
-    expect(acReasonCopy("requeued", "item-code")).toBeNull();
+    expect(acReasonCopy("requeued", "item-code", null)).toBeNull();
   });
 
   it("says nothing about a waiting or an arrived document", () => {
-    expect(acReasonCopy("pending", null)).toBeNull();
-    expect(acReasonCopy("sent", null)).toBeNull();
+    expect(acReasonCopy("pending", null, null)).toBeNull();
+    expect(acReasonCopy("sent", null, null)).toBeNull();
   });
 });
 
@@ -822,16 +859,46 @@ describe("acWhatWasSaid — who spoke, and how much of it is on screen", () => {
     expect(acWhatWasSaid(erp, false).said).toBe(erp.reason);
   });
 
-  it("never folds AutoCount's own sentence away, plain words or not", () => {
+  /* THIS USED TO ASSERT "never folds AutoCount's own sentence away, plain words
+     or not", by calling acWhatWasSaid directly with hasWords=true. That flag
+     said "who spoke" when it was written, because the only notes this file had
+     words for were the ERP's — so for an AutoCount answer the true branch was
+     unreachable and asserting it pinned a case the page could not produce.
+
+     `AC_AUTOCOUNT_SAID` made it reachable, and the PROPERTY worth protecting is
+     unchanged: an AutoCount refusal this file cannot explain must keep its words
+     ON THE ROW, because there the machine's sentence is the entire diagnosis.
+     What changed is that the property is now asserted through `acRowDetail`, the
+     caller that actually decides the flag — a test that hand-feeds an argument
+     its only caller would never pass proves nothing about the screen. */
+  it("never folds an AutoCount sentence this file cannot explain", () => {
     const failed = row({
       state: "failed",
       reason: "Invalid transfer item. || source SO lines as the book holds them: 905348 Qty=1",
     });
-    for (const hasWords of [true, false]) {
-      const said = acWhatWasSaid(failed, hasWords);
-      expect(said.said).toBe("Invalid transfer item.");
-      expect(said.technical).toBe("source SO lines as the book holds them: 905348 Qty=1");
-    }
+    /* Through the real caller: no translation exists for this string, so the
+       generic failed copy is used and the quote stays in view. */
+    const detail = acRowDetail(failed, false);
+    expect(detail.said!.said).toBe("Invalid transfer item.");
+    expect(detail.said!.technical).toBe("source SO lines as the book holds them: 905348 Qty=1");
+    /* And directly, on the branch acRowDetail computes for it. */
+    const said = acWhatWasSaid(failed, false);
+    expect(said.said).toBe("Invalid transfer item.");
+  });
+
+  /* The other half of the same rule, and the reason the flag stopped being about
+     who spoke: where this file DOES say what the note says, the raw text is
+     duplication on the face of the row and belongs in the disclosure — exactly
+     where the ERP's own notes already go. */
+  it("folds an AutoCount sentence away once this file has plain words for it", () => {
+    const refused = row({
+      state: "failed",
+      reason: "Gave up after 6 attempts. Last error: Primary Key Error",
+    });
+    const detail = acRowDetail(refused, false);
+    expect(detail.line).toBe("AutoCount already has a document with this number");
+    expect(detail.said!.said).toBeNull();
+    expect(detail.said!.technical).toContain("Primary Key Error");
   });
 
   it("says nothing came back, rather than inventing a speaker", () => {

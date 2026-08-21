@@ -347,10 +347,55 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(body.writeback?.on).toBe(false);
   });
 
+  /* THE SWITCH IS A COMPANY ALLOW-LIST, AND `on` ANSWERS FOR ONE COMPANY.
+     Until 2026-08-18 this route read the scope bare and published
+     `on: scope !== 'off'` — "is it on for ANYBODY" — while all eight enqueue
+     gates asked `isWritebackEnabled(sb, companyId)`. With the live value set to
+     one company, the OTHER organisation's operator was told on this page that
+     sending was switched on FOR HIS COMPANY and that saving a document would
+     queue it. His queue is company-scoped, so it stays empty and nothing
+     errors: a false sentence with no symptom attached to it.
+
+     This test used to pass NO company at all and still assert `on === true`,
+     which is how the company-blind reading looked correct. Its title already
+     said "for the named company"; now it names one. */
   it('reads an on flag as on, for the named company', async () => {
-    const { body } = await get(harness({ outbox: [], flag: '1' }));
+    const { body } = await get(harness({ outbox: [], flag: '1', companyId: 1 }));
     expect(body.writeback?.on).toBe(true);
     expect(body.writeback?.scope).toBe('1');
+  });
+
+  it('is OFF for a company the allow-list does not name, while still reporting the scope', async () => {
+    const { body } = await get(harness({ outbox: [], flag: '1', companyId: 2 }));
+    expect(body.writeback?.on).toBe(false);
+    // The scope is still the whole truth — an admin has to be able to see the
+    // allow-list — it is `on` that is answered per company.
+    expect(body.writeback?.scope).toBe('1');
+    expect(body.writeback?.value).toBe('1');
+  });
+
+  it("'all' is on for every company, including one not in any list", async () => {
+    const { body } = await get(harness({ outbox: [], flag: 'all', companyId: 2 }));
+    expect(body.writeback?.on).toBe(true);
+    expect(body.writeback?.scope).toBe('all');
+  });
+
+  /* UNRESOLVED IS NOT OFF. A REPORT and an ENQUEUE want opposite answers here:
+     the enqueue must refuse (never write into a live account book on a guess),
+     while this page must not claim the switch is off on the strength of a
+     company it could not resolve. null is its own state and the client renders
+     its own sentence for it. */
+  it('answers null, not false, when the company cannot be resolved', async () => {
+    const { body } = await get(harness({ outbox: [], flag: '1', companyId: undefined }));
+    expect(body.writeback?.on).toBeNull();
+    expect(body.writeback?.scope).toBe('1');
+  });
+
+  it('an off switch is off for everyone, resolved company or not', async () => {
+    const off = await get(harness({ outbox: [], flag: 'off', companyId: 1 }));
+    expect(off.body.writeback?.on).toBe(false);
+    const unresolved = await get(harness({ outbox: [], flag: 'off', companyId: undefined }));
+    expect(unresolved.body.writeback?.on).toBe(false);
   });
 
   /* An UNREADABLE switch and an ABSENT switch render as opposite claims — "OFF"

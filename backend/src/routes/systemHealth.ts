@@ -3,6 +3,7 @@ import type { Env } from "../types";
 import { requirePermission, requirePageAccess } from "../middleware/auth";
 import { isSupabaseConfigured, getSupabaseService } from "../db/supabase";
 import { reconcileLedger } from "../scm/lib/reconcile-ledger";
+import { PAGE as PAGINATE_ALL_PAGE } from "../scm/lib/paginate-all";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Gated on the
@@ -177,6 +178,281 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
     anthropic,
     scm,
     counts,
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// GET /rest-page-ceiling — HOW MANY ROWS DOES THE POSTGREST EDGE ACTUALLY HAND
+// BACK? Read-only: every call below is a GET of ONE narrow column, and the
+// response carries counts only — never a row, a doc_no or a name.
+//
+// WHY THIS LIVES IN THE WORKER AND NOT IN A SCRIPT. The number is a property of
+// the REST edge, and only the Worker can ask it: `db/supabase.ts:66` builds the
+// real `createClient(url, serviceKey)` and every `sb.from(...)` in the SCM
+// module is a PostgREST call, but those two credentials exist ONLY as Worker
+// secrets. They are deliberately NOT GitHub secrets (public repo, readable by
+// non-admin collaborators, and the service-role key bypasses RLS on a database
+// two tenants share), so `probe-mrp-read-ceiling.mjs`'s REST half could never
+// run from Actions — runs 31941352447 and 31942066593 both printed
+// "SKIPPED — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set". Rewriting it
+// over DATABASE_URL would have measured Postgres, which is not the thing in
+// question. So it is asked from the process that already holds the credentials
+// and already issues the exact request.
+//
+// WHAT IT SETTLES. `lib/paginate-all.ts`'s header asserts a 1000-row cap; that
+// assertion was never measured, and 52 files page against `PAGE`. Two failures
+// are possible and this separates them:
+//   · ceiling >= PAGE — paginateAll's short-page stop is sound.
+//   · ceiling <  PAGE — page one comes back short, the loop stops on it, and
+//     EVERY paged read in the tree truncates silently.
+// It imports the real `PAGE` rather than restating 1000, so the verdict cannot
+// agree with itself by construction.
+//
+// HOW TO READ IT. `returned` vs `contentRangeTotal` is the whole answer: the
+// total is what the filter matches, `returned` is what arrived. A gap is rows
+// dropped with no error. A probe is only informative when the table holds MORE
+// rows than were requested — otherwise the read ran out of table, not out of
+// ceiling, and it is reported `inconclusive` rather than counted as evidence.
+// ---------------------------------------------------------------------------
+
+/* CANDIDATE TABLES, probed head-only first so the ladder runs against whichever
+   actually holds enough rows to be informative. A fixed table cannot do that
+   job across environments: production's `mfg_sales_order_items` carries ~13.9k
+   rows, but on staging that same table holds 67 (run 32281490702) while
+   `mfg_products` holds 1,326 — so a hardcoded target answers on one stack and
+   returns "inconclusive" on the other. All are SCM master/among-largest tables
+   and all are read as `select=id` alone. This is a fixed allow-list, never a
+   caller-supplied table name: the gate is `*`, but a table name off the wire
+   would still be an arbitrary-read primitive. */
+const CEILING_CANDIDATES = [
+  "mfg_sales_order_items",
+  "mfg_products",
+  "mfg_sales_orders",
+  "purchase_order_items",
+] as const;
+/* Straddles the asserted 1000 on both sides so the ceiling is LOCATED rather
+   than assumed. PAGE+1 is the one that matters: at exactly PAGE, a cap and a
+   table that happens to stop there are indistinguishable. */
+const CEILING_LIMITS = [500, 1000, 1001, 5000] as const;
+
+/** Error text without an `any`: a thrown value is `unknown` until proven. */
+function errText(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
+type CeilingProbe = {
+  requested: number;
+  returned: number | null;
+  contentRangeTotal: number | null;
+  short: boolean | null;
+  cappedByEdge: boolean | null;
+  inconclusive: boolean | null;
+  error?: string;
+};
+
+app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
+  if (!isSupabaseConfigured(c.env)) {
+    return c.json(
+      {
+        check: "rest_page_ceiling",
+        status: "unknown",
+        error: "Supabase REST is not configured on this Worker — nothing to measure.",
+      },
+      503,
+    );
+  }
+
+  const sb = getSupabaseService(c.env);
+  const probes: CeilingProbe[] = [];
+
+  /* STEP 1 — size the candidates, head-only (`head: true` sends the count
+     request and returns ZERO rows), then probe the biggest. A ladder is only
+     evidence about a ceiling when the table can outrun the limit being asked
+     for, so the target is chosen by measurement rather than assumed. */
+  const sizes: { table: string; total: number | null; error?: string }[] = [];
+  for (const table of CEILING_CANDIDATES) {
+    try {
+      const { count, error } = await sb.from(table).select("id", { count: "exact", head: true });
+      sizes.push({ table, total: typeof count === "number" ? count : null, error: error?.message });
+    } catch (e: unknown) {
+      sizes.push({ table, total: null, error: errText(e, "count failed") });
+    }
+  }
+  const countable = sizes
+    .filter((x) => typeof x.total === "number")
+    .sort((a, b) => (b.total as number) - (a.total as number));
+  if (countable.length === 0) {
+    return c.json({
+      check: "rest_page_ceiling",
+      status: "unknown",
+      error: "no candidate table could be counted — cannot measure a ceiling",
+      tableSizes: sizes,
+    }, 200);
+  }
+  const CEILING_TABLE = countable[0].table;
+
+  for (const requested of CEILING_LIMITS) {
+    const t0 = Date.now();
+    try {
+      const { data, count, error } = await sb
+        .from(CEILING_TABLE)
+        .select("id", { count: "exact" })
+        .limit(requested);
+      if (error) {
+        probes.push({
+          requested, returned: null, contentRangeTotal: null,
+          short: null, cappedByEdge: null, inconclusive: null,
+          error: error.message,
+        });
+        continue;
+      }
+      const returned = data.length;
+      const total = typeof count === "number" ? count : null;
+      /* "The table ran out" and "the edge capped" are the same observation
+         unless the total exceeds what was asked for. Only the latter is
+         evidence about a ceiling. */
+      const inconclusive = total == null ? true : total <= requested;
+      probes.push({
+        requested,
+        returned,
+        contentRangeTotal: total,
+        short: returned < requested,
+        cappedByEdge: inconclusive ? null : returned < requested,
+        inconclusive,
+      });
+    } catch (e: unknown) {
+      probes.push({
+        requested, returned: null, contentRangeTotal: null,
+        short: null, cappedByEdge: null, inconclusive: null,
+        error: `${errText(e, "probe failed")} (after ${Date.now() - t0}ms)`,
+      });
+    }
+  }
+
+  /* paginateAll's FIRST WINDOW, issued in its own shape rather than inferred
+     from the `.limit()` probes above. `.range(a,b)` is a Range header, not a
+     `limit=` parameter, and the second-order question is specifically about
+     what THIS call returns — so it is measured, not reasoned about. */
+  let firstWindow: CeilingProbe = {
+    requested: PAGINATE_ALL_PAGE, returned: null, contentRangeTotal: null,
+    short: null, cappedByEdge: null, inconclusive: null,
+  };
+  try {
+    const { data, count, error } = await sb
+      .from(CEILING_TABLE)
+      .select("id", { count: "exact" })
+      .range(0, PAGINATE_ALL_PAGE - 1);
+    if (error) firstWindow.error = error.message;
+    else {
+      const returned = data.length;
+      const total = typeof count === "number" ? count : null;
+      const inconclusive = total == null ? true : total <= PAGINATE_ALL_PAGE;
+      firstWindow = {
+        requested: PAGINATE_ALL_PAGE,
+        returned,
+        contentRangeTotal: total,
+        short: returned < PAGINATE_ALL_PAGE,
+        cappedByEdge: inconclusive ? null : returned < PAGINATE_ALL_PAGE,
+        inconclusive,
+      };
+    }
+  } catch (e: unknown) {
+    firstWindow.error = errText(e, "range probe failed");
+  }
+
+  /* THE CEILING. The most rows the edge was ever willing to hand back — taken
+     from the probes that actually pushed past the table's own size, because a
+     read that ran out of rows says nothing about a cap. `null` when no probe
+     was conclusive, and that is reported as UNKNOWN rather than smoothed into
+     a number. */
+  const conclusive = probes.filter((p) => p.inconclusive === false && p.returned != null);
+  const ceiling = conclusive.length
+    ? Math.max(...conclusive.map((p) => p.returned as number))
+    : null;
+
+  /* THE SECOND-ORDER VERDICT. paginateAll stops on the first page shorter than
+     PAGE, so a ceiling BELOW PAGE makes page one look final. Decided from the
+     measured first window where that is conclusive — the direct observation —
+     and from `ceiling` otherwise. */
+  let paginateAll: { page: number; verdict: string; basis: string };
+  if (firstWindow.inconclusive === false && firstWindow.returned != null) {
+    paginateAll = {
+      page: PAGINATE_ALL_PAGE,
+      verdict: firstWindow.returned >= PAGINATE_ALL_PAGE ? "CORRECT" : "TRUNCATES_SILENTLY",
+      basis:
+        `measured directly: its own .range(0, ${PAGINATE_ALL_PAGE - 1}) window returned ` +
+        `${firstWindow.returned} of ${firstWindow.contentRangeTotal} matching rows`,
+    };
+  } else if (ceiling != null) {
+    paginateAll = {
+      page: PAGINATE_ALL_PAGE,
+      verdict: ceiling >= PAGINATE_ALL_PAGE ? "CORRECT" : "TRUNCATES_SILENTLY",
+      basis: `inferred from the measured ceiling ${ceiling} (the .range() probe was inconclusive)`,
+    };
+  } else {
+    paginateAll = {
+      page: PAGINATE_ALL_PAGE,
+      verdict: "UNKNOWN",
+      basis: "no probe was conclusive — see scopeNotes",
+    };
+  }
+
+  /* DOES THE CAP GENERALISE? PostgREST's row cap is server configuration
+     (`db-max-rows`), not a per-table property — but that is a claim about how
+     PostgREST is built, and this endpoint exists because claims of that shape
+     went unchecked for weeks. So ask the SAME decisive limit (PAGE+1) of every
+     OTHER candidate big enough to answer, and let the payload show whether the
+     number repeats across tables instead of asserting that it must. */
+  const crossTable: CeilingProbe[] = [];
+  for (const s2 of sizes) {
+    if (s2.table === CEILING_TABLE) continue;
+    if (typeof s2.total !== "number" || s2.total <= PAGINATE_ALL_PAGE) continue;
+    const requested = PAGINATE_ALL_PAGE + 1;
+    try {
+      const { data, count, error } = await sb
+        .from(s2.table)
+        .select("id", { count: "exact" })
+        .limit(requested);
+      if (error) {
+        crossTable.push({ requested, returned: null, contentRangeTotal: null, short: null, cappedByEdge: null, inconclusive: null, error: `${s2.table}: ${error.message}` });
+        continue;
+      }
+      const returned = data.length;
+      const total = typeof count === "number" ? count : null;
+      const inconclusive = total == null ? true : total <= requested;
+      crossTable.push({
+        requested, returned, contentRangeTotal: total,
+        short: returned < requested,
+        cappedByEdge: inconclusive ? null : returned < requested,
+        inconclusive,
+        error: undefined,
+      });
+    } catch (e: unknown) {
+      crossTable.push({ requested, returned: null, contentRangeTotal: null, short: null, cappedByEdge: null, inconclusive: null, error: `${s2.table}: ${errText(e, "probe failed")}` });
+    }
+  }
+
+  return c.json({
+    check: "rest_page_ceiling",
+    label: "PostgREST page ceiling, measured at the edge",
+    time: new Date().toISOString(),
+    status: ceiling == null ? "unknown" : "ok",
+    table: CEILING_TABLE,
+    tableSizes: sizes,
+    ceiling,
+    probes,
+    crossTable,
+    paginateAllFirstWindow: firstWindow,
+    paginateAll,
+    /* WHAT THIS MEASUREMENT CANNOT SEE. Stated in the payload, not just in a
+       comment, because the number gets quoted and the caveats get dropped. */
+    scopeNotes: [
+      `The ladder is direct evidence about ONE table (${CEILING_TABLE}, chosen as the largest countable candidate) read as a single narrow column through getSupabaseService — the same client the SCM module uses.`,
+      `Generalisation is measured, not asserted: \`crossTable\` re-asks the decisive ${PAGINATE_ALL_PAGE + 1} of every other candidate holding more than ${PAGINATE_ALL_PAGE} rows. ${crossTable.length} such table(s) were available here. PostgREST's cap is server-level \`db-max-rows\` rather than per-table, so agreement across tables is expected — but where crossTable is empty, only the one table is actually evidenced.`,
+      "A probe whose contentRangeTotal is <= its requested limit is marked inconclusive: the read ran out of rows, not out of ceiling, so it is not counted toward `ceiling`.",
+      "This measures a ROW cap only. A wide select, an embedded resource, or a large payload can fail on response size or URI length instead — different limits, not measured here (see lib/paginate-all.ts's URL_QUERY_BUDGET for the URI one).",
+    ],
   });
 });
 

@@ -8,18 +8,23 @@
  * NO SHEBANG — see the header of working-agreement.mjs.
  */
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  addsBugHistoryEntry,
+  addsBugEntry,
   buildModuleIndex,
   detectFixIntent,
   detectSurfaceChanges,
   evaluate,
+  findObservation,
+  findRemedyClaims,
   isCodePath,
   isSurfacePath,
   mapPathToGuides,
   parseUnifiedDiff,
+  RULE_ORDER,
+  renderOrder,
   stripTemplateLines,
 } from "./working-agreement.mjs";
 
@@ -32,6 +37,19 @@ const diff = (path, added = [], removed = [], section = "") =>
     `+++ b/${path}`,
     `@@ -1,3 +1,3 @@ ${section}`,
     ...removed.map((l) => `-${l}`),
+    ...added.map((l) => `+${l}`),
+  ].join("\n");
+
+/* What `git diff` emits for a file it CREATED. Rule 1 keys on this since the
+   ledger became one file per entry: an entry is a new PATH, and the shape of
+   the diff is the only thing that says so. */
+const created = (path, added = []) =>
+  [
+    `diff --git a/${path} b/${path}`,
+    `new file mode 100644`,
+    `--- /dev/null`,
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${added.length} @@`,
     ...added.map((l) => `+${l}`),
   ].join("\n");
 
@@ -96,11 +114,54 @@ test("word boundaries: debug and 500ms are not fix signals", () => {
   assert.equal(detectFixIntent({ title: "returns 500 on empty", branch: "feat/x", body: "", templateBody: TEMPLATE }).isFix, true);
 });
 
-test("a BUG-HISTORY entry is a new heading, not a touched file", () => {
-  assert.equal(addsBugHistoryEntry(parseUnifiedDiff(diff("BUG-HISTORY.md", ["typo"]))).entry, false);
-  const ok = addsBugHistoryEntry(parseUnifiedDiff(diff("BUG-HISTORY.md", ["## The thing broke [high]"])));
+test("a bug entry is a NEW FILE under docs/bugs/ carrying a heading", () => {
+  // A new file with no heading is not an entry.
+  assert.equal(addsBugEntry(parseUnifiedDiff(created("docs/bugs/0462-x.md", ["typo"]))).entry, false);
+
+  // An EDIT to an existing entry is somebody else's entry, not yours.
+  const edit = addsBugEntry(parseUnifiedDiff(diff("docs/bugs/0461-old.md", ["## Reworded heading [high]"])));
+  assert.equal(edit.touched, true, "the directory was touched");
+  assert.equal(edit.entry, false, "editing an existing entry is not logging a new bug");
+
+  const ok = addsBugEntry(parseUnifiedDiff(created("docs/bugs/0462-the-thing-broke.md", ["## The thing broke [high]"])));
   assert.equal(ok.entry, true);
   assert.equal(ok.heading, "## The thing broke [high]");
+  assert.equal(ok.file, "docs/bugs/0462-the-thing-broke.md");
+});
+
+test("a mis-named new file in the ledger directory is reported, not counted", () => {
+  /* The one failure that would otherwise look like a clean pass: a file that
+     is invisible to the ledger, the index AND this gate simultaneously. */
+  const r = addsBugEntry(parseUnifiedDiff(created("docs/bugs/my-notes.md", ["## The thing broke [high]"])));
+  assert.equal(r.entry, false);
+  assert.deepEqual(r.misnamed, ["docs/bugs/my-notes.md"]);
+
+  // The directory's own README is not an entry and is not a mis-named one.
+  const readme = addsBugEntry(parseUnifiedDiff(created("docs/bugs/README.md", ["# The bug ledger"])));
+  assert.equal(readme.entry, false);
+  assert.deepEqual(readme.misnamed, []);
+});
+
+test("parseUnifiedDiff marks a created file, from either header", () => {
+  const viaMode = parseUnifiedDiff(created("docs/bugs/0462-x.md", ["## x [low]"]))[0];
+  assert.equal(viaMode.isNew, true);
+  /* `gh pr diff` has been seen to omit `new file mode`, so `--- /dev/null`
+     alone must be enough — and it must not land in `removed` as `-- /dev/null`,
+     which is what happened before it was intercepted. */
+  const viaDevNull = parseUnifiedDiff(
+    [
+      "diff --git a/docs/bugs/0462-x.md b/docs/bugs/0462-x.md",
+      "--- /dev/null",
+      "+++ b/docs/bugs/0462-x.md",
+      "@@ -0,0 +1,1 @@",
+      "+## x [low]",
+    ].join("\n"),
+  )[0];
+  assert.equal(viaDevNull.isNew, true);
+  assert.deepEqual(viaDevNull.removed, []);
+
+  const edited = parseUnifiedDiff(diff("backend/src/a.ts", ["const x = 1;"]))[0];
+  assert.equal(edited.isNew, false);
 });
 
 test("rule 1 fails a fix that changes code without an entry, and the escape says why", () => {
@@ -113,13 +174,13 @@ test("rule 1 fails a fix that changes code without an entry, and the escape says
   assert.equal(escaped.ok, true);
   const esc = escaped.findings.find((f) => f.level === "escape");
   assert.match(esc.message, /SKIPPED by label/);
-  assert.match(esc.message, /NO BUG-HISTORY.md entry/, "an escape must PRINT the violation it waives");
+  assert.match(esc.message, /NO docs\/bugs\/ entry/, "an escape must PRINT the violation it waives");
 
   const logged = evaluate({
     ...base,
     title: "fix the repair script",
     branch: "fix/x",
-    files: [...files, ...parseUnifiedDiff(diff("BUG-HISTORY.md", ["## The repair script double-encoded jsonb [high]"]))],
+    files: [...files, ...parseUnifiedDiff(created("docs/bugs/0462-the-repair-script-double-encoded-jsonb.md", ["## The repair script double-encoded jsonb [high]"]))],
   });
   assert.equal(logged.ok, true);
 });
@@ -312,4 +373,283 @@ test("rule 2 ignores a file no guide quotes, so the gate cannot spread on its ow
   ]);
   const res = evaluate({ ...base, files: parseUnifiedDiff(undocumented) });
   assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "module-guide"), false);
+});
+
+// --------------------------------------------------------------------------
+// Rule 4 — a remedy claim needs the run that proved it
+// --------------------------------------------------------------------------
+
+/* The two strings below are QUOTED FROM THE REPO, not invented for the test.
+   The first is the sentence that cost a salesperson a working day; the second
+   is the correction that replaced it. A gate whose fixtures are written by the
+   same person who wrote the regex proves only that the regex is self-consistent,
+   so these are the real ones and they are checked in both directions. */
+const THE_CLAIM_THAT_SHIPPED = [
+  '    console.log("   still be reporting successful runs — it counts per-row failures and");',
+  '    console.log("   carries on. Run the pull in \'all\' mode: pull.ts:29 says that path");',
+  '    console.log("   uses /getAll and does NOT touch the checkpoint, so it is the clean");',
+  '    console.log("   way to collect a backlog without unfreezing anything by hand.");',
+].join("\n");
+
+const THE_CORRECTION = [
+  "**`all` DOES NOT WORK on this book, and that was measured rather than reasoned.**",
+  "Dispatched against production 2026-08-19: 39 seconds, then HTTP 503",
+  "`Worker exceeded resource limits`. `getAll()` over ~13,000 orders cannot fetch and",
+  "upsert inside one Cloudflare Worker request.",
+].join("\n");
+
+test("rule 4 fires on the real sentence that shipped, and stays silent on its correction", () => {
+  const claims = findRemedyClaims(THE_CLAIM_THAT_SHIPPED);
+  assert.equal(claims.length, 1, "the claim that cost a day must be detected");
+  assert.match(claims[0].text, /Run the pull in 'all' mode/);
+
+  assert.deepEqual(findRemedyClaims(THE_CORRECTION), [], "a correction must not read as a claim");
+});
+
+test("rule 4 does not fire on a mention of an operation that prescribes nothing", () => {
+  /* The first draft of this detector fired here — `\brun\b` matched the noun.
+     A gate that flags narration is a gate that gets routed around. */
+  assert.deepEqual(
+    findRemedyClaims("the job kept reporting a normal-looking run. The INSERT is fixed now."),
+    [],
+  );
+  assert.deepEqual(findRemedyClaims("Running the migration is what BROKE it."), []);
+  assert.deepEqual(findRemedyClaims("Should I run the backfill to fix this?"), [], "a question asserts nothing");
+});
+
+test("rule 4 reads a claim split across lines, because that is how it was written", () => {
+  /* Same-line matching missed the real defect: the instruction and the promise
+     were four console.log lines apart. */
+  const split = "Re-run the sync.\nThat collects everything the checkpoint skipped.";
+  assert.equal(findRemedyClaims(split).length, 1);
+});
+
+test("rule 4 ignores fenced blocks — the evidence is not the claim", () => {
+  const withFence = ["```", "Run the pull in all mode; it collects the backlog", "```"].join("\n");
+  assert.deepEqual(findRemedyClaims(withFence), []);
+});
+
+test("rule 4 fails a body that prescribes a remedy with no sign it was run", () => {
+  const body = "`?mode=all` is the clean way to collect a backlog — just run it against production.";
+  const res = evaluate({ ...base, body, files: [] });
+  assert.equal(res.ok, false);
+  assert.equal(res.findings.filter((f) => f.level === "fail" && f.rule === "remedy-claim").length, 1);
+});
+
+test("rule 4 passes when the author pasted what they observed", () => {
+  const body = [
+    "`?mode=all` is the clean way to collect a backlog — just run it against production.",
+    "",
+    "Observed: dispatched 2026-08-19, 39s then HTTP 503 Worker exceeded resource limits.",
+  ].join("\n");
+  const res = evaluate({ ...base, body, files: [] });
+  assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "remedy-claim"), false);
+  assert.equal(res.findings.some((f) => f.level === "pass" && f.rule === "remedy-claim"), true);
+});
+
+test("an observation must show something LOOKED AT, not a restatement", () => {
+  assert.equal(findObservation("Observed: it works fine"), null, "no outcome token, and too short");
+  assert.equal(findObservation("Observed: <fill this in>"), null, "a placeholder is not evidence");
+  assert.ok(findObservation("Observed: returned 200 with 362 rows fetched"));
+  assert.ok(findObservation("Measured: took 39s then errored out"));
+});
+
+test("rule 4 escapes are on the record, never silent", () => {
+  const claim = "Just re-run the importer and it recovers the missing rows.";
+  const byLabel = evaluate({ ...base, body: claim, labels: ["remedy-untested"], files: [] });
+  assert.equal(byLabel.ok, true);
+  const esc = byLabel.findings.find((f) => f.level === "escape" && f.rule === "remedy-claim");
+  assert.ok(esc, "the label must produce an ESCAPE finding, not silence");
+  assert.match(esc.message, /re-run the importer/, "the waived claim is printed verbatim");
+
+  const inline = evaluate({ ...base, body: `${claim} (UNTESTED)`, files: [] });
+  assert.equal(inline.ok, true);
+  assert.ok(inline.findings.some((f) => f.level === "escape" && f.rule === "remedy-claim"));
+});
+
+test("rule 4 WARNS, never fails, on a guide or check script — and never on other files", () => {
+  /* Warn, for the same reason rule 2 warns on an unmapped guide: a gate that
+     fails on prose gets deleted. The claim still lands in the log, which is
+     what the module guide correction missed when it left the identical
+     sentence printing in the check script's own verdict. */
+  const guide = diff("docs/modules/system-health.md", [
+    "Run it in `all` mode and it collects the whole backlog.",
+  ]);
+  const res = evaluate({ ...base, files: parseUnifiedDiff(guide) });
+  assert.equal(res.ok, true, "a doc claim must not block");
+  assert.equal(res.findings.filter((f) => f.level === "warn" && f.rule === "remedy-claim").length, 1);
+
+  const script = diff("backend/scripts/check-autocount-pull-health.mjs", [
+    '  console.log("Run the pull in all mode; it collects the backlog.");',
+  ]);
+  assert.equal(
+    evaluate({ ...base, files: parseUnifiedDiff(script) })
+      .findings.filter((f) => f.level === "warn" && f.rule === "remedy-claim").length,
+    1,
+  );
+
+  /* Ordinary source is NOT scanned. Prose lives in guides and in the read-only
+     checks whose output is advice to a human; everywhere else this would be
+     noise on every PR. */
+  const src = diff("backend/src/services/pull.ts", [
+    "  // Run it in all mode and it collects the backlog.",
+  ]);
+  assert.equal(
+    evaluate({ ...base, files: parseUnifiedDiff(src) })
+      .findings.some((f) => f.rule === "remedy-claim" && f.level === "warn"),
+    false,
+  );
+});
+
+test("the PR template itself can never trip rule 4", () => {
+  /* The failure this prevents is not hypothetical in this file: the template's
+     own word "fix" once made detectFixIntent report EVERY pull request as a
+     fix. A prescriptive sentence in the template would do the same to rule 4,
+     and "every PR is red" is how a gate gets deleted. Read from the real file
+     on disk, so editing the template re-runs this check. */
+  const template = readFileSync(new URL("../../.github/pull_request_template.md", import.meta.url), "utf8");
+  assert.deepEqual(findRemedyClaims(template), [], "the template must contain no remedy claim");
+
+  const untouched = evaluate({
+    title: "chore: x",
+    branch: "chore/x",
+    body: template,
+    labels: [],
+    templateBody: template,
+    files: [],
+    guides,
+  });
+  assert.equal(untouched.findings.some((f) => f.rule === "remedy-claim" && f.level === "fail"), false);
+});
+
+test("renderOrder appends a rule the list has not heard of", () => {
+  /* The regression this exists for shipped INSIDE the PR that added rule 4:
+       ...filter((r) => !seen.has(r) && !seen.add(r))
+     Set.prototype.add returns the Set, which is truthy, so the filter is always
+     false and nothing is ever appended. It read like a de-dup idiom, it was
+     described in a commit message as working, and it was never run. */
+  assert.deepEqual(renderOrder([]), RULE_ORDER);
+
+  const withNew = renderOrder([{ rule: "remedy-claim" }, { rule: "rule-5" }, { rule: "rule-5" }]);
+  assert.ok(withNew.includes("rule-5"), "an unknown rule must still be rendered");
+  assert.equal(withNew.filter((r) => r === "rule-5").length, 1, "and only once");
+  assert.deepEqual(withNew.slice(0, RULE_ORDER.length), RULE_ORDER, "known rules keep their order");
+
+  // Every rule the evaluator can emit must be renderable, or a finding goes unsaid.
+  const emitted = new Set(
+    evaluate({ ...base, files: [] }).findings.map((f) => f.rule),
+  );
+  for (const r of emitted) assert.ok(RULE_ORDER.includes(r), `${r} is missing from RULE_ORDER`);
+});
+
+// --------------------------------------------------------------------------
+// Rule 4, Chinese — the owner writes in Chinese
+// --------------------------------------------------------------------------
+
+test("rule 4 reads a remedy claim written in Chinese", () => {
+  /* Measured before this was written: the English-only detector missed ALL
+     FIVE of these, which is the half of this repo's PR bodies most likely to
+     carry an unproved promise. They are the owner's own phrasings. */
+  for (const claim of [
+    "跑这个就能补回来",
+    "重跑一次 sync 就会好了",
+    "执行 mode=all 就可以把历史补齐",
+    "dispatch 一次这个 workflow 就能修复",
+    "跑 all 模式是补历史的干净做法",
+  ]) {
+    assert.equal(findRemedyClaims(claim).length, 1, `must detect: ${claim}`);
+  }
+});
+
+test("Chinese narration and denial stay silent", () => {
+  for (const quiet of [
+    "跑了 all 模式，但是补不回来",      // denies the remedy
+    "这个 job 一直在跑，但一笔都没有搬", // narration; 跑 is not a prescription
+    "跑这个能不能补回来？",              // a question asserts nothing
+    "我们跑了很多测试",                  // no promise at all
+    "这个 bug 已经修好了",               // reports a past fix, prescribes nothing
+    "不要跑 all 模式，它修不好",          // tells you NOT to
+  ]) {
+    assert.deepEqual(findRemedyClaims(quiet), [], `must stay silent: ${quiet}`);
+  }
+});
+
+test("a single common Chinese character cannot carry a match", () => {
+  /* Chinese has no word boundaries, so `\b` does nothing and a bare 跑 or 好
+     would fire on ordinary prose. Every pattern is a multi-character phrase;
+     the one exception is 跑 + a LATIN token ("跑 all 模式"), which names a
+     command and cannot collide with 跑了 / 跑步 because those continue in CJK. */
+  assert.deepEqual(findRemedyClaims("他跑步的时候想到一个好办法"), []);
+  assert.deepEqual(findRemedyClaims("好像是这样，我们再看看"), []);
+});
+
+test("mixed English and Chinese in one sentence is still one claim", () => {
+  const mixed = "Re-run the sync — 就能把历史补齐。";
+  assert.equal(findRemedyClaims(mixed).length, 1);
+  assert.equal(findRemedyClaims(`${mixed} (UNTESTED)`)[0].untested, true, "UNTESTED still applies");
+});
+
+test("a vain run is narration, not a prescription — 白跑 MRP walks past the Latin-token exception", () => {
+  /* The collision that put main's own corpus test red on 2026-08-19, hours
+     after the Chinese support shipped: 「跑 + Latin」 reads as a command being
+     named, but 白跑/空跑 say a run achieved NOTHING — narration about waste,
+     from the left side the original comment did not consider. The sentence is
+     lifted from the real #2488 entry that tripped it. */
+  const vain = "至此「列表白跑 MRP」这个病的四处全部关掉,过一拍再由独立轻接口补上。";
+  assert.equal(findRemedyClaims(vain).length, 0, "白跑 + 补上 is not a remedy claim");
+  assert.equal(findRemedyClaims("空跑 mode=all 也补不回来。").length, 0, "空跑 likewise");
+  // and the genuine command shape the exception exists for still fires
+  assert.equal(findRemedyClaims("跑 mode=all 就可以把历史补齐。").length, 1, "a real 跑-command still claims");
+});
+
+test("the Chinese patterns add NO noise to the surface the gate actually scans", () => {
+  /* The isolation measurement, kept as a test so a later pattern edit cannot
+     quietly make the gate chatty.
+
+     IT USED TO MEASURE BUG-HISTORY.md, AND THAT WAS THE WRONG CORPUS — proved
+     within a day, by this very test failing on the entry written to document the
+     narration-vs-prescription fix. That entry QUOTES 「跑这个就能补回来」 as an
+     example of a real claim, and the detector dutifully found it. It was right
+     to. A file whose job is to record what claims look like cannot be the noise
+     baseline for a claim detector; every worked example in it is a true positive
+     by construction.
+
+     So this measures docs/modules/, which is the surface rule 4 actually scans,
+     and asserts the count does not GROW. Zero is not the bar there either — the
+     three pre-existing English hits predate rule 4 — but growth is. */
+  const dir = new URL("../../docs/modules/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+  assert.ok(files.length > 20, `expected the module guides, saw ${files.length} file(s)`);
+
+  let claims = 0;
+  let chinese = 0;
+  const chineseTriggered = [];
+  for (const f of files) {
+    const text = readFileSync(new URL(f, dir), "utf8");
+    chinese += (text.match(/[一-鿿]/g) || []).length;
+    for (const c of findRemedyClaims(text)) {
+      claims++;
+      if (/[一-鿿]/.test(c.text)) chineseTriggered.push(`${f}:${c.line} ${c.text.slice(0, 60)}`);
+    }
+  }
+
+  /* Measured 2026-08-19 across 32 guides / 19,784 lines. Pinned so the number
+     cannot drift upward unnoticed; lowering it is always welcome. */
+  assert.ok(claims <= 3, `module-guide claims grew to ${claims} (was 3) — the detector got chattier`);
+  assert.deepEqual(chineseTriggered, [], "no module-guide claim may be triggered by a Chinese passage");
+});
+
+test("the promise must FOLLOW the instruction, not merely share a window", () => {
+  /* Quoted from BUG-HISTORY.md, which broke this gate on main the moment the
+     corpus grew. 「跑 MRP」 matches the 跑 + latin-token pattern and 「补上」
+     matches the promise vocabulary — but 补上 sits BEFORE 跑 MRP, in a different
+     clause. The text describes a disease already cured; it prescribes nothing.
+     Searching the whole window could not tell those apart. */
+  const narration =
+    "空着),过一拍再由独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处(销售单、 采购发票、采购单、收货单)全";
+  assert.deepEqual(findRemedyClaims(narration), [], "narration is not a prescription");
+
+  // The ordering that DOES read as a claim still does, in both languages.
+  assert.equal(findRemedyClaims("跑 MRP 就能把这些补上").length, 1);
+  assert.equal(findRemedyClaims("Run the pull in all mode and it collects the backlog").length, 1);
 });

@@ -202,10 +202,73 @@ const MIG_FILE_REF = /\b(\d{3,4}_[a-z0-9_]+\.sql)\b/g;
 const PERM_REF = /`(scm\.[a-z0-9_.]+|[a-z]+\.[a-z0-9_.]+)`/g;
 const NPM_REF = /\bnpm(?:\s+--prefix\s+\S+)?\s+run\s+([A-Za-z0-9:_-]+)/g;
 
+/* THE MARKERS an author uses to say "absent on purpose", matched against the
+   text immediately AFTER a path reference. Hoisted out of the scan loop so the
+   self-test below can assert it: this is the one pattern in the file that lets a
+   CORRECT doc stay green, so a typo in it does not produce a miss — it produces
+   findings nobody can clear, and then the whole gate gets switched off.
+
+   `-\d+` is tolerated because docs cite RANGES (`foo.ts:16-20`) and the path
+   capture stops at the first number, so the marker sits past the range's tail.
+
+   THE CLOSING DELIMITERS ARE A RUN, not one character. A single optional
+   delimiter is an arbitrary limit, and a perfectly normal shape needs two — a
+   quoted script inside a code span, which is how a package.json line is written
+   in prose:
+
+     `"test": "vitest run && npm run test:scale-contract"` [gone]
+                                                        ^^ two, and the marker
+                                                           was unreachable.
+
+   ONE ALTERNATION, READ BY ALL THREE CHECKS. There used to be two: this one for
+   paths, and a second written inline at the migration-filename check carrying
+   `renumbered` but not `generated`. They diverged, and the cost was exactly the
+   shape a marker exists to prevent — `delivery-planning-jobtypes-spec.md:99`
+   writes
+
+     `backend/src/db/migrations-pg/0140_assr_inspection_visit.sql` [renumbered]
+
+   which is a migration filename AND a path, so both patterns matched it: the
+   migration check honoured the marker, the path check had never heard of it, and
+   the doc was reported for a reference it had already answered correctly. A
+   marker set that depends on which pattern happens to match first is not a
+   marker set. `npm run` references read the same list — see NPM_REF. */
+const MARKER_RX = /^(?:-\d+)?["'`)\]]*\s*\[(gone|planned|external|generated|renumbered)\]/;
+
+/* Every `/g` pattern the scan uses, named. Two things read this list: the
+   self-test's clone helper, and the invariant assertion right after it. */
+const GLOBAL_PATTERNS = { FILE_REF, BARE_LINE_REF, MIG_REF, MIG_FILE_REF, PERM_REF, NPM_REF };
+
 /* SELF-TEST. A pattern that cannot match reports a clean run, and this repo has
-   produced that failure three times in one day. Assert before scanning. */
+   produced that failure three times in one day. Assert before scanning.
+
+   THE SELF-TEST ITSELF PRODUCED THAT FAILURE A FOURTH TIME, and this is the fix.
+   `one()` used to run `re.exec(s)` on the module-level pattern objects. `exec`
+   on a `/g` regex ADVANCES `lastIndex` and leaves it advanced; the last probe
+   here is `one(FILE_REF, "in backend/package.json today")`, which stops at 23.
+   `String.prototype.matchAll` does not ignore that — it clones the regex and
+   COPIES `lastIndex` into the clone — so every `matchAll` in the scan below
+   began at offset 23 of every line, and the first 23 characters of every line in
+   every doc were unreadable. Measured on this tree:
+
+     lastIndex AFTER self-test      : 23
+     matchAll with dirty lastIndex  : []                              <- blind
+     matchAll with lastIndex = 0    : [ 'docs/generated/bug-index.md' ]
+
+   The gate went from 3,106 claims to 5,477 and from 0 CERTAIN findings to 43
+   the moment the indices were clean. Every "docs-drift --strict is green" ever
+   reported before 2026-08-21 was that much weaker than it read.
+
+   THE FIX IS TO STOP SHARING THE OBJECTS, NOT TO RESET THEM BEFORE USE, and the
+   difference matters. `re.lastIndex = 0` before each use is a discipline that has
+   to be repeated at every call site that is ever added, and omitting it is
+   INVISIBLE — it under-reports, which is the one failure mode this file cannot
+   afford. Probing a CLONE removes the shared mutable state, so there is nothing
+   left for a future call site to forget. The invariant below then makes any
+   re-introduction loud instead of silent. */
 {
-  const one = (re, s) => { re.lastIndex = 0; return re.exec(s); };
+  /* A fresh RegExp per probe: the scan's own objects are never touched. */
+  const one = (re, s) => new RegExp(re.source, re.flags).exec(s);
   const ok =
     one(FILE_REF, "see backend/src/scm/routes/foo.ts:42 now")?.[1] === "backend/src/scm/routes/foo.ts" &&
     one(FILE_REF, "see backend/src/scm/routes/foo.ts:42 now")?.[2] === "42" &&
@@ -217,9 +280,46 @@ const NPM_REF = /\bnpm(?:\s+--prefix\s+\S+)?\s+run\s+([A-Za-z0-9:_-]+)/g;
     one(MIG_REF, "see migration 0284 for the shape")?.[1] === "0284" &&
     one(NPM_REF, "run `npm --prefix frontend run typecheck`")?.[1] === "typecheck" &&
     one(PERM_REF, "gated on `scm.payment_voucher.post` now")?.[1] === "scm.payment_voucher.post" &&
-    one(BARE_LINE_REF, "at sofa-build.ts:503 the round")?.[1] === "sofa-build.ts";
+    one(BARE_LINE_REF, "at sofa-build.ts:503 the round")?.[1] === "sofa-build.ts" &&
+    /* The METAVARIABLE rule, asserted so it cannot widen by accident: a token
+       with no lowercase letter is a placeholder, everything else is a claim. */
+    !/[a-z]/.test(one(NPM_REF, "the row says `npm run X` in that table")?.[1] ?? "x") &&
+    /[a-z]/.test(one(NPM_REF, "run `npm run db:reset:remote:DANGER` never")?.[1] ?? "") &&
+    /* The MARKER alternation, asserted rather than trusted — see MARKER_RX. */
+    MARKER_RX.test("` [gone]") &&
+    MARKER_RX.test("` [planned]") &&
+    MARKER_RX.test("` [external]") &&
+    MARKER_RX.test("` [generated]") &&
+    /* `[renumbered]` was the migration check's private fifth marker until the
+       two alternations were merged. Asserted HERE, on the shared pattern, so the
+       merge cannot be quietly undone. */
+    MARKER_RX.test("` [renumbered]") &&
+    MARKER_RX.test("-20` [gone]") &&
+    /* TWO closing delimiters — a quoted script inside a code span. See MARKER_RX. */
+    MARKER_RX.test("\"` [gone]") &&
+    !MARKER_RX.test("` [invented]");
   if (!ok) {
     console.error("check-docs-drift: internal pattern self-test FAILED - not reporting.");
+    process.exit(2);
+  }
+
+  /* THE INVARIANT, asserted rather than assumed. Nothing above may leave a `/g`
+     pattern mid-string. This is the guard the file did not have when it went
+     blind: a dirty index does not throw, does not warn, and does not reduce the
+     finding count to zero in a way anybody would notice — it just quietly stops
+     reading the head of every line. Checked here, once, where it is cheap.
+
+     Deliberately NOT a reset. Resetting would repair the symptom and let the
+     cause back in; this refuses to report at all, which is what every other
+     self-test in this file does. */
+  const dirty = Object.entries(GLOBAL_PATTERNS).filter(([, re]) => re.lastIndex !== 0);
+  if (dirty.length) {
+    console.error(
+      "check-docs-drift: a /g pattern carries a non-zero lastIndex before the scan - not reporting.\n" +
+        dirty.map(([n, re]) => `  ${n}.lastIndex = ${re.lastIndex}`).join("\n") +
+        "\n  matchAll COPIES lastIndex into its clone, so the scan would silently skip the\n" +
+        "  first that many characters of every line. Probe patterns on a clone, never in place.",
+    );
     process.exit(2);
   }
 }
@@ -250,10 +350,31 @@ let claimsChecked = 0;
 for (const file of docFiles) {
   const rel = path.relative(repoRoot, file).split(path.sep).join("/");
   const lines = fs.readFileSync(file, "utf8").split("\n");
-  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (/^\s*```/.test(line)) { inFence = !inFence; continue; }
+    /* FENCED BLOCKS ARE SCANNED, DELIBERATELY. There used to be an `inFence`
+       flag here, toggled on every ``` line and then READ BY NOTHING — dead state
+       that read, to anyone skimming, like a working exclusion. It has been
+       removed rather than wired up, and that direction is the whole decision:
+
+       a fence is where a doc puts the command a reader COPIES. The one certain
+       finding it is currently earning is `SCALE-PERFORMANCE-HARNESS.md`'s
+       ```powershell block telling you to run `npm run test:scale-contract`,
+       a script deleted on 2026-08-20 — the single most expensive kind of stale
+       claim this file can catch, and honouring the flag would have hidden it.
+       Measured over the whole tree: 2 of 38 certain findings sit inside fences,
+       and skipping them would have removed claims from the denominator too.
+
+       The cost, stated: a fence quoting a tool's VERBATIM OUTPUT can name a path
+       that is legitimately not in the tree, and a marker cannot be added inside
+       a quote without falsifying it. One doc hit that (`docs/bugs/0177`); it was
+       resolved by lifting the path out of the quote into marked prose, which the
+       reader is better served by anyway. If that ever stops being a handful of
+       cases, the answer is a marker the reader can see — not this flag back.
+
+       Fence DELIMITER lines are still skipped: nothing on a bare ``` is a claim.
+       (This exclusion is why the `continue` below is kept.) */
+    if (/^\s*```/.test(line)) continue;
     /* `advisory` splits CERTAIN from HEURISTIC, the same split every sibling
        checker makes (WRITE vs read; SILENT vs UNRESOLVED). --strict gates on the
        certain half only. A gate that fires on a guess is a gate someone turns
@@ -275,13 +396,13 @@ for (const file of docFiles) {
       // NNNN is matched WITHOUT \b — the placeholder appears as `NNNN_foo.sql`,
       // and `_` is a word character, so \b never fires after it.
       if (p.includes("/.../") || /NNNN/.test(p) || /(^|\/)\.[A-Za-z]/.test(p)) continue;
-      /* THREE MARKERS, for the three honest reasons a doc names a path that is
+      /* FOUR MARKERS, for the four honest reasons a doc names a path that is
          not in the tree. Each one keeps the doc TRUE and tells the reader the
          same thing it tells the checker — which a silent exemption list would
          not:
 
-           [gone]      the doc is RECORDING a deletion. BUG-HISTORY is full of
-                       these by construction: an entry whose whole subject is
+           [gone]      the doc is RECORDING a deletion. The bug ledger is full
+                       of these by construction: an entry whose whole subject is
                        "this file was removed" must name a file that no longer
                        exists, and editing the entry to stop naming it would
                        destroy the record.
@@ -289,13 +410,24 @@ for (const file of docFiles) {
                        says "(no guide exists yet)" in the same sentence.
            [external]  lives in the 2990 source repo this SCM tree was vendored
                        from, not here.
+           [generated] REGENERATED ON DEMAND and deliberately gitignored — absent
+                       in a fresh checkout, present the moment anyone runs its
+                       generator. Added 2026-08-20 with the second such file
+                       (`docs/generated/bug-history.md` joined `bug-index.md`),
+                       and it exists because both alternatives are wrong: [gone]
+                       tells the reader the file was DELETED while the sentence
+                       is telling them to BUILD it, and leaving it unmarked is a
+                       gate that PASSES on the author's machine (where the
+                       generator has been run) and FAILS in CI. Not hypothetical:
+                       that is how this marker was bought, on run 32385565323.
+                       NOT for a TRACKED generated file (`codebase-map-facts.md`,
+                       `route-locator.md`) — those are in the tree and must
+                       resolve.
 
          The path is usually inside backticks, so the marker sits AFTER the
          closing one: `foo.ts` [gone]. Allow the delimiter through. */
       const after = line.slice(m.index + m[0].length, m.index + m[0].length + 20);
-      // `-20` tolerated: docs cite RANGES (`foo.ts:16-20`) and the capture stops
-      // at the first number, so the marker sits past the range's tail.
-      if (/^(?:-\d+)?["'`)\]]?\s*\[(gone|planned|external)\]/.test(after)) continue;
+      if (MARKER_RX.test(after)) continue;
       claimsChecked++;
       const resolved = resolveDocPath(p);
       if (!resolved) { at("missing-file", p); continue; }
@@ -318,8 +450,9 @@ for (const file of docFiles) {
     }
     // 3b. Migrations named in FULL — the renumber trap. See MIG_FILE_REF.
     for (const m of line.matchAll(MIG_FILE_REF)) {
-      /* THE SAME THREE MARKERS THE PATH CHECK HONOURS. They did not apply here,
-         and that is why this advisory could never shrink: a doc naming 2990's
+      /* THE SAME MARKERS THE PATH CHECK HONOURS — literally the same regex now,
+         which is the point. They did not apply here at all once, and that is why
+         this advisory could never shrink: a doc naming 2990's
          `0210_so_amendments.sql`, or a retirement note naming the file it
          retired, is CORRECT and had no way to say so. 41 hits with no way to
          mark any of them is a list nobody triages, and the real drift sits
@@ -327,17 +460,18 @@ for (const file of docFiles) {
 
          Checked BEFORE the existence test on purpose — a marked reference is a
          statement about a file that is deliberately not here, so looking for it
-         first would be asking the wrong question. */
-      /* A FOURTH marker, and only migration filenames need it. `[gone]` says the
-         file was deleted; `[external]` says it lives in the 2990 repo. Neither
-         fits the commonest honest case here: the migration EXISTS and carries a
+         first would be asking the wrong question.
+
+         `[renumbered]` is the marker this check contributed to the shared list,
+         and only migrations really need it: `[gone]` says the file was deleted,
+         `[external]` says it lives in another repo, and neither fits the
+         commonest honest case here — the migration EXISTS and carries a
          different number, because parallel PRs collide on numbers and the loser
-         renumbers. A `BUG-HISTORY` entry naming the number a migration carried
-         on the day it broke something is CORRECT and must stay that way, and
-         `[renumbered]` is the reader-facing way to say so — it tells them the
-         file is findable, just not at that number. */
+         renumbers. An entry naming the number a migration carried on the day it
+         broke something is CORRECT and must stay that way; `[renumbered]` tells
+         the reader the file is findable, just not at that number. */
       const tail = line.slice(m.index + m[0].length, m.index + m[0].length + 20);
-      if (/^["'`)\]]?\s*\[(gone|planned|external|renumbered)\]/.test(tail)) continue;
+      if (MARKER_RX.test(tail)) continue;
       claimsChecked++;
       if (migrationFiles.has(m[1])) continue;
       const num = /^(\d{3,4})_/.exec(m[1])?.[1];
@@ -388,6 +522,25 @@ for (const file of docFiles) {
     }
     // 5. npm scripts.
     for (const m of line.matchAll(NPM_REF)) {
+      /* A METAVARIABLE, not a script. `audit-2026-08-13-ledger.md` documents this
+         very checker with the row `| `npm run X` | resolved against all three
+         package.json files |`, and X is a stand-in the same way `NNNN_foo.sql`
+         is one for the path check. The test is that a real name has a lowercase
+         letter in it: measured over all 114 scripts in the three manifests, ZERO
+         lack one (two carry an uppercase segment — `db:reset:remote:DANGER` —
+         and both still have lowercase). So an all-caps token is a placeholder,
+         and the rule cannot swallow a name this repo actually uses. */
+      if (!/[a-z]/.test(m[1])) continue;
+      /* THE SAME MARKERS THE PATH AND MIGRATION CHECKS HONOUR. This check had
+         none, and the omission had the shape the markers exist to fix: seven
+         references to `npm run test:scale-contract` sit in bug entries whose
+         SUBJECT is that script — 0120 is about it failing, 0171 about the suites
+         it ran — and the script was deliberately deleted on 2026-08-20 when
+         those seventeen `node --test` files became vitest files. Every one of
+         those sentences is TRUE, and until now the only ways to clear them were
+         to falsify the record or to switch the gate off. */
+      const tail = line.slice(m.index + m[0].length, m.index + m[0].length + 20);
+      if (MARKER_RX.test(tail)) continue;
       claimsChecked++;
       if (!npmScripts.has(m[1])) at("missing-npm-script", `npm run ${m[1]} is in no package.json`);
     }

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import { useQueryClient } from "@tanstack/react-query";
-import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
+import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
-import { SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
+import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
+import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
@@ -27,7 +28,6 @@ import {
   useSoDropdownOptions,
   optionsOrFallback,
   preferredCustomerTypeValue,
-  FALLBACK_OPTIONS,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import {
   useLocalities,
@@ -47,6 +47,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -77,8 +78,11 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
+/* parseInches is imported, not redeclared: this file's private copy also served
+   sortNumeric below, and a shared parser serves both readers. */
+import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
@@ -118,6 +122,9 @@ type LineItem = {
   name: string;
   qty: string;
   price: string; // RM, as typed — display/default only; server recomputes
+  /* Typed into the price box? Tells a deliberate RM 0 from an unpriced SKU.
+     Client-only like overriddenKeys; sent as `zeroPriceIntended`, not stored. */
+  priceAuthored: boolean;
   ddate: string; // per-line delivery date (ISO yyyy-mm-dd)
   remark: string;
   cat: LineCat;
@@ -266,9 +273,12 @@ type PaymentsResp = { payments: SoPayment[] };
    static allowlist here: the SHARED reconciler (vendor/scm/lib/scan-prefill) has
    already snapped those against the LIVE catalog before the value reaches this
    file, so both the interactive seed and the headless createDraftFromPrefill
-   trust the reconciled value. PAY_METHODS stays (fixed 4-value enum), single-
-   sourced from the shared FALLBACK_OPTIONS. */
-const PAY_METHODS = FALLBACK_OPTIONS.payment_method.map((o) => o.value);
+   trust the reconciled value. The payment METHOD joined that rule 2026-08-20:
+   a PAY_METHODS list from the static FALLBACK_OPTIONS re-checked a value that
+   reconcilePayment had ALREADY snapped against the live catalog (scan-prefill.ts:
+   snapValue returns null, never a bad method). It dropped nothing while that list
+   was a superset, and was one edit from silently blanking a scanned method — the
+   re-guard this paragraph records removing for customer type. */
 /* Sentinel for "the signed-in creator has no scm.staff row" — shows their name
    in the Salesperson select but sends null so the backend stamps the caller. */
 const SELF_SALESPERSON = "__self__";
@@ -300,17 +310,10 @@ const FABRIC_SYNC_KEYS: string[] = [
   "fabricCode", "colourId", "fabricId", "fabricLabel", "colourLabel", "colourHex",
 ];
 
-/* Inches parser — mirrors SoLineCard.parseInches (handles `10"`, `10`, `-2`). */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
-};
-
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
-    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "",
+    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "", priceAuthored: false,
     variants: {}, overriddenKeys: [], photoKeys: [], photoFiles: [],
   };
 }
@@ -339,15 +342,22 @@ function defaultSofaLegValue(maint: MaintenanceConfig | null | undefined): strin
 
 /* Build a line's outgoing `variants` blob for the create/edit body. We fold in
    the remark + a fresh computed totalHeight for bedframes (kept for the backend
-   even though the readout is hidden). */
+   even though the readout is hidden).
+
+   THE TOTAL HEIGHT IS ASSIGNED UNCONDITIONALLY NOW. This function used to say
+   `if (th > 0) variants.totalHeight = …`, which was a third answer to "what is
+   written when divan/leg/gap are blank" — it both left a STALE height on a line
+   whose parts were cleared (the blob is spread from l.variants, so the old
+   number survived) and omitted the key on a fresh line. Writing '' matches the
+   fourteen purchasing screens; '' and an absent key are interchangeable to
+   every consumer (computeVariantKey drops empty axes, the pricing lookups and
+   the allowed-options gate all short-circuit on a falsy value), so the only
+   thing that changes is that a cleared spec now actually clears. */
 function buildVariants(l: LineItem): Record<string, unknown> {
   const variants: Record<string, unknown> = { ...(l.variants ?? {}) };
   if (l.remark.trim()) variants.remark = l.remark.trim();
   else delete variants.remark;
-  if (l.cat === "bedframe") {
-    const th = parseInches(variants.divanHeight) + parseInches(variants.legHeight) + parseInches(variants.gap);
-    if (th > 0) variants.totalHeight = `${th}"`;
-  }
+  if (isTotalHeightCategory(l.cat)) variants.totalHeight = computeTotalHeight(l.cat, variants);
   return variants;
 }
 
@@ -370,6 +380,8 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -454,6 +466,13 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
        date-less SO landed CONFIRMED (owner hit this on the legacy scan path). */
     asDraft: true,
     emergencyContactPhone: ecPhoneOut,
+    /* Slip + receipt provenance (migrations 0033 / 0034) — the R2 keys
+       /scan-so/extract answered with, so the SO detail can show the slip this
+       order was read from. Desktop sends the same pair; this path sent neither,
+       leaving a phone-scanned order's "Scanned photos" card permanently empty.
+       Omitted rather than "" when absent — the handler stores it verbatim. */
+    ...(prefill.slipImageKey ? { slipImageKey: prefill.slipImageKey } : {}),
+    ...(prefill.receiptImageKey ? { receiptImageKey: prefill.receiptImageKey } : {}),
     items,
   };
 
@@ -485,6 +504,7 @@ function lineFromItem(it: SoItem): LineItem {
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
     price: fromSen(it.unit_price_sen),
+    priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -654,8 +674,6 @@ export function MobileNewSO({
   });
   const seededLineMeta: Record<string, ScanLineMetaSeed> = {};
   for (const { line, meta } of scanLines) seededLineMeta[line.key] = meta;
-  const inList = (v: string, list: string[]) => (list.includes(v) ? v : "");
-
   /* Seed ONE payment row per captured payment slip. */
   const scanPaymentSlips = scanPrefill?.payments ?? [];
   const scanSlipFilesInit: Record<string, File> = {};
@@ -663,7 +681,7 @@ export function MobileNewSO({
     ? scanPaymentSlips.map((ps) => {
         const row: Payment = {
           ...newPayment(),
-          method: inList(ps.method, PAY_METHODS),
+          method: ps.method,
           amount: ps.amount || "0.00",
           approval: ps.approval ?? "",
           slipName: ps.file.name,
@@ -673,7 +691,7 @@ export function MobileNewSO({
         return row;
       })
     : scanPrefill?.payment
-      ? [{ ...newPayment(), method: inList(scanPrefill.payment.method, PAY_METHODS), amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
+      ? [{ ...newPayment(), method: scanPrefill.payment.method, amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
       : [];
 
   // Customer
@@ -1160,19 +1178,23 @@ export function MobileNewSO({
 
   /* ── FIX A — Salesperson default (desktop parity) ─────────────────────────
      The creator IS the salesperson: default to the signed-in user. If they have
-     a matching scm.staff row (by id / email / name) seed its canonical id;
-     otherwise seed a UI-only "self" sentinel so their NAME shows (never blank).
-     Only seeds when nothing is picked yet (never stomps an admin's manual pick,
-     or a scan-provided salesperson). Non-admins can't re-pick (gated select). */
-  const selfStaffMatch = useMemo(() => {
-    const email = (currentUser?.email ?? "").trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? "").trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const nm = (currentUser?.name ?? "").trim().toLowerCase();
-    return nm ? staffList.find((s) => (s.name ?? "").trim().toLowerCase() === nm) : undefined;
-  }, [staffList, currentUser?.email, currentUser?.name]);
+     a matching scm.staff row seed its canonical id; otherwise seed a UI-only
+     "self" sentinel so their NAME shows (never blank). Only seeds when nothing
+     is picked yet (never stomps an admin's manual pick, or a scan-provided
+     salesperson). Non-admins can't re-pick (gated select).
+
+     The MATCH is the SHARED `resolveSelfStaff` — user_id first, the key the
+     backend joins on. This file matched email-then-name while the comment above
+     it advertised an id match it never ran; of 140 production scm.staff rows 18
+     carry an email and 102 carry user_id, so most salespeople were not
+     recognised as themselves here and could be blocked by the confirm gate
+     below (#2049). */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id, email: currentUser?.email, name: currentUser?.name,
+    }),
+    [staffList, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
   const selfDisplayName =
     (currentUser?.name ?? "").trim() || (currentUser?.email ?? "").trim() || "Me";
   useEffect(() => {
@@ -1540,6 +1562,8 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
+    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
+    ...zeroPriceClaim(toSen(l.price), true),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -1713,10 +1737,16 @@ export function MobileNewSO({
       setError(`Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`);
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    if (hasSofaMixConflict(namedLines.map((l) => l.itemGroup))) {
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       INTRODUCED, not flat (desktop parity, #2395): this asked the flat
+       `hasSofaMixConflict`, which is the CREATE path's question, and the guard
+       sits ABOVE the edit branch so it ran on edits too. The server's line paths
+       refuse only a change that INTRODUCES the mix, so an order written before
+       the rule existed stays editable — while this refused EVERY save on one,
+       not even a phone number, blaming a rule the server grandfathers.
+       `origItems` is empty on a create, so there this IS the flat question. */
+    if (sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup))) {
       setError(SOFA_MIX_MESSAGE);
       return;
     }
@@ -2095,16 +2125,7 @@ export function MobileNewSO({
       /* Aggregated save-gate failure (validation_failed) — show EVERY reason at
          once, same popup + list as desktop (owner 2026-07-18). Anything else
          keeps the inline error line. */
-      const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-      if (problems && problems.length > 0) {
-        void notify({
-          title: saveProblemsTitle(problems.length),
-          body: <SaveProblemsList problems={problems} />,
-          tone: "error",
-        });
-      } else {
-        setError(e instanceof Error ? e.message : "Couldn't save the sales order. Please try again.");
-      }
+      void notifySaveProblems(notify, e, setError, "Couldn't save the sales order. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -3061,7 +3082,7 @@ function LineCard({
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value })}
+              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>

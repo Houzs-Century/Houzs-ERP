@@ -300,6 +300,87 @@ no DO yet (one SO).
 four consignment pairs, all four purchase-consignment pairs, the Delivery
 Planning bulk convert, and MRP → PO. **Mobile-only pairs: none.**
 
+### The wizard's picker reads are wired into the shared invalidation (2026-08-21)
+
+The wizard keys its three reads under private roots it invented —
+`["convert-source", …]`, `["convert-lines", …]`, `["convert-grn-lines", …]` —
+and until 2026-08-21 they were in **nobody's** invalidation set. A convert
+completed anywhere else (a desktop picker, another mobile flow, or this wizard a
+moment earlier) therefore left a MOUNTED phone wizard still offering lines that
+had already been consumed: `over_remaining` on submit at best, and where the
+pool had only partly shrunk, a wrong quantity going through instead.
+
+All three now ride `invalidateConvertShared` (`frontend/src/mobile/sharedInvalidate.ts`,
+`CONVERT_PICKER_ROOTS`), which every convert already calls. **Add a picker root
+there, never a fourth private key at the call site** — inventing the key locally
+is what produced the first three. Pinned by
+`frontend/src/mobile/convertWizardInvalidation.test.tsx`.
+
+> **Limit, stated plainly.** This covers converts inside ONE browser, plus other
+> TABS via the BroadcastChannel in `lib/cross-tab-sync.ts`. A convert on a
+> physically different DEVICE still cannot reach the phone until the query goes
+> stale on its own — there is no server push, and `refetchOnWindowFocus` is what
+> actually rescues that case. The server's own `over_remaining` / `409` refusal
+> remains the real guard, and it always was.
+
+### 6b. Why the other six pairs are still NOT on the wizard (assessed 2026-08-21)
+
+The wizard covers four of the ten desktop `*From*` pickers. The remaining six
+were each assessed against three questions — does a convert endpoint exist that
+takes the wizard's shape, can the document be raised as a DRAFT, and is it work
+done away from a desk. **All six fail on the DRAFT question, and that is not a
+mobile problem — it is the shape of those documents.**
+
+The wizard's rule, bought by defect #2555 (the DO arm shipped without `asDraft`
+and a phone convert dispatched stock immediately): **an arm that cannot send a
+draft flag must not exist.** A phone convert parks a document for review; it does
+not move stock or post to the ledger on a tap.
+
+| Pair | Convert endpoint | Draft possible? | Verdict |
+|---|---|---|---|
+| DO → **Delivery Return** | `POST /delivery-returns/from-do` — takes `picks:[{doItemId, qty, condition}]`, i.e. exactly the wizard's shape | **No.** `grep -c DRAFT backend/src/scm/routes/delivery-returns.ts` = **0**. Hardcodes `status: 'RECEIVED'` and calls `increaseInventoryForReturn` in the same request. | **Closest to accidental, and still blocked.** The endpoint fits; the document has no draft state at all, so a phone tap would move stock straight back into inventory with no review. Needs a backend DRAFT state first — an owner decision, not a UI change. |
+| GRN → **Purchase Invoice** | `POST /purchase-invoices/from-grn-items` (line-level), `/from-grn` (whole) | **No.** Both hardcode `status: 'POSTED'` + `posted_at`. The BARE `POST /` does support `asDraft`, but the convert handlers never read it. | Not added. Posting a supplier invoice to AP is also desk work — it is matching a supplier's paperwork against a receipt, not something done in a warehouse aisle. |
+| PCO → **PC Receive** | `POST /purchase-consignment-receives/from-pcos` | **No, explicitly.** `if (body.status === 'DRAFT') return … 'draft_status_not_supported'` — *"Consignment receives post immediately on create."* | Not added. Also takes WHOLE orders (`purchaseConsignmentOrderIds[]`), so the wizard's line+qty step would have nothing to drive. |
+| PC Receive → **PC Return** | `POST /purchase-consignment-returns/from-pc-receives` | **No, explicitly** — same refusal. | Not added. Same whole-document shape (`pcReceiveIds[]`). |
+| CO → **Consignment Note** | **None.** `GET /consignment-notes/deliverable-order-lines` exists (the picker read), but creation is `POST /` then `POST /:id/items`. | n/a | Not added. Would need a new backend converter, which is a backend change with its own consume-accounting decisions, not a wizard arm. |
+| CN → **Consignment Return** | **None.** `GET /consignment-returns/returnable-note-lines` exists; creation is `POST /` then `POST /:id/items`. | n/a | Not added. Same as above. |
+
+**So zero arms were added, deliberately.** Adding any of them today ships a phone
+button that writes stock or the ledger with no draft and no undo — the #2555
+defect, reintroduced five more times. The unblocking work is backend
+(a DRAFT state for delivery returns; `asDraft` honoured by the PI convert
+handlers; line-level + draft-capable converters for the two consignment pairs),
+and each is a judgement call for the owner rather than a provable defect.
+
+
+---
+
+## 6a. Every picker row shows its VARIANTS (owner rule, 2026-08-19)
+
+*"只要有 variants 的，你就应该要显示 variants"*. A sofa model decomposes into
+modules — `9028-1A(LHF)`, `9028-1A(RHF)`, `9028-1NA` — that share a name, so a
+row printing only the name identifies nothing. Every line-picker in this module
+therefore renders the shared `buildVariantSummary` string for its row.
+
+Two things have to be true, and **only checking the first is how this defect
+hides**: the component has to be on the row, AND the row's endpoint has to have
+SELECTED `variants`. `<VariantDescription>` over a row whose read never selected
+them renders empty and is indistinguishable from a missing component.
+
+| Surface | How it renders the summary |
+|---|---|
+| The ten desktop `*From*.tsx` pickers | `vendor/scm/components/VariantDescription.tsx` |
+| `MobileConvertWizard` (all four targets) | `variantLineOf()` → `buildVariantSummary`, one muted line under the name; omitted when empty (no `Standard` filler on a phone) |
+| `SalesOrderNewFromProducts`, `SoFromProducts` | **Deliberately none.** These pick CATALOGUE SKUs, not document lines. A catalogue row has no per-line variants (`default_variants` is SKU-master admin data, `pages/scm-v2/products/VariantsTab.tsx`), and the SO line they create carries none either — so a summary here could only ever print `Standard`. |
+
+The reads that feed them all select `variants` — `routes/delivery-orders-mfg.ts`
+(`soDeliverableRemaining`), `lib/do-line-remaining.ts`,
+`routes/mfg-purchase-orders.ts` (`/outstanding-so-items`),
+`lib/outstanding-po-lines.ts`, `routes/consignment-notes.ts`,
+`routes/consignment-returns.ts`, `routes/purchase-consignment-receives.ts`,
+`routes/purchase-consignment-returns.ts`. **Adding a picker means checking its
+read, not copying the JSX.**
+
 ---
 
 ## 7. Backend converters with no live frontend caller
@@ -497,6 +578,42 @@ Three properties, each of which was a real defect before:
   goes to the transfer. This is what the owner spotted: the sales order reported
   a `Delivered` STATUS while the delivery order offered a `Mark signed` ACTION.
   **Statuses report; buttons act.**
+
+  The rule landed on `DeliveryOrderDetailV2` and NOT on the delivery-order list
+  drawer, where the two buttons stayed mutually exclusive in an `if / else-if`
+  chain until 2026-08-18: a DISPATCHED delivery matched the `Mark signed` arm
+  and returned, so the transfer was not disabled there — it was never rendered.
+  Both surfaces now render them independently, `Mark signed` secondary for the
+  pre-signed states and the transfer primary for every shipped one.
+
+#### Which deliveries may be invoiced — one declaration, five states
+
+`DO_SHIPPED_STATES` (`backend/src/scm/shared/do-shipped-states.ts`, mirrored to
+`frontend/src/vendor/shared/do-shipped-states.ts` and pinned byte-identical by
+`frontend/src/vendor/shared/do-shipped-states.canonical.test.ts`) is the system's
+ONLY definition of "this
+delivery has shipped and is billable": `DISPATCHED`, `IN_TRANSIT`, `SIGNED`,
+`DELIVERED`, `INVOICED`. The first transition into any of them writes the
+inventory OUT, so by then the goods have left. `LOADED` and `DRAFT` are
+deliberately outside it.
+
+Both desktop entry points to `Transfer to Sales Invoice` used to gate on a
+hand-typed `["signed","delivered"]` instead — a third spelling, and the
+narrowest of the three, while the server picker
+(`resolveCandidateDoIds`, which admits everything except `CANCELLED` and
+`DRAFT`), the mobile convert wizard, and `DeliveryOrderDetailV2`'s own line
+edit-lock all used something correct.
+
+**This is worth remembering as a MULTI-ORGANISATION defect, not a status
+defect.** The predicate contains no company term and never did. It fired on one
+organisation only because of DATA: 2990's source system had no "delivered" step
+on delivery orders, so its imported deliveries sit at `DISPATCHED`, while the
+AutoCount carry-overs on the HOUZS side were inserted with the literal
+`'DELIVERED'`. Two organisations, one build, one set of permissions — and one of
+them was told the transfer did not exist. The fix is the shared constant in both
+places; flipping the statuses in the database would only have hidden it, and
+`backfill-2990-delivered-dos.mjs` had already done exactly that for some of them
+without the button appearing for the rest.
 
 #### The 20 labels
 
@@ -813,6 +930,16 @@ line** and are the subject of this section. Two are deliberately not:
 For the rest, the mechanism is a **per-line quantity ceiling**, and
 `backend/src/scm/lib/convert-ceilings.test.ts` states the invariant in one line:
 
+> **Which source rows are IN the pool is a separate question from the ceiling
+> over them** (2026-08-20). `do-line-remaining.ts` takes a REQUIRED
+> `DoPendingBasis` — `'invoiceable'` for the DO→SI chain, `'delivered'` for
+> DO→DR and the unbilled-money report — because a LOADED delivery may be
+> invoiced but has not delivered anything. The ceiling test passes
+> `'invoiceable'`. The write-path cap (`checkSiOverRemaining`) pins the same
+> basis internally: a cap measuring a narrower pool than the gate offers would
+> refuse `over_remaining` on an invoice that had just passed
+> `siTransferRefusal`. See `docs/bugs/0480`.
+
 > Σ(converted so far) + this conversion ≤ source qty
 
 That file also records why a boolean "already converted" flag would have been
@@ -838,6 +965,24 @@ shape** — and it is the same shape every ERP below converged on.
 | 9 | Note → Consignment Return | `delivered − Σ qty_returned` | derived | `checkCrOverRemaining` | **no** | **no** | yes |
 | 10 | PC Order → PC Receive | `purchase_consignment_order_items.received_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
 | 11 | PC Receive → PC Return | `purchase_consignment_receive_items.returned_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
+
+**Edit-side re-point guard (GAP-2), rows 9 & 11 — closed 2026-08-20.** The
+`Unlinked-line back door closed` column above is the CREATE / add-line half. A
+second half of the same door is EDITING an already-saved unlinked line's
+`item_code` to one the parent carries: the stored link stays NULL, so the cap
+and recount (both gated on it) still miss the line. That edit half was closed on
+the GRN, purchase-return, delivery-return and sales-invoice chains on 2026-08-17
+by `unlinkedEditRefusal` (`scm/lib/unlinked-line-edit-guard.ts`), and is now
+wired into both consignment return line-PATCH handlers too — chain
+`'consignment-return'` (parent = the Consignment Note, codes via `cnItemCodesOf`)
+in `consignment-returns.ts`, and chain `'purchase-consignment-return'` (parent =
+the PC Receive, codes via `pcReceiveItemCodesOf`) in
+`purchase-consignment-returns.ts`. Both refuse the not-on-parent -> on-parent
+transition with 409 `unlinked_line_repoint`; an ad-hoc code, a linked line and a
+code-untouched qty edit still pass; a failed parent read fails closed. The
+CREATE half for these two consignment pairs stays open — they convert through the
+plain `POST /`, so there is no single create handler to hang the insert guard on
+(the nine-not-eleven finding below).
 
 The three population claims in that table are mechanically checkable, and each
 command is the definition of its column:
@@ -1054,7 +1199,7 @@ full account is in `docs/unlinked-line-duplicate-coe.md` §5a; in brief:
 | what | where |
 |---|---|
 | the predicate — refuse only when the material is already on a receipt this invoice covers | `lib/return-unlinked-lines.ts` `findUnlinkedPiLines` |
-| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `material_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
+| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `item_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
 | **every** receipt the invoice covers, not the header ref | `coveredGrnIds`: header `grn_id` UNION the receipts behind the invoice's own linked lines. A PI is line-level multi-receipt (mig 0267), so a set of one let a SECONDARY note's material through |
 | FAILS CLOSED | the guard's read binds its error; every call site answers 500 `unlinked_check_failed`. An empty parent-code set is an unconditional pass, so a swallowed error opened the door in silence |
 
@@ -1422,3 +1567,26 @@ treat as impossible.**
   `migrations-pg` tree, so the `ON DELETE SET NULL` claim rests on a source
   comment. LIKELY, not PROVEN, and settled by one query against the live
   catalog.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

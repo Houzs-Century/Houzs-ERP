@@ -22,9 +22,9 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Info, Clock } from 'lucide-react';
+import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
 import {
-  useMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
+  useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
   type MrpWarehouse, type CategoryLeadTimes,
 } from '../../vendor/scm/lib/mrp-queries';
@@ -32,7 +32,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -53,7 +53,12 @@ const TOOLBAR_BTN =
    sit in the default view alongside dated ones — so it gets a word instead of
    the same em-dash every other empty cell renders. Undated rows sort LAST in
    the allocation (byDateAsc, mrp.ts) and cannot take supply from a dated line;
-   the tag is what makes that visible on the row rather than only in the banner.
+   the tag is what makes that visible on the row.
+
+   Since the page-level undated summary banner was removed (owner, 2026-08-20 —
+   「黄色的也delete掉」) this tag is the ONLY place an undated line announces
+   itself, so it is load-bearing rather than decorative. Do not fold it back into
+   fmtDate's em-dash.
 
    Not orderable yet is the POINT: the operator should see the demand exists and
    see, in the same glance, that it has no promised date behind it. */
@@ -197,7 +202,14 @@ type ModelGroup = {
   stock: number;
   poOutstanding: number;
   shortage: number;
-  suppliers: MrpSku['suppliers'];
+  /* NO `suppliers` HERE, DELIBERATELY. All three groupers built this field the
+     same way — from whichever child happened to be first — and a Model or a
+     Sales Order does not have suppliers: each VARIANT does, and on the Sofa tab
+     each variant is a different module SKU with its own bindings. Nothing read
+     it, so it was a wrong value waiting for a reader: the next renderer to want
+     a supplier on a parent row would have picked up the first module's and shown
+     it against all three. Supplier lives on MrpSku and is read there
+     (LineSupplierCell, SofaSoTable, OrderLines). */
 };
 
 const WH_NONE = 'NOWH';
@@ -224,7 +236,6 @@ function groupByModel(skus: MrpSku[]): ModelGroup[] {
         warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
         itemCode: s.itemCode, description: s.description, category: s.category,
         variants: [], qtyNeeded: 0, stock: 0, poOutstanding: 0, shortage: 0,
-        suppliers: s.suppliers,
       };
       map.set(gk, g);
     }
@@ -345,7 +356,6 @@ function groupBySo(skus: MrpSku[]): ModelGroup[] {
         warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
         itemCode: soDocNo, description: null, category: 'SOFA',
         variants: [], qtyNeeded: 0, stock: 0, poOutstanding: 0, shortage: 0,
-        suppliers: s.suppliers,
       };
       map.set(gk, g);
     }
@@ -393,7 +403,6 @@ function groupByVariant(skus: MrpSku[]): ModelGroup[] {
     itemCode: s.itemCode, description: s.description, category: s.category,
     variants: [s],                     // single → ModelRows jumps straight to orders
     qtyNeeded: s.qtyNeeded, stock: s.stock, poOutstanding: s.poOutstanding, shortage: s.shortage,
-    suppliers: s.suppliers,
   }));
   // Same ordering as the other groupers: shortage (orange) first, then warehouse,
   // then code, then the variant label so a model's colours cluster together.
@@ -436,11 +445,17 @@ export const Mrp = () => {
   /* HIDDEN by default (owner, 2026-08-18, ruling on a build that had it shown):
      "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来." This is
      the ordering worklist and undated demand is not orderable yet, so it stays
-     off the list until asked for. What was actually broken was never the rows
-     being absent — it was the page saying NOTHING about withholding them; the
-     banner below carries the count in both directions, so the operator always
-     knows there is something behind the toggle. Ticking shows them, marked
-     "No date" and sorted last. See parseIncludeUndated in mrp.ts. */
+     off the list until asked for. The "Show no-date" checkbox in the filter row
+     is the ONLY affordance that flips this — it is always rendered, so the state
+     is never stranded. Ticking shows the rows, tagged "No date" and sorted last.
+     See parseIncludeUndated in mrp.ts.
+
+     There used to be a yellow summary banner above the filters carrying the
+     withheld count in both directions with a one-click Show/Hide. The owner
+     removed it on 2026-08-20 (「黄色的也delete掉」) after being told it carried
+     data rather than instruction — a deliberate deletion, not a slip. The count
+     itself is still computed and tested server-side (MrpResult.undated,
+     backend/src/scm/routes/mrp.test.ts); nothing on this page reads it now. */
   const [showUndated, setShowUndated] = useState<boolean>(false);
   /* Commander 2026-05-29 — focus view: hide everything that's fully covered and
      show ONLY the rows that still need ordering (shortage > 0), so the operator
@@ -472,18 +487,19 @@ export const Mrp = () => {
   const apiCategory = VIEW_CATEGORY[view];
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
-  /* How much undated demand this tab is carrying — whether it is on screen or
-     withheld. The sofa view reads the sofa tally (section 8 is SOFA-only and
-     ignores the category filter); every other view reads the general one, which
-     IS category-filtered. Reading the wrong one would report the whole sofa
-     book on the Mattress tab. */
-  const undatedCount = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
-  const undatedShortUnits = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
-  /* What the RUN did, from the response — not from `showUndated`. A request the
-     server did not honour must not be reported as the state the operator asked
-     for. `undated` is optional on the type, so an older/partial payload leaves
-     this undefined and the banner below stays off rather than guessing. */
-  const undatedHidden = data?.undated?.hidden;
+  /* Stored planning snapshot (option B, 2026-08-19). `data.stored` is true when
+     this came from the saved snapshot (the default view opens instantly from it);
+     `regenerate` recomputes it server-side. See mrp-snapshot.ts. */
+  const regenerate = useRegenerateMrp();
+  /* `data.undated` (the tab-appropriate count of withheld demand) is no longer
+     read here — the banner that displayed it was removed on the owner's
+     instruction, 2026-08-20. The response still carries it and the backend still
+     tests it; if it is ever surfaced again, read `sofaSets` on the sofa view and
+     `lines` everywhere else (section 8 is SOFA-only and ignores the category
+     filter, section 7 honours it — blending them reports the whole sofa book on
+     the Mattress tab), and take `hidden` from the RESPONSE rather than from
+     `showUndated`, so a request the server did not honour is not described as
+     the state the operator asked for. */
   const createPos = useCreatePosFromSoItems();
 
   /* One key per convert RUN — the intent this page DOES have, and the reason
@@ -890,6 +906,17 @@ export const Mrp = () => {
               <button type="button" className={TOOLBAR_BTN} onClick={() => void q.refetch()} disabled={q.isFetching}>
                 <RefreshCw {...ICON} className={q.isFetching ? 'animate-spin' : undefined} /> Refresh
               </button>
+              {/* Server-side Regenerate — recompute + save the stored planning
+                  snapshot (option B). Distinct from Refresh, which only re-reads. */}
+              <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
+                title="Recompute the MRP plan from current stock, orders and deliveries, and save it">
+                <RefreshCw {...ICON} className={regenerate.isPending ? 'animate-spin' : undefined} /> {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
+              </button>
+              {data?.stored && data.computedAt && (
+                <span className="inline-flex items-center gap-1 text-xs opacity-70" title="When this plan was last calculated">
+                  <Clock {...ICON} /> as of {fmtDateTime(data.computedAt)}
+                </span>
+              )}
               {isAdmin && (
                 <button type="button" className={TOOLBAR_BTN} onClick={onBackfillWarehouses} disabled={backfilling}
                   title="Bind a warehouse to older SOs that have none, derived from each SO's State">
@@ -947,74 +974,12 @@ export const Mrp = () => {
         ))}
       </div>
 
-      {/* Undated demand — STATED IN BOTH DIRECTIONS. Owner, 2026-08-16:
-          "明明这个东西没有 ready,可是我的 MRP 却 show 不出来" — half of 2990's live
-          demand was absent by default and the page said nothing, so a real
-          shortage read as no shortage at all.
-
-          The rows stay HIDDEN by default (owner 2026-08-18: "这个应该是要把没有
-          日期的藏起来的,不过我点 show no date 它才会出来") — hiding is legitimate on
-          an ordering worklist, and it was never the hiding that broke; it was
-          the SILENCE. So the banner is the fix, not the default: it renders
-          whenever there IS undated demand and says which of the two things is
-          true of it, in either direction, so a later flip cannot reintroduce the
-          same silence. The one-click toggle works from whichever side the
-          operator is currently on.
-
-          `hidden` comes from the RESPONSE, not from showUndated, so a request
-          the server did not honour is described as it actually came back.
-
-          Sofa counts sets and is not category-filtered; every other tab counts
-          general lines — see MrpResponse['undated']. */}
-      {undatedCount > 0 && undatedHidden !== undefined && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning-text/25 bg-warning-bg px-4 py-2.5 text-[12.5px] leading-relaxed text-warning-text">
-          <Clock {...ICON} className="shrink-0" />
-          <span>
-            <strong className="font-semibold">{undatedCount}</strong>{' '}
-            {view === 'sofa' ? (undatedCount === 1 ? 'sofa set' : 'sofa sets') : (undatedCount === 1 ? 'order line' : 'order lines')}
-            {' '}with no delivery date {undatedCount === 1 ? 'is' : 'are'}{' '}
-            {undatedHidden ? 'hidden from this view' : 'listed below, sorted last and marked No date'}
-            {undatedShortUnits > 0 && (
-              <> — <strong className="font-semibold">{undatedShortUnits}</strong> {undatedShortUnits === 1 ? 'unit is' : 'units are'} short</>
-            )}.
-          </span>
-          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(undatedHidden)}>
-            {undatedHidden ? 'Show them' : 'Hide them'}
-          </button>
-        </div>
-      )}
-
       {/* Summary pills removed (Commander 2026-06-15 — "那个不需要,删掉"); the
           active date-window chip stays since it reflects the live filter. */}
       {data && hasWindow && (
         <div className="flex flex-wrap gap-3">
           <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-[13px] font-semibold text-ink shadow-stone">
             <CalendarRange {...ICON} /> Window {windowLabel}
-          </span>
-        </div>
-      )}
-
-      {/* Sofa is ordered as a colour-matched SET, one PO per SO. */}
-      {view === 'sofa' && (
-        <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary-soft px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-secondary">
-          <Info {...ICON} className="mt-0.5 shrink-0 text-primary" />
-          <span>
-            Expand a sofa model to see its colour <strong className="font-semibold text-primary">variants</strong>, then
-            which Sales Orders need each. A sofa is colour-matched and ordered as
-            a whole set — selecting one selects the whole same-SO set. Orange rows
-            still need ordering.
-          </span>
-        </div>
-      )}
-
-      {/* Bedframe flattened (BF-FLAT): one row per colour variant. */}
-      {view === 'bedframe' && (
-        <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary-soft px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-secondary">
-          <Info {...ICON} className="mt-0.5 shrink-0 text-primary" />
-          <span>
-            Each row is one bedframe <strong className="font-semibold text-primary">colour / variant</strong> (its
-            Description 2). Expand a row to see which Sales Orders need it. Orange
-            rows still need ordering.
           </span>
         </div>
       )}

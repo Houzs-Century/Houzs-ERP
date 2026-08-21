@@ -32,14 +32,16 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop list + detail | `frontend/src/pages/ServiceCases.tsx` | **8,032 lines** — list, calendar, create panel, detail panel, workflow card, stage accordion all in one file. Exports `ServiceCases` and `ServiceCaseDetail`. Do not open whole. |
 | Desktop "my cases" | `frontend/src/pages/MyCases.tsx` | Assignee-scoped card view (`MyCases`, `MyCaseDetail`). |
 | Desktop sub-views | `ServiceMetrics.tsx`, `ServiceSettings.tsx`, `ServiceLeadTimePortal.tsx` | Imported by `ServiceCases.tsx:79-81`. |
-| Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | 3,042 lines. Tabbed detail (Overview / Stage / Info / Timeline), `NewCaseSheet` at `:1775`. |
+| Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | Tabbed detail (Overview / Stage / Info / Timeline) + `NewCaseSheet`. |
+| Mobile READ-ONLY detail (Sales rep) | `frontend/src/mobile/MobileMyCaseDetail.tsx` | The mobile half of `/my-cases/:id`. Case + items + issue + the customer/sales/nudge conversation, and NO write control. Mounted in place of `CaseDetail` for `isSalesNonDirector`. |
 | Shared stage logic | `frontend/src/vendor/scm/lib/assr/stages.ts` | No React, no I/O. The one place the PIPELINE (order, supplier-only rule, sub-statuses) is defined. It no longer holds the words. |
 | Shared stage WORDS | `backend/src/scm/shared/assr-stage-labels.ts` + `frontend/src/vendor/scm/lib/assr-stage-labels.ts` | Byte-identical pair, refereed by `check-shared-mirrors.mjs --strict`. Every stage label — including `voided`, which the pipeline table correctly has no row for. |
 
 Desktop routes: `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id`
 (`frontend/src/App.tsx:366-416`). Mobile mounts `MobileServiceCase` for
-`/assr` (`frontend/src/mobile/MobileApp.tsx:109,717`) and as the "Service"
-bottom tab (`:756`).
+`/assr` (`frontend/src/mobile/MobileApp.tsx`) and as the "Service" bottom tab —
+and a non-director Sales rep gets `MobileMyCaseDetail` in place of the editable
+detail, the mobile half of the desktop `/my-cases/:id` redirect.
 
 ### The 7-stage pipeline (and why a case sometimes runs 5)
 
@@ -98,12 +100,34 @@ list unconditionally — a case parked on a filtered-out stage still renders.
 
 **Progress is computed off the filtered list, not the 7-stage table:**
 
-- Desktop detail: `getActiveStages()` (`ServiceCases.tsx:5058-5063`) filters
-  `DETAIL_STAGES` (`:5036`) through the shared `isStageActive`; the result is
-  memoised once per case at `:2906-2909` and threaded into the workflow card,
-  summary bar and stage accordion. The card renders `Step {curIdx + 1} / {n}`
-  where `n = stages.length` (`:5215-5216`, `:5222-5224`) plus a dot rail. There
+- Desktop detail: `getActiveStages()` filters `DETAIL_STAGES` through the shared
+  `isStageActive`; the result is memoised once per case and threaded into the
+  workflow card, summary bar and stage accordion. The card renders
+  `Step {curIdx + 1} / {n}` where `n = stages.length` plus a dot rail. There
   is **no percentage** on desktop.
+
+  > **FIXED 2026-08-21 — the counter and the dropdown used to disagree.** The
+  > "Change to" `<select>` mapped the module-level, UNFILTERED `DETAIL_STAGES`
+  > while the `Step n / N` counter two lines above it read the FILTERED `stages`
+  > prop it had been handed. On an internal-resolution case that read
+  > "Step 2 / 5" beside a list of 7, the two supplier-only stages included.
+  > `docs/bugs/0481-the-desktop-stage-picker-offered-stages-the-case-does-not-ru.md`.
+  >
+  > **`DETAIL_STAGES` no longer holds any stage WORDS.** It is
+  > `ASSR_STAGES.map(...)`. It used to type its own `long` column and four rows
+  > had drifted from the canonical table — desktop printed "Review", "Solution",
+  > "Verification", "Delivery / Service" where mobile, the portal and the printed
+  > report say "Pending Review", "Pending Solution", "Under Verification",
+  > "Pending Delivery / Service". The funnel-dot caption `desc` moved onto
+  > `AssrStageDef` (`stages.ts`), so the whole stage row has one home.
+
+**`voided` is offered on DESKTOP ONLY, and that is an open question, not a
+defect.** The desktop select appends `<option value="voided">` after the mapped
+stages; mobile's picker has never carried it. So a case can be voided from a
+desktop and not from a phone. Left exactly as it shipped when the filtering bug
+above was fixed — whether the phone SHOULD be able to void is a business call
+(the standing philosophy is to loosen rather than restrict), and merging it under
+cover of a drift fix would have made that decision silently.
 - Mobile list card: `activeMStages(...)` per row (`MobileServiceCase.tsx:522-523`),
   showing `idx+1 / rowStages.length` (`:587`) and one mini bar per active stage
   (`:591-596`).
@@ -122,7 +146,7 @@ at `ServiceCases.tsx:5241-5252`), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts:156-161`) hides one that merely restates
 its stage label.
 
-> `frontend/src/components/ServiceProgressTracker.tsx` **was DELETED** (with its
+> `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
 > anywhere in the tree, and it carried its own 7-stage copy with **no** resolution
 > filter, so wiring it up would have regressed the 7-vs-5 rule. Any future stepper
@@ -133,6 +157,37 @@ its stage label.
 > so it is inert — but it is the next place the rule would break, and it is not
 > covered by that deletion.
 
+### `issue_category` and `service_category` are two different questions
+
+They are not old and new versions of each other, and reading them that way is
+what put free text into a maintained lookup.
+
+| column | question | shape | where it is edited |
+|---|---|---|---|
+| `issue_category` | WHAT WENT WRONG (damage, defect, wrong item) | one value | intake form on both surfaces; drives the dispatcher breakdown and SLA |
+| `service_category` | WHICH PRODUCT it is about (Mattress, Bedframe, Sofa) | **an ARRAY** — one complaint can be a bedframe AND a mattress | chips on the desktop detail + intake, chips on the phone's Product info accordion |
+
+`backend/src/routes/assr.ts` describes the intake form as having "replaced the
+older service_category-driven flow". **That is about the INTAKE / dashboard role
+only.** `service_category` itself is live and maintained: `assr_product_categories`
+(mig 0112) is the admin-editable lookup, `assr_case_categories` is the join table
+every count and breakdown reads, and the desktop list still filters on it.
+
+**A hand-typed value is lossy in two ways at once**, which is why the phone's
+`type: "text"` binding was a defect and not a style difference.
+`resolveCategories` (`backend/src/services/assr.ts`) keeps an unrecognised token
+in the flat DISPLAY string but writes it **no row** in the join table. So a typed
+"Mattres" becomes its own bucket in desktop's category filter AND leaves the case
+uncategorised for every report. Neither failure says anything.
+
+The rule now lives in one place both surfaces import —
+`frontend/src/lib/assrProductCategories.ts` (the endpoint constant,
+`splitCategories`, `categoryChipList`, `toggleCategory`). The chip MARKUP is
+per-surface: `CategoryChips` in `pages/ServiceCases.tsx`,
+`frontend/src/mobile/MobileAssrCategoryChips.tsx` on the phone. Both send the
+complete ARRAY on every save, because `PATCH /api/assr/:id` rewrites the join
+rows from what it is given — a partial list deletes categories nobody deselected.
+
 ### Required fields at create
 
 Enforced on **both** halves as of 2026-07-21:
@@ -142,6 +197,14 @@ Enforced on **both** halves as of 2026-07-21:
 | `doc_no` (SO) | desktop `ServiceCases.tsx`; mobile `MobileServiceCase.tsx` | `backend/src/routes/assr.ts` → one combined 400 `"doc_no, complaint_issue and issue_category are required"` |
 | `complaint_issue` | same | same 400 |
 | `issue_category` | same (desktop also requires the custom label when "Other…" is picked) | same 400 — `hasCategory` treats whitespace-only as missing |
+
+### Optional at create, and worth capturing there anyway
+
+| Field | Why it belongs on the intake form |
+|---|---|
+| `customer_email` | **This is the satisfaction-survey address.** When a case reaches `completed`, `backend/src/routes/assr.ts` resolves the CSAT recipient as `email_for_survey \|\| customer_email`; a case created without either has nobody to send to, and somebody has to go back and fill it in. Desktop has captured it since it was written; the phone did not send the key on any path until 2026-08-21. |
+| `ref_no` | the customer's own pre-printed reference. Blank falls back to the SO's `Ref`. |
+| `service_category` | the PRODUCT category — see the section below. Optional at intake on the phone (it is set on the detail screen); desktop offers the chips at intake too. |
 
 **`items[]` is NOT required — that changed on owner audit 2026-07-22.** The
 server used to 400 `"At least one item is required"`; it no longer does, and the
@@ -160,6 +223,49 @@ to collide on.
 
 The desktop comment at `ServiceCases.tsx` saying *"server still accepts a null
 category"* is **stale** — the server `hasCategory` guard is the authority now.
+
+### The SO picker: a refusal used to render as "no results"
+
+*Create Service Case* stays disabled until a Sales Order is linked, so **the SO
+picker is the gate on the whole form**. When it finds nothing, the button is grey
+and the person is stuck — and until 2026-08-19 the screen could not say why.
+
+`useSoSearch` destructured only `{ data, isFetching }` from its `useQuery` and
+returned `data?.results ?? []`. **The error was dropped**, so a refusal rendered
+byte-identical to an honest empty answer. That matters because `GET
+/api/assr/search-so` can come back empty for three unrelated reasons:
+
+| | cause | fix |
+| --- | --- | --- |
+| 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
+| 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+
+The hook now returns `error` and the picker renders it **instead of** the
+not-found line. `check-silent-mutations` enforces this for `useMutation`, not
+`useQuery`, which is how it survived.
+
+**The gate WAS TEXT, and that is the part nobody thought to check — FIXED
+2026-08-20.** `canAccessServiceCases` used to admit the `service_cases.read`
+holder **or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
+(`services/pmsAccess.ts`) tests `position_name` against `/^sales/i` and
+`department_name` for the substring "sales". So a real salesperson whose position
+or department field was blank, or spelled another way ("Executive Sales" fails
+`/^sales/i`), was refused — and their permission list looked perfectly fine.
+
+The middle term is now `holdsHouzsCompanyGrant(c)` — the owner's ruling,
+"有 Houzs 这家公司的授权 就好（不看职称）". A company grant is provisioned
+deliberately, in one place, by someone who meant to; a job title is free text
+nobody re-checks against this gate. The permission and director terms are
+unchanged. See §6 *Route admission* and
+`docs/SERVICE-CASE-VISIBILITY-DECISION.md`.
+
+**Worked example, 2026-08-19.** A salesperson could not raise a case against
+`SO-005263`. Two hypotheses were raised and both were guesses, because the screen
+carried nothing that separated them. The read-only diagnostic
+(`Actions -> Why can this person not find this SO`) settled it: he held HOUZS,
+his position read "Sales Executive" and his department "Sales Department", so the
+gate admitted him — the order was simply never collected into the mirror. Cause 3.
 
 ### Complaint date is automatic and locked
 
@@ -229,6 +335,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
+| GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
 | PUT/POST/PATCH/DELETE | `/settings`, `/lookups/:kind*` | `service_cases.manage` `:321-475` | Admin config (read is `:296` / `:371`) |
 | POST | `/bulk/archive`, `/bulk/unarchive`, `/bulk/assign`, `/run-escalation` | `service_cases.manage` `:1025`, `:1042`, `:1058`, `:2057` | Bulk + manual SLA sweep |
@@ -246,9 +353,12 @@ Token-gated companions (no session): `/api/track` (customer verify),
 
 ### List (`assr.ts:807-835` → `services/assr.ts:1553-1727`)
 
-1. **Scope** — `assrVisibleUserIds(c)` (`assr.ts:148-156`) and
-   `assrVisibleAgentNames(c)` (`:163-…`), both keyed off the same tier
-   predicate `assrUnrestricted` (`:140-146`). `undefined` = unrestricted.
+1. **Scope** — `assrVisibleUserIds(c)`, keyed off the tier predicate
+   `assrUnrestricted`. `undefined` = unrestricted. The ids are turned into a
+   WHERE fragment by `assrVisibilityPredicateSql`
+   (`services/assrVisibility.ts`) — see §6 *Row visibility*.
+   `assrVisibleAgentNames` was removed on 2026-08-20 with the free-text
+   `sales_agent` match it fed.
 2. **Company** — `assrCompanyIds(c)` (`:115-117`) → `pushAllowedCompanies`.
    Service Cases are a cross-company queue that follows the caller's granted
    companies (decision trail in the header comment `:91-106`).
@@ -287,20 +397,47 @@ takes effect without a deploy (`:383-401`), snapshots the stage target
 
 Two independent clocks.
 
-**Case-level** — `SLA_HOURS_BY_PRIORITY` (`services/assr.ts:62-69`) is the
-single source of truth:
+**Case-level** — the source of truth is **`assr_priorities.sla_hours`**, the
+"SLA hrs" cell managers edit in Service Maintenance -> Priorities.
+`slaHoursForPriority(env, slug)` in `services/assrSla.ts` reads it; both SLA
+computations in `services/assr.ts` call that. Blank means "use the module default", which is
+`slaHoursFor()` over the hardcoded `SLA_HOURS_BY_PRIORITY` — the LAST-RESORT
+fallback, not the answer:
 
-| Priority | SLA hours |
+| Priority | fallback SLA hours |
 |---|---|
 | `urgent` | 24 |
 | `high` | 72 |
 | `normal` (default) | 168 (7 days) |
 | `low` | 336 (14 days) |
 
-`slaHoursFor()` (`:71-73`) defaults anything unknown to 168.
-`deadline_at = now + slaHours` at create (`:370-372`); changing priority via
-PATCH recomputes `deadline_at` off `created_at` unless the request also sets
-`deadline_at` or `sla_hours` explicitly (`:994-1006`).
+The fallback is also used when the row is missing, the stored value is not a
+positive whole number, or the read throws (wrapped in try/catch, same posture as
+`lookupStageTargetDays()`); `slaHoursFor()` defaults anything unknown to 168.
+There is deliberately **no `active` predicate** on the read — deactivating a
+priority must not swing the SLA of a case that still carries it.
+
+`deadline_at = now + slaHours` at create; changing priority via PATCH recomputes
+`deadline_at` off `created_at` unless the request also sets `deadline_at` or
+`sla_hours` explicitly. **Editing the cell does NOT recompute deadlines already
+on existing cases** — only new cases and priority changes pick it up (mig 065
+says the same).
+
+> **Until 2026-08-20 that cell was written and never read.** Both computations
+> called `slaHoursFor()` directly, so an edit saved, answered `{ ok: true }` and
+> changed nothing; the seeded values equal the constant, so it looked correct
+> until somebody edited one. `BUG-HISTORY.md` has the trace, and
+> `backend/tests/assrSlaHoursOverride.test.ts` is the guard.
+>
+> **Adding a priority still does not work**, and that is a different defect left
+> open: `assr_cases.priority` carries
+> `CHECK (priority IN ('low','normal','high','urgent'))`, so a
+> Service-Maintenance-added priority saves and lists but 500s every case create
+> that uses it. Widening it needs its own migration.
+
+`sla_hours` writes are validated on both `POST /lookups/priorities` and
+`PATCH /lookups/priorities/:id`: a positive whole number, or blank. Anything
+else is a 400 rather than a stored value nothing can use.
 
 **Per-stage** — `lookupStageTargetDays()` (`:126-160`) resolves in order:
 1. `assr_priority_stage_targets` joined to `assr_priorities` on the case's
@@ -461,11 +598,30 @@ leak while collapsing the second into the first is an empty-list outage.
 
 Two gates, deliberately different:
 
-- `requireServiceCaseAccess(perms)` (`backend/src/routes/assr.ts:78-89`) wraps
-  `canAccessServiceCases` (`:66-74`): pass if the caller holds any of the listed
-  permissions **OR** is Sales staff (`isSalesUser`) **OR** is a director
-  (`isDirectorUser` = `*` / Super Admin / Sales Director / Finance Manager).
-  Applied only to READS and to CREATE.
+- `requireServiceCaseAccess(perms)` wraps `canAccessServiceCases`: pass if the
+  caller holds any of the listed permissions **OR** holds the **HOUZS company
+  grant** (`holdsHouzsCompanyGrant`) **OR** is a director (`isDirectorUser` =
+  `*` / Super Admin / Sales Director / Finance Manager). Applied only to READS
+  and to CREATE.
+
+  The middle term was `isSalesUser` — a job-title test — until 2026-08-20.
+  `holdsHouzsCompanyGrant` reads `allowedCompanyIds` with the usual three-state
+  sentinel: `undefined` (unresolved company context) degrades to YES, exactly as
+  `allowedCompaniesSql` degrades to no predicate, so a cold start does not 403
+  everyone; `[]` is NO; a resolved set is YES only when HOUZS is in it.
+
+  **Known consequence, measured, not guessed.** Census run 32351722894
+  (2026-08-20, production): admittance goes 49 -> 77 active users, **+28 gained,
+  0 lost**. The 28 are Operation Department staff — Drivers, Warehouse Crew,
+  Outsource Transporters — plus HR and an Operation Executive. That is what
+  "不看职称" means in this data.
+
+  **Known future gap, also measured.** Six Sales-titled active users hold no
+  HOUZS grant (the 2990-only cohort). None of them loses access today, because
+  each is admitted by the permission or director term as well — but a FUTURE
+  2990-only rep with neither would be refused by this gate. If 2990 grows its own
+  sales team, this term needs a second company, or it needs to become "holds any
+  granted company".
 - `requirePermission("service_cases.<verb>")` — plain, for every write /
   manage / approve route. Owner rule 8 widened intake for Sales; it never
   widened mutation access (comment `:52-65`).
@@ -475,13 +631,75 @@ Permission keys in play: `service_cases.read`, `.create`, `.write`, `.manage`,
 
 ### Row visibility (WHICH cases)
 
-`assrUnrestricted(user)` (`assr.ts:140-146`) — `*`, or `service_cases.manage`,
-or a director — sees everything. Everyone else is narrowed to their reporting
-subtree by `assrVisibleUserIds` (`:148-156`, `subtreeUserIds`, full depth) plus
-`assrVisibleAgentNames` (`:163-…`) for legacy cases that only carry a free-text
-`sales_agent`. Both fail **closed** (`[]`) when the caller has no resolvable
-identity. Scoped callers additionally lose creditor fields (`stripCreditorFields`
-`:800`, applied at `:832-834`).
+`assrUnrestricted(user)` — `*`, or `service_cases.manage`, or a director — sees
+everything, and **must not be narrowed**: office staff work a case on a
+salesperson's behalf ("要不然 office 的帮不到 sales 处理东西了", owner
+2026-08-20). Everyone else is narrowed to their reporting subtree by
+`assrVisibleUserIds` (`subtreeUserIds`, full depth), which fails **closed** (`[]`)
+when the caller has no resolvable identity. Scoped callers additionally lose
+creditor fields (`stripCreditorFields`).
+
+**What the subtree is matched ON changed on 2026-08-20**, and this is the whole
+rule now — `assrVisibilityPredicateSql` in
+`backend/src/services/assrVisibility.ts`:
+
+| source of the case's SO | who may see it |
+|---|---|
+| ERP-native — `doc_no` resolves to a non-DRAFT, non-CANCELLED `scm."mfg_sales_orders"` row | `created_by` / `assigned_to` / `assigned_to_2` in the subtree, **or** the order's `salesperson_id` -> `scm.staff.user_id` (mig 0066) in the subtree. BY ID. |
+| AutoCount `sales_orders` mirror, or no resolvable SO | whoever the COMPANY predicate admits. No agent test at all. |
+
+The asymmetry is about DATA QUALITY, not trust: "AutoCount 那一边，它的 SysAgent
+可能也不准吧". The old rule OR-ed
+`LOWER(sales_agent) LIKE '%<subtree member name>%'` — a substring match over text
+mirrored from AutoCount — which is what silently removed a batch of Sales Agents
+from their own cases. `assrVisibleAgentNames` is **gone**; `subtreeAgentNames`
+(`services/orgScope.ts`) stays, because `/my-cases` still uses it (below).
+
+**One predicate, four readers.** `pushVisibilityScope` (list + CSV export),
+`assrVisibilitySql` (the five aggregate endpoints), `assrCaseRowInScope` (detail
+GET + printable) and `caseInCallerScope` (the mutating `/:id` guard) all resolve
+through that one string — `assrCaseRowInScope` by asking the database with it
+rather than restating it in TypeScript. The two SQL twins and the two TS copies
+that existed before are the drift `fix/assr-aggregate-scope` had to close once
+already. `backend/tests/assrVisibilityRule.test.ts` scans the reader files and
+fails if the id clause reappears in any of them.
+
+**How much this widened, measured.** Census run 32351722894 (2026-08-20,
+production): of 859 non-archived cases, **7** are ERP-sourced and **852** are
+AutoCount-sourced — so in practice almost the whole case book is now
+company-open. All 60 visibility-scoped users gain cases; **36 go from ZERO
+visible cases to some** (the reported outage); 45,168 user-case grants added, 0
+lost.
+
+**ASSUMPTION AWAITING THE OWNER — "own" keys off the SO's SALESPERSON, not the
+case's CREATOR.** `docs/SERVICE-CASE-VISIBILITY-DECISION.md` leaves this open in
+so many words: *"for an ERP order does 'own' key off the SO's salesperson or the
+case's creator? Ask before choosing - they differ whenever office raises a case
+on a salesperson's behalf."* The shipped rule takes the SALESPERSON, because that
+is the binding the same paragraph calls real, and because the creator is already
+covered by the separate `created_by` term — so office raising a case on a rep's
+behalf leaves the case visible to office (unrestricted tier) AND to the rep and
+their upline (salesperson term), which is the outcome the tier exists to allow.
+If the owner rules the other way, the change is to drop the `es.user_id` arm from
+`assrVisibilityPredicateSql` and rely on `created_by` alone. It affects 7 cases
+today (census run 32351722894).
+
+**`/my-cases` is NOT part of this rule and still matches on the name.** It
+answers a different question — "cases that are MINE" — and lists rows whose
+`sales_agent` text matches a subtree display name (`subtreeAgentNames`). So a rep
+can see an AutoCount case in the main list that does not appear under My Cases.
+That is deliberate, and it was left alone on 2026-08-20 rather than swept in.
+
+**The FRONTEND gate is now NARROWER than the backend**, deliberately and
+temporarily. `PageGuard allowSales` still asks `org.sales.staff`
+(= `isSalesUser`), so a HOUZS grantee who is not Sales-titled needs the
+`service_cases` page grant to reach the screen even though the API would answer
+them. It is not a regression — that person could not open the page before either
+— and it cannot be closed by OR-ing two capabilities on the client, which
+`frontend/src/auth/capabilities.ts` forbids by name. The composed capability has
+to be resolved on the server, and `/auth/me` is registered BEFORE the
+`companyContext` middleware, so it has no company grant to read. Closing it means
+resolving the grant inside `/auth/me`.
 
 Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 (`assrCompanySql` `:109`, `assrCompanyIds` `:115`), every creator stamps
@@ -514,7 +732,7 @@ them — and are called by both:
 
 | exported from `services/assrVisibility.ts` | answers |
 |---|---|
-| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all (self + downline + the legacy `sales_agent` reach)? `true` for an unrestricted caller. |
+| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all? The id terms are checked in memory, then the rest is asked of the database using `assrVisibilityPredicateSql` — the SAME string the list builds its WHERE from, never a second copy. `true` for an unrestricted caller; fails CLOSED if the query throws. |
 | `assrCallerIsScoped(c)` | is this caller visibility-restricted, i.e. must not see supplier identity? |
 | `stripCreditorFields(row)` | removes the creditor columns, both naming conventions. |
 
@@ -526,10 +744,28 @@ on one of two routes that emit the same content is not enforced.
 | Surface | What it checks | File |
 |---|---|---|
 | Desktop routes `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id` | `PageGuard page="service_cases" allowSales` | `App.tsx:369, 386, 402, 410` |
-| `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")`, the same `pmsAccess.isSalesUser` classifier `requireServiceCaseAccess` admits on | `frontend/src/auth/PageGuard.tsx:70`, `backend/src/services/capabilities.ts:244` |
-| Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx:474` |
+| `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")` = `pmsAccess.isSalesUser`. **No longer the same classifier the API admits on**: `requireServiceCaseAccess` moved to the HOUZS company grant on 2026-08-20 and this term did not follow. See §6 *Row visibility*, last paragraph, for why and what closing it takes. | `frontend/src/auth/PageGuard.tsx`, `backend/src/services/capabilities.ts` |
+| Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx` |
+| **Mobile case DETAIL, non-director Sales rep** | `isSalesNonDirector(user)` — the SAME predicate the desktop route redirects on, imported not re-derived. A rep opens `MobileMyCaseDetail` (read-only + comment/nudge); everyone else opens the editable `CaseDetail`. The LIST and the create sheet are unaffected. | `frontend/src/mobile/MobileServiceCase.tsx`, `frontend/src/mobile/MobileMyCaseDetail.tsx` |
 | Mobile list query `enabled` | `can("service_cases.read") \|\| capability(user, "org.sales.staff") \|\| capability(user, "org.director")` — `canViewCases` | `frontend/src/mobile/MobileServiceCase.tsx` |
 
+> **The ruling had ONE enforcement point for 13 months, and it was desktop.**
+> Owner 2026-07-23: 「sales agent 不应该有 edit case 功能」. `App.tsx` redirected;
+> mobile mounted the FULL editable detail, and `isSalesNonDirector` had exactly
+> one mobile call site in the tree (`MobilePMS`, unrelated). Closed 2026-08-21 —
+> `docs/bugs/0483-a-sales-rep-could-not-edit-a-case-on-desktop-and-got-a-scree.md`.
+>
+> **The backend has never enforced it, and that is not the gap it looks like.**
+> Every write route is `requirePermission("service_cases.write")`, which knows
+> nothing about the Sales cohort. So what was live was decided by the permission
+> MATRIX, and it was read rather than assumed
+> (`backend/scripts/census-service-case-visibility.mjs` §5, run 32395787958):
+> **32 active non-director Sales staff, all on the role `Sales Person`, and
+> `service_cases.write` held by ZERO of them.** No rep could ever have edited a
+> case from the phone — the buttons all 403'd. The ruling IS enforced, by the
+> grant. **Do not "fix" this by changing a permission**: the grant already
+> implements the owner's rule, and changing one is his call.
+>
 > **The director divergence this section used to report is FIXED.** The mobile
 > predicate carried only two of the backend's three terms and omitted the
 > director branch, so a director holding neither `service_cases.read` nor Sales
@@ -550,14 +786,28 @@ module that means:
 | Stage pipeline, supplier-only rule, sub-statuses | `pages/ServiceCases.tsx` (`DETAIL_STAGES`, `getActiveStages`) | `mobile/MobileServiceCase.tsx` (`STAGES`, `activeMStages`, `PHASE_DEFS`) | **`vendor/scm/lib/assr/stages.ts`** — put the rule HERE; both surfaces already import it |
 | Stage LABELS (what any reader sees for a stage) | `pages/ServiceCases.tsx`, `pages/MyCases.tsx`, `portal/pages/PortalSupplierCase.tsx` | `mobile/MobileServiceCase.tsx` (`prettyStage`) | **`vendor/scm/lib/assr-stage-labels.ts`** and its byte-identical backend twin — the words had five hand-written homes and the customer-facing one printed a raw slug |
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
-| Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups `:2251-2260`, `:2956-2968` | `MobileServiceCase.tsx:92-118` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` `:215` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
-| Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list `MobileServiceCase.tsx:1197` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
+| Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups | `MobileServiceCase.tsx` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
+| **Note audience + issue-category fallback** | `ServiceCases.tsx` (add-note form, create panel) | `MobileServiceCase.tsx` (Timeline picker, NoteSheet, intake sheet) | **`vendor/scm/lib/assr/case-fields.ts`** — `ASSR_NOTE_AUDIENCES`, `assrNoteIsCustomerVisible()`, `ASSR_ISSUE_CATEGORIES` |
+| Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list in `MobileServiceCase.tsx` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
+| Product category (`service_category`) | `CategoryChips` in `pages/ServiceCases.tsx` | `mobile/MobileAssrCategoryChips.tsx`, wired as the `chips` field type in `EditableAcc` | **`frontend/src/lib/assrProductCategories.ts`** — the endpoint, the split, which chips exist, what a toggle produces. Markup only is per-surface |
+| Survey address (`customer_email`) | intake form + Customer panel in `pages/ServiceCases.tsx` | intake sheet + Customer accordion in `mobile/MobileServiceCase.tsx` | `email_for_survey \|\| customer_email` in `backend/src/routes/assr.ts` decides who the CSAT mail goes to |
+| Row readers / formatters on the phone | — | **`frontend/src/mobile/assr-case-fields.ts`** — `get`, `caseNo`, `slaText`, `prettyStage`. Extracted from the screen so it stays under its size ceiling AND so they are testable | — |
+| SO typeahead on the phone | `CreatePanel` in `pages/ServiceCases.tsx` | **`frontend/src/mobile/MobileAssrSoField.tsx`** — `useSoSearch` + `SoSearchField`, used by both the create sheet and the detail | `GET /api/assr/search-so` |
 | Attachment upload / thumbs | `ServiceCases.tsx:2472-2498` | `MobileServiceCase.tsx:1890-1905` | `lib/assrAttachmentUpload.ts`, `lib/imagePipeline.ts` |
-| Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx:340` | backend capabilities (`services/capabilities.ts`) |
+| Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx` | backend capabilities (`services/capabilities.ts`) |
+| **The 2026-07-23 rule: a Sales rep may not EDIT a case** | `App.tsx` `SalesRepCaseDetailRoute` redirects `/assr/:id` -> `/my-cases/:id` | `MobileServiceCase.tsx` opens `MobileMyCaseDetail` instead of `CaseDetail` | **`auth/salesAccess.isSalesNonDirector`** — one predicate, imported by both. Pinned on BOTH surfaces by `auth/permissionDivergence.test.ts` |
 
 The history is not hypothetical: `stages.ts:1-16` exists because mobile once
 ignored the internal-resolution skip and mis-routed cases into the two
 supplier-only stages with the wrong progress denominator.
+
+Nor is the row above it. The two note-audience copies had ALREADY come apart by
+the time anyone compared them: desktop offered "Customer-visible", mobile offered
+"Customer" — and `customer` is the only bucket the portal shows a customer, so
+the phone's label named the bucket while the desktop's named the consequence.
+One home now, on the explicit wording; the mobile chips wrap 2x2 because
+`.sochip` is `white-space: nowrap` and the longer labels overflow a 375px row
+(measured, `docs/bugs/0482-two-assr-field-lists-were-written-twice-and-the-note-audienc.md`).
 
 ---
 
@@ -570,3 +820,21 @@ supplier-only stages with the wrong progress denominator.
   `do_date` or own-team `inspection_visit_at` also surface as fleet jobs on the
   delivery board.
 - `BUG-HISTORY.md` — read the Service Case entries before touching this module.
+
+## The pre-auth intake endpoints are scoped to their SECRET's company (2026-08-18)
+
+`GET /api/assr-form-intake/status-export` and `POST /api/assr-form-intake/delivery-dates`
+are pre-auth by design — Google's servers call them, there is no session and no
+`X-Company-Id`, so `companyContext` never runs. That is why neither could be
+given a caller's predicate, and why both ran unscoped across BOTH companies: the
+export returned `customer_name`, `phone`, `addr1-4` and `complaint_issue` for
+every non-archived case, and `/delivery-dates` resolved a case by `assr_no` —
+which is not unique across companies — and UPDATEd it.
+
+The rule now: **each shared secret carries its own company.** `FORM_INTAKE_KEY`
+and `SHEET_SYNC_KEY` are both Houzs Century artifacts (the staff service-request
+form and the HC Delivery sheet), so both map to `HOUZS` in
+`INTAKE_KEY_COMPANY` (`backend/src/routes/assrFormIntake.ts`). A future 2990
+sheet gets its OWN key and its own row there; it must never be handed one of
+these two. A readable companies master with no row for the code is a
+MISCONFIGURATION and answers 503 — it does not fall back to "no predicate".

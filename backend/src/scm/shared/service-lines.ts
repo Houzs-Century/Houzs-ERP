@@ -104,6 +104,96 @@ export const liftChargeableUnits = (floorsCount: number, itemsCount: number): nu
  *   · additional (operator free-form)                     → SVC-DELIVERY-ADD
  * Zero components produce no line; Σ lines === fee.total always.
  */
+/** What the OPERATOR owns on the existing SVC-DELIVERY* lines, recovered before
+ *  a rebuild discards them (2026-08-19). Two things and only two:
+ *
+ *  · the free-form additional fee — recovered from the GROSS side (unit × qty,
+ *    falling back to total for pre-discount rows). With discounts surviving,
+ *    total_sen is NET, and recovering the net as the next gross would compound
+ *    the reduction on every save (50 → 30 → 10 across three edits);
+ *  · per-line DISCOUNTS, keyed by item_code. The line PATCH accepts a bounded
+ *    discount on any line, delivery included — but the rebuild used to write
+ *    discount_sen: 0 over it, so the one sanctioned way to REDUCE a delivery
+ *    fee was silently undone by the very next derivation ("250 → 125 nuked the
+ *    line to 0"). Typing a lower unit price never could hold — the fee is
+ *    derived, one truth (owner 2026-08-07) — so the discount is the operator's
+ *    reduction, expressed like every other price cut on an SO.
+ *
+ *  The caller clamps each recovered discount to the REBUILT line's own total
+ *  (a fee line can never go negative), and a component that disappears on
+ *  rebuild drops its discount rather than migrating it to money it never
+ *  named. */
+export function recoverOperatorDeliveryState(
+  deliveryLines: Array<{ item_code: string; total_sen: number | null; unit_price_sen?: number | null; discount_sen?: number | null; qty?: number | null }>,
+): { additionalSen: number; discountByCode: Map<string, number> } {
+  const additionalSen = deliveryLines
+    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
+    .reduce((s, l) => s + (l.unit_price_sen != null
+      ? Number(l.unit_price_sen) * Math.max(1, Number(l.qty ?? 1))
+      : Number(l.total_sen ?? 0)), 0);
+  const discountByCode = new Map<string, number>();
+  for (const l of deliveryLines) {
+    const d = Math.max(0, Number(l.discount_sen ?? 0));
+    if (d > 0) discountByCode.set(l.item_code, (discountByCode.get(l.item_code) ?? 0) + d);
+  }
+  return { additionalSen, discountByCode };
+}
+
+/** The operator-owned fee state a derivation was computed FROM, in the shape
+ *  migration 0314's `p_expect_state` re-reads under the rebuild's advisory
+ *  lock. Keyed by row id so the comparison is order-free:
+ *
+ *      { "<uuid>": [item_code, qty, unit_price_sen, discount_sen] }
+ *
+ *  This exists because the lock was in the wrong place. `rebuild_mfg_so_-
+ *  delivery_lines` locks per doc_no, but `recomputeDeliveryFeeCore` READS the
+ *  fee lines first and calls it after — so two line PATCHes from ONE Save
+ *  (`runSoLineWrites` fans the dirty-line stage out with `Promise.allSettled`)
+ *  could both derive from a pre-discount snapshot, and the second write put the
+ *  operator's 125 back to 250. The lock made that ordering deterministic, not
+ *  impossible. Passing what we read turns read-then-lock into
+ *  lock-read-compare-write.
+ *
+ *  Every number is truncated to an integer here because the SQL side casts to
+ *  bigint before building its jsonb: `1` has to match `1`, never `1.00`.
+ *
+ *  Returns null when any line arrives without an id — the expectation would be
+ *  unbuildable and a WRONG one would refuse every rebuild forever. The caller
+ *  treats null as "no expectation" (pre-0314 behaviour) and says so in the log;
+ *  `id` is the primary key of the row we just selected, so this is a branch
+ *  that should never run. */
+export function deliveryFeeStateKey(
+  deliveryLines: Array<{ id?: string | null; item_code: string; qty?: number | null; unit_price_sen?: number | null; discount_sen?: number | null }>,
+): Record<string, [string, number, number, number]> | null {
+  const int = (v: unknown): number => {
+    const n = Math.trunc(Number(v ?? 0));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const out: Record<string, [string, number, number, number]> = {};
+  for (const l of deliveryLines) {
+    /* EXACTLY the three codes the RPC's own predicate names, not
+       isDeliveryFeeServiceCode's PREFIX match. The caller filters with the
+       prefix (`startsWith(SVC_DELIVERY)`), the function compares
+       `item_code IN ('SVC-DELIVERY','SVC-DELIVERY-CROSS','SVC-DELIVERY-ADD')`,
+       and a hand-added SVC-DELIVERY-ANYTHING row would therefore be in the
+       expectation and NOT in what the function re-reads — a mismatch that never
+       resolves, so the fee would stop re-deriving on that order forever. Fails
+       CLOSED, silently, which is the worst shape. The two sides must name the
+       same set. */
+    if (!REBUILT_DELIVERY_FEE_CODES.has(l.item_code)) continue;
+    const id = l.id == null ? '' : String(l.id);
+    if (!id) return null;
+    out[id] = [l.item_code, int(l.qty), int(l.unit_price_sen), int(l.discount_sen)];
+  }
+  return out;
+}
+
+/** The SVC-DELIVERY* codes `scm.rebuild_mfg_so_delivery_lines` reads, writes and
+ *  deletes — its `live` CTE and its DELETE both name exactly these three. */
+export const REBUILT_DELIVERY_FEE_CODES: ReadonlySet<string> = new Set([
+  SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD,
+]);
+
 export function buildDeliveryFeeServiceLines(
   fee: SoDeliveryFeeResult,
   crossCategorySourceDocNo?: string | null,

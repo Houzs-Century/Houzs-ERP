@@ -1,0 +1,1134 @@
+{
+  "reviewed": [
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA|backend/src/scm/lib/lead-time.ts backend/src/scm/routes/mrp-lead-times.ts backend/src/scm/routes/product-models.ts backend/src/scm/routes/pwp-rules.ts backend/src/scm/routes/scan-so.ts backend/src/scm/routes/special-addons.ts backend/src/services/assistant-tools.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/lib/mrp-queries.ts frontend/src/vendor/scm/lib/scan-prefill.ts frontend/src/vendor/scm/lib/supplier-categories.ts",
+      "why": "THE PRODUCT-CATEGORY VOCABULARY, written out at 11 homes (LEAD_CATEGORIES, CATEGORIES, VARIANT_CATEGORIES, CATEGORY_TO_GROUP, DEFAULT_SUPPLIER_CATEGORIES) as zod enums, MRP lead-time buckets, supplier defaults and pickers. One question — what categories does this business sell — with 11 answers, and D2 already reports three of them disagreeing (MIXED, OTHERS, a missing SERVICE). Recorded and NOT collapsed here: it touches eleven modules and belongs in its own PR."
+    },
+    {
+      "check": "D1",
+      "key": "BEDFRAME,MATTRESS,SOFA|backend/src/scm/lib/so-display-branding.ts backend/src/scm/lib/so-readiness.ts backend/src/scm/routes/consignment-orders.ts backend/src/scm/routes/delivery-planning.ts backend/src/scm/routes/mfg-sales-orders.ts frontend/src/vendor/scm/components/SpecialAddonsTab.tsx",
+      "why": "THE MAIN CATEGORIES (sofa/bedframe/mattress) — the set the sofa-exclusivity rule, the branding label and the readiness roll-up all key on. Six homes: MAIN_CATS, MAIN_CATEGORY_ORDER, MAIN, DELIVERABLE, SA_CATEGORIES. A genuine duplicated decision; unifying it changes what SpecialAddonsTab offers and what so-readiness counts, so it is the owner's call and not a drive-by."
+    },
+    {
+      "check": "D1",
+      "key": "IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/product-models.ts backend/src/scm/routes/scan-lorry-invoice.ts backend/src/scm/routes/scan-payment.ts backend/src/scm/routes/scan-so.ts backend/src/services/vision-blocks.ts frontend/src/vendor/scm/components/SlipUploadField.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 6 homes: GALLERY_MIME, IMAGE_MIMES, ASSISTANT_IMAGE_MIMES, IMAGE_SLIP_MIMES. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "PRICE_1,PRICE_2,PRICE_3|backend/src/scm/routes/fabric-library.ts backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/sofa-combos.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/components/FabricsTable.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx",
+      "why": "THE THREE PRICE TIERS. A closed vocabulary fixed by the supplier price sheet; the copies are a validator and three label maps (VALID_TIERS, TIERS, TIER_LABELS, allTiers, TIER_NEXT). Recorded rather than merged because the validator must stay server-side and the labels must stay renderable offline."
+    },
+    {
+      "check": "D1",
+      "key": "24,26,28,30,32,35|frontend/src/pages/scm-v2/ProductModelDetail.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/pages/scm-v2/Products.tsx frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx",
+      "why": "A HARD-CODED FALLBACK used only when the maintenance table has not loaded; the live list comes from config. 5 homes: SOFA_HEIGHT_FALLBACK, HEIGHTS_FALLBACK. A stale fallback shows a short picker, it does not decide anything."
+    },
+    {
+      "check": "D1",
+      "key": "CASH,INSTALLMENT,MERCHANT,ONLINE|backend/src/scm/lib/fair-report.ts backend/src/scm/shared/payment-methods.ts frontend/src/lib/paymentRetryHandoff.ts frontend/src/mobile/RecordedPayments.tsx frontend/src/vendor/scm/lib/payment-methods.ts",
+      "why": "THE PAYMENT METHODS. backend/src/scm/shared/payment-methods.ts is the canonical home and IS mirrored to the frontend, but fair-report.ts and paymentRetryHandoff.ts re-type the same four values (TENDER_LABELS, PAYMENT_METHOD_CORE_VALUES, PAY_METHODS). Those two are the copies worth removing; doing it touches the fair P&L, which is why it is recorded here first."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION|backend/src/routes/assrPortal.ts frontend/src/pages/MyCases.tsx frontend/src/pages/ServiceMetrics.tsx frontend/src/pages/serviceCaseStages.ts frontend/src/portal/pages/PortalSupplierCase.tsx",
+      "why": "THE ASSR CASE STAGES — the seven-stage service pipeline, spelled out at five homes (STAGES, STAGE_COLOR, STAGE_FUNNEL_ORDER, STAGE_FUNNEL_LABEL, STAGE_FUNNEL_DESC) as a funnel order, a colour map, two label maps and a portal filter. This is the clearest live instance of the class the owner named, and it is deliberately left visible here rather than half-fixed: the funnel ORDER changed on 2026-08-11 (Solution before Verification) and any collapse has to preserve that order."
+    },
+    {
+      "check": "D1",
+      "key": "JPEG,JPG,PNG,WEBP|backend/src/routes/portal.ts backend/src/routes/projects.ts backend/src/routes/supplierPortal.ts frontend/src/portal/pages/PortalCaseDetail.tsx frontend/src/portal/pages/PortalSupplierCase.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 5 homes: ALLOWED_EXT, allowed. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "MYR,RMB,SGD,USD|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts frontend/src/lib/scm.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: VALID_CURRENCIES, CURRENCIES, CURRENCY_SYMBOL, CURRENCY_OPTIONS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 4 homes: ALLOWED_SLIP_MIMES. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "APPROVED,PO_APPROVED,SENT,SO_APPROVED|frontend/src/mobile/MobileSODetail.tsx frontend/src/pages/scm-v2/AmendmentDetailV2.tsx frontend/src/vendor/scm/lib/amendment-pdf-map.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: soApplied, APPLIED_STATES. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APR,AUG,DEC,FEB,JAN,JUL,JUN,MAR,MAY,NOV,OCT,SEP|backend/src/routes/finance.ts backend/src/routes/projects_print.ts backend/src/scm/lib/po.ts frontend/src/pages/Projects.tsx",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 4 homes: MONTH_LABELS, MONTHS, month, mon."
+    },
+    {
+      "check": "D1",
+      "key": "BOTH,REVENUE,SETS|backend/src/scm/lib/fleet-availability.ts backend/src/scm/routes/delivery-zones.ts backend/src/scm/routes/lorries.ts frontend/src/vendor/scm/lib/lorries-queries.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CAP_LAYERS, CAPACITY_LAYERS, CAPACITY_LAYER_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CREDIT_NOTED,INSPECTED,PENDING,RECEIVED,REFUNDED,REJECTED|frontend/src/pages/scm-v2/ConsignmentReturnDetail.tsx frontend/src/pages/scm-v2/ConsignmentReturns.tsx frontend/src/pages/scm-v2/DeliveryReturnDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: STATUS_FLOW, STATUS_CLASS, STATUS_LABEL, STAGE_LABEL, DR. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-status.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: VALID_STATUSES, STAGE_LABEL, PO_STATUS_LABEL, PO. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/PoAmendmentDetailV2.tsx",
+      "why": "THE AMENDABLE PO HEADER FIELDS — which header columns a PO amendment may carry. One home decides, three render labels for it (AMENDABLE_HEADER, HEADER_LABEL). The deciding copy is po-revision.ts; the others cannot widen it."
+    },
+    {
+      "check": "D1",
+      "key": "FIELD_SERVICE_OWN,FIELD_SERVICE_SUPPLIER,REPLACE_UNIT,RETURN_VISIT,SUPPLIER_REPAIR|backend/src/routes/assr_print.ts frontend/src/components/StatusDot.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/mobile/assr-case-fields.ts frontend/src/pages/ServiceCases.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: RESOLUTION_LABEL, RESOLUTION_OPTIONS, RESOLUTION_LABELS. Cost of divergence is a blank chip, not a wrong number. The fifth home is NOT a new decision: RESOLUTION_LABELS simply MOVED out of frontend/src/mobile/MobileServiceCase.tsx into frontend/src/mobile/assr-case-fields.ts when that screen hit its size ceiling. The screen still lists RESOLUTION_OPTIONS (the slugs it offers), which is why both mobile paths appear here."
+    },
+    {
+      "check": "D1",
+      "key": "GENERAL,LEARNING,SOP,WARNING|frontend/src/components/AnnouncementBanner.tsx frontend/src/mobile/MobileAnnouncementPopup.tsx frontend/src/mobile/MobileAnnouncements.tsx frontend/src/pages/Announcements.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CATEGORY_LABEL, CAT_LABEL, CAT_COLOR, CATEGORY_ORDER. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "PO_APPROVED,REJECTED,REQUESTED,SENT,SO_APPROVED,SUPPLIER_PENDING|backend/src/scm/routes/amendment-mirror.ts backend/src/scm/shared/so-amendment.ts frontend/src/mobile/MobileSODetail.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CANON_AMENDMENT_STATUS, FORWARD_RANK, AMENDMENT_STATUS_LABEL, SO_AMENDMENT. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/routes/consignment-notes.ts backend/src/scm/routes/consignment-returns.ts backend/src/scm/routes/delivery-returns.ts",
+      "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 3 homes: CN_FINANCE_KEYS, CRN_FINANCE_KEYS, DR_FINANCE_KEYS."
+    },
+    {
+      "check": "D1",
+      "key": "ACTIVE,BLOCKED,INACTIVE|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: SUPPLIER_STATUSES, STATUS_CLASS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APAD,CROSS_BORDER,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/scm/lib/fleet-availability.ts backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: COMPLIANCE_DOC_TYPES, COMPLIANCE_DOC_LABELS, DOC_TYPES, DOC_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee."
+    },
+    {
+      "check": "D1",
+      "key": "ASSET,EQUITY,EXPENSE,INCOME,LIABILITY|backend/src/scm/routes/accounting.ts frontend/src/pages/scm-v2/Accounting.tsx frontend/src/vendor/scm/components/AccountSelect.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: ACCOUNT_TYPES, ACCOUNT_TYPE_ORDER, TYPE_ORDER, TYPE_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ASSR_CASE,DELIVERY_ORDER,GRN,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER,USER|frontend/src/components/GlobalSearch.tsx frontend/src/lib/globalSearch.ts frontend/src/mobile/MobileSearch.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: order, DEGRADED_LABEL, TYPE_LABEL, TYPE_COLOR. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CLOSED,DELIVERED,INVOICED,SHIPPED|backend/src/scm/routes/inventory.ts backend/src/scm/routes/mfg-sales-orders.ts frontend/src/vendor/scm/lib/so-detail-gates.ts",
+      "why": "SO \"DONE\" AT FIVE STATUSES: inventory.ts's second SO_DONE, the amendment terminal check in mfg-sales-orders.ts and so-detail-gates.ts's LOCKED_STATUSES. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which asserts the exact membership of all three live spellings (four, five and six) so the count cannot quietly become a fourth while the owner's ruling on DRAFT and SHIPPED is outstanding. MUST NOT be merged in this run — so-terminal-states.ts:29-34 and inventory.ts:542-548 both say so from both ends."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,ON_HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/mfg-purchase-orders.ts backend/src/scm/shared/hr-commission.ts",
+      "why": "THE SO THRESHOLD — DRAFT/CANCELLED/ON_HOLD. Two of the three are the same question (SO_UNORDERABLE_STATUSES refuses a PO, SO_UNDELIVERABLE_STATUSES refuses a DO) and are PINNED equal by backend/tests/duplicatedDecisionPins.test.ts. The third, COMMISSION_EXCLUDED_STATUSES, is a DIFFERENT question — which orders earn commission — and its own header explains why DRAFT is on it. Same members, two questions: exactly the judgement this field exists to record."
+    },
+    {
+      "check": "D1",
+      "key": "CASH,INSTALLMENT,MERCHANT,TRANSFER|backend/src/scm/routes/mfg-sales-orders.ts backend/src/scm/shared/payment-methods.ts frontend/src/vendor/scm/lib/payment-methods.ts",
+      "why": "THE PAYMENT-METHOD CODES with TRANSFER instead of ONLINE — the write-side vocabulary the SO route validates against, versus the read-side labels. Three homes (VALID_METHODS, PAYMENT_METHOD_CODES); the ONLINE/TRANSFER split is real and is why the two sets do not fold together."
+    },
+    {
+      "check": "D1",
+      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR|backend/src/scm/lib/fabric-supplier-code.ts backend/src/scm/shared/so-variant-rule.ts frontend/src/vendor/shared/so-variant-rule.ts",
+      "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. 3 homes: FABRIC_CODE_KEYS."
+    },
+    {
+      "check": "D1",
+      "key": "CRITICAL,MAJOR,MINOR|backend/src/services/fleet-status.ts frontend/src/mobile/MobileMileageCapture.tsx frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: BREAKDOWN_SEVERITIES, SEVERITY_TONE. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,DROP,TRIP,UNIT|backend/src/scm/lib/delivery-rate-card.ts backend/src/scm/routes/delivery-rate-cards.ts frontend/src/pages/scm-v2/DeliveryRateCards.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: AGGREGATION_UNITS, AGGREGATION_HINT. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,OVERDUE,PENDING_DELIVERY,PENDING_SCHEDULE|backend/src/scm/routes/delivery-planning.ts backend/src/services/agents/delivery-agent.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: DELIVERY_STATES, byPlanningState, DELIVERY_STATE_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE DISPATCHABLE JOB TYPES. Already independently refereed: check-job-type-parity.mjs asserts the rate-rule taxonomy and the DP job types agree. Recorded here so the two gates are visibly the same finding and not two."
+    },
+    {
+      "check": "D1",
+      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here."
+    },
+    {
+      "check": "D1",
+      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/Projects.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 3 homes: WEEKDAYS."
+    },
+    {
+      "check": "D1",
+      "key": "GIF,HEIC,JPEG,JPG,PNG,WEBP|frontend/src/mobile/MobilePMS.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 3 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/scm/lib/fleet-availability.ts backend/src/scm/routes/fleet-maintenance.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: FLAT_COL, REQUIRED_FOR_INHOUSE. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "K,Q,S,SK,SP,SS|frontend/src/pages/scm-v2/ProductModelDetail.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/scm/lib/size-info.ts",
+      "why": "A HARD-CODED FALLBACK used only when the maintenance table has not loaded; the live list comes from config. 3 homes: FALLBACK_BEDFRAME_SIZES, SIZE_INFO. A stale fallback shows a short picker, it does not decide anything."
+    },
+    {
+      "check": "D1",
+      "key": "KELANTAN,PERAK,PULAU PINANG,TERENGGANU|backend/src/services/projectGates.ts frontend/src/mobile/MobilePMS.tsx frontend/src/pages/Projects.tsx",
+      "why": "THE DEFECT-REVIEW REGION STATES (owner 2026-08-11, two-warehouse split). backend/src/services/projectGates.ts is the authored home; Projects.tsx and MobilePMS.tsx each re-type it to decide which reviewer to SHOW. A server/UI disagreement here sends a defect to the wrong reviewer's screen while the server routes it correctly — the same shape as the crew predicate this PR pins, and the next one worth pinning."
+    },
+    {
+      "check": "D1",
+      "key": "PENDING_INSPECTION,PENDING_SUPPLIER_PICKUP,PENDING_SUPPLIER_RETURN,QC_ISSUE_RESULT|backend/src/routes/assr.ts backend/src/routes/assr_print.ts backend/src/services/assr.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: SUB_STATUS_VALUES, SUB_STATUS_LABEL, SUB_LABELS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": ",1ST,2ND,3RD,4TH,5TH|backend/src/scm/shared/service-sku.ts frontend/src/vendor/shared/service-sku.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FLOOR_ORDINALS."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.AUTOCOUNT.READ,SETTINGS.MANAGE|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE PERMISSION KEYS ONE NAV ENTRY IS GATED ON, written once on the route Guard and once on the sidebar item so a hidden link is also an unreachable route. The pair must agree; the server is the real gate and neither of these is it. unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.HR.MANAGE,SCM.HR.READ|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE PERMISSION KEYS ONE NAV ENTRY IS GATED ON, written once on the route Guard and once on the sidebar item so a hidden link is also an unreachable route. The pair must agree; the server is the real gate and neither of these is it. unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "0000,000000,1111,11111,111111,11111111,111222,112233,121212,123123,123123123,123321,1234,12344321,12345,123456,1234567,12345678,123456789,1234567890,1234QWER,123654,123QWE,131313,159753,1Q2W3E4R,1QAZ2WSX,2000,222222,232323,333333,555555,654321,666666,6969,777777,7777777,8675309,87654321,888888,88888888,987654,987654321,999999,AAAAAA,ABC123,ABCD1234,ABCDEFG,ACCESS,ADIDAS,ADMIN,ADMINISTRATOR,AMANDA,ANDREA,ANDREW,ANGEL,ANGELA,ANGELS,ANTHONY,ARSENAL,ASDFASDF,ASDFGH,ASHLEY,AUSTIN,BADBOY,BAILEY,BANANA,BARNEY,BASEBALL,BATMAN,BIGDADDY,BIGDICK,BIGDOG,BIGTITS,BITCH,BITEME,BLOWJOB,BLOWME,BOOBOO,BOOMER,BOSTON,BRANDON,BRANDY,BULLDOG,BUSTER,CAMARO,CANADA,CASPER,CENTURY,CHARLES,CHARLIE,CHEESE,CHELSEA,CHESTER,CHICAGO,CHICKEN,CHRIS,COCACOLA,COFFEE,COMPAQ,COMPUTER,COOKIE,CORVETTE,COWBOY,COWBOYS,CRYSTAL,DAKOTA,DALLAS,DANIEL,DIABLO,DIAMOND,DRAGON,EAGLES,EDWARD,ENTER,ERP123,FALCON,FENDER,FERRARI,FISHING,FLOWER,FOOTBALL,FOREVER,FREEDOM,FUCK,FUCKER,FUCKME,FUCKOFF,GANDALF,GATEWAY,GEORGE,GFHJKM,GHBDTN,GINGER,GOLDEN,GOLFER,GUEST,GUITAR,HAMMER,HANNAH,HARDCORE,HARLEY,HEATHER,HELLO,HOCKEY,HOUZS,HOUZS123,HOUZSCENTURY,HOUZSERP,HUNTER,ICEMAN,ILOVEYOU,INTERNET,IWANTU,JACKSON,JAMES,JASMINE,JASPER,JENNIFER,JESSICA,JOHNNY,JORDAN,JORDAN23,JOSEPH,JOSHUA,JUNIOR,JUSTIN,KILLER,KLASTER,KNIGHT,LAKERS,LAUREN,LETMEIN,LONDON,LOVE,MADISON,MAGGIE,MARINA,MARINE,MARLBORO,MARTIN,MASTER,MATRIX,MATTHEW,MAVERICK,MELISSA,MERCEDES,MERLIN,MICHAEL,MICHELLE,MICKEY,MIDNIGHT,MIKE,MILLER,MONEY,MONKEY,MONSTER,MORGAN,MOTHER,MUSTANG,NASCAR,NATASHA,NCC1701,NICOLE,NIKITA,OLIVER,ORANGE,P@SSW0RD,PANTHER,PANTIES,PASS,PASSW0RD,PASSWORD,PATRICK,PEANUT,PEPPER,PHOENIX,PLAYER,PLEASE,PORSCHE,PRINCE,PRINCESS,PURPLE,PUSSY,Q1W2E3R4,Q1W2E3R4T5,QAZWSX,QWER1234,QWERTY,QWERTY1,QWERTY123,QWERTYUIOP,RABBIT,RACHEL,RAIDERS,RANGER,RANGERS,REDSOX,RICHARD,ROBERT,ROOT,SAMANTHA,SAMSUNG,SCOOBY,SCOOTER,SECRET,SEXSEX,SEXY,SHADOW,SHANNON,SILVER,SLAYER,SMOKEY,SNOOPY,SOCCER,SOPHIE,SPANKY,SPARKY,SPIDER,STARWARS,STEELERS,STEVEN,SUMMER,SUNSHINE,SUPERMAN,TAYLOR,TENNIS,TEST,THOMAS,THUNDER,THX1138,TIGERS,TIGGER,TOOR,TOYOTA,TRUSTNO1,VICTORIA,WELCOME,WHATEVER,WILLIAM,WINNER,WINSTON,WINTER,WIZARD,XXXXXX,YAMAHA,YANKEES,YELLOW,ZXCVBN,ZXCVBNM|backend/src/services/passwordStrength.ts frontend/src/lib/passwordStrength.ts",
+      "why": "THE COMMON-PASSWORD LIST inside the password-strength rule. This pair MUST stay two — the meter scores as the user types, before any round-trip, and the two packages share no build graph (both files say so at lines 9-12). check-shared-mirrors cannot see it: its source directory is backend/src/scm/shared only, and this pair lives in backend/src/services + frontend/src/lib. PINNED instead by backend/tests/passwordStrengthDrift.test.ts, which feeds both implementations one corpus and asserts identical score and identical message."
+    },
+    {
+      "check": "D1",
+      "key": "1A,1B,1NA,2A,2B,2NA|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: RECLINER_FAMILIES."
+    },
+    {
+      "check": "D1",
+      "key": "1A,2A,CNR|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1A(L)(LHF),1A(L)(RHF),1A(LHF),1A(P)(LHF),1A(P)(RHF),1A(R)(LHF),1A(R)(RHF),1A(RHF),1B(LHF),1B(RHF),1NA,1NA(L),1NA(P),1NA(R),1S,1S(L),1S(P),1S(R),2A(LHF),2A(RHF),2B(LHF),2B(RHF),2NA,2S,3S,CNR,CONSOLE,L(LHF),L(RHF),STOOL|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: MODULE_EDGES_BASE."
+    },
+    {
+      "check": "D1",
+      "key": "1A(LHF),1A(RHF),CONSOLE|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1A(LHF),2A(RHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1A(RHF),2A(LHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1NA,2A,L|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1NA,2A(LHF),L(RHF)|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1NA,2A(RHF),L(LHF)|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "1S,2.5S,2S|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: SINGLE_PIECE_BUNDLES."
+    },
+    {
+      "check": "D1",
+      "key": "2D,3D,BD,DO,PIC,PO,PPE|frontend/src/mobile/MobilePMS.tsx frontend/src/pages/Projects.tsx",
+      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: ROLE_ACRONYMS. Divergence shows as one surface missing an option."
+    },
+    {
+      "check": "D1",
+      "key": "A,B,C|backend/src/scm/routes/inventory.ts frontend/src/pages/scm-v2/Inventory.tsx",
+      "why": "THE ABC INVENTORY CLASSES. A three-letter vocabulary fixed by the method, computed on the backend and rendered on the frontend."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/consignment-order-shape.ts frontend/src/pages/scm-v2/ConsignmentOrders.tsx",
+      "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 2 homes: CO_FINANCE_KEYS."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/sales-invoices.ts",
+      "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 2 homes: DO_FINANCE_KEYS, SI_FINANCE_KEYS."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SERVICE,SOFA|backend/src/scm/shared/so-branding-label.ts frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "AGREEMENT.APPROVE,PROJECTS.APPROVE,STOCK_IN.APPROVE,STOCK_TRANSFER.APPROVE|backend/src/services/permissions.ts frontend/src/auth/projectAccess.ts",
+      "why": "THE EXPLICIT-APPROVAL KEYS — the permission keys a \"*\" wildcard must NOT satisfy. A genuine unrefereed cross-tree twin (backend/src/services/permissions.ts, frontend/src/auth/projectAccess.ts); the frontend copy's own comment calls itself a mirror and nothing checks it. Divergence hides or offers an approve button the server disagrees about. FOUND BY THIS GATE, not fixed here: pinning it is the same twenty-line drift test as the password pair and belongs in its own change."
+    },
+    {
+      "check": "D1",
+      "key": "AIR_COMPRESSOR,ALTERNATOR,BATTERY,BRAKE_PADS,GEARBOX,OTHER,STARTER,TYRE|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: COMPONENT_TYPES, COMPONENT_TYPE_LABELS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ALL,ATTENTION,FAILED,PENDING,REQUEUED,SENT,SKIPPED|backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STATES, AC_FILTER_STATES. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNTSEN,DEPOSITSEN,DISCOUNTSEN,LOCALTOTALSEN,TOTALSEN,UNITCOSTSEN,UNITPRICESEN|frontend/src/mobile/MobileSODetail.tsx frontend/src/pages/scm-v2/so-audit-labels.ts",
+      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: HIST_MONEY_FIELDS, MONEY_FIELDS. Divergence shows as one surface missing an option."
+    },
+    {
+      "check": "D1",
+      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/routes/mail-center.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: INLINE_SAFE. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "APPROACHING_BREACH,BREACH,HALF_TIME,STAGE_ENTERED|backend/src/routes/assrPortal.ts backend/src/services/assrAlerts.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ALERT_EVENTS, EVENT_FLAG, EVENT_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APPROVED,COMPLETED,DIAGNOSED,IN_REPAIR,QUOTED,REPORTED,VERIFIED,WAITING_PARTS|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "THE FLEET WORK-ORDER STATES. Already independently refereed by check-work-order-states.mjs, which is wired into this same CI job. Recorded so the two gates are visibly one finding."
+    },
+    {
+      "check": "D1",
+      "key": "APRIL,AUGUST,DECEMBER,FEBRUARY,JANUARY,JULY,JUNE,MARCH,MAY,NOVEMBER,OCTOBER,SEPTEMBER|backend/src/routes/pos.ts frontend/src/mobile/MobileCalendar.tsx",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 2 homes: KPI_MONTHS, MONTHS."
+    },
+    {
+      "check": "D1",
+      "key": "ARM,BACK,FRONT|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "ARM,BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "AVAILABLE,BREAKDOWN,COMPLIANCE_BLOCKED,OUT_OF_SERVICE,PLANNED_MAINTENANCE,SERVICE_DUE,WAITING_PARTS|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VEHICLE_STATUS_LABELS, STATUS_TONE, map. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "AVI,M4V,MOV,MP4,WEBM|frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "BMP,GIF,HEIC,HEIF,JPEG,JPG,PDF,PNG,SVG,WEBP|backend/src/lib/mail-attachments.ts frontend/src/pages/MailCenter/mail-attachments.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: MAIL_ATTACH_ALLOWED_EXTENSIONS. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "BN,EN,MS,ZH|backend/src/lib/translate-announcement.ts frontend/src/mobile/mobileI18n.ts",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 2 homes: ANNOUNCEMENT_LANGS, MOBILE_LANGS."
+    },
+    {
+      "check": "D1",
+      "key": "BUILDING_TYPE,CUSTOMER_TYPE,INSTALLMENT_PLAN,ONLINE_TYPE,PAYMENT_MERCHANT,PAYMENT_METHOD,RELATIONSHIP,VENUE|backend/src/scm/routes/so-dropdown-options.ts frontend/src/vendor/scm/lib/so-dropdown-options-queries.ts",
+      "why": "THE SO DROPDOWN OPTION CATEGORIES — which maintenance vocabularies the SO form loads. Backend route and frontend query layer, and the frontend copy is a FALLBACK for when the read fails, so the two are meant to track. CATEGORIES, grouped, FALLBACK_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CALENDAR VIEWER,DRIVER,FINANCE MANAGER,HELPER,HR MANAGER,LOGISTIC ADMIN,OPERATION EXECUTIVE,OPERATION MANAGER,PROCUREMENT/PURCHASING,SALES DIRECTOR,SALES EXECUTIVE,SALES MANAGER,SALES PERSON,SERVICE ADMIN,STOREKEEPER,STOREKEEPER SUPERVISOR,SUPER ADMIN|backend/src/services/assistant-scope.ts frontend/src/auth/assistantAccess.ts",
+      "why": "THE ASSISTANT'S KNOWN POSITIONS. Cross-tree twin (backend/src/services/assistant-scope.ts, frontend/src/auth/assistantAccess.ts) whose only test, frontend assistantAccess.test.ts, imports the FRONTEND copy alone — so the backend half is unrefereed. Same shape as the password pair and the next candidate for the same treatment."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED|backend/src/scm/lib/so-lifecycle-guards.ts frontend/src/pages/scm-v2/SalesOrderDetail.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: SO_STATUSES, SO_STATUS_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CLOSED,ON_HOLD|frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-status.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,COMPLETED,POSTED|frontend/src/pages/scm-v2/PurchaseConsignmentReturns.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STATUS_COLOR, STATUS_LABEL, PR. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CREDIT_NOTED,REFUNDED|frontend/src/pages/scm-v2/ConsignmentReturnDetail.tsx frontend/src/pages/scm-v2/ConsignmentReturns.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: lockedStatuses. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,OVERDUE,PAID,PARTIALLY_PAID,SENT|backend/src/scm/routes/sales-invoices.ts frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: SI_LEGAL_TRANSITIONS, STAGE_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,POSTED|frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STAGE_LABEL, PV. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,OPEN,POSTED|backend/src/scm/routes/stock-takes.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VALID_STATUS, STOCK_TAKE. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CARD_CC,CARD_DB,CASH,CHEQUE,EPP,ONLINE|backend/src/routes/sales.ts frontend/src/pages/Sales.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: PAYMENT_TYPES, PAYMENT_TYPE_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "CBM,QTY,VALUE|frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx frontend/src/pages/scm-v2/PurchaseInvoiceDetailV2.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ALLOC_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "COLLECTION,CS,DELIVERY,DOCUMENT,OF,PMS,PROCUREMENT,SI|backend/src/services/agent-console.ts backend/src/services/assistant-teach.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: AGENT_FAMILIES, AGENT_LABELS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "COLORCODE,FABRICCODE,FABRICCOLOR|frontend/src/vendor/scm/lib/sales-order-pdf.ts frontend/src/vendor/scm/lib/supplier-doc-data.ts",
+      "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. 2 homes: FABRIC_VARIANT_KEYS."
+    },
+    {
+      "check": "D1",
+      "key": "COLOURHEX,COLOURID,COLOURLABEL,FABRICCODE,FABRICID,FABRICLABEL|frontend/src/mobile/MobileNewSO.tsx frontend/src/pages/scm-v2/SalesOrderNew.tsx",
+      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: FABRIC_SYNC_KEYS. Divergence shows as one surface missing an option."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED_AT,STATUS,UPDATED_AT|backend/src/scm/routes/purchase-consignment-returns.ts backend/src/scm/routes/purchase-returns.ts",
+      "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
+    },
+    {
+      "check": "D1",
+      "key": "DAMAGED,DEFECTIVE,NEW,OPENED|frontend/src/pages/scm-v2/ConsignmentReturnFromNote.tsx frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: CONDITIONS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,LINE,PRICE,QTY,SPEC,SUPPLIER,VARIANT|backend/src/scm/shared/amendment-routing.ts frontend/src/vendor/scm/lib/amendment-routing.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FIELD_KIND_LABEL."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,OUTSTATION,SERVICE_CALL,SITE_WORK|backend/src/scm/lib/rate-rule-taxonomy.ts frontend/src/vendor/scm/lib/rate-rule-taxonomy.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: RATE_RULE_CATEGORIES, CATEGORY_LABEL, CATEGORY_HINT."
+    },
+    {
+      "check": "D1",
+      "key": "DEPOSIT_REFUND,OTHER_INCOME,REBATE,SALES|backend/src/services/projects.ts frontend/src/vendor/scm/lib/pms-ledger-categories.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: LEDGER_INCOME_CATEGORIES, LEDGER_INCOME_CATS. Cost of divergence is a blank chip, not a wrong number. MOVED 2026-08-21: the frontend home was frontend/src/pages/Projects.tsx and is now the shared vendor/scm/lib/pms-ledger-categories.ts — the SAME pair, one fewer copy, because mobile used to run a generic humanize() over these slugs and read them differently from desktop. The recorded path is updated, not the decision."
+    },
+    {
+      "check": "D1",
+      "key": "DISCOUNT_SEN,LINE_COST_SEN,LINE_MARGIN_SEN,LINE_TOTAL_SEN,QTY_RETURNED,REFUND_SEN,UNIT_COST_SEN,UNIT_PRICE_SEN|backend/src/scm/routes/consignment-returns.ts backend/src/scm/routes/delivery-returns.ts",
+      "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
+    },
+    {
+      "check": "D1",
+      "key": "DISCOUNT_SEN,LINE_TOTAL_SEN,QTY_ACCEPTED,QTY_RECEIVED,UNIT_PRICE_SEN|backend/src/scm/routes/grns.ts backend/src/scm/routes/purchase-consignment-receives.ts",
+      "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
+    },
+    {
+      "check": "D1",
+      "key": "DISMANTLE,DISPOSE,INSPECTION,OUTSTATION,OUTSTATION_TRIP,OVERAGE,PICKUP,POSITIONAL_TIER,SERVICE,SETUP,SOFA_BRACKET,SUPPLIER_PICKUP,TRANSFER|backend/src/scm/lib/rate-rule-taxonomy.ts frontend/src/vendor/scm/lib/rate-rule-taxonomy.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: RATE_RULE_TYPES, RULE_CATEGORY, RULE_LABEL, RULE_JOB_TYPE."
+    },
+    {
+      "check": "D1",
+      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "DIVANHEIGHT,GAP,LEGHEIGHT|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/total-height.ts frontend/src/vendor/shared/so-variant-rule.ts frontend/src/vendor/shared/total-height.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: DIVANLESS_AXES. NEW HOMES since this was recorded: backend/src/scm/shared/total-height.ts and its vendored twin (TOTAL_HEIGHT_PARTS), landed by #2389 as the ONE home for a bedframe's Total Height after sixteen screens had each decided it separately. So this fingerprint is now TWO vendored PAIRS naming the same three axes for two DIFFERENT questions — which axes a divanless bedframe drops, and which parts sum to Total Height — and each pair is pinned by check-shared-mirrors.mjs. Merging them would tie a display formula to a validation rule that only coincides today."
+    },
+    {
+      "check": "D1",
+      "key": "DO,INVOICE,PNL,SO|backend/src/scm/lib/fair-report.ts frontend/src/auth/salesAccess.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: FAIR_STAGES. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "DRIVER,HELPER,SALES DIRECTOR,SALES EXECUTIVE,SALES MANAGER,SALES PERSON,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/assistant-scope.ts frontend/src/auth/assistantAccess.ts",
+      "why": "THE ASSISTANT'S DENIED POSITIONS — the field-crew positions that never reach the Assistant. Same unrefereed cross-tree pair as the known-positions list; both sides match EXACTLY on the normalised name (never a substring), which is the part a future edit is most likely to lose."
+    },
+    {
+      "check": "D1",
+      "key": "DWG,JPEG,JPG,MP4,PDF,PNG,SKP,WEBP|backend/src/routes/projects.ts frontend/src/pages/Projects.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: PROJECT_ATTACH_ALLOWED, ALLOWED. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
+      "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+    },
+    {
+      "check": "D1",
+      "key": "FABRIC,MFG_PRODUCT,RAW|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VALID_KINDS, MATERIAL_KINDS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "FABRICCODE,LEGHEIGHT,SEATHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "FRONT_L,FRONT_R,NA,REAR_L,REAR_R|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: COMPONENT_POSITIONS, COMPONENT_POSITION_LABELS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/Roles.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ACCESS_LEVELS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "HIGH,LOW,NORMAL,URGENT|frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: PRIORITY_OPTIONS. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/scm/routes/sofa-compartment-photos.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: THUMB_TYPES, RASTER_INLINE. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "IN_WORKSHOP,OPEN,RESOLVED,TOWING|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: BREAKDOWN_STATUSES, BREAKDOWN_STATUS_LABELS, BREAKDOWN_STATUS_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "INSPECTION,OTHER,PUNCTURE,REPAIR,ROTATION|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: COMPONENT_EVENT_TYPES, EVENT_TYPES. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/Projects.tsx",
+      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and Projects.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
+    },
+    {
+      "check": "D1",
+      "key": "JPEG,JPG,MOV,MP4,PDF,PNG,WEBM,WEBP|backend/src/routes/assr.ts frontend/src/mobile/MobileServiceCase.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: ALLOWED_EXTENSIONS, ATTACH_EXTS. Divergence costs a refused upload, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "K,Q,S,SS|frontend/src/pages/scm-v2/ProductModelDetail.tsx frontend/src/pages/scm-v2/ProductModels.tsx",
+      "why": "A HARD-CODED FALLBACK used only when the maintenance table has not loaded; the live list comes from config. 2 homes: FALLBACK_MATTRESS_SIZES. A stale fallback shows a short picker, it does not decide anything."
+    },
+    {
+      "check": "D1",
+      "key": "LINE_COST_SEN,LINE_MARGIN_SEN,UNIT_COST_SEN|backend/src/scm/lib/finance-keys.ts backend/src/scm/routes/delivery-orders-mfg.ts",
+      "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 2 homes: SO_ITEM_FINANCE_KEYS, update."
+    },
+    {
+      "check": "D1",
+      "key": "LINE_REFUND_SEN,QTY_RETURNED,UNIT_PRICE_SEN|backend/src/scm/routes/purchase-consignment-returns.ts backend/src/scm/routes/purchase-returns.ts",
+      "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
+    },
+    {
+      "check": "D1",
+      "key": "LORRY_10FT,LORRY_14FT,LORRY_17FT,LORRY_21FT,OTHER,OUTSOURCE,VAN|backend/src/scm/routes/lorries.ts frontend/src/vendor/scm/lib/lorries-queries.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: LORRY_TYPES, LORRY_TYPE_LABEL. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "OUTLET_MANAGER,SALES,SALES_EXECUTIVE|backend/src/scm/routes/consignment-orders.ts backend/src/scm/routes/mfg-sales-orders.ts",
+      "why": "THE VENUE-SCOPED SALES POSITIONS — who is pinned to their own showroom. Written inline in the SO route and again in the consignment-order route; the two are the same rule and the consignment copy is the one that was added second. Recorded, not merged, because both sit inside write paths this PR is not touching."
+    },
+    {
+      "check": "D1",
+      "key": "P.DISMANTLE_DRIVER_USER_ID = ?,P.DISMANTLE_HELPER_1_ID = ?,P.DISMANTLE_HELPER_2_ID = ?,P.SETUP_DRIVER_USER_ID = ?,P.SETUP_HELPER_1_ID = ?,P.SETUP_HELPER_2_ID = ?|backend/src/routes/projects.ts backend/src/services/projects.ts",
+      "why": "THE SIX CREW COLUMNS a project's setup/dismantle assignment can live in, written as SQL fragments in the route and again in the service. Same question — is this user crewed on this event — with the answer spelled out twice in SQL. Out of reach of every check in this repo (limit 2 in the header: a rule expressed in SQL)."
+    },
+    {
+      "check": "D1",
+      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierDetail.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TIER_KEYS, SOFA_TIERS_FOR_EXPORT. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "REDEEMED_DOC_NO,REDEEMED_ITEM_CODE,STATUS,UPDATED_AT|backend/src/scm/lib/pwp-claim-single.ts backend/src/scm/routes/mfg-sales-orders.ts",
+      "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: patch. Two routes touching the same columns is the schema agreeing with itself."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by DEPOSIT_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "DISMANTLE,DISPOSE,INSPECTION,OUTSTATION,OUTSTATION_TRIP,OVERAGE,PICKUP,POSITIONAL_TIER,SERVICE,SETUP,SOFA_BRACKET,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,DISPOSE,INSPECTION,OUTSTATION,OUTSTATION_TRIP,OVERAGE,PICKUP,POSITIONAL_TIER,SERVICE,SETUP,SOFA_BRACKET,TRANSFER",
+      "why": "THE RATE-RULE TYPES VERSUS THE DELIVERY-RATE-CARD RULE TYPES, differing by SUPPLIER_PICKUP. Already refereed by check-job-type-parity.mjs; recorded so the two gates read as one finding."
+    },
+    {
+      "check": "D2",
+      "key": "ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
+      "why": "THE ASSR PATCHABLE FIELDS VERSUS THE ASSR FIELD LABELS, in one file. Four fields are patchable without ever being shown as a labelled diff (assignments, sub-status, void reason). Same file, two lists, deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by DEPOSIT_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "IPOH,JOHOR,KEDAH,KELANTAN,KL,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KL,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by IPOH/KUALA LUMPUR. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED",
+      "why": "THE ASSR STAGE SET WITH AND WITHOUT VOIDED. stages.ts records that VOIDED is a terminal alt-outcome and deliberately not a funnel dot, so the two sets are meant to differ by exactly this member."
+    },
+    {
+      "check": "D2",
+      "key": "CONTRACTOR_COST,DEPOSIT_PAID,DEPOSIT_REFUND,LICENSE_FEE,MISC_COST,NOTES,RENTAL,TOTAL_SALES ~ CONTRACTOR_COST,DEPOSIT_PAID,DEPOSIT_REFUND,LICENSE_FEE,MISC_COST,RENTAL,TOTAL_SALES",
+      "why": "THE PROJECT FINANCE FIELDS VERSUS THE ROW THEY ARE WRITTEN INTO, differing by NOTES, in one file. The write carries a note the finance summary does not total. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER_MISUSE,DESIGN,INSTALLATION,MATERIAL_DEFECT,OTHER,TRANSIT_DAMAGE,UNCLASSIFIED,WORKMANSHIP ~ CUSTOMER_MISUSE,DESIGN,INSTALLATION,MATERIAL_DEFECT,OTHER,TRANSIT_DAMAGE,WORKMANSHIP",
+      "why": "THE NCR OPTIONS VERSUS THE NCR LABELS, differing by UNCLASSIFIED — a case can BE unclassified but nobody may choose it. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by SERVICE_SEN/SERVICE_COST_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,CUSTOMER_CASES,ITEM_CASES,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD ~ AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD",
+      "why": "THE SERVICE DRILL METRICS VERSUS THEIR LABELS, differing by two metrics the UI does not offer as a drill-down. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "ALL,DO,GR,IV,PI,PO,SO ~ DO,GR,IV,PI,PO,SO",
+      "why": "THE AUTOCOUNT DOC TYPES VERSUS THE FILTER THAT OFFERS THEM PLUS \"ALL\". A filter's extra \"all\" pseudo-value is not a member of the vocabulary."
+    },
+    {
+      "check": "D2",
+      "key": "BMP,GIF,HEIC,JPEG,JPG,PNG,WEBP ~ GIF,HEIC,JPEG,JPG,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by BMP. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DRAFT,OVERDUE,PAID,PARTIALLY_PAID,SENT ~ CANCELLED,DRAFT,OVERDUE,PAID,PARTIALLY_PAID,SENT,VOID",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by VOID. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "COLOURHEX,COLOURID,COLOURLABEL,FABRICCODE,FABRICID,FABRICLABEL ~ COLOURHEX,COLOURID,COLOURLABEL,FABRICCODE,FABRICID,FABRICLABEL,SOFALEGHEIGHT",
+      "why": "THE TBC BUILD KEYS VERSUS THE FABRIC SYNC KEYS, differing by SOFALEGHEIGHT. The server copies leg height when a TBC line is resolved; the form does not re-sync it. Two moments, not two rules."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by SERVICE_SEN/SERVICE_COST_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "IPOH,JOHOR,KEDAH,KELANTAN,KL,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,SINGAPORE,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by IPOH/KL/SINGAPORE. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOM_SPECIALS,DESCRIPTION,DESCRIPTION2,DIVAN_HEIGHT_INCHES,DIVAN_PRICE_SEN,GAP_INCHES,GRN_ITEM_ID,ITEM_CODE,ITEM_GROUP,LEG_HEIGHT_INCHES,LEG_PRICE_SEN,LINE_REFUND_SEN,LINE_SUFFIX,MATERIAL_KIND,MATERIAL_NAME,NOTES,PURCHASE_RETURN_ID,QTY_RETURNED,REASON,SPECIAL_ORDER_PRICE_SEN,UNIT_PRICE_SEN,UOM,VARIANTS ~ CUSTOM_SPECIALS,DESCRIPTION,DESCRIPTION2,DIVAN_HEIGHT_INCHES,DIVAN_PRICE_SEN,GAP_INCHES,ITEM_CODE,ITEM_GROUP,LEG_HEIGHT_INCHES,LEG_PRICE_SEN,LINE_REFUND_SEN,LINE_SUFFIX,MATERIAL_KIND,MATERIAL_NAME,NOTES,PC_RECEIVE_ITEM_ID,PURCHASE_CONSIGNMENT_RETURN_ID,QTY_RETURNED,REASON,SPECIAL_ORDER_PRICE_SEN,UNIT_PRICE_SEN,UOM,VARIANTS",
+      "why": "TWO RETURN-LINE ROW SHAPES differing by their own foreign keys (a purchase return points at a GRN item, a purchase-consignment return at a receive item). The difference IS the two tables. Re-keyed 2026-08-20: main renamed the money columns to _sen and the row shape gained item_code / material_name, but the DELTA is unchanged and still nothing but the two foreign keys (PC_RECEIVE_ITEM_ID + PURCHASE_CONSIGNMENT_RETURN_ID against GRN_ITEM_ID + PURCHASE_RETURN_ID), which is what the reason above turns on."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,MIXED,SERVICE,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA",
+      "why": "THE PRODUCT CATEGORIES VERSUS THE SUPPLIER CATEGORIES, differing by MIXED — a supplier may be MIXED, a product may not. One of the three disagreements inside the eleven-home category family recorded under D1."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SERVICE,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA",
+      "why": "THE PRODUCT CATEGORIES VERSUS THE BRANDING BUCKETS, differing by OTHERS — the branding label needs a catch-all bucket the product enum does not have. Part of the same eleven-home category family."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,DELIVERED,DRAFT,INVOICED,SHIPPED ~ CANCELLED,CLOSED,DELIVERED,INVOICED,SHIPPED",
+      "why": "SO \"DONE\" AT FIVE STATUSES VERSUS SIX — the five-status set adds nothing the six-status SO_TERMINAL_STATES lacks; the six adds DRAFT. This is one of the three live answers to \"which orders still demand stock\" and it MUST NOT be collapsed in this run: so-terminal-states.ts:29-34 records that resolving it changes the numbers on the Inventory page and is the owner's call, and inventory.ts:542-548 adds \"Do not 'helpfully' merge them without it.\" PINNED at exact membership by backend/tests/duplicatedDecisionPins.test.ts so a FOURTH spelling cannot appear while the ruling is outstanding."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DRAFT,PAID,PARTIALLY_PAID,POSTED ~ CANCELLED,DRAFT,PAID,PARTIALLY_PAID,POSTED,VOID",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by VOID. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DOC_NO,LOCAL_TOTAL_SEN,SO_DATE,STATUS ~ DEBTOR_NAME,DOC_NO,LOCAL_TOTAL_SEN,SO_DATE,STATUS",
+      "why": "TWO SORT-COLUMN WHITELISTS differing by CUSTOMER_DELIVERY_DATE — a consignment order has no customer delivery date. Meant to differ."
+    },
+    {
+      "check": "D2",
+      "key": "HEIC,JPEG,JPG,PDF,PNG,WEBP ~ JPEG,JPG,PDF,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by HEIC. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "JOHOR,KEDAH,KELANTAN,KL,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,SINGAPORE,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by KL/KUALA LUMPUR/SINGAPORE. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,SINGAPORE,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by PULAU PINANG/PENANG/SINGAPORE. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "JPEG,JPG,MP4,PDF,PNG,WEBP ~ JPEG,JPG,PDF,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by MP4. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "JPEG,JPG,PDF,PNG,WEBP ~ JPEG,JPG,PDF,PNG,WEBP,XLSX",
+      "why": "TWO UPLOAD WHITELISTS differing by XLSX. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by ON_HOLD/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SOFA",
+      "why": "THE PRODUCT CATEGORIES VERSUS THE MRP LEAD CATEGORIES, differing by SERVICE — MRP does not plan services. Part of the same eleven-home category family, and the member that goes missing is the one to watch."
+    },
+    {
+      "check": "D2",
+      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP ~ APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by IMAGE/GIF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP ~ IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by APPLICATION/PDF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CANCELLED/ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CANCELLED/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED/ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,DELIVERED,INVOICED ~ CANCELLED,CLOSED,DELIVERED,INVOICED,SHIPPED",
+      "why": "SO \"DONE\" AT FOUR STATUSES VERSUS FIVE — two constants with the SAME NAME, SO_DONE, and different contents inside ONE file (routes/inventory.ts, one consumed at the reservations bucket and one at the READY roll-up; the five adds SHIPPED). The outstanding question is a ruling, not a PR: does a DRAFT order reserve stock, and does a SHIPPED one still? PINNED at exact membership by backend/tests/duplicatedDecisionPins.test.ts."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DRAFT,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED ~ CANCELLED,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED",
+      "why": "THE PO VALID-STATUS SET VERSUS THE PURCHASE-CONSIGNMENT ONE, differing by DRAFT. A purchase consignment order has no draft state. Meant to differ."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER,SALES,SERVICE,SUPPLIER ~ CUSTOMER,SALES,SERVICE,SUPPLIER,SYSTEM",
+      "why": "THE NOTE CATEGORIES VERSUS THEIR DISPLAY ORDER, differing by SYSTEM — system notes are rendered but never authored. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "DEBTOR_NAME,INVOICE_DATE,INVOICE_NUMBER,STATUS,TOTAL_SEN ~ INVOICE_DATE,INVOICE_NUMBER,STATUS,TOTAL_SEN",
+      "why": "TWO SORT-COLUMN WHITELISTS differing by DEBTOR_NAME — a purchase invoice has a creditor, not a debtor. Meant to differ."
+    },
+    {
+      "check": "D2",
+      "key": "DO_TO_IV,GR_TO_PI,PO_TO_GR,SO_TO_DO ~ DO_TO_IV,GR_TO_PI,PO_TO_GR,SO_TO_DO,SO_TO_PO",
+      "why": "THE AUTOCOUNT TRANSFER OPS VERSUS THE CONVERT TARGETS, differing by SO_TO_PO — an SO-to-PO writeback transfers but converts nothing. Two questions, one member apart."
+    },
+    {
+      "check": "D2",
+      "key": "FAILED,PENDING,REQUEUED,SENT,SKIPPED ~ FAILED,PENDING,SENT,SKIPPED",
+      "why": "THE AUTOCOUNT OUTBOX STATUSES WITH AND WITHOUT REQUEUED, both in autocount-outbox-status.ts — one is what a row may BE, the other is what a filter may ASK FOR. Same file, two questions, and the file already names them apart."
+    },
+    {
+      "check": "D2",
+      "key": "GIF,HEIC,JPEG,JPG,MOV,MP4,PDF,PNG,WEBM,WEBP ~ JPEG,JPG,MOV,MP4,PDF,PNG,WEBM,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by GIF/HEIC. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "JPEG,JPG,PDF,PNG,WEBP ~ JPEG,JPG,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by PDF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "IPOH,JOHOR,KEDAH,KELANTAN,KL,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by PULAU PINANG/IPOH/KL/PENANG. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by DEPOSIT_SEN/SERVICE_SEN/SERVICE_COST_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
+      "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by DEPOSIT_SEN/SERVICE_SEN/SERVICE_COST_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/CANCELLED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by RETURNED/DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "JOHOR,KEDAH,KELANTAN,KL,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PENANG,PERAK,PERLIS,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU ~ JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU",
+      "why": "TWO SPELLINGS OF THE MALAYSIAN STATE LIST, differing by KUALA LUMPUR/PULAU PINANG/KL/PENANG. This one IS a real disagreement — KL vs KUALA LUMPUR and PENANG vs PULAU PINANG are the same place under two names, and mig 0175 already picked Pulau Pinang as canonical. Left visible on purpose: canonicalising the stragglers rewrites stored addresses and is its own change."
+    },
+    {
+      "check": "D2",
+      "key": "1A(L)(LHF),1A(L)(RHF),1A(LHF),1A(P)(LHF),1A(P)(RHF),1A(R)(LHF),1A(R)(RHF),1A(RHF),1B(LHF),1B(RHF),1NA,1NA(L),1NA(P),1NA(R),1S,1S(L),1S(P),1S(R),2A(LHF),2A(RHF),2B(LHF),2B(RHF),2NA,2S,3S,CNR,CONSOLE,L(LHF),L(RHF),STOOL ~ 1A(LHF),1A(P)(LHF),1A(P)(RHF),1A(R)(LHF),1A(R)(RHF),1A(RHF),1ABOX(LHF),1ABOX(RHF),1B(LHF),1B(RHF),1NA,1S,1S(P),1S(R),2A(LHF),2A(RHF),2B(LHF),2B(RHF),2NA,2S,3S,CNR,CONSOLE,L(LHF),L(RHF),STOOL",
+      "why": "THE SOFA MODULE EDGE TABLE VERSUS THE COMPARTMENT LIST, differing by the box variants and the positional suffixes. Two different tables about the same modules."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SOFA ~ BEDFRAME,MATTRESS,SOFA",
+      "why": "THE MAIN CATEGORIES VERSUS THE MRP LEAD CATEGORIES, differing by ACCESSORY. MRP plans accessories; the sofa-exclusivity rule does not care about them. Two questions."
+    },
+    {
+      "check": "D2",
+      "key": "ALL,CANCELLED,COMPLETED,POSTED ~ CANCELLED,COMPLETED,POSTED",
+      "why": "A STATUS SET VERSUS THE FILTER CHIPS OVER IT PLUS \"ALL\". The pseudo-value is the filter's, not the document's."
+    },
+    {
+      "check": "D2",
+      "key": "ALL,CANCELLED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
+      "why": "A STATUS SET VERSUS THE FILTER CHIPS OVER IT PLUS \"ALL\". The pseudo-value is the filter's, not the document's."
+    },
+    {
+      "check": "D2",
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP ~ IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by APPLICATION/PDF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "ARM,BACK,FRONT ~ ARM,BACK,FRONT,OPEN",
+      "why": "TWO SLICES OF THE SOFA MODULE GEOMETRY TABLE inside the same vendored pair — different rows of one table, not two answers. check-shared-mirrors referees the pair."
+    },
+    {
+      "check": "D2",
+      "key": "ARM,BACK,FRONT,OPEN ~ BACK,FRONT,OPEN",
+      "why": "TWO SLICES OF THE SOFA MODULE GEOMETRY TABLE inside the same vendored pair — different rows of one table, not two answers. check-shared-mirrors referees the pair."
+    },
+    {
+      "check": "D2",
+      "key": "BEDFRAME,COMMON,PRODUCTS MAINTENANCE ~ BEDFRAME,COMMON,PRODUCTS MAINTENANCE,SOFA",
+      "why": "TWO PRODUCT-MAINTENANCE SECTION LISTS differing by SOFA — the supplier screen offers the sections for ONE category, the products screen offers all of them. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "BEDFRAME,COMMON,PRODUCTS MAINTENANCE,SOFA ~ BEDFRAME,COMMON,SOFA",
+      "why": "TWO PRODUCT-MAINTENANCE SECTION LISTS differing by one section, same reason as the sibling pair: a per-category slice versus the whole."
+    },
+    {
+      "check": "D2",
+      "key": "BEDFRAME,COMMON,PRODUCTS MAINTENANCE,SOFA ~ COMMON,PRODUCTS MAINTENANCE,SOFA",
+      "why": "TWO PRODUCT-MAINTENANCE SECTION LISTS differing by BEDFRAME, same per-category slice."
+    },
+    {
+      "check": "D2",
+      "key": "BOOTH_LAYOUT,EDIT,EXPO_MAP,INTEGRATIONS,PM_WORKFLOW,PROJECT_STAGE,SETUP_DISMANTLE ~ BOOTH_LAYOUT,EVENT_CHAT,EXPO_MAP,INTEGRATIONS,PM_WORKFLOW,PROJECT_STAGE,SETUP_DISMANTLE",
+      "why": "TWO PMS ROLE-SECTION LISTS in one file differing by EVENT_CHAT/EDIT — the per-role section grants. Different roles get different sections; that is the whole table."
+    },
+    {
+      "check": "D2",
+      "key": "BUILDING_TYPE,CUSTOMER_TYPE,INSTALLMENT_PLAN,ONLINE_TYPE,PAYMENT_MERCHANT,PAYMENT_METHOD ~ BUILDING_TYPE,CUSTOMER_TYPE,INSTALLMENT_PLAN,ONLINE_TYPE,PAYMENT_MERCHANT,PAYMENT_METHOD,RELATIONSHIP,VENUE",
+      "why": "THE OCR OPTION CATEGORIES VERSUS THE SO DROPDOWN CATEGORIES, differing by RELATIONSHIP/VENUE. The scanner fills fewer fields than the form offers. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CREATE_PO,CREATE_SO,DO_TO_IV,EDIT,GR_TO_PI,PO_TO_GR,SO_TO_DO ~ CREATE_PO,CREATE_SO,DO_TO_IV,GR_TO_PI,PO_TO_GR,SO_TO_DO",
+      "why": "THE OUTBOX OPS QUERIED VERSUS THE OPS LABELLED, differing by CANCEL/EDIT. The query asks for the transfer ops; the label map covers everything a row can be. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "THE AR RECONCILIATION STATUSES VERSUS THE SO STATUS LIST, differing by CANCELLED/CLOSED. AR asks which orders can still be paid against; the SO screen lists every status. Two questions."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,DELIVERED,INVOICED ~ CLOSED,DELIVERED,INVOICED",
+      "why": "SO_DONE VERSUS THE CS AGENT'S DELIVERED_STATUSES, differing by CANCELLED. The agent is answering \"has the customer got it\", which a cancelled order never satisfies; SO_DONE is answering \"does this still demand stock\", which a cancelled order also does not. Two questions that happen to nearly agree."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CLOSED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,COMPLETED,DRAFT,POSTED ~ CANCELLED,COMPLETED,POSTED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,COMPLETED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
+      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by COMPLETED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,COMPLETED,IN_PROGRESS,PLANNED ~ COMPLETED,IN_PROGRESS,PLANNED",
+      "why": "THE TRIP STATUSES VERSUS THE TRIP STATUS ORDER, differing by CANCELLED — a cancelled trip is a valid state but is not placed in the board's ordering. Deliberate."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED ~ PARTIALLY_RECEIVED,RECEIVED,SUBMITTED",
+      "why": "THE SENDABLE PO STATUSES VERSUS THE PURCHASE-CONSIGNMENT VALID SET, differing by CANCELLED — you may not email a cancelled PO, but CANCELLED is still a legal PCO status. Two questions."
+    },
+    {
+      "check": "D2",
+      "key": "CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "THE SO STATUS RANK VERSUS THE AR STATUSES, differing by CLOSED/DRAFT. A rank table needs every status; AR needs the ones that can still carry a balance."
+    },
+    {
+      "check": "D2",
+      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR ~ COLORCODE,FABRICCODE,FABRICCOLOR",
+      "why": "TWO SUBSETS OF ONE VOCABULARY differing by COLOURCODE; the smaller side is a filtered view (one screen's options, one agent's interest), not a competing definition."
+    },
+    {
+      "check": "D2",
+      "key": "CONFIRMED,IN_PRODUCTION,READY_TO_SHIP ~ CONFIRMED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "DELIVERABLE_FROM VERSUS CANCELLABLE_STATUSES, differing by SHIPPED — the point at which a DO may be cut is exactly the point at which the SO stops being cancellable. Adjacent by design, opposite in meaning."
+    },
+    {
+      "check": "D2",
+      "key": "DATE_ARRANGED,PENDING_DATE,PENDING_TIME,TIME_ARRANGED ~ PENDING_DATE,PENDING_TIME,TIME_ARRANGED",
+      "why": "THE ARRANGEMENT-STAGE SPLIT VERSUS ITS LABEL MAP, differing by DATE_ARRANGED. arrangement-stage.ts records that the date side and the time side name the same stage differently on purpose."
+    },
+    {
+      "check": "D2",
+      "key": "DRIVER,HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR ~ HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR",
+      "why": "THE CREW-SCOPED POSITIONS VERSUS THE SIDEBAR'S HIDE LIST, differing by DRIVER — and that is deliberate: projectGates.ts says drivers stay unscoped on the projects list, while the sidebar hides the Assistant from drivers too. Two questions, one member apart. The crew predicate itself is PINNED by backend/tests/duplicatedDecisionPins.test.ts against the frontend's copy."
+    },
+    {
+      "check": "D2",
+      "key": "DWG,JPEG,JPG,MP4,PDF,PNG,SKP,WEBP ~ JPEG,JPG,MP4,PDF,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by DWG/SKP. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "FAILED,PENDING,SENT ~ FAILED,PENDING,SENT,SKIPPED",
+      "why": "THE MAIL OUTBOX STATUSES VERSUS THE AUTOCOUNT OUTBOX STATUSES, differing by SKIPPED. Two different outboxes for two different systems that happen to share four state names. Not one rule."
+    },
+    {
+      "check": "D2",
+      "key": "IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP ~ IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by IMAGE/GIF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "JPEG,JPG,MOV,MP4,PDF,PNG,WEBM,WEBP ~ JPEG,JPG,MP4,PDF,PNG,WEBP",
+      "why": "TWO UPLOAD WHITELISTS differing by MOV/WEBM. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
+    },
+    {
+      "check": "D2",
+      "key": "PROJECTS.FINANCES,SCM.FINANCE,SCM.FINANCE.ACCOUNTING,SCM.FINANCE.OUTSTANDING ~ SCM.FINANCE,SCM.FINANCE.ACCOUNTING,SCM.FINANCE.OUTSTANDING",
+      "why": "TWO SIDEBAR ENTRIES' ACCESS LISTS differing by PROJECTS.FINANCES. One nav item additionally needs the finances grant. Not a rule with two homes."
+    },
+    {
+      "check": "D1",
+      "key": "HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/projectGates.ts frontend/src/auth/crewScope.ts",
+      "why": "THE CREW-SCOPED POSITIONS, and this twin is DELIBERATE: the projects filter bar has to render before any round-trip, so the client cannot wait to be told. It is also the twin that had already drifted — the desktop copy substring-matched the position name and carried no permission escape, so an owner-created \"Warehouse Helper\" caged the UI while the server returned everything, and an admin holding the Storekeeper position lost controls the server would have allowed. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which imports BOTH implementations and runs one corpus of (position, permissions) pairs through them. Added by the same change that created the second home — this gate flagged its own author, which is the behaviour it is for."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED|backend/src/scm/shared/assr-stage-labels.ts backend/src/services/assr.ts frontend/src/pages/MyCases.tsx frontend/src/portal/pages/PortalSupplierCase.tsx frontend/src/vendor/scm/lib/assr-stage-labels.ts",
+      "why": "The ASSR stage vocabulary, and it is ALREADY pinned rather than merely duplicated: backend/tests/assrStageLabelOneHome.test.ts is titled \"the ASSR stage vocabulary has exactly one home\" and scans the source for exactly these sites. That is the second remedy this gate offers. The five files consume the vocabulary; they do not each decide it."
+    },
+    {
+      "check": "D1",
+      "key": "ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION,VOIDED|backend/src/scm/shared/assr-stage-labels.ts frontend/src/vendor/scm/lib/assr-stage-labels.ts",
+      "why": "A shared MIRROR pair, which is this repo's established way of giving one rule to both runtimes: backend/src/scm/shared/* and frontend/src/vendor/scm/lib/* are held byte-identical by check-shared-mirrors --strict, a gate that already runs in backend-typecheck. Two copies that CANNOT diverge are not two answers."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY_ORDER_ITEMS,GRN_ITEMS,MFG_SALES_ORDER_ITEMS,PURCHASE_INVOICE_ITEMS,PURCHASE_ORDER_ITEMS,SALES_INVOICE_ITEMS|backend/src/scm/lib/autocount-convert-lines.ts backend/src/scm/lib/autocount-outbox.ts",
+      "why": "One home, plus its TYPE. autocount-convert-lines.ts holds the value; autocount-outbox.ts imports from it (line 115) and only restates the key set as a TypeScript union in annotations. A union that drifted from the imported record would fail to compile where the two meet, so the compiler is the referee here."
+    },
+    {
+      "check": "D1",
+      "key": "DO,GR,IV,PI|backend/src/scm/lib/autocount-convert-lines.ts backend/src/scm/lib/autocount-outbox.ts",
+      "why": "Same pair, same reason: DOWNSTREAM and CONVERT_TARGET are declared once in autocount-convert-lines.ts and imported by autocount-outbox.ts, which restates 'DO' | 'GR' | 'IV' | 'PI' only as a type annotation on its own signatures."
+    },
+    {
+      "check": "D2",
+      "key": "ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION ~ ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION,VOIDED",
+      "why": "The one member that differs is VOIDED, and its absence from the shorter set is the POINT, not an oversight. The shorter set is the salesperson STEPPER; a terminal void state is not a step. assr-stage-labels.ts records the failure that came from getting this backwards: portal.ts built the stepper by mapping ALL_STAGES, which DOES carry voided, so the word appeared on every case rather than only voided ones."
+    },
+    {
+      "check": "D1",
+      "key": "ASSIGNED_SOS,ASSIGNED_SO_LINKED,ASSIGNED_SO_PROVENANCE,DELIVERED_DOS|backend/src/scm/lib/list-mrp-enrichment-keys.ts backend/src/scm/lib/pi-assigned-sos.ts frontend/src/lib/listMrpEnrichment.ts frontend/src/lib/piListEnrichment.ts",
+      "why": "TWO DEFERRED-ENRICHMENT CONTRACTS that happen to name the same four columns, each ALREADY reduced to one home per document family and each with a REFEREE. The PO/GRN lists pin LIST_MRP_ENRICHMENT_KEYS against the frontend's LIST_MRP_DERIVED_FIELDS (backend/tests/listMrpEnrichmentKeys.test.ts); the PI list pins PI_LIST_MRP_ENRICHMENT_KEYS against PI_MRP_DERIVED_LIST_FIELDS (piListEnrichment.test.ts). Each pair fails CI naming the drifting key. Collapsing the two families onto one list would ASSERT that the PI list must always heal exactly what the PO and GRN lists heal — a stronger claim than either module makes, since a document family is entitled to its own enrichment shape. Two homes, two referees, both watching."
+    },
+    {
+      "check": "D1",
+      "key": "DEPTH,SEATHEIGHT,SEATSIZE|backend/src/scm/shared/so-variant-rule.ts frontend/src/vendor/shared/so-variant-rule.ts",
+      "why": "A VENDORED TWIN, not a second decision: the sofa seatHeight ALIAS list in backend/src/scm/shared/so-variant-rule.ts and its copy under frontend/src/vendor/shared/ so the browser runs the same rule. Same file pair and same referee as the DIVANLESS_AXES entry — check-shared-mirrors.mjs compares the two function-by-function and fails on DIVERGED."
+    },
+    {
+      "check": "D2",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO,CUSTOMER_PO_DATE,CUSTOMER_PO_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,PO_DOC_NO,REF,SALESPERSON_ID,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID ~ ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,REF,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID",
+      "why": "NOT SETTLED — RAISED FOR THE OWNER, recorded as open rather than decided. The consignment order's identity lock still FREEZES salesperson_id; the Sales Order's stopped freezing it (owner 2026-08-17, reason at so-identity-lock.ts:10 — a DO or SI snapshots the customer, the addresses and the money, never WHO SOLD IT, and freezing it stranded a resigning salesperson's delivered orders where the replacement could not even SEE them, because SO row visibility keys off that very column). Whether that ruling extends to consignment orders is a business judgement and his to make, not a checker's. The other four columns in the delta (customer_po, customer_po_id, customer_po_date, po_doc_no) are SCHEMA — only consignment_orders carries them — and are not in question."
+    },
+    {
+      "check": "D2",
+      "key": "DESCRIPTION,DISPLAYTERM,DOCDATE,DOCNO,PURCHASELOCATION,REF,SUPPLIERDONO ~ DESCRIPTION,DISPLAYTERM,DOCDATE,DOCNO,PURCHASELOCATION,REF,SUPPLIERINVOICENO",
+      "why": "TWO ARMS OF ONE MAP, three lines apart in one declaration: AC_TRANSFER_HEADER_KEYS in autocount-convert-lines.ts. The GR arm is PurchaseHeader plus the goods receipt's own SupplierDONo; the PI arm is PurchaseHeader plus the purchase invoice's own SupplierInvoiceNo. Each line carries a comment saying exactly that. Meant to differ, and the difference is visible to anyone reading either line — the opposite of the invisible second home this gate hunts."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,DISPATCHED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE STATES A DELIVERY MAY BE INVOICED FROM — a VENDORED TWIN of one declaration, not a second decision. The rule has one home in backend/src/scm/shared/do-shipped-states.ts and a byte-identical copy under frontend/src/vendor/shared/ so the browser can gate the transfer button on the same list the server enforces. Four hand-typed spellings of this rule are what the parent PR removes; keeping the twin is the price of a browser that cannot import backend/src. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
+    }
+  ]
+}

@@ -95,6 +95,65 @@ SO via `onOpen` so the office cuts the DO first.
 move type, per-item spec, sales-rep contact, 3D floor plan) are omitted, never
 invented. Money is balance-only and never NaN.
 
+#### The "Delivery details" card — `MobileDeliveryFieldsCard.tsx`
+
+The stop detail's editable HC-fields card lives in its own file
+(`frontend/src/mobile/MobileDeliveryFieldsCard.tsx`), not in
+`MobileDeliveryPlanning.tsx` — that file sits under a 2,449-line ceiling in
+`scripts/file-size-ceilings.json`. `pdRow` / `hhmm` / `EM` moved there with it
+and MobileDeliveryPlanning imports them back; the dependency is one-way on
+purpose, since the reverse direction would be a cycle.
+
+It is the mobile counterpart of the desktop drawer and PATCHes the same
+endpoint, so it carries the drawer's **two groups**:
+
+- **SO-context** — move-in (possession) date, house type (`New House` /
+  `Replacement`), referral, replacement / disposal. Saved on the SO header, so
+  the card **renders and these stay editable whether or not a DO exists**.
+- **DO-execution** — time window + confirmed, arrival / departure, shipout date,
+  customer-delivered date, port ref, HC "Remark 4" sub-status. These columns
+  live on the DO, so the group is replaced by a "create a DO first" hint when
+  there is none. (Desktop disables a `<fieldset>` instead; eight greyed inputs
+  is a lot of dead phone screen.)
+
+Mobile sends a **changed-only diff** where the drawer posts the whole form. That
+decision is the pure exported `buildDeliveryFieldsPatch(initial, form, {
+procLocked, hasDo })`, pinned by
+`frontend/src/mobile/mobileDeliveryFields.test.tsx` — test the builder, not a
+render, when changing what a save sends.
+
+#### `replacement_disposal` has TWO lanes, and the client picks
+
+This is the one field on either surface that does not always go down the direct
+PATCH, and it is not documented anywhere else.
+
+Owner ruling 2026-07-27: `replacement_disposal` is a CONTROLLED SO field. On an
+order that is processing-locked or PO-locked, a change to it "appears in SO
+Amendment — Logistics reviews → approves" rather than being written from the
+board. **The backend enforces this independently**: the `fields` handler answers
+**409 `so_locked_processing`** for a *genuine* change (it re-reads the stored
+value first, so re-saving the same text is not a change) when
+`soProcessingLocked(...) || soPoLocked(...)`. The other SO-context fields —
+possession date, house type, referral — are FREE and never take this lane.
+
+So a client that simply PATCHes the field on a locked order gets a refusal with
+no way forward. Both surfaces therefore recognise the lock themselves, using the
+shared `procLockActive` from `frontend/src/vendor/scm/lib/so-detail-gates.ts`,
+and:
+
+1. EXCLUDE `replacementDisposal` from the direct PATCH body;
+2. raise it through `useCreateAmendment`
+   (`frontend/src/vendor/scm/lib/so-amendment-queries.ts`) as a header-only
+   amendment (`headerChanges: { replacementDisposal }`, no lines);
+3. show the lock warning as soon as the order is locked — before the field is
+   dirty, not after.
+
+`procLockActive` needs **`po_locked`** as well as `processing_date` + `status`.
+It is server-computed (a live PO already claims one of this SO's lines, 2990
+only) and cannot be derived client-side, so it rides on the board payload and
+must be declared on `PlanningOrder` *and* on mobile's `BoardRow`. Absent reads
+as false, degrading the gate to the date rule alone.
+
 ### Trips = Delivery Time Arrangement — the board IS the page
 
 
@@ -527,7 +586,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET | `/delivery-planning` | `scm/routes/delivery-planning.ts:409` | **The board.** `?region=ALL\|<code>&state=ALL\|<delivery_state>` → `{ orders, counts, regions }` |
 | GET | `/delivery-planning/:docNo/lines` | `:1389` | Expand-row line items, scoped to the caller's ALLOWED companies (not the active one) |
 | GET | `/delivery-planning/geo` | `delivery-planning.ts` (registered BEFORE `/:docNo/lines` — 'geo' would parse as a docNo) | **Option B side map (2026-08-08).** `?date=YYYY-MM-DD&region=<r>` → `{ date, region, configured, points[], depot\|null, depotReason, ungeocoded[] }` — one point per SO whose EFFECTIVE delivery date (amended ?? customer) is the picked day. Allowed-companies scoped + region-filtered with the board's own config classification + per-assignee row scope (latest-DO assignment rule). lat/lng resolve CACHE-FIRST through `scm.geocode_cache` (ONE batched read, then at most one Google call per never-seen address — cached forever; no `GOOGLE_MAPS_API_KEY` → only cached addresses pin, nothing bills). A point carries `zone` (postcode-zone via the delivery-zones map), `region`, `sets` (the packer's `deriveSetCount`), `revenueCenti`, `customer`, `address`; unlocatable orders return in `ungeocoded` with a reason, never dropped. Depot = the day's MAJORITY line-warehouse (ties to first seen), geocoded the same way; `depotReason` says why when null. READ-only, no polling — the frontend fetches once per (date, region) |
-| PATCH | `/delivery-planning/:type/:id/fields` | `:1493` | HC delivery fields (time range, shipout date, sub-status…) |
+| PATCH | `/delivery-planning/:type/:id/fields` | `:1493` | HC delivery fields, in two groups. **SO-context** (`possessionDate`, `houseType`, `referral`, `replacementDisposal`) writes the SO header and needs no DO; **DO-execution** (`timeRange`, `timeConfirmed`, `arrivalAt`, `departureAt`, `shipoutDate`, `customerDeliveredDate`, `etaArrivingPort`, `deliverySubstatus`) writes the latest DO and answers `no_do_hint` when there is none. **`replacementDisposal` is the exception:** a GENUINE change to it on a processing- or PO-locked SO is refused **409 `so_locked_processing`** — it must arrive as an SO Amendment instead (§1, "`replacement_disposal` has TWO lanes"). The other three SO-context fields are free |
 | PATCH | `/delivery-planning/:type/:id/schedule` | `:1705` | Schedule date + **driver / lorry assignment**; `type` = `so \| do \| assr` |
 | GET/POST/PATCH/DELETE | `/delivery-planning-regions`, `/…/states/:stateKey` | `delivery-planning-regions.ts:65,89,120,150,196,228,261` | Region master + the state→region map |
 | GET/POST/PATCH/DELETE | `/delivery-residence-rules`, `/…/:id` | `delivery-residence-rules.ts` | Per-building-type CONFIG (mig 0196): service duration + access windows + lift/registration flags. Per-company scoped (scopeToCompany read / scopeToCompanyId write). The Phase-3 scheduler READS this; no scheduler is wired here. NOT openRead — unlike the region master this is not a cross-page picklist. |
@@ -644,6 +703,24 @@ per-company. Filters are a working view, NOT synced to the account layout
 store. (2) `DeliveryPlanning.tsx` swaps `useSearchParams` for
 `useStickyFilters('delivery-planning', ['state','region'])` — URL wins,
 localStorage restores the last state/region pair when the URL carries none.
+
+**SO-list design parity, 2026-08-19** (owner: "要和 sales order design 设计,
+字体,颜色一样" + "一样的button和位置和design"). The DataGrid chrome and the
+board's cells now speak the DataTable lists' design language — this applies to
+EVERY DataGrid list, not just the board. Table: 13px body / ~34px rows /
+`border-subtle` row rules. Cells (`DeliveryPlanningBoard.tsx` type ramp): doc
+numbers = Plex Mono 12.5 semibold ink (`DOCNO_STYLE`), Customer = 13 semibold
+ink (`strong`), detail text (salesperson / venue / phone / dates / state) =
+12.5 ink-secondary (`detail`), money = 13 semibold ink (`MONEY_STYLE`; Balance
+keeps its over-collection red / settled grey). Toolbar: the SHARED
+`ResetFiltersButton` sits after the search labelled "Reset layout" (clears
+funnels + search, hides while inactive — it REPLACED the right-side "Clear
+filters" pill AND the footer column-layout reset; column-layout resets live in
+the Columns drawer, like the SO list), then the rows·cols caption; right side
+is "Export" + the SHARED `ColumnsButton` ("Columns · N"). Region chips wear the
+`FilterPills` slab (white track, squared uppercase pills, solid-primary
+active; SG keeps its dashed cross-border outline). The filter-chips bar lost
+its burnt-orange wash for a neutral grey.
 
 Then: row scope (§6) → region filter → counts → state filter →
 `{ orders, counts, regions }` (`:1345-1371`). Counts are computed over the
@@ -1194,6 +1271,7 @@ service-case / sales / projects family.
 | Driver / Helper / Lorry masters | `Fleet.tsx` (`DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`) | `MobileModuleList.tsx:1327` / `:1357` / `:1857` | `drivers-queries.ts` / `helpers-queries.ts` / `lorries-queries.ts` |
 | Assignment + scheduling | `DeliveryPlanningBoard.tsx` `DriverEditCell` / `LorryEditCell` / the bulk-bar `applyBulk` (shared grid) | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
 | Status writes / POD | board row actions | `MobileDeliveryPlanning.tsx` (`PATCH /delivery-orders-mfg/:id/status`), `MobilePOD.tsx` | the DO status machine in `delivery-orders-mfg.ts` |
+| HC delivery fields + the disposal amendment lane | `vendor/scm/components/DeliveryFieldsDrawer.tsx` (the "Edit HC fields" drawer) | `mobile/MobileDeliveryFieldsCard.tsx` (the stop detail's "Delivery details" card) | `PATCH /delivery-planning/:type/:id/fields` for the write; `procLockActive` (`vendor/scm/lib/so-detail-gates.ts`) decides the lane and `useCreateAmendment` (`vendor/scm/lib/so-amendment-queries.ts`) is the second one. A field added to one surface is missing on the other until it is added there too — that is exactly how the four SO-context fields stayed desktop-only |
 | Live GPS (Phase 4) | dispatcher READ: `LiveTripMap.tsx` in `Trips.tsx` (poll `latest`) | driver CAPTURE: `MobileTrackingBanner.tsx` (watchPosition → POST) | `vendor/scm/lib/trip-locations-queries.ts` (the ONE shared logic layer: capture engine + reads + cadence) and `backend/src/scm/lib/tripLocation.ts` (validation / rate cap / shaping) |
 | Access gating | `App.tsx:601-605` + `Sidebar.tsx:515-524` | `MobileApp.tsx:114,157-184` | `scmAreaGuard('scm.transportation.drivers')` |
 

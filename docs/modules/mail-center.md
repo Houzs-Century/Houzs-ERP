@@ -134,3 +134,92 @@ ops-only, so a retry can reproduce the same send).
 
 - `backend/tests/emailOutbox.test.ts` — the queue's retry ladder
 - `docs/modules/` — sibling guides; `sales-order.md` is the shape to follow
+
+## Company scope on the outbox (2026-08-18)
+
+`GET /outbox`, its status roll-up, and `GET /outbox/:id` are scoped to the ACTIVE
+company. `email_outbox` has no `company_id` — its company column is
+`company_code` (mig 0094) — so the predicate is `activeCompanyCodePred(c)` from
+`backend/src/scm/lib/companyScope.ts`, which BINDS rather than interpolating and
+handles the three things that column actually holds: the code, NULL (= the base
+company, per 0094 and the cron drain), and a company id stringified by two
+callers that pass `String(row.company_id)` into `sendEmail`'s `companyCode`.
+
+**Mail admin is NOT a company scope.** `isMailAdmin` grants management rights
+over mailboxes; it never widened the company predicate and must not be made to.
+Before this, both reads returned every company's rows — including `body_html`,
+which carries the one-time `/invite/<token>` and `/reset/<token>` links minted in
+`routes/auth.ts`.
+
+## Mobile shares the desktop's rules — it does not re-derive them (2026-08-20)
+
+`frontend/src/mobile/MobileMailCenter.tsx` is the phone twin of the desktop
+screens, and the owner's standing rule is ONE shared logic layer with the two
+surfaces differing only in presentation. Three rules had been re-implemented on
+the phone instead of imported, and each copy was missing the half that had
+already been fixed on desktop. They now come from the same modules:
+
+| rule | shared module both surfaces use |
+|---|---|
+| which mailbox the From defaults to | `frontend/src/pages/MailCenter/mail-from-default.ts` (`pickDefaultFromAddress`) |
+| the auto-sent log's fetchers | `frontend/src/pages/MailCenter/mail-actions.ts` (`fetchOutbox`, `fetchOutboxDetail`) |
+| attaching a file: read, size, extension, the refusal wording | `frontend/src/pages/MailCenter/mail-attach-files.ts` (`pickMailAttachments`, `attachmentPayload`, `humanSize`) over the pure `mail-attachments.ts` |
+| To / Cc / Bcc parsing + the "name the bad address" check | `frontend/src/pages/MailCenter/mail-recipients.ts` (`parseRecipients`, `firstInvalid`) |
+| assigning a thread to a colleague | `frontend/src/pages/MailCenter/mail-actions.ts` (`patchThreadAssignment`) |
+| a label's colour, and the colour a NEW label is created in | `frontend/src/pages/MailCenter/mail-labels.ts` (`labelColorMap`, `colorForLabel`, `chipStyle`, `LABEL_PALETTE`) |
+
+**`replyAll` is a REQUIRED prop on the phone's reply box, and `defaultFrom` is a
+REQUIRED prop on its composer.** Both were written that way on purpose, per the
+`optional-param-noop` rule in `CLAUDE.md`: an omitted `replyAll` silently
+answers one person on a mail that copied several, and an omitted `defaultFrom`
+silently falls back to `addresses[0]`, which is the ALPHABETICALLY first mailbox
+because `GET /addresses` is `ORDER BY address ASC`. Neither failure raises an
+error, so the compiler is the only thing that can catch a new call site that
+forgets one.
+
+**The member's own alias is spliced into the From list on both surfaces.**
+`getMailScope` builds `scope.addresses` from `email_addresses` rows only, while
+`canSendFrom` also accepts the caller's `users.email_alias`. A member whose only
+sending identity is that alias therefore gets an EMPTY `/addresses` response and
+must be offered the alias by the client, or they cannot send at all.
+
+**"Auto-sent" is on the phone too.** Same read-only outbox log as the desktop
+folder, same endpoint, same company scope (see the section above). It is the
+only place a FAILED customer notice is visible — the auto-sent mail goes out
+from a no-reply sender, so there is no thread and no "Sent" copy anywhere else.
+Before this the phone had a fixed six-folder list and a failed invoice email was
+invisible to anyone not at a desk.
+
+### Four more phone-only gaps, closed 2026-08-21
+
+Same class, same remedy — the shared modules are in the table above. What moved
+on the phone's SURFACE:
+
+- **Attachments on new mail and on replies.** A plain `<input type="file">`
+  (`accept="image/*,application/pdf"`), deliberately: it is what opens the
+  native Take Photo / Photo Library / Browse sheet, and the camera is the best
+  attachment source in this business. Both composers render the same `AttachRow`
+  and both refuse a bad file in the SERVER's own words, because the check is the
+  server's own `validateMailAttachments`. Attachments still are NOT persisted on
+  the outbox row (see *Rules that will bite you*) — a drained retry sends the
+  mail body-only from either surface.
+- **Cc / Bcc,** behind a "Cc / Bcc" reveal, exactly as on desktop. The phone's
+  `to` field now posts an ARRAY through `parseRecipients` rather than a raw
+  string, so a comma-separated To works there too.
+- **Assign to,** a dropdown of colleagues from `GET /api/users` (envelope
+  `{ users: [] }`). It writes BOTH `assignedToUserId` and `assignedToName` —
+  the id is what a thread is filtered by and the name is what every row
+  renders, so writing one alone leaves a thread that is assigned and shows
+  nobody. A member without `users.read` gets an empty list and a disabled
+  picker, the same degradation desktop has.
+- **Listing by label.** A second chip strip under the folder chips sets
+  `?label=` on the thread query — the same server-side filter the desktop
+  sidebar uses. Hidden on Drafts and Auto-sent, which do not read the thread
+  list. Before this a conversation could be tagged from a phone and then never
+  found from one.
+
+**A new label is created in `LABEL_PALETTE[0].value`, never a hand-picked hex.**
+`normalizeColor` (`backend/src/routes/mail-center.ts`) maps anything outside its
+nine-entry allow-list to the brand brown, so a colour off that list is stored as
+a DIFFERENT colour than the picker showed. `LABEL_PALETTE` mirrors the backend
+allow-list for exactly this reason; take colours from it on both surfaces.

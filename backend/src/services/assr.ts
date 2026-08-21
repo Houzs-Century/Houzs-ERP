@@ -1,4 +1,8 @@
 import type { Env } from "../types";
+// Case-level SLA clock — its own module (see assrSla.ts header). Re-exported
+// because callers and tests have imported slaHoursFor from here since mig 065.
+import { slaHoursFor, slaHoursForPriority } from "./assrSla";
+export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
 import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
@@ -7,6 +11,7 @@ import { normalizePhone } from "../scm/shared/phone";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { assrVisibilityPredicateSql } from "./assrVisibility";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -69,18 +74,6 @@ export type Stage =
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-// Default SLA in hours per priority — single source of truth.
-// Mirrors the backfill in 012_assr_sla.sql so new + historical rows align.
-const SLA_HOURS_BY_PRIORITY: Record<Priority, number> = {
-  urgent: 24,
-  high: 72,
-  normal: 168,  // 7 days
-  low: 336,     // 14 days
-};
-
-export function slaHoursFor(priority: string | null | undefined): number {
-  return SLA_HOURS_BY_PRIORITY[(priority as Priority) || "normal"] ?? 168;
-}
 
 // Maps stage → user-facing status (backward compat for legacy list
 // renderers that still read `status`).
@@ -378,11 +371,13 @@ export async function createAssrCase(
   // Use first item_code for the legacy column
   const firstItem = input.items[0]?.item_code ?? null;
 
-  // SLA window from the case's priority (defaults to 'normal' = 168h
-  // when intake didn't pick one). Priority is stored as the slug on
-  // assr_cases.priority; mig 082 also drives per-stage targets off it.
+  // SLA window from the case's priority (defaults to 'normal' when intake
+  // didn't pick one). Read from assr_priorities on every create so a Service
+  // Maintenance edit takes effect without a deploy — same reason the default
+  // assignee below is read here rather than cached. Priority is stored as the
+  // slug on assr_cases.priority; mig 082 also drives per-stage targets off it.
   const prioritySlug = input.priority ?? "normal";
-  const slaHours = slaHoursFor(prioritySlug);
+  const slaHours = await slaHoursForPriority(env, prioritySlug);
   const deadlineAt = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
 
   // Optional default assignee — admin sets this in Settings → Service.
@@ -1170,7 +1165,7 @@ export async function patchAssrCase(
   // same request), recompute deadline_at off the case's created_at so the
   // SLA clock tracks the new priority band.
   if ("priority" in body && !("deadline_at" in body) && !("sla_hours" in body)) {
-    const newHours = slaHoursFor(body.priority);
+    const newHours = await slaHoursForPriority(env, body.priority);
     const row = await env.DB.prepare(
       `SELECT created_at FROM assr_cases WHERE id = ?`
     )
@@ -1661,20 +1656,15 @@ export interface ListAssrFilters {
   date_field?: "reported" | "deadline";
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  /** Row-level visibility scope (owner spec 2026-07): when set, only cases
-   *  CREATED BY or ASSIGNED TO one of these user ids are returned — the
+  /** Row-level visibility scope (owner spec 2026-07, amended 2026-08-20): the
    *  caller + their full manager_id downline chain (services/orgScope.ts).
-   *  undefined = unrestricted (admin `*` / service_cases.manage). An empty
-   *  array matches NOTHING (fail closed). */
+   *  undefined = unrestricted (admin `*` / service_cases.manage / director). An
+   *  empty array matches NOTHING (fail closed). What the ids are matched ON is
+   *  `assrVisibilityPredicateSql` (services/assrVisibility.ts): created_by /
+   *  assigned_to / assigned_to_2, plus the salesperson of the case's ERP-native
+   *  SO. Cases whose SO is the AutoCount mirror (or resolves nowhere) are
+   *  company-scoped only and ignore this list entirely. */
   visible_to_user_ids?: number[];
-  /** Legacy-case reach (owner ask 2026-07): the lowercased display names of
-   *  the caller's reporting subtree (self + downline). OLD cases carry only a
-   *  free-text `sales_agent` NAME and no created_by/assigned_to id, so id-scope
-   *  alone hides them from the salesperson who owns them. When set, a case is
-   *  ALSO in scope if its `sales_agent` text (case-insensitive) CONTAINS one of
-   *  these names — additive, OR-ed with the id clause; never narrows it.
-   *  Only consulted for the scoped tier (visible_to_user_ids defined). */
-  visible_agent_names?: string[];
   /** Multi-company: the company ids ASSR is scoped to. EVERY caller — including
    *  rank-and-file sales — passes their GRANTED set. `undefined` = unresolved →
    *  no predicate; `[]` = granted nothing → matches nothing. NOT interchangeable.
@@ -1704,45 +1694,28 @@ function pushAllowedCompanies(where: string[], ids: number[] | undefined): void 
   where.push(`c.company_id IN (${clean.join(",")})`);
 }
 
-/** Shared WHERE fragment for the visibility scope — used by both the
- *  paginated list and the CSV export so they can never drift apart.
+/** WHERE fragment for the visibility scope on the paginated list and the CSV
+ *  export.
  *
- *  TWIN: `assrVisibilitySql` (routes/assr.ts) expresses this SAME rule as an
- *  interpolated fragment for the aggregate endpoints (/summary, /metrics,
- *  /by-creditor, /metrics/drill, /logistics/all), which do not build bind
- *  arrays. Change BOTH or the list and its own totals drift apart again — the
- *  leak `fix/assr-aggregate-scope` closed. */
+ *  It does not STATE the rule — `assrVisibilityPredicateSql`
+ *  (services/assrVisibility.ts) does, and the aggregate endpoints, the detail
+ *  GET and the printable all resolve through that same string. This used to be
+ *  a hand-maintained twin of `assrVisibilitySql` in routes/assr.ts and the two
+ *  drifted, which is the leak `fix/assr-aggregate-scope` had to close when the
+ *  list and its own totals disagreed. There is nothing left here to keep in
+ *  sync.
+ *
+ *  No binds: every id is inlined after being re-validated as a positive integer
+ *  inside the predicate builder, the same justification `allowedCompaniesSql`
+ *  gives. The list's bind array is positional, so having one fewer thing that
+ *  can be spliced at the wrong offset is the point. */
 function pushVisibilityScope(
   where: string[],
-  binds: any[],
   ids: number[] | undefined,
-  agentNames?: string[],
 ): void {
-  if (ids === undefined) return; // unrestricted
-  if (ids.length === 0) {
-    where.push("1 = 0"); // scoped caller with no resolvable identity → nothing
-    return;
-  }
-  const ph = ids.map(() => "?").join(",");
-  const clauses = [
-    `c.created_by IN (${ph})`,
-    `c.assigned_to IN (${ph})`,
-    `c.assigned_to_2 IN (${ph})`,
-  ];
-  binds.push(...ids, ...ids, ...ids);
-  // Legacy reach: OLD cases carry only a free-text `sales_agent` name (no id),
-  // so also admit a case whose agent name matches a subtree member's display
-  // name. Substring match (member name ⊆ agent text) mirrors My Cases so a row
-  // that shows in the list always opens in the detail. Additive — OR-ed in, and
-  // the id clauses above keep new (id-stamped) cases visible unchanged.
-  const names = (agentNames ?? [])
-    .map((n) => n.trim().toLowerCase())
-    .filter(Boolean);
-  for (const n of names) {
-    clauses.push(`LOWER(COALESCE(c.sales_agent, '')) LIKE ?`);
-    binds.push(`%${n}%`);
-  }
-  where.push(`(${clauses.join(" OR ")})`);
+  const pred = assrVisibilityPredicateSql(ids, "c.");
+  if (pred === null) return; // unrestricted
+  where.push(`(${pred})`);
 }
 
 // Allow-listed sort columns. Computed aliases (stage_since,
@@ -1869,7 +1842,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
       binds.push(f.to);
     }
   }
-  pushVisibilityScope(where, binds, f.visible_to_user_ids, f.visible_agent_names);
+  pushVisibilityScope(where, f.visible_to_user_ids);
   pushAllowedCompanies(where, f.allowed_company_ids);
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2152,7 +2125,7 @@ export async function exportAssrCases(
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
     binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
   }
-  pushVisibilityScope(where, binds, f.visible_to_user_ids, f.visible_agent_names);
+  pushVisibilityScope(where, f.visible_to_user_ids);
   pushAllowedCompanies(where, f.allowed_company_ids);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = await env.DB.prepare(

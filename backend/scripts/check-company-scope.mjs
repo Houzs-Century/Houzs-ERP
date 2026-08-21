@@ -53,11 +53,47 @@
 //
 // Usage:
 //   node backend/scripts/check-company-scope.mjs           # report
-//   node backend/scripts/check-company-scope.mjs --strict  # exit 1 on findings
+//   node backend/scripts/check-company-scope.mjs --strict  # exit 1 on WRITE findings
+//   node backend/scripts/check-company-scope.mjs --check   # RATCHET: exit 1 on a
+//                                                          # NEW unscoped handler
+//                                                          # (one not in the baseline)
+//   node backend/scripts/check-company-scope.mjs --update  # rewrite the baseline,
+//                                                          # SHRINK-only (refuses to grow)
+//   ... --check --ratchet-against origin/main              # also fail if the
+//                                                          # baseline file itself GREW
+//
+// ⚠️ THE RATCHET (--check / --update) — read before touching the baseline.
+//
+// The goal is to LOCK the company-scope check: a NEW handler that touches a row
+// by id with no company predicate is BLOCKED, while today's findings are
+// grandfathered and may only DECREASE. Same shape as lint-ratchet.mjs and
+// check-release-discipline.mjs.
+//
+//   * The grandfather baseline is backend/scripts/company-scope-baseline.json —
+//     a flat, sorted list of STABLE KEYS, one per unscoped handler/statement.
+//   * The stable key is FILE PATH + ROUTE IDENTITY, never a line number (which
+//     drifts on every merge). A route handler is `<file> :: <METHOD> <path>`;
+//     a library write is `<file> :: lib(<key>)`.
+//   * `--check` recomputes the findings and fails if the current set is NOT a
+//     subset of the baseline — i.e. a key appears that nobody grandfathered.
+//   * `--update` rewrites the baseline from the current findings but REFUSES to
+//     add a key the committed baseline does not already have (mirroring
+//     lint-ratchet's refusal to raise a ceiling). It is how you lock in a fix:
+//     after a handler is scoped, `--update` drops it from the list.
+//   * `--ratchet-against <ref>` closes the obvious bypass — editing the JSON to
+//     add your new key. It compares the baseline file at HEAD to the one at the
+//     merge base and fails if it grew. This is exactly check-release-discipline's
+//     `--ratchet-against` guard.
+//
+// This does NOT replace `--strict`. --strict enforces the stronger invariant
+// that handler WRITE findings stay at ZERO (writes are the worst class and there
+// are none today); the ratchet grandfathers the read-side backlog and locks the
+// whole set against growth. Both run in CI.
 // ----------------------------------------------------------------------------
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /* BOTH route trees. It scanned only scm/routes until 2026-08-13, leaving
@@ -75,6 +111,51 @@ const ROUTE_DIRS = [
 ];
 const strict = process.argv.includes("--strict");
 const jsonOut = process.argv.includes("--json");
+const checkMode = process.argv.includes("--check");
+const updateMode = process.argv.includes("--update");
+const ratchetAgainst = (() => {
+  const i = process.argv.indexOf("--ratchet-against");
+  if (i === -1) return null;
+  const ref = process.argv[i + 1];
+  if (!ref || ref.startsWith("--")) {
+    // Silently comparing against nothing is the one outcome that must not
+    // happen: the step would go green while checking against no baseline.
+    console.error("FATAL: --ratchet-against needs a git ref (e.g. origin/main).");
+    process.exit(2);
+  }
+  return ref;
+})();
+
+const repoRoot = path.resolve(backendRoot, "..");
+const BASELINE_REL = "backend/scripts/company-scope-baseline.json";
+const BASELINE_PATH = path.join(backendRoot, "scripts", "company-scope-baseline.json");
+
+/* THE STABLE KEY. File path + route identity, never a line number — a merge
+   that shifts a 12,000-line router must not turn every handler below it into a
+   "new" violation. A handler is `<file> :: <METHOD> <path>`; a library write is
+   `<file> :: lib(<key>)`. These are the two shapes the two finding sets carry. */
+const handlerKeyOf = (f) => `${f.file} :: ${f.handler}`;
+const libKeyOf = (f) => `${f.file} :: lib(${f.key})`;
+const newAgainst = (keys, baseSet) => keys.filter((k) => !baseSet.has(k));
+
+/* SELF-TEST the ratchet primitives, same rule as the pattern self-tests below:
+   a key builder or a subset test that silently does the wrong thing produces a
+   plausible verdict over nothing. If these break, refuse to run rather than
+   grandfather the world or gate on garbage. */
+{
+  const hk = handlerKeyOf({ file: "backend/src/scm/routes/x.ts", handler: "PATCH /:id" });
+  const lk = libKeyOf({ file: "backend/src/scm/lib/y.ts", key: "code" });
+  const base = new Set([hk, lk, "kept-a"]);
+  const ok =
+    hk === "backend/src/scm/routes/x.ts :: PATCH /:id" &&
+    lk === "backend/src/scm/lib/y.ts :: lib(code)" &&
+    newAgainst([hk, "kept-a"], base).length === 0 &&              // subset -> no new
+    newAgainst([hk, "brand-new"], base).join() === "brand-new";   // one NEW -> named
+  if (!ok) {
+    console.error("check-company-scope: RATCHET self-test FAILED - not reporting.");
+    process.exit(2);
+  }
+}
 
 /* A handler counts as scoped if it uses one of the helpers OR writes the
    predicate by hand. The hand-written form is common and legitimate —
@@ -103,6 +184,22 @@ const SCOPE_PRIMITIVES = [
      Note it is NOT caught by the "scopeToCompany" entry above: the substring
      test fails on scopeToALLOWEDCompanies. */
   "scopeToAllowedCompanies",
+  /* THE scopedDb VOCABULARY (src/scm/lib/scopedDb.ts, 2026-08-20). These are
+     the four scope constructors a CONVERTED file passes as the required second
+     argument to `db.from(table, scope)`. They had to be added the moment the
+     first file converted: without them this checker read a correctly scoped
+     `db.from('stock_transfers', companyIdScope(co.companyId)).update(...)` as
+     unscoped and reported the pilot's cancel handler — the very handler the
+     2026-07-22 audit missed — as a WRITE finding. A checker that punishes the
+     safer construct is a checker somebody switches off.
+     `CENTRALISED` counts for the same reason `// company-scope:` does: it is an
+     explicit, reviewed statement that this query carries no company predicate,
+     and it is STRONGER than the comment because the compiler made the author
+     write it and the reason string is mandatory. */
+  "companyScope",
+  "companyIdScope",
+  "allowedScope",
+  "CENTRALISED",
   "allowedCompaniesSql",
   "allowedCompanyIds",
   "requireActiveCompanyId",
@@ -649,16 +746,251 @@ for (const dir of LIB_DIRS) {
   }
 }
 
+/* ── PASS 4: the CONVERTED files must not reach for the raw client again ────
+   src/scm/lib/scopedDb.ts makes a query's company scope a REQUIRED argument, so
+   in a converted file `db.from(table)` with no scope is a TS2554 and "this one
+   is deliberately centralised" has to be typed out as CENTRALISED('<why>').
+
+   That guarantee is ONE LINE deep. `const sb = c.get('supabase')` anywhere in a
+   converted file hands back the raw service-role client, and from there every
+   statement is unchecked again — with no compile error, no failing test and no
+   runtime signal. It reads exactly like the code that was there before, which is
+   why a human reviewer is the wrong instrument for it.
+
+   So the rule is mechanical and narrow: a file on the converted list may not
+   contain `c.get('supabase')` in CODE. Comments are stripped first — this
+   checker's name and that call both appear in the pilot's own header comment,
+   and a checker that fires on prose describing itself is one nobody keeps.
+
+   THE LIST MAY ONLY GROW. Nothing here can see git history, so removal is
+   pinned instead by backend/tests/companyScopeConverted.test.mjs, which runs in
+   the LIGHT project inside the required backend-typecheck job. */
+const CONVERTED_REL = "backend/scripts/company-scope-converted.json";
+const CONVERTED_PATH = path.join(backendRoot, "scripts", "company-scope-converted.json");
+const RAW_CLIENT = /\bc\s*\.\s*get\(\s*['"`]supabase['"`]\s*\)/;
+/* SELF-TEST, same rule as every other pass in this file: a pattern that cannot
+   match produces a plausible clean run. Both directions are asserted — the shape
+   it must catch, and the two shapes it must NOT — and a missing or empty list is
+   fatal rather than silently vacuous, because "the checker read no files" and
+   "the files are clean" must never print the same verdict. */
+{
+  const ok =
+    RAW_CLIENT.test("  const sb = c.get('supabase');") &&
+    RAW_CLIENT.test('const sb = c.get("supabase")') &&
+    !RAW_CLIENT.test("  const db = scmDb(c);") &&
+    !RAW_CLIENT.test("  const user = c.get('user');");
+  if (!ok) {
+    console.error("check-company-scope: CONVERTED pass self-test FAILED - not reporting.");
+    process.exit(2);
+  }
+}
+const convertedFindings = [];
+let convertedChecked = 0;
+{
+  if (!fs.existsSync(CONVERTED_PATH)) {
+    console.error(`FATAL: ${CONVERTED_REL} is missing — the converted-file pass would check nothing and read as a pass.`);
+    process.exit(2);
+  }
+  const list = JSON.parse(fs.readFileSync(CONVERTED_PATH, "utf8")).converted;
+  if (!Array.isArray(list) || list.length === 0) {
+    console.error(`FATAL: ${CONVERTED_REL} has no non-empty "converted" array.`);
+    process.exit(2);
+  }
+  for (const rel of list) {
+    const full = path.join(backendRoot, rel);
+    if (!fs.existsSync(full)) {
+      /* A listed file that has been renamed or deleted is a FINDING, not a skip.
+         Skipping it would let a rename silently remove a file from the gate. */
+      convertedFindings.push({ file: `backend/${rel}`, line: 0, reason: "listed as converted but the file does not exist (renamed or deleted?)" });
+      continue;
+    }
+    convertedChecked++;
+    const raw = fs.readFileSync(full, "utf8").split(/\r?\n/);
+    stripComments(raw).forEach((line, i) => {
+      if (RAW_CLIENT.test(line)) {
+        convertedFindings.push({
+          file: `backend/${rel}`,
+          line: i + 1,
+          reason: "reaches for the raw service-role client — every query below it is unscoped again with no compile error",
+        });
+      }
+    });
+  }
+}
+
 findings.sort((a, b) => Number(b.writes) - Number(a.writes) || a.file.localeCompare(b.file) || a.line - b.line);
+
+/* ── THE RATCHET (--check / --update) ───────────────────────────────────────
+   The current set of unscoped things, keyed stably. Both finding sets go in:
+   route handlers (read + write) and library writes. Nothing here re-decides
+   what is scoped — that is the whole matcher above; this only compares the keys
+   it produced against the grandfather baseline. */
+const currentKeys = [...findings.map(handlerKeyOf), ...libFindings.map(libKeyOf)].sort();
+const detailFor = new Map([
+  ...findings.map((f) => [handlerKeyOf(f), `${f.writes ? "WRITE" : "read "} L${f.line}  ${f.hits.map((h) => `L${h.line}`).join(" ")}`]),
+  ...libFindings.map((f) => [libKeyOf(f), `WRITE L${f.line} by '${f.key}'`]),
+]);
+
+function loadBaseline(fatalIfMissing) {
+  if (!fs.existsSync(BASELINE_PATH)) {
+    if (fatalIfMissing) {
+      console.error(
+        `FATAL: baseline ${BASELINE_REL} is missing. Without it every finding reads ` +
+          `as new. Create it with \`node scripts/check-company-scope.mjs --update\`.`,
+      );
+      process.exit(2);
+    }
+    return null;
+  }
+  const parsed = JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"));
+  if (!Array.isArray(parsed.unscoped)) {
+    console.error(`FATAL: ${BASELINE_REL} has no "unscoped" array.`);
+    process.exit(2);
+  }
+  return parsed;
+}
+
+function writeBaseline(keys) {
+  const body = {
+    "//": [
+      "GRANDFATHER BASELINE for backend/scripts/check-company-scope.mjs --check.",
+      "Each entry is one handler/statement that touches a row by id with NO company",
+      "predicate, keyed by FILE PATH + ROUTE IDENTITY (never a line number).",
+      "This is DEBT, not the standard, and it may only SHRINK. A NEW unscoped handler",
+      "is BLOCKED: it is not in this list, so --check fails and names it.",
+      "To lock in a fix: scope the handler (add a company_id predicate) or annotate a",
+      "verified-safe one with `// company-scope: <reason>`, then run",
+      "`npm --prefix backend run audit:company-scope:update` and commit the smaller list.",
+      "Generated ONLY by --update, which refuses to add an entry the committed list does",
+      "not already have — the same no-growth rule lint-ratchet.mjs enforces on ceilings.",
+    ],
+    unscoped: keys,
+  };
+  fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(body, null, 2)}\n`);
+}
+
+if (updateMode) {
+  const existing = loadBaseline(false);
+  const committed = new Set(existing?.unscoped ?? []);
+  const grew = currentKeys.filter((k) => !committed.has(k));
+  // On the introducing run there is no baseline yet, so writing the whole set is
+  // how it is born. After that, a key not already grandfathered is a NEW
+  // violation and --update REFUSES it — the list may only shrink.
+  if (existing && grew.length) {
+    console.error(
+      `\ncheck-company-scope: REFUSING to write — ${grew.length} unscoped handler(s) ` +
+        `are NOT in the committed baseline and --update may only SHRINK it:\n`,
+    );
+    for (const k of grew) console.error(`  + ${k}   (${detailFor.get(k) ?? ""})`);
+    console.error(
+      `\n  A baseline that grows is not a ratchet. Fix the finding — put a company_id\n` +
+        `  predicate on the statement — or annotate a verified-safe handler with\n` +
+        `  \`// company-scope: <reason>\`, then run this again. ${BASELINE_REL} was NOT written.\n`,
+    );
+    process.exit(1);
+  }
+  const removed = [...committed].filter((k) => !currentKeys.includes(k));
+  writeBaseline(currentKeys);
+  console.log(
+    `check-company-scope: wrote ${currentKeys.length} grandfathered entr${currentKeys.length === 1 ? "y" : "ies"} ` +
+      `to ${BASELINE_REL} (was ${committed.size}).`,
+  );
+  if (removed.length) {
+    console.log(`  ${removed.length} now-scoped and dropped from the baseline:`);
+    for (const k of removed.slice(0, 40)) console.log(`    - ${k}`);
+    if (removed.length > 40) console.log(`    … and ${removed.length - 40} more`);
+  }
+  process.exit(0);
+}
+
+if (checkMode) {
+  const existing = loadBaseline(true);
+  const baseline = new Set(existing.unscoped);
+  const problems = [];
+
+  // The primary gate: every current finding must be grandfathered.
+  const newViolations = newAgainst(currentKeys, baseline);
+  const fixed = [...baseline].filter((k) => !currentKeys.includes(k));
+
+  // The no-growth guard: the obvious bypass is to add your key to the JSON in the
+  // same PR. Compare the baseline file at HEAD to the one at the merge base and
+  // fail if it grew — exactly check-release-discipline's --ratchet-against.
+  if (ratchetAgainst) {
+    let baseSha;
+    try {
+      baseSha = execFileSync("git", ["merge-base", "HEAD", ratchetAgainst], { cwd: repoRoot, encoding: "utf8" }).trim();
+    } catch {
+      console.error(
+        `FATAL: --ratchet-against ${ratchetAgainst} could not be resolved to a merge base. ` +
+          `Fetch it first; a ratchet that cannot see its baseline must not pass in silence.`,
+      );
+      process.exit(2);
+    }
+    let baseText = null;
+    try {
+      baseText = execFileSync("git", ["show", `${baseSha}:${BASELINE_REL}`], { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      // The introducing commit: no baseline existed at the merge base.
+      console.log(`ratchet: ${BASELINE_REL} did not exist at ${baseSha.slice(0, 8)} — this is the commit that introduces it, nothing to compare.`);
+    }
+    if (baseText !== null) {
+      const was = new Set(JSON.parse(baseText).unscoped ?? []);
+      const grew = [...baseline].filter((k) => !was.has(k));
+      if (grew.length) {
+        for (const k of grew) problems.push(`the baseline GREW against ${ratchetAgainst}: + ${k}`);
+      } else {
+        console.log(`ratchet: baseline compared against ${baseSha.slice(0, 8)} (${ratchetAgainst}) — no growth.`);
+      }
+    }
+  }
+
+  for (const k of newViolations) {
+    problems.push(`NEW unscoped handler (not grandfathered): ${k}   ${detailFor.get(k) ?? ""}`);
+  }
+
+  // Printed on every run — the current count and the grandfathered count.
+  console.log(
+    `\ncheck-company-scope ratchet: ${currentKeys.length} unscoped now, ${baseline.size} grandfathered ` +
+      `(${handlersChecked} handlers + ${libStatementsChecked} library writes scanned).`,
+  );
+  if (fixed.length) {
+    console.log(
+      `  ${fixed.length} baseline entr${fixed.length === 1 ? "y is" : "ies are"} no longer unscoped — ` +
+        `run \`npm --prefix backend run audit:company-scope:update\` to lock the improvement in:`,
+    );
+    for (const k of fixed.slice(0, 20)) console.log(`    - ${k}`);
+    if (fixed.length > 20) console.log(`    … and ${fixed.length - 20} more`);
+  }
+
+  if (problems.length) {
+    console.error(
+      `\ncheck-company-scope: RATCHET BROKEN — ${problems.length} problem(s).\n\n` +
+        problems.map((p) => `  - ${p}`).join("\n") +
+        `\n\n  A handler that touches a row by id with no company predicate is the repo's\n` +
+        `  most repeated defect class. Put a company_id predicate on the statement (see\n` +
+        `  scm/lib/companyScope.ts), or if it is a deliberate cross-company surface,\n` +
+        `  annotate it with \`// company-scope: <reason>\`. Do NOT add the key to\n` +
+        `  ${BASELINE_REL} — the baseline may only shrink.\n`,
+    );
+    process.exit(1);
+  }
+  console.log(`  OK — every unscoped handler is grandfathered; no NEW violation.`);
+  process.exit(0);
+}
 
 if (jsonOut) {
   console.log(JSON.stringify({ handlersChecked, findings, libStatementsChecked, libFindings }, null, 2));
 } else {
   const w = findings.filter((f) => f.writes).length;
+  const baselineNow = loadBaseline(false);
   console.log(
     `Checked ${handlersChecked} SCM route handlers.\n` +
       `${findings.length} touch a row by id with no company-scope helper in the handler ` +
       `(${w} of them WRITE).\n` +
+      (baselineNow
+        ? `Ratchet: ${currentKeys.length} unscoped now, ${baselineNow.unscoped.length} grandfathered ` +
+          `in ${BASELINE_REL} (run with --check to gate, --update to shrink).\n`
+        : `Ratchet: no baseline yet — run with --update to create ${BASELINE_REL}.\n`) +
       `Annotate a verified-safe handler with "// company-scope: <reason>" to silence it.\n`,
   );
   let lastFile = "";
@@ -691,6 +1023,14 @@ if (jsonOut) {
     console.log(`\nFile-level exemptions ("company-scope-file:") — read these when they change:`);
     for (const [f, n] of [...byFile].sort()) console.log(`  ${n} statement(s)  ${f}`);
   }
+
+  console.log(
+    `\n\nConverted to scopedDb (${CONVERTED_REL}): ${convertedChecked} file(s).\n` +
+      `${convertedFindings.length} have gone back to the raw client.\n` +
+      `In a converted file the company scope is a REQUIRED argument, so omitting it is a compile error — ` +
+      `one c.get('supabase') undoes that for the whole file.\n`,
+  );
+  for (const f of convertedFindings) console.log(`  REGRESSION  ${f.file}:${f.line}  ${f.reason}`);
 }
 
 /* --strict gates on the WRITE findings only.
@@ -701,4 +1041,9 @@ if (jsonOut) {
    Sibling checks make the same split: check-silent-mutations gates on SILENT
    (not CAUGHT/UNRESOLVED), check-shared-mirrors on DIVERGED (not COSMETIC). */
 const writeFindings = findings.filter((f) => f.writes).length;
-process.exit(strict && writeFindings ? 1 : 0);
+/* The CONVERTED-file regressions gate too, and unlike the read-side backlog
+   there is nothing to judge: the file was converted on purpose, the list says
+   so, and going back to the raw client is a straight undo of a guarantee that
+   only exists while nobody does it. No grandfathering — the population is
+   whatever this PR chose to put on the list. */
+process.exit(strict && (writeFindings || convertedFindings.length) ? 1 : 0);

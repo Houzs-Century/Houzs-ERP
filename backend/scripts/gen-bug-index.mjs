@@ -1,21 +1,28 @@
 #!/usr/bin/env node
-// Build docs/generated/bug-index.md from BUG-HISTORY.md.
+// Build docs/generated/bug-index.md from the bug ledger in docs/bugs/.
 //
-// WHY. BUG-HISTORY is 115 entries and 9,000+ lines in one reverse-chronological
-// stream with no index, so "have we hit this before?" costs a full scan that
-// nobody performs. The entries are good; they are simply unreachable. This makes
-// them reachable by subsystem without touching the ledger itself.
+// WHY. The ledger runs to hundreds of entries and tens of thousands of lines of
+// reverse-chronological prose with no index, so "have we hit this before?" costs a
+// full scan that nobody performs. (No count is typed here: it grows every day, and
+// this file prints its own on every run.) The entries are good; they are simply unreachable. This makes
+// them reachable by subsystem without touching the entries themselves.
 //
-// GENERATED, never hand-edited. `--check` fails when the index no longer matches
-// the ledger, and is wired into `audit:bug-index` so it cannot rot the way
-// codebase-map-facts.md did for three weeks.
-import { execFileSync } from "node:child_process";
+// THE SOURCE MOVED 2026-08-20, from the single file BUG-HISTORY.md to one file
+// per entry under docs/bugs/ — see backend/scripts/lib/bug-ledger.mjs for why
+// (the merge queue was serialised to one PR at a time by the shared first line).
+// Every row here now points at an entry FILE, which is a citation target that
+// does not drift the way `BUG-HISTORY.md:5562` did.
+//
+// GENERATED, never hand-edited. `--check` gates on the GENERATOR working, and is
+// wired into `audit:bug-index` so it cannot rot the way codebase-map-facts.md
+// did for three weeks.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { BUG_DIR, mergeBaseLedger, parseEntry, readEntries } from "./lib/bug-ledger.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SRC = path.join(repoRoot, "BUG-HISTORY.md");
 const OUT = path.join(repoRoot, "docs", "generated", "bug-index.md");
 const checkOnly = process.argv.includes("--check");
 
@@ -119,7 +126,7 @@ function countHits(text, re) {
  *  WHO introduced the tag decides whether it fails the run. See chargeBadAreaTags. */
 const badAreaTags = [];
 
-function areaOf(title, body) {
+function areaOf(title, body, file = null) {
   const tag = AREA_TAG.exec(body)?.[1];
   if (tag) {
     if (!AREA_NAMES.has(tag)) {
@@ -141,7 +148,7 @@ function areaOf(title, body) {
          predated it. Same rule now applies here, and it is the same rule
          check-file-size.mjs uses for an inherited ceiling violation: REPORT in
          full, always; CHARGE only the change that introduced it. */
-      badAreaTags.push({ title, tag });
+      badAreaTags.push({ title, tag, file });
       // Fall through to the keyword guess. The objection recorded here was to a
       // typo reverting to guessing SILENTLY — it is not silent: every run prints
       // the entry and the bad tag until somebody fixes it.
@@ -172,30 +179,41 @@ function githubAnchor(heading) {
     .replace(/\s+/g, "-");
 }
 
-/** Split a ledger into entries. Shared with the merge-base copy, so "was this
- *  entry already there?" is asked of the SAME shape it is asked of here. */
-function parseEntries(text) {
-  const out = [];
-  let cur = null;
-  text.split(/\r?\n/).forEach((line, i) => {
-    const m = /^##\s+(.*?)\s*(?:\[(\w+)\])?\s*$/.exec(line);
-    if (m) {
-      if (cur) out.push(cur);
-      cur = { title: m[1], severity: m[2] ?? "unspecified", line: i + 1, body: "" };
-    } else if (cur) {
-      cur.body += line + "\n";
-    }
-  });
-  if (cur) out.push(cur);
-  return out;
+/* SELF-TEST, before a single file is read. A generator whose parser has stopped
+   matching produces an empty index and reports a clean run — the failure this
+   repo hit three times in one day. Prove the two shapes this file rests on. */
+{
+  const probe = parseEntry("## A title [high]\n\n<!-- area: Fleet, trips, TMS -->\n\nbody\n");
+  const ok =
+    probe?.title === "A title" &&
+    probe.severity === "high" &&
+    areaOf(probe.title, probe.body).area === "Fleet, trips, TMS" &&
+    parseEntry("not a heading\n") === null;
+  if (!ok) {
+    console.error("gen-bug-index: internal self-test FAILED — not reporting.");
+    process.exit(2);
+  }
 }
 
-const src = fs.readFileSync(SRC, "utf8");
-const lines = src.split(/\r?\n/);
-const entries = parseEntries(src);
+const { entries: files } = readEntries(repoRoot);
+/* One file that does not open with a `## ` heading is not an entry. It is named
+   and refused by `audit:bug-history`, which owns that invariant; here it is
+   skipped so the index still builds for everyone else. */
+const entries = files
+  .filter((f) => f.parsed)
+  .map((f) => ({
+    name: f.name,
+    file: f.file,
+    title: f.parsed.title,
+    severity: f.parsed.severity,
+    body: f.parsed.body,
+    lines: f.text.split("\n").length,
+  }));
 
+let ledgerLines = 0;
 for (const e of entries) {
-  const a = areaOf(e.title, e.body);
+  ledgerLines += e.lines;
+  const a = areaOf(e.title, e.body, e.name);
   e.area = a.area;
   e.tagged = a.tagged;
   const ref = /\*\*Ref\*\*\s*-\s*(.+)/.exec(e.body);
@@ -211,17 +229,17 @@ for (const e of entries) byArea.get(e.area).push(e);
 
 const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unspecified: 4 };
 
-let out = `# Bug index — generated from BUG-HISTORY.md
+let out = `# Bug index — generated from ${BUG_DIR}/
 
 > Generated by \`backend/scripts/gen-bug-index.mjs\`; do not edit by hand.
 > Regenerate: \`npm --prefix backend run gen:bug-index\`.
 > Drift check: \`npm --prefix backend run audit:bug-index\`.
 
 **Read this before changing a subsystem, then read the entries it points at.**
-\`BUG-HISTORY.md\` is ${lines.length.toLocaleString()} lines of reverse-chronological
-entries with no way in; that is why the same bug classes kept being re-derived
-from scratch, differently each time. This is the way in. It carries no facts of
-its own — every row points at the entry, which stays the only copy.
+The ledger is ${ledgerLines.toLocaleString()} lines of reverse-chronological entries
+with no way in; that is why the same bug classes kept being re-derived from
+scratch, differently each time. This is the way in. It carries no facts of its
+own — every row points at the entry FILE, which stays the only copy.
 
 ${entries.length} entries across ${[...byArea].filter(([, v]) => v.length).length} areas.
 
@@ -254,31 +272,10 @@ for (const [name, list] of byArea) {
     );
   for (const e of sorted) {
     const title = e.title.replace(/\|/g, "\\|");
-    out += `| ${e.severity} | [${title}](../../BUG-HISTORY.md#${githubAnchor(e.title)}) <sub>L${e.line}</sub> | ${e.ref.replace(/\|/g, "\\|")} |\n`;
-  }
-}
-
-/**
- * BUG-HISTORY.md as it stands at the merge base, or null when that cannot be
- * resolved (shallow clone, no origin/main). Null means "cannot tell whose fault
- * it is", and the caller then charges everything — the same choice
- * check-file-size.mjs makes, for the same reason.
- */
-function ledgerAtMergeBase() {
-  const git = (args) =>
-    execFileSync("git", args, {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  try {
-    git(["rev-parse", "--verify", "--quiet", "origin/main"]);
-    const base = git(["merge-base", "HEAD", "origin/main"]).trim();
-    if (!base) return null;
-    return git(["show", `${base}:BUG-HISTORY.md`]);
-  } catch {
-    return null;
+    /* The link is the ENTRY FILE, and that is the point of the split: a
+       per-entry path is a citation target that survives every later merge,
+       where `BUG-HISTORY.md#anchor <sub>L5562</sub>` drifted on every append. */
+    out += `| ${e.severity} | [${title}](../../${e.file}) | ${e.ref.replace(/\|/g, "\\|")} |\n`;
   }
 }
 
@@ -293,24 +290,27 @@ function ledgerAtMergeBase() {
 function chargeBadAreaTags() {
   if (badAreaTags.length === 0) return;
 
-  const base = ledgerAtMergeBase();
-  /** `title\u0000tag` for every entry that ALREADY carried this bad tag at the base. */
-  const atBase = new Set();
-  if (base !== null) {
-    for (const e of parseEntries(base)) {
-      const tag = AREA_TAG.exec(e.body)?.[1];
-      if (tag && !AREA_NAMES.has(tag)) atBase.add(`${e.title}\u0000${tag}`);
-    }
-  }
+  const base = mergeBaseLedger(repoRoot);
 
+  /* INHERITED means this entry's OWN FILE already carried this same bad tag at
+     the merge base. One file per entry makes that a single `git show` of one
+     path; the old single-file ledger had to be re-parsed whole and matched on
+     title-plus-tag, a heuristic that named the wrong entry whenever one broken
+     tag appeared twice. */
   const mine = [];
   const inherited = [];
   for (const bad of badAreaTags) {
-    if (base !== null && atBase.has(`${bad.title}\u0000${bad.tag}`)) inherited.push(bad);
-    else mine.push(bad);
+    const at = bad.file && base.resolved ? base.read(bad.file) : null;
+    const wasBadAtBase = (() => {
+      if (at === null) return false;
+      const q = parseEntry(at);
+      const tag = q ? AREA_TAG.exec(q.body)?.[1] : null;
+      return Boolean(tag) && tag === bad.tag && !AREA_NAMES.has(tag);
+    })();
+    (wasBadAtBase ? inherited : mine).push(bad);
   }
 
-  const show = (b) => `  "${b.title.slice(0, 60)}" carries <!-- area: ${b.tag} -->`;
+  const show = (b) => `  ${b.file ? `${BUG_DIR}/${b.file}: ` : ""}"${b.title.slice(0, 60)}" carries <!-- area: ${b.tag} -->`;
 
   if (inherited.length) {
     console.warn(
@@ -327,7 +327,7 @@ function chargeBadAreaTags() {
       `\nBUG-INDEX: this change adds ${mine.length} entr(y/ies) whose area tag is not an area:\n` +
         mine.map(show).join("\n") +
         `\n\nValid areas:\n${[...AREA_NAMES].map((n) => `  ${n}`).join("\n")}\n\n` +
-        (base === null
+        (!base.resolved
           ? "The merge base could not be resolved, so every bad tag is charged here — a gate\n" +
             "that cannot tell whose fault it is must not let anything through.\n"
           : "") +
@@ -372,13 +372,13 @@ if (checkOnly) {
      three weeks. A parse failure or a missing BUG-HISTORY.md throws before this
      point, an unresolvable area tag exits 1 in chargeBadAreaTags() above, and an
      empty entry list is refused below. None of those ever needed a copy in git. */
-  console.log(`Bug index generates cleanly (${entries.length} entries parsed from BUG-HISTORY.md).`);
+  console.log(`Bug index generates cleanly (${entries.length} entries parsed from ${BUG_DIR}).`);
 
   /* The generator producing NOTHING is the failure this gate exists for.
      A scan that finds no entries is broken, not clean — the same rule the
      file-size gate encodes for an empty file list. */
   if (entries.length === 0) {
-    console.error("BUG INDEX: parsed ZERO entries from BUG-HISTORY.md — that is a broken generator, not an empty history.");
+    console.error(`BUG INDEX: parsed ZERO entries from ${BUG_DIR} — that is a broken generator, not an empty history.`);
     process.exit(2);
   }
   /* A verdict computed over a suspiciously small corpus is worth naming too:

@@ -1,3 +1,4 @@
+import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 // ----------------------------------------------------------------------------
 // do-next-step — what a Delivery Order may do next, and why it may not yet, in
 // ONE place, as words an operator can act on.
@@ -77,8 +78,32 @@
 // salesperson may never take is noise and leaks org structure.
 // ----------------------------------------------------------------------------
 
-/** Statuses a Sales Invoice can be raised from. */
-export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
+/* THE OWNER'S RULE, FROM ITS ONE HOME — NOT A HAND-TYPED LIST. `['signed',
+   'delivered']` stood here until 2026-08-18 and was the narrowest of three live
+   spellings of "this delivery may be invoiced". Two things fixed it, a day
+   apart, and BOTH are kept:
+
+     · WHERE the rule lives (2026-08-18). SI_TRANSFERABLE_DO_STATES in
+       shared/do-shipped-states.ts is the single declaration; the backend
+       ENFORCES it in routes/sales-invoices.ts, the server's own DO picker and
+       the phone's convert wizard read the same constant, and the frontend twin
+       is held byte-identical by check-shared-mirrors.mjs --strict. This module
+       derives from it instead of restating it.
+     · WHAT the rule says (2026-08-19, #2485). Every CONFIRMED delivery order —
+       anything past DRAFT that is not CANCELLED — may be invoiced, LOADED
+       included. That superseded the previous day's four-state list, and it is
+       what the server has always permitted: the SI-from-DO create refuses only
+       a CANCELLED source. "Mark signed" survives as an OPTIONAL delivery-
+       tracking action (doAdvanceStep), never a prerequisite.
+
+   It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
+   no company term and never did; it fired on one organisation because of DATA.
+   2990's source system has no "delivered" step, so its imported deliveries sit
+   at DISPATCHED, while the HOUZS AutoCount carry-overs were inserted as literal
+   'DELIVERED'. One build, one permission set — and 2990 was told the transfer
+   did not exist. */
+export const SI_TRANSFERABLE_DO_STATUSES =
+  SI_TRANSFERABLE_DO_STATES.map((s) => s.toLowerCase()) as readonly string[];
 
 /** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
@@ -114,10 +139,7 @@ export function siTransferBlockReason(status: string | null | undefined): string
     return 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.';
   }
   if (s === 'draft') {
-    return 'This delivery order is still a draft — confirm it, then mark it signed, before raising a Sales Invoice.';
-  }
-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return 'Mark this delivery order signed first — a Sales Invoice can only be raised once it is signed or delivered.';
+    return 'This delivery order is still a draft — confirm it before raising a Sales Invoice.';
   }
   /* INVOICED deliberately falls through to the generic sentence rather than
      getting an "already invoiced" one. routes/unbilled-deliveries.ts:13 records
@@ -126,8 +148,9 @@ export function siTransferBlockReason(status: string | null | undefined): string
      not advance the DO — so the label means "somebody clicked it", not "this was
      billed", and it is unreliable in both directions. Saying "already invoiced"
      here would state as fact the exact thing that file proves the flag cannot
-     tell us. The generic sentence states the gate, which is true. */
-  return 'A Sales Invoice can only be raised from a signed or delivered delivery order.';
+     tell us. The generic sentence states the gate, which is true. An unrecognised
+     status also lands here rather than a guess (COMPLETED once did — see header). */
+  return 'A Sales Invoice can only be raised from a confirmed delivery order.';
 }
 
 /**
@@ -166,6 +189,42 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
     return { status: 'DELIVERED', label: 'Mark signed' };
   }
   return null;
+}
+
+/**
+ * The sentence to show an operator who is about to close a delivery that
+ * carries NO proof of delivery — `null` when there is nothing to say.
+ *
+ * WHY A SENTENCE AND NOT A REFUSAL. Three measured reasons, all pointing the
+ * same way:
+ *
+ *   · The office legitimately closes deliveries it did not attend. 2990's
+ *     imported deliveries have no POD at all, and the HOUZS AutoCount
+ *     carry-overs were inserted as literal 'DELIVERED'. A hard gate would make
+ *     a whole tenant's backlog unclosable.
+ *   · The SERVER already decided this. `patchDeliveryOrderStatusHandler` DROPS
+ *     an out-of-range GPS fix rather than 409-ing it, in as many words: "a bad
+ *     sensor reading must never be the reason a driver cannot close a
+ *     delivery". A client stricter than its own server is a bug.
+ *   · The owner's standing rule for this system is to loosen rather than
+ *     restrict, and to prefer a default or a prompt over a wall.
+ *
+ * What was actually wrong was never the permissiveness — it was the SILENCE.
+ * The same delivery closed from a different screen either had a signature or
+ * had nothing, and no screen said which you were about to do. That is the same
+ * rule this module already applies to the Sales-Invoice transfer: the thing may
+ * be unavailable, but it may not be silent.
+ *
+ * Scope: only the step that CLOSES the delivery is warned about. A
+ * DRAFT→DISPATCHED confirm is not a delivery and must not nag.
+ */
+export function doCloseWithoutEvidenceWarning(
+  step: DoAdvanceStep | null,
+  pod: { signature_data?: string | null; pod_r2_key?: string | null } | null | undefined,
+): string | null {
+  if (step?.status !== 'DELIVERED') return null;
+  if (pod?.signature_data || pod?.pod_r2_key) return null;
+  return 'This delivery order has no customer signature and no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen in the mobile app.';
 }
 
 /**

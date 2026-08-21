@@ -133,7 +133,7 @@ Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, del
 where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked,
 source }], storedLink, provenance: [{ soDocNo, deliveryDate, locked: true,
 source: 'linked' }] }]` and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`,
-matched by SKU (`material_code`). The full relationship graph (SO/DO/SI +
+matched by SKU (`item_code`). The full relationship graph (SO/DO/SI +
 returns) stays on the Relationship Map modal (`/document-flow/:type/:id`) —
 unchanged.
 
@@ -868,10 +868,10 @@ Stored-origin build (`feat/po-real-origin-so`, 2026-07-25 — superseded by the 
 - `frontend/src/pages/scm-v2/{PurchaseOrdersListV2,GoodsReceivedListV2,PurchaseInvoicesListV2}.tsx`
   — feed the columns from `usePoSoCoverage`; the old `DocumentTraceability` strip removed.
 - `frontend/src/mobile/MobileModuleDetail.tsx` — assignment rides each `LineItem`.
-- `frontend/src/components/DocumentTraceability.tsx` — DELETED.
+- `frontend/src/components/DocumentTraceability.tsx` [gone] — DELETED.
 
 Original strip (`feat/doc-traceability-display`, 2026-07-24 — now superseded):
-- `frontend/src/components/DocumentTraceability.tsx` (new, since deleted).
+- `frontend/src/components/DocumentTraceability.tsx` [gone] (new, since deleted).
 - `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`,
   `PurchaseInvoicesListV2.tsx` — rendered the strip in the row-expansion wrappers.
 - `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` — `drillStock` service → READY.

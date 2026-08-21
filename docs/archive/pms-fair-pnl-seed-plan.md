@@ -39,7 +39,7 @@ _Owner request 2026-07-26: backfill historical roadshow projects from the two FA
 
 1. `extract_fair_pnl.py` (DONE) — Excel → normalized event JSON. Add: brand normalisation, header-noise drop, date-range parse (start/end ISO), venue/organizer split from `LOCATION` (`"HOMELOVE @ SSCC SPICE PG"` → organizer `HOMELOVE`, venue `SSCC SPICE PG` — confirm the convention with the owner).
 2. Cross-month merge pass (pure, unit-tested).
-3. `backend/scripts/seed-fair-pnl.mjs` — reads the JSON, connects with `DATABASE_URL`, **`--dry-run` default**: prints per event INSERT vs SKIP(dedup) + totals; `--commit` writes. Idempotent (re-run safe). Insert project + finance lines, then call `recomputeAutoCostLines` so the auto rows compute.
+3. `backend/scripts/fair-pnl/seed-fair-pnl.mjs` — reads the JSON, connects with `DATABASE_URL`, **`--dry-run` default**: prints per event INSERT vs SKIP(dedup) + totals; `--commit` writes. Idempotent (re-run safe). Insert project + finance lines, then call `recomputeAutoCostLines` so the auto rows compute.
 4. `.github/workflows/seed-fair-pnl.yml` — `workflow_dispatch`, own concurrency group (never the deploy's), `--dry-run` input default true. Owner uploads the two Excel files as inputs OR the JSON is committed. Read-only until the owner flips `--commit`.
 5. Verify against screenshots: Finance Snapshot shows the 10 lines; the project list + analytics fill with real 2025/26 numbers.
 

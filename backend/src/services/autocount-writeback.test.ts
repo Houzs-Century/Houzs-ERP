@@ -8,6 +8,8 @@ import { describe, expect, test, vi } from 'vitest';
 import {
   composeCreateSo,
   composeCreatePo,
+  composeSoToPo,
+  AcSoToPoAlignmentError,
   composeDetails,
   composeEdit,
   KeylessLineError,
@@ -60,7 +62,7 @@ const header: ErpSoHeader = {
   venue: 'KSL CITY MALL', address1: 'A1', address2: 'A2', address3: null, address4: null,
   city: null, postcode: null, customer_state: null,
   phone: '0123', emergency_contact_phone: null,
-  ref: 'REF', po_doc_no: 'CUST-PO-7', customer_po: null, customer_so_no: null,
+  ref: 'REF', customer_so_no: 'CUST-PO-7',
 };
 
 const line = (over: Partial<ErpLine> = {}): ErpLine => ({
@@ -177,7 +179,7 @@ describe('composeCreateSo', () => {
 
   test('a blank UDF is dropped, not sent as an empty option', () => {
     const p = createSo(
-      { ...header, branding: null, venue: null, po_doc_no: null, customer_po: null, customer_so_no: null },
+      { ...header, branding: null, venue: null, customer_so_no: null },
       [line()], SALESPERSON, opts,
     );
     expect(p.UDF).toEqual({});
@@ -412,10 +414,70 @@ describe('ItemCode resolution (D10) — no silent fallback to item_code', () => 
   });
 });
 
+/* ── composeSoToPo — the transfer is the create's master, plus the keys ──────
+   The whole point of the shape: this function does NOT list the master's
+   fields, so a field added to composeCreatePo reaches a transfer without anyone
+   editing this function. Two fields reached the live account book wrong because
+   it used to list them (CreditorCode 2026-08-17 09:15, DocNo 10:15). */
+describe('composeSoToPo', () => {
+  const master = () => composeCreatePo({
+    po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
+    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
+    purchase_location: 'KL',
+  }, [line({ unit_price_sen: 5000, location: 'KL' })], opts);
+
+  test('every master field survives the transfer, and none is re-listed by hand', () => {
+    const m = master();
+    const t = composeSoToPo(m, [4242], m.Details);
+    for (const key of Object.keys(m)) {
+      if (key === 'Details') continue;   // replaced by the DtlKey override shape
+      expect(t[key as keyof typeof t], `${key} on the transfer`).toEqual(m[key as keyof typeof m]);
+    }
+    /* The five that were still missing after the two one-field patches, named
+       so a regression says which one came back. */
+    expect(t.DocDate).toBe('2026-08-10');
+    expect(t.Agent).toBe(AC_PURCHASE_AGENT);
+    expect(t.Ref).toBe('R');
+    expect(t.Description).toBe('N');
+    expect(t.UDF).toEqual({});
+    expect(t.PurchaseLocation).toBe('KL');
+  });
+
+  test('the Details become the DtlKey override shape and carry no create-only key', () => {
+    const m = master();
+    const t = composeSoToPo(m, [4242], m.Details);
+    expect(t.DtlKeys).toEqual([4242]);
+    expect(t.Details).toHaveLength(1);
+    expect(t.Details[0].DtlKey).toBe(4242);
+    expect(t.Details[0].UnitPrice, 'the supplier COST, over the customer price the transfer brought across').toBe(50);
+    /* ItemCode/Description/Desc2 belong to a CREATE. Phase two of SoToPo reads
+       four keys and would drop these silently (AcSyncService.cs:2407-2410). */
+    for (const k of ['ItemCode', 'Description', 'Desc2']) {
+      expect(t.Details[0]).not.toHaveProperty(k);
+    }
+  });
+
+  test('keys and cost lines that do not line up are REFUSED, not zipped short', () => {
+    /* They are matched BY POSITION, and they are built by different code from
+       different rows — poTransferShape counts ERP purchase-order lines,
+       composeDetails collapses a sofa build into one AutoCount line (D9). Zipped
+       short, the tail lines keep the CUSTOMER's price and the purchase order
+       pays the wrong number while looking saved. */
+    const m = master();
+    expect(() => composeSoToPo(m, [4242, 4243], m.Details)).toThrow(AcSoToPoAlignmentError);
+    let msg = '';
+    try { composeSoToPo(m, [4242, 4243], m.Details); } catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('HC-PO-1');
+    expect(msg, 'the two counts, so the reader knows which side is short').toContain('2 source line(s)');
+    expect(msg).toContain('1 cost line(s)');
+  });
+});
+
 describe('composeCreatePo', () => {
   const po = (over: Partial<ErpPoHeader> = {}) => composeCreatePo({
     po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
-    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N', ...over,
+    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
+    purchase_location: null, ...over,
   }, [line({ unit_price_sen: 5000, location: 'KL' })], opts);
 
   test('carries the creditor and the lines', () => {
@@ -561,28 +623,27 @@ describe('BRANDING — the header column is empty on every ERP-created order (fi
   });
 });
 
-describe('ToPONo — the composer read a column PR #140 stopped writing (finding 7)', () => {
-  /* No Houzs surface writes po_doc_no or customer_po since PR #140 dropped the
-     Customer PO card; the operator's reference lands in customer_so_no, which
-     SO_HEADER_COLS did not even select. */
-  test('falls through to customer_po and then to customer_so_no', () => {
+describe('ToPONo — the customer reference now lives only in customer_so_no', () => {
+  /* po_doc_no and customer_po held it once; both were 0%-filled and DROPPED from
+     scm.mfg_sales_orders by migration 0310. The operator's reference lands in
+     customer_so_no, which is the only column SO_HEADER_COLS still selects. */
+  test('reads the customer reference from customer_so_no', () => {
     const at = (over: Partial<ErpSoHeader>) =>
-      createSo({ ...header, po_doc_no: null, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
-    expect(at({ customer_po: 'CP-1', customer_so_no: 'CSO-1' })).toBe('CP-1');
-    expect(at({ customer_po: null, customer_so_no: 'CSO-1' })).toBe('CSO-1');
-    expect(at({ customer_po: null, customer_so_no: null })).toBeUndefined();
+      createSo({ ...header, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
+    expect(at({ customer_so_no: 'CSO-1' })).toBe('CSO-1');
+    expect(at({ customer_so_no: null })).toBeUndefined();
   });
 
-  test('a cutover-imported order keeps AutoCount"s own text', () => {
-    expect(soCustomerRef({ po_doc_no: 'PO-OLD', customer_po: 'CP', customer_so_no: 'CSO' }))
-      .toBe('PO-OLD');
+  test('soCustomerRef resolves to customer_so_no', () => {
+    expect(soCustomerRef({ customer_so_no: 'CSO' })).toBe('CSO');
+    expect(soCustomerRef({ customer_so_no: null })).toBeNull();
   });
 
   /* `ref` goes out as the document's Ref. Sending it here too would put the
      same string in two AutoCount fields. */
   test('the document Ref is NOT reused as the customer reference', () => {
     const p = createSo(
-      { ...header, po_doc_no: null, customer_po: null, customer_so_no: null, ref: 'REF' },
+      { ...header, customer_so_no: null, ref: 'REF' },
       [line()], SALESPERSON, opts,
     );
     expect(p.Ref).toBe('REF');
@@ -917,11 +978,52 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
     expect((err as Error).message).toContain('FK_SODTL_Location');
   });
 
-  test('a PO has no document location to inherit, so a warehouse-less line is refused', () => {
+  /* THE CLAIM THIS TEST USED TO MAKE WAS WRONG, and it is the second half of
+     what the owner reported on 2026-08-19 (「它的 Purchase Location 也不对」). It
+     read "a PO has no document location to inherit" — but the ERP's purchase
+     order carries `purchase_location_id` (PR #77) and /submit refuses one that
+     has neither it nor a warehouse on every line
+     (mfg-purchase-orders.ts:4019), and AutoCount's purchase header carries
+     `PurchaseLocation`, assigned by `CreatePo` for /create-po
+     (AcSyncService.cs:934-935) and by `PurchaseHeader` for /so-to-po
+     (:2456-2457). So there IS something to inherit, and the ERP's own
+     precedence is line-then-header (outstanding-po-lines.ts:382).
+     What survives is the genuine refusal: neither side named a warehouse. */
+  test('a warehouse-less line on a warehouse-less PO is still refused — nobody said where the goods go', () => {
     expect(() => composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
-      creditor_name: 'S', agent: null, ref: null, notes: null,
+      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: null,
     }, [line()], opts)).toThrow(MissingLocationError);
+  });
+
+  test('a warehouse-less line INHERITS the PO header\'s purchase location', () => {
+    const p = composeCreatePo({
+      po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
+      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: 'KL',
+    }, [line()], opts);
+    expect(p.PurchaseLocation, 'the header field AutoCount defaults when we send none').toBe('KL');
+    expect(p.Details[0].Location, 'the ERP default fans out to the line').toBe('KL');
+  });
+
+  test('a line\'s OWN warehouse beats the header\'s, which is the ERP\'s own precedence', () => {
+    const p = composeCreatePo({
+      po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
+      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: 'KL',
+    }, [line({ location: 'PG' })], opts);
+    expect(p.PurchaseLocation).toBe('KL');
+    expect(p.Details[0].Location).toBe('PG');
+  });
+
+  test('a PO with no purchase location OMITS the key rather than sending a blank', () => {
+    /* The service's guard on this key — in both copies — is ContainsKey AND
+       non-empty (AcSyncService.cs:934 and :2456) because "" is its own foreign
+       key error. A
+       present-null would reach it through Str() as exactly that blank. */
+    const p = composeCreatePo({
+      po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
+      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: null,
+    }, [line({ location: 'KL' })], opts);
+    expect(p).not.toHaveProperty('PurchaseLocation');
   });
 
   test('an EDIT omits the key entirely rather than blanking the book, and never refuses', () => {

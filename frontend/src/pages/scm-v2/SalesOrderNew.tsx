@@ -46,14 +46,18 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
+import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -94,7 +98,7 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
@@ -335,6 +339,7 @@ export const SalesOrderNew = () => {
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
         unitPriceSen: it.unit_price_sen ?? 0,
+        priceAuthored: true, // copied off the SOURCE order's persisted row: a 0 IS its price
         discountSen:  it.discount_sen ?? 0,
         unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
@@ -579,7 +584,14 @@ export const SalesOrderNew = () => {
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
-  const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
+  // Debounce before hitting the server: debtorName updates on every keystroke,
+  // so passing it raw fired one /debtors/search per character. Measured on prod
+  // 2026-08-20, one customer name = 35 requests and the serialized API answered
+  // 34 of them 503 (silent — the suggestion list just stayed empty). The
+  // consignment sibling (ConsignmentOrderDetail) already debounces at 200ms;
+  // match it so a name is 2-3 requests, not one per keystroke.
+  const debouncedDebtorName = useDebouncedValue(debtorName, 200);
+  const debtors = useDebtorSearch(debouncedDebtorName.trim().length >= 2 ? debouncedDebtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
   /* Portalled, because this module has no `.field { position: relative }` and
      `.card { overflow: hidden }` left 130px of room for a 260px list. */
@@ -986,33 +998,21 @@ export const SalesOrderNew = () => {
      id; when no staff row matches we synthesize a UI-only "self" option from
      the Houzs auth user so their NAME is always selectable + shown. */
   const SELF_SALESPERSON = '__self__';
-  const selfStaffMatch = useMemo(() => {
-    /* user_id FIRST. It is the only link that actually exists on this data (102
-       of 140 staff rows carry it; 18 carry an email), and it is what the backend
-       already resolves the caller by — resolveOwnerStaffId joins staff.user_id.
-       Matching the frontend to the backend's own key is what stops the two
-       disagreeing about whether the caller has a staff row at all: the IT Admin
-       HAS one (user_id 4, email NULL), yet id/email/name all missed it, so the
-       page offered a synthesized self-option the create path then discarded. */
-    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
-    const byUserId = selfUserId != null
-      ? staffList.find((s) => s.userId != null && Number(s.userId) === selfUserId)
-      : undefined;
-    if (byUserId) return byUserId;
-    const byId = currentStaff?.id
-      ? staffList.find((s) => s.id === currentStaff.id)
-      : undefined;
-    if (byId) return byId;
-    const email = (currentUser?.email ?? '').trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? '').trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const name = (currentUser?.name ?? currentStaff?.name ?? '').trim().toLowerCase();
-    return name
-      ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
-      : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id]);
+  /* The ladder itself is the SHARED `resolveSelfStaff` (vendor/scm/lib) — user_id
+     FIRST, then the bridge staff id, then email, then name. It was written here
+     and mobile MobileNewSO carried a THIRD, older copy that stopped at
+     email-then-name; one module is what stops them disagreeing again. Behaviour
+     is unchanged on this screen: same order, same inputs. */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      staffId: currentStaff?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id],
+  );
 
   /* The creator's display name for the synthesized self-option (only used when
      selfStaffMatch is undefined — i.e. they have no scm.staff row). */
@@ -1386,16 +1386,25 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    if (!debtorName.trim()) {
-      void notify({ title: 'Customer name is required.', tone: 'error' });
-      return;
-    }
-    if (!phone.trim()) {
-      void notify({
-        title: 'Phone number is required',
-        body: 'every sales order must have a contact number.',
-        tone: 'error',
-      });
+    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
+       — the form popped ONE missing field per click). Collect EVERY always-required
+       field the operator is missing and show them together. The CONDITIONAL guards
+       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
+       "State has no warehouse" config case, payment sub-fields) still run one at a
+       time, because each only applies once an earlier choice is made. Shared with
+       mobile via soRequiredFieldErrors so the required set can't drift. */
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    const missingRequired = soRequiredFieldErrors({
+      customerName: debtorName,
+      phone,
+      hasNamedLine: validLines.length > 0,
+      asDraft,
+      hasVenue: !!effectiveVenueId,
+      hasSalesperson: !!salespersonId,
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+    });
+    if (missingRequired.length > 0) {
+      void notify({ ...soRequiredFieldsMessage(missingRequired), tone: 'error' });
       return;
     }
     // Date sanity (set-together / not-past / processing≤delivery) — shared with
@@ -1403,11 +1412,6 @@ export const SalesOrderNew = () => {
     const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
     if (dateErr) {
       void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
-    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    if (validLines.length === 0) {
-      void notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
       return;
     }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
@@ -1482,26 +1486,11 @@ export const SalesOrderNew = () => {
       }
     }
     /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. The backend enforces both
-       (validation_failed); the pre-checks just say it in one sentence before
-       the round-trip. The SELF sentinel counts as a salesperson: the backend
-       stamps the caller's own staff row for it. */
-    if (!asDraft && !effectiveVenueId) {
-      void notify({
-        title: 'Pick a venue before confirming this order.',
-        body: 'The venue follows the picked salesperson. A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
-    if (!asDraft && !salespersonId) {
-      void notify({
-        title: 'Pick a salesperson before confirming this order.',
-        body: 'A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
+       salesperson; drafts stay freely saveable. Both are now collected in the
+       one-pass required-field check above (soRequiredFieldErrors), so the backend
+       stays the authoritative gate and the operator sees them alongside the other
+       missing fields rather than in two more separate dialogs. The SELF sentinel
+       counts as a salesperson: the backend stamps the caller's own staff row. */
     /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
        ship from a warehouse or AutoCount refuses the whole document. SHARED
        with mobile via soStockLocationError; the backend is the authoritative
@@ -1597,7 +1586,11 @@ export const SalesOrderNew = () => {
         /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
            not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
-        manualEntry: true, // hand-keyed: backend drops the deposit condition only
+        /* `manualEntry: true` stood here — a bare literal on EVERY create, which
+           the backend read as "drop the deposit condition for this screen". The
+           phone sent nothing and was refused the identical order. Owner ruling
+           2026-08-20 (「以电脑为准 —— 两边都不查」) removed the condition itself,
+           so there is nothing left to waive and no flag to send. */
         debtorName,
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
@@ -1652,6 +1645,8 @@ export const SalesOrderNew = () => {
           uom:            l.uom,
           qty:            l.qty,
           unitPriceSen: l.unitPriceSen,
+          /* A TYPED 0 is a free line; an untouched 0 is an unpriced SKU the server must still price. */
+          ...zeroPriceClaim(l.unitPriceSen, l.priceAuthored === true),
           discountSen:  l.discountSen,
           unitCostSen:  l.unitCostSen,
           variants:       l.variants,
@@ -1663,6 +1658,9 @@ export const SalesOrderNew = () => {
       },
       {
         onSuccess: async (res: { docNo: string }) => {
+          /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
+             behind a permission key knew. Never blocks — the order is saved. */
+          await notifyAcNotSent(notify, res, 'Sales order');
           /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
              We don't gate navigation on success — if a payment fails the
              SO still exists, so we navigate to the Detail page where
@@ -1706,16 +1704,10 @@ export const SalesOrderNew = () => {
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },
-        onError:   (err) => {
-          /* Aggregated save-gate failure → list every reason (owner 2026-07-18),
-             same popup as the SO Detail + mobile paths. */
-          const problems = parseSaveProblems((err as { body?: string } | undefined)?.body);
-          if (problems && problems.length > 0) {
-            void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
-          } else {
-            void notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-          }
-        },
+        /* Aggregated save-gate failure → every reason at once (owner
+           2026-07-18); anything else keeps this page's own "Save failed" popup. */
+        onError: (err) => { void notifySaveProblems(notify, err,
+          (m) => { void notify({ title: 'Save failed', body: m, tone: 'error' }); }); },
       },
     );
   };

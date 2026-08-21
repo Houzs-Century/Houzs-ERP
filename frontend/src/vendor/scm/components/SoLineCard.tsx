@@ -34,7 +34,8 @@ import {
   type MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
-import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   useMaintenanceConfig,
@@ -44,13 +45,14 @@ import {
   type MfgProductRow,
   type SpecialAddonRow,
 } from '../lib/mfg-products-queries';
-import { useFabricTrackings, useFabricColoursSearch, type FabricTrackingRow, type FabricColourRow } from '../lib/fabric-queries';
+import { useFabricTrackingsLite, useFabricColoursSearch, type FabricLite, type FabricColourRow } from '../lib/fabric-queries';
 import { useFabricLibrary } from '../lib/queries';
 import {
   useUploadSoItemPhoto,
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
+import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -103,6 +105,12 @@ export type SoLineDraft = {
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
+  /* Client-only, like overriddenKeys: TRUE once the operator has typed into
+     this line's price box. It is how a deliberate RM 0 is told apart from a
+     SKU that simply has no sell price (a sofa the server prices from its
+     Model's modules at save). Parents send it as `zeroPriceIntended` via
+     vendor/scm/lib/zeroPriceClaim; it is never persisted. */
+  priceAuthored?: boolean;
   /* PR-E — Per-item delivery date + cascade override flag. */
   lineDeliveryDate?:           string | null;
   lineDeliveryDateOverridden?: boolean;
@@ -223,7 +231,7 @@ const SoLineCardInner = ({
   /* fabric_trackings stays ONLY for the read-only pricing-tier breakdown
      (pickedFabric below) — the Fabrics DROPDOWN now sources the selling-side
      fabric_colours, same as POS (SO-parity, Loo 2026-06-06). */
-  const fabricsQ = useFabricTrackings();
+  const fabricsQ = useFabricTrackingsLite();
   const fabrics = useMemo(() => fabricsQ.data ?? [], [fabricsQ.data]);
   const fabricLibQ     = useFabricLibrary();
   /* Special Add-ons (the per-Model system POS sells from + the server prices
@@ -242,6 +250,36 @@ const SoLineCardInner = ({
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
   const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
+     The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
+     typed unit price never survived: the next rebuild re-derived 250 over it
+     and the operator watched 250 -> 125 "nuke the line to 0". The sanctioned
+     reduction is the line DISCOUNT, which the PATCH has always accepted and
+     #2490 taught the rebuild to keep — but nothing on this screen could ever
+     enter one, so that road was reachable only from the POS voucher split.
+     So on a fee line this cell SHOWS the net and WRITES the difference as a
+     discount: type the amount you want charged. Gross stays derived, and the
+     printed SO reads unit 250 / discount 125 / total 125, exactly like every
+     other price reduction on an order. Raising a fee is NOT expressible this
+     way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
+     for — so a higher figure clamps to no discount rather than pretending. */
+  const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
+  /* ...and the fee-vs-price verdict is LOCKED per mounted line, never
+     re-derived per keystroke. Deriving it live from the gross shipped two
+     regressions in one day (the full account is on lockedFeeSemantics): first
+     a hand-added fee line at gross 0 read "250" as a target and booked
+     nothing, then the fix for THAT let the first keystroke flip the cell into
+     target mode and pin the price at the first digit typed ("stuck at RM 2").
+     A line that arrives priced edits as a fee; a line being authored from 0
+     stays a plain unit price until it is saved and re-mounted. */
+  const feeVerdictRef = useRef<boolean | null>(null);
+  feeVerdictRef.current = lockedFeeSemantics(
+    feeVerdictRef.current, isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen,
+  );
+  const isFeeLine = feeVerdictRef.current === true;
+  const amountCellSen = isFeeLine
+    ? feeAmountSen(feeGrossSen, draft.discountSen)
+    : draft.unitPriceSen;
   /* Special-order price DISPLAY is off for EVERYONE on the order-entry
      documents (owner 2026-07-17: costing leaves the SO/DO/SI/DR forms entirely
      and moves to the separate Finance "Fulfillment Costing" module — even
@@ -278,7 +316,7 @@ const SoLineCardInner = ({
      every keystroke (which jumps the cursor and blocks typing). Synced back
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
-  const [priceText, setPriceText] = useState((draft.unitPriceSen / 100).toFixed(2));
+  const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
      this the product picker fired one /mfg-products?search=… request per
      keystroke even when the picker wasn't open (every render of an
@@ -369,13 +407,15 @@ const SoLineCardInner = ({
   // Sync picker search box to the description after picking.
   useEffect(() => { setSearch(draft.description ?? ''); }, [draft.description]);
 
-  // Reflect external Unit Price changes (e.g. product pick → 0) into the
-  // local text box, but leave the operator's in-progress typing untouched.
+  // Reflect external amount changes (e.g. product pick → 0, or a delivery fee
+  // re-derived by the server) into the local text box, but leave the
+  // operator's in-progress typing untouched. On a fee line the canonical value
+  // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
     const parsed = Math.round(Number(priceText) * 100) || 0;
-    if (parsed !== draft.unitPriceSen) setPriceText((draft.unitPriceSen / 100).toFixed(2));
+    if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.unitPriceSen]);
+  }, [amountCellSen]);
 
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
@@ -422,26 +462,31 @@ const SoLineCardInner = ({
     setShowPicker(false);
   };
 
-  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. */
-  const parseInches = (s: unknown): number => {
-    if (s === null || s === undefined) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
-  const computedTotalHeight = useMemo(() => {
-    if (category !== 'bedframe') return '';
-    const d = parseInches(draft.variants.divanHeight);
-    const l = parseInches(draft.variants.legHeight);
-    const g = parseInches(draft.variants.gap);
-    if (d === 0 && l === 0 && g === 0) return '';
-    return `${d + l + g}"`;
-  }, [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap]);
+  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. The rule
+     itself lives in vendor/shared/total-height.ts; this card is one of sixteen
+     writers that used to carry a private copy of it. */
+  const computedTotalHeight = useMemo(
+    () => computeTotalHeight(category, draft.variants),
+    [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap],
+  );
 
+  /* THE `if (!computedTotalHeight) return;` THAT USED TO SIT HERE IS GONE, and
+     removing it is the behavioural half of unifying this rule. It made the
+     writer refuse to write an EMPTY total, so clearing divan/leg/gap on a line
+     that already carried one left the OLD number in the draft — and that stale
+     number was saved, priced by mfg-pricing.ts, and gated by
+     allowed-options-check.ts, which can refuse the line for a `total_height`
+     the form has no input to correct. The fourteen purchasing screens had
+     always cleared it; only this card and MobileNewSO did not.
+
+     The decision now lives in `totalHeightPatch`, which returns null ONLY when
+     the stored value already equals the computed one — never merely because the
+     computed one is empty. That is deliberately not a guard a caller can get
+     wrong here again, and it is pinned by total-height.canonical.test.ts. */
   useEffect(() => {
-    if (category !== 'bedframe') return;
-    if (!computedTotalHeight) return;
-    if (String(draft.variants.totalHeight ?? '') === computedTotalHeight) return;
-    onChange({ variants: { ...draft.variants, totalHeight: computedTotalHeight } });
+    const patch = totalHeightPatch(category, draft.variants);
+    if (!patch) return;
+    onChange({ variants: { ...draft.variants, ...patch } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computedTotalHeight, category]);
 
@@ -471,7 +516,7 @@ const SoLineCardInner = ({
      variant. Pull the per-context tier (sofa_price_tier vs
      bedframe_price_tier) so the shared compute function can switch
      basePriceSen ↔ price1Sen exactly the same way the server does. */
-  const pickedFabric: FabricTrackingRow | null = useMemo(() => {
+  const pickedFabric: FabricLite | null = useMemo(() => {
     const code = String(draft.variants.fabricCode ?? '');
     if (!code) return null;
     return fabrics.find((f) => f.fabric_code === code) ?? null;
@@ -853,13 +898,27 @@ const SoLineCardInner = ({
           className={styles.priceInput}
           value={priceText}
           disabled={!isEditing || !canEditPrice}
-          title={!canEditPrice ? 'Price follows the SKU Master sell price — admin can override' : undefined}
+          title={
+            !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
+              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : undefined
+          }
           onChange={(e) => {
             const t = e.target.value;
             setPriceText(t);
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0 });
+            if (isFeeLine) {
+              /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
+                 0, which would read as charge-nothing and discount the whole
+                 line on the way to retyping it — and a blur right then would
+                 save that. A real waiver is typed as 0, which still lands. */
+              const n = Number(t);
+              if (t.trim() === '' || !Number.isFinite(n)) return;
+              onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
+              return;
+            }
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
           }}
-          onBlur={() => setPriceText((draft.unitPriceSen / 100).toFixed(2))}
+          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
