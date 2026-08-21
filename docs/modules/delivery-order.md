@@ -53,20 +53,27 @@ parameter existed the hook was typed `{ id, status }`, which is why MobilePOD
 bypassed it with a raw fetch and why every other surface closed deliveries with
 nothing attached.
 
-| Surface | Captures evidence? | On closing without it |
-|---|---|---|
-| Mobile POD | **Yes** — pad, photo, GPS | Confirm says "No customer signature has been captured." Still allowed. |
-| Mobile planning board | Routes to Mobile POD | n/a — it no longer writes a status |
-| Desktop detail / list drawer | No — the office is not at the door | `window.confirm` carrying `doCloseWithoutEvidenceWarning`. Still allowed. |
-| Mobile shell action bar | No | **Known open** — "Mark Signed" writes `SIGNED` (which counts as delivered) with no evidence. `docs/bugs/0481`. |
+**"Mark signed" was REMOVED on 2026-08-21 (owner decision).** It was the office
+button that closed a delivery with no evidence, and the confusing twin of
+"Transfer to Sales Invoice" in the same corner. So the office surfaces no longer
+CLOSE a delivery at all — a shipped DO's next office action is its Sales Invoice,
+and the DO stays `DISPATCHED` until a driver closes it. `DISPATCHED` still
+invoices (siTransferBlockReason allows it), so the money flow is unaffected; only
+the `DELIVERED` tracking status is no longer reached from the office.
 
-Evidence is **allowed everywhere and required nowhere**, on purpose. The office
-legitimately closes deliveries it did not attend — measured 2026-08-21, EVERY
-closed delivery in production is one of these, and 2990's source system has no
-POD step to carry over in the first place — the server itself drops a bad GPS
-reading rather than refusing the write, and the standing rule for this system is
-to loosen rather than restrict. The defect was never the permissiveness; it was
-that no screen said which of the two things you were about to do.
+| Surface | Closes a delivery (writes DELIVERED/SIGNED)? | Evidence |
+|---|---|---|
+| Mobile POD (driver) | **Yes — the ONLY closer now** | pad, photo, GPS; confirm warns if no signature, still allowed |
+| Mobile planning board | No — routes to Mobile POD | n/a — writes no status |
+| Desktop detail / list drawer | **No** — "Mark signed" removed 2026-08-21; only DRAFT → Confirm remains | n/a |
+| Mobile shell action bar | **No** — the "Mark Signed" rung was removed 2026-08-21; its no-evidence hole (`docs/bugs/0481`) is closed with it. It still offers DRAFT→Confirm, LOADED→Dispatch, DISPATCHED→"Mark In Transit" | n/a |
+
+Evidence is now captured on the one path that closes a delivery (the driver's
+POD), which signs it. The office's old permissiveness — closing a delivery it did
+not attend, with no proof and no word — is gone because the office no longer
+closes deliveries. Deliveries a driver never signs (2990's imported style) simply
+stay `DISPATCHED`; the standing rule to loosen rather than restrict is served by
+DISPATCHED remaining fully invoiceable, not by a bare status button.
 
 Census of the historical population: `backend/scripts/check-pod-evidence.mjs`,
 dispatchable via the **DO integrity check (read-only)** workflow. It counts
