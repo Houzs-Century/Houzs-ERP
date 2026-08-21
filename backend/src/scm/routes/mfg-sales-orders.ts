@@ -5457,10 +5457,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         codesByLead.set(lead, arr);
       }
     }
+    // HAZARD 2 (mig 0188 re-keyed pwp_codes on (company_id, code)): `code`
+    // alone re-stamps whichever company's voucher sorts first. The rows being
+    // re-stamped are this order's, so the active company IS their company —
+    // the same pairing the claim/burn/rollback sites above already carry.
+    const restampCompanyId = activeCompanyId(c);
     for (const [lead, codes] of codesByLead) {
+      if (restampCompanyId == null) break; // unresolved company: skip, never write half-keyed
       const { error: stampErr } = await sb.from('pwp_codes')
         .update({ trigger_item_code: lead, updated_at: new Date().toISOString() })
-        .in('code', codes);
+        .in('code', codes).eq('company_id', restampCompanyId);
       // eslint-disable-next-line no-console
       if (stampErr) console.error('[so-create] pwp trigger restamp failed:', lead, stampErr.message);
     }
@@ -9240,18 +9246,28 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   if (upErr) return c.json({ error: 'update_failed', reason: upErr.message }, 500);
 
   /* Re-stamp the voucher audit columns so the codes keep pointing at the
-     line's CURRENT SKU (best-effort — the line is already correct). */
+     line's CURRENT SKU (best-effort — the line is already correct).
+
+     HAZARD 2 (mig 0188): pwp_codes is keyed on (company_id, code), so every
+     statement below carries BOTH halves. `redeemed_doc_no = docNo` on the first
+     one proves the voucher is ON this order — it does not prove the order is in
+     this caller's books, which is a different question and the one company_id
+     answers. */
+  const voucherCompanyId = activeCompanyId(c);
+  if (voucherCompanyId == null) {
+    return c.json({ error: 'company_unresolved', message: 'Cannot tell which company this order belongs to right now. Reload and try again.' }, 409);
+  }
   if (rewardPwpCode) {
     const { error: e1 } = await sb.from('pwp_codes')
       .update({ redeemed_item_code: newCode })
-      .eq('code', rewardPwpCode).eq('redeemed_doc_no', docNo);
+      .eq('code', rewardPwpCode).eq('redeemed_doc_no', docNo).eq('company_id', voucherCompanyId);
     throwAtomicCommandWrite(sb, e1, 'TBC reward code restamp failed');
     if (e1) console.error('[tbc-swap] reward code restamp failed:', e1.message); // eslint-disable-line no-console
   }
   if (triggerCodesToRestamp.length > 0) {
     const { error: e2 } = await sb.from('pwp_codes')
       .update({ trigger_item_code: newCode, updated_at: new Date().toISOString() })
-      .in('code', triggerCodesToRestamp);
+      .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId);
     throwAtomicCommandWrite(sb, e2, 'TBC trigger code restamp failed');
     if (e2) console.error('[tbc-swap] trigger code restamp failed:', e2.message); // eslint-disable-line no-console
   }
@@ -9316,9 +9332,11 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
       if (error) console.error('[tbc-swap] reward revert failed for', line.id, error.message); // eslint-disable-line no-console
     }
     // 2. Dead vouchers go (un-redeemed + reverted ones - Loo: delete).
+    //    HAZARD 2: this DESTROYS a voucher. Half a key deletes theirs.
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete().in('code', toDelete);
+      const { error } = await sb.from('pwp_codes').delete()
+        .in('code', toDelete).eq('company_id', voucherCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC code delete failed');
       if (error) console.error('[tbc-swap] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -9333,7 +9351,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
          bridge's pin, which records every voucher as minted by "System". */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = triggerCodesToRestamp.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id').in('code', triggerCodesToRestamp)
+        ? await sb.from('pwp_codes').select('code, rule_id')
+            .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {
@@ -10056,10 +10075,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     throwAtomicCommandWrite(sb, error, `TBC sofa reward revert failed for ${uid}`);
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
   }
+  /* HAZARD 2 (mig 0188 re-keyed pwp_codes on (company_id, code)) — hoisted to
+     the whole voucher settlement, not just the RELEASE below. Everything in
+     this function that touches a voucher by `code` (release, re-point, restamp,
+     DELETE) needs both halves; four of them were carrying one, sixty lines
+     under the two that were correct. */
+  const rewardCompanyId = activeCompanyId(c);
+  if (rewardCompanyId == null) throw new Error('TBC sofa voucher write refused: company unresolved');
   if (rewardCtx) {
     // HAZARD 2 again: these RELEASE a voucher — unfiltered hands theirs back to stock.
-    const rewardCompanyId = activeCompanyId(c);
-    if (rewardCompanyId == null) throw new Error('TBC sofa reward code write refused: company unresolved');
     if (rewardComboMatch) {
       const { error } = await sb.from('pwp_codes')
         .update({ redeemed_item_code: newLeadCode, updated_at: new Date().toISOString() })
@@ -10080,7 +10104,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (pwpKeepCodes.length > 0) {
       const { error } = await sb.from('pwp_codes')
         .update({ trigger_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .in('code', pwpKeepCodes);
+        .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa keep-code restamp failed');
       if (error) console.error('[tbc-swap-sofa] keep-code restamp failed:', error.message); // eslint-disable-line no-console
     }
@@ -10124,7 +10148,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     // 3. Dead vouchers go (un-redeemed + the reverted ones — Loo: delete).
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete().in('code', toDelete);
+      const { error } = await sb.from('pwp_codes').delete()
+        .in('code', toDelete).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa code delete failed');
       if (error) console.error('[tbc-swap-sofa] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -10137,7 +10162,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
          swap above for why this must not be the bridge's pinned system uuid. */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = pwpKeepCodes.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id').in('code', pwpKeepCodes)
+        ? await sb.from('pwp_codes').select('code, rule_id')
+            .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {

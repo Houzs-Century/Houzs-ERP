@@ -127,6 +127,18 @@ export function scopeToCompanyId<Q>(query: Q, companyId: number): Q {
 }
 
 /**
+ * The same filter, for a helper that ALREADY HOLDS a nullable company id and
+ * would otherwise write `.eq('company_id', null)` — which is a malformed filter,
+ * not "no company", and matches nothing. Null means UNRESOLVED, so it returns the
+ * query untouched, exactly like scopeToCompany's unresolved branch. Use it only
+ * where the id is already in hand; a route should still call
+ * requireActiveCompanyId and refuse rather than run wide.
+ */
+export function scopeToCompanyIdOrOpen<Q>(query: Q, companyId: number | null | undefined): Q {
+  return companyId != null ? scopeToCompanyId(query, companyId) : query;
+}
+
+/**
  * THE ALLOW-LIST SENTINEL — three states, never two. Read this before touching
  * any consumer; collapsing the first two together is a cross-company LEAK, and
  * collapsing the last two together is an app-wide EMPTY-LIST outage.

@@ -688,6 +688,23 @@ because a balancing IN would reuse the DO source key that the partial unique ind
 (`:4322-4328`) rejects. Rack stock is returned separately by
 `returnDoRacksOnCancel` (`:1073`, called `:4336`).
 
+**Rack stock-out is bounded to the ORDER'S OWN company, and that is a predicate,
+not a policy.** `stockOutDoLinesFromRacks` consumes the physical rack ledger on
+dispatch. The rack it consumes from is CALLER-SUPPLIED — the DO line's `rackId`
+lands in `delivery_order_items.rack_id` straight off the request body — and the
+client is service-role against a database whose RLS has no policies, so the
+`company_id` the helper receives has to appear in every rack read and write, not
+only on the movement rows it stamps. Until 2026-08-21 it appeared only on the
+stamp, and a rack uuid from the other company's warehouse resolved and had its
+placements decremented. `backend/tests/doRackStockOutCompanyKey.test.ts` fails
+the build on a rack statement in that helper with no company predicate. Entry:
+`docs/bugs/0497-a-delivery-order-could-take-goods-off-the-other-company-s-ra.md`.
+
+Still open, deliberately: the explicit-pick branch does not require the rack to
+sit in the LINE'S ship-from warehouse, which the fallback branch does. That is an
+operational question (how do pickers actually choose a rack), not a defect with
+one right answer, so it is the owner's call.
+
 **Drop-ship:** a DO flagged `is_dropship` ships against the expected PO batch
 BEFORE any receipt, so its OUT consumes no lot. The GRN's
 `reconcileDropshipBatches` settles that later (`grns.ts:460`). This is why
