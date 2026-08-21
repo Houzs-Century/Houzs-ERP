@@ -81,6 +81,10 @@ import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+/* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
+   Both statements live in ONE module, with the reasoning, so the predicate is
+   assertable and cannot be re-derived by hand here. */
+import { assrBoardUnionSql, assrOpenCaseGuardSql } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -99,6 +103,7 @@ import { dateOrNull } from '../lib/date-coerce';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
+
 
 /* ── Region model ─────────────────────────────────────────────────────────
    CONFIG-DRIVEN (migration 0053). The region buckets are an owner-maintained
@@ -1027,32 +1032,17 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         'customer_pickup', one 'delivery'), so each leg schedules independently.
         assr_cases lives in the PUBLIC schema (not scm) — read it via c.env.DB
         (the D1-shim raw SQL over Postgres public.*, the same path the SO
-        active-venue lookup uses), NOT the scm-scoped supabase client. Wrapped
-        defensively: any failure logs + leaves the SO rows untouched. */
+        active-venue lookup uses), NOT the scm-scoped supabase client — which is
+        exactly why this union shipped company-BLIND until 2026-08-21; the
+        predicate now lives in assrBoardUnionSql (scm/lib/assr-board-scope.ts).
+        Wrapped defensively: any failure logs + leaves the SO rows untouched. */
   type BoardRow = (typeof orders)[number];
   const assrOrders: BoardRow[] = [];
   try {
     // Explicit lowercase aliases → deterministic snake_case result keys
     // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
-    const assrRows = await c.env.DB.prepare(
-      `SELECT id            AS id,
-              assr_no       AS assr_no,
-              status        AS status,
-              customer_name AS customer_name,
-              phone         AS phone,
-              location      AS location,
-              customer_pickup_at AS customer_pickup_at,
-              inspection_visit_at AS inspection_visit_at,
-              inspection_by AS inspection_by,
-              do_date       AS do_date,
-              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
-         FROM assr_cases
-        WHERE closed_at IS NULL
-          AND archived_at IS NULL
-          AND (customer_pickup_at IS NOT NULL OR do_date IS NOT NULL
-               OR (inspection_visit_at IS NOT NULL AND inspection_by = 'own'))`,
-    ).all<{
-      id: number | null; assr_no: string | null; status: string | null;
+    const assrRows = await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
+      id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
       customer_name: string | null; phone: string | null; location: string | null;
       customer_pickup_at: string | null; inspection_visit_at: string | null;
       inspection_by: string | null; do_date: string | null;
@@ -1152,9 +1142,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
-          // ASSR (service) cases live in public.assr_cases (no scm company_id yet)
-          // — no company label on the shared queue.
-          company_code: null,
+          /* The company chip, from the SAME codeMap the SO rows use. Was a hard
+             `null` under the comment "no scm company_id yet" — wrong, and being
+             wrong is what let the union ship unscoped: the column is bigint NOT
+             NULL (production, 2026-08-21). */
+          company_code: a.company_id != null ? (codeMap.get(Number(a.company_id)) ?? null) : null,
           region: primaryRegion,
           regions: [...regionSet],
           warehouse_id: null,
@@ -2284,10 +2276,12 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
        check such a call would mint a trip, a trip_stop and a DP number for a
        closed / archived / non-existent case: fleet capacity consumed by work that
        is finished or was never there, and invisible on the board because the
-       board has no row for it. Fails the same way the date path already does. */
+       board has no row for it. Fails the same way the date path already does.
+       It is ALSO the company gate for everything below: assrOpenCaseGuardSql
+       carries the caller's granted-company predicate, so an out-of-scope case
+       404s here (owner ruling 2026-08-21). */
     const openCase = (await c.env.DB.prepare(
-      `SELECT id FROM assr_cases
-        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+      assrOpenCaseGuardSql(c),
     ).bind(caseId).first()) as { id: number } | null;
     if (!openCase) return c.json({ error: 'not_found' }, 404);
 
@@ -2794,7 +2788,10 @@ async function scheduleAssrOntoTrip(
 
     /* Case snapshot (customer / address) + the leg's own date, from public.assr_cases
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's
-       default date so a crew-only edit (no scheduleDate) still lands on the right day. */
+       default date so a crew-only edit (no scheduleDate) still lands on the right day.
+       company-scope: deliberately UNSCOPED, and safe — reachable only after the
+       ASSR branch's assrOpenCaseGuardSql has 404'd any case outside the caller's
+       granted companies. Same shape as routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,
               addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4

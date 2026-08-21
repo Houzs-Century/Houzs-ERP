@@ -436,15 +436,56 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
   });
 });
 
-/* ── What an approved amendment still CANNOT change ─────────────────────────
-   Pinned so the next reader does not have to re-derive it: scm.so_amendment_lines
-   has no discount column (mig 0080 + 0281 — new_item_code, new_variants, new_qty,
-   new_unit_price_sen, new_remark, old_snapshot), so a discount cannot be
-   requested, approved, or applied. The apply COPIES the line's existing discount
-   forward; it never moves it. Reducing an amount on a locked SO is therefore a
-   unit-price change, never a discount. */
-describe('applySoAmendment — discount_sen has no amendment channel (documented gap)', () => {
-  it('the existing discount is carried forward untouched and still reduces the line total', async () => {
+/* ── The discount channel (mig 0317) ─────────────────────────────────────
+   Until 0317 this block was titled "What an approved amendment still CANNOT
+   change": so_amendment_lines had no discount column, the apply copied the
+   line's existing discount forward, and reducing an amount on a locked SO was a
+   unit-price change only. That gap is what silently dropped a delivery-fee
+   reduction (RM 250 → 125 books as a DISCOUNT against the derived unit, and
+   the derived unit is rebuilt by rederiveDeliveryFee — the discount is the one
+   lever that survives). new_discount_sen now rides with new_remark's exact
+   NULL semantics: null = not requested (every pre-0317 row), and the value is
+   clamped to [0, qty * unit] at apply. */
+describe('applySoAmendment — the discount channel (mig 0317)', () => {
+  it('a requested discount is applied and reduces the line total', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 25000, total_sen: 25000 })];
+    /* The fee-shape request: unit re-sent unchanged, ONLY the discount moves —
+       exactly what the fee cell produces for 250 → 125. */
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 25000, new_discount_sen: 12500 })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.discount_sen).toBe(12500);
+    expect(line.unit_price_sen).toBe(25000);
+    expect(line.total_sen).toBe(12500);      // 250.00 - 125.00
+    expect(line.balance_sen).toBe(12500);
+  });
+
+  it('an approved discount can never exceed the line gross — clamped, not negative', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 5000, new_discount_sen: 99000 })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.discount_sen).toBe(5000);    // clamped to qty * unit
+    expect(line.total_sen).toBe(0);          // floor, never negative
+  });
+
+  it('a zero discount is a real request — it CLEARS the one on the line', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ discount_sen: 1500, total_sen: 8500 })];
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 10000, new_discount_sen: 0 })];
+
+    await apply(store);
+
+    expect(lineOf(store).discount_sen).toBe(0);
+    expect(lineOf(store).total_sen).toBe(10000);
+  });
+
+  it('a NULL discount preserves the existing one — a pre-0317 amendment cannot blank a discount booked since', async () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ discount_sen: 1500, total_sen: 8500 })];
     store.so_amendment_lines = [specLine({ new_unit_price_sen: 5000 })];

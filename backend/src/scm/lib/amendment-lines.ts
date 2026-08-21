@@ -28,6 +28,12 @@ export type SubmittedAmendmentLine = {
      '' = clear it. Before 0280 it had no column, so submit dropped it in
      silence and a SVC-ADDON line reached the driver saying nothing at all. */
   newRemark?: string | null;
+  /* Migration 0317 — the line's DISCOUNT in sen. The one sanctioned lever for
+     reducing a DERIVED price (the delivery fee books the reduction here, and
+     rederiveDeliveryFee preserves it through every rebuild). undefined/null =
+     this request does not touch the discount; 0 = clear it. Before 0317 it had
+     no column, so a fee reduction on a locked SO was dropped in silence. */
+  newDiscountSen?: number | null;
   oldSnapshot?: unknown;
 };
 
@@ -40,6 +46,7 @@ export type AmendmentLineRow = {
   new_qty: number | null;
   new_unit_price_sen: number | null;
   new_remark: string | null;
+  new_discount_sen: number | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -79,13 +86,16 @@ export async function buildAmendmentLineRows(
      asking to change it. A client-supplied "was" could show the approver a
      remark that was never on the line. */
   const remarkById = new Map<string, string | null>();
+  /* The line's CURRENT discount, for the same before-side reason (mig 0317). */
+  const discountById = new Map<string, number | null>();
   if (referencedItemIds.length > 0) {
     const { data, error } = await sb.from('mfg_sales_order_items')
-      .select('id, item_group, remark').eq('doc_no', docNo).in('id', referencedItemIds);
+      .select('id, item_group, remark, discount_sen').eq('doc_no', docNo).in('id', referencedItemIds);
     if (error) return { ok: false, reason: 'unreadable' };
-    for (const r of (data ?? []) as Array<{ id: string; item_group: string | null; remark: string | null }>) {
+    for (const r of (data ?? []) as Array<{ id: string; item_group: string | null; remark: string | null; discount_sen: number | null }>) {
       itemGroupById.set(r.id, r.item_group);
       remarkById.set(r.id, r.remark);
+      discountById.set(r.id, r.discount_sen);
     }
     const missingIds = referencedItemIds.filter((id) => !itemGroupById.has(id));
     if (missingIds.length > 0) return { ok: false, reason: 'missing', missingIds };
@@ -102,9 +112,11 @@ export async function buildAmendmentLineRows(
     /* An ADD line has no persisted remark either — its before-side is simply
        absent, which is what the diff reads as "added". */
     const wasRemark = l.salesOrderItemId ? remarkById.get(l.salesOrderItemId) ?? null : null;
+    const wasDiscount = l.salesOrderItemId ? discountById.get(l.salesOrderItemId) ?? null : null;
     const stamped = {
       ...(group != null ? { itemGroup: String(group) } : {}),
       ...(wasRemark != null ? { remark: String(wasRemark) } : {}),
+      ...(wasDiscount != null ? { discountSen: Number(wasDiscount) } : {}),
     };
     return {
       amendment_id:        amendmentId,
@@ -118,6 +130,14 @@ export async function buildAmendmentLineRows(
          to NULL so applySoAmendment's `!= null` test is the ONE gate on whether
          the remark is written. '' survives as a real request to clear it. */
       new_remark:          l.newRemark ?? null,
+      /* Same NULL normalisation as new_remark: applySoAmendment's `!= null` is
+         the ONE gate. Garbage never becomes a request — a non-finite or
+         negative value is dropped to NULL (the upper bound needs qty * unit,
+         which can change in this same amendment, so it is clamped at APPLY). */
+      new_discount_sen:
+        typeof l.newDiscountSen === 'number' && Number.isFinite(l.newDiscountSen) && l.newDiscountSen >= 0
+          ? Math.round(l.newDiscountSen)
+          : null,
       old_snapshot:        snapshot || Object.keys(stamped).length > 0
         ? { ...(snapshot ?? {}), ...stamped }
         : null,
