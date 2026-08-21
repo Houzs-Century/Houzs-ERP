@@ -465,6 +465,28 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           npm run audit:release-discipline -- --ratchet-against FETCH_HEAD
+      # THE SCHEMA ARTIFACT MUST DESCRIBE THE DATABASE IT TYPES.
+      #
+      # src/db/schema.pg.ts is what every Drizzle read is typed from, so a
+      # column it does not carry does not exist as far as the compiler, the
+      # author, or any source-scanning checker is concerned. It was hand-ported
+      # at the Postgres cutover and never validated: by 2026-08-21 it was
+      # missing project_brands.company_id (mig 0093) and .logo_r2_key (mig 0069)
+      # and declaring a UNIQUE on project_brands.name that production does not
+      # have. The SO letterhead's unscoped Drizzle read of that table — 69 of
+      # 2990's sales orders printed Houzs's mark — was invisible to BOTH
+      # company-scope checkers for exactly that reason.
+      #
+      # This step compares the artifact against src/db/migrations-pg, the tree
+      # deploy.yml actually applies. No database, so it runs on the PR path and
+      # inside the one job that is a REQUIRED context. It would have failed the
+      # day 0069 and 0093 landed; measured against the pre-regeneration file it
+      # reports 25 disagreements.
+      #
+      # It cannot see out-of-band DDL, which is documented to exist here. That
+      # half is `--source=live` and runs dispatched, never on the PR path and
+      # never on a schedule: schema-artifact-check.yml.
+      - run: npm run audit:schema-artifact
       - run: npm run typecheck
       # The 221-file pure-logic suite. It lives here, in the job that already
       # finishes in about a minute, because it takes ~7 SECONDS — it used to be
@@ -1172,3 +1194,17 @@ jobs:
       # own baseline, and the sibling's invariant stays intact.
       - run: node backend/scripts/check-master-read-scope.mjs --check
       - run: node backend/scripts/check-master-read-scope.mjs --check --ratchet-against origin/main
+      # THIRD CLASS, SAME JOB (2026-08-21). Neither script above can see a
+      # DRIZZLE statement: check-company-scope reads supabase builder chains, and
+      # check-master-read-scope's own self-test asserts that a builder call does
+      # NOT match its raw-SQL needle. `getDb(c.env).select({...}).from(
+      # project_brands)` is neither shape, so every Drizzle statement in the nine
+      # files that import from db/schema was outside both remits.
+      #
+      # It could not have existed before the artifact was regenerated: it decides
+      # "is this table company-scoped?" from src/db/schema.pg.ts, and until
+      # 2026-08-21 that file did not carry project_brands.company_id. Run against
+      # the old artifact it REFUSES (exit 2) rather than reporting a clean run
+      # over an empty table set.
+      - run: node backend/scripts/check-orm-read-scope.mjs --check
+      - run: node backend/scripts/check-orm-read-scope.mjs --check --ratchet-against origin/main

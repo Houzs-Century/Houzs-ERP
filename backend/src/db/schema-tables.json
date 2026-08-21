@@ -1,0 +1,13 @@
+{
+  "//": [
+    "Extra tables for backend/scripts/gen-schema-artifact.mjs.",
+    "The generator DERIVES its table list from the `import { ... } from \"../db/schema\"`",
+    "statements in backend/src, so a table already imported does not belong here.",
+    "This list exists for the chicken-and-egg case only: a table you are about to start",
+    "using through Drizzle cannot be imported until it is in the artifact.",
+    "Add it here, regenerate (docs/schema-artifact.md), then write the import.",
+    "Foreign-key targets are pulled automatically - `companies` arrives because",
+    "project_brands references it, not because anyone listed it."
+  ],
+  "extraTables": []
+}

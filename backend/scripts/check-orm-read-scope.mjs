@@ -137,6 +137,18 @@ const ORM_STMT = /\.(from|update|insert|delete)\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
 const SCOPED_INLINE =
   /\bcompany_id\b|activeCompanyId|requireActiveCompanyId|allowedCompanyIds|scopeToCompany|scopeToCompanyId|scopeToAllowedCompanies|companyIdScope|companyScope/;
 const WRITE_VERBS = new Set(["update", "insert", "delete"]);
+/* A Drizzle predicate is routinely assembled into an ARRAY far above the
+   statement and spread into it — `const scopeConds = []; scopeConds.push(
+   inArray(projects.company_id, allowedCo)); ... .where(and(...feedConds))`.
+   A window that only reads around `.from(` sees `...feedConds` without knowing
+   what it holds, and reports three correctly-scoped handlers. So resolve, per
+   FILE, which array names carry a company predicate — directly, or by spreading
+   one that does — and treat `...thatName` in a statement as scoped. This is not
+   a loosening: the array provably contains a company predicate. Same move
+   check-master-read-scope had to make for `${coSql}`. */
+const ARRAY_PUSH = /([A-Za-z_$][\w$]*)\s*\.\s*push\s*\(/;
+const ARRAY_INIT = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=\s*\[/;
+const SPREAD_OF = /\.\.\.\s*([A-Za-z_$][\w$]*)/g;
 const HANDLER = /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`](\/[^'"`]*)['"`]/;
 const ANNOTATION = /\/\/\s*company-scope:/;
 
@@ -181,10 +193,24 @@ const ANNOTATION = /\/\/\s*company-scope:/;
     const m = "app.post('/import/csv', requirePermission('projects.manage'), async (c) => {".match(HANDLER);
     return !!m && m[1] === "post" && m[2] === "/import/csv" && !HANDLER.test("  const db = getDb(c.env);");
   })();
-  if (!importOk || !stmtOk || !scopedOk || !regressionOk || !handlerOk) {
+  /* The scope-ARRAY vocabulary, which acquits three real handlers. If these
+     stop matching, notifications.ts and sales.ts turn into permanent false
+     positives and somebody switches the check off. */
+  const arrayOk =
+    "  scopeConds.push(".match(ARRAY_PUSH)?.[1] === "scopeConds" &&
+    "  const conds: any[] = [];".match(ARRAY_INIT)?.[1] === "conds" &&
+    "  const feedConds = [".match(ARRAY_INIT)?.[1] === "feedConds" &&
+    !"  db.select({".match(ARRAY_PUSH) &&
+    (() => {
+      SPREAD_OF.lastIndex = 0;
+      const s = [..."    ...scopeConds,".matchAll(SPREAD_OF)];
+      return s.length === 1 && s[0][1] === "scopeConds";
+    })();
+  if (!importOk || !stmtOk || !scopedOk || !regressionOk || !handlerOk || !arrayOk) {
     console.error(
       "check-orm-read-scope: PATTERN self-test FAILED - not reporting.\n" +
-        `  import=${importOk} stmt=${stmtOk} scoped=${scopedOk} regression=${regressionOk} handler=${handlerOk}`,
+        `  import=${importOk} stmt=${stmtOk} scoped=${scopedOk} regression=${regressionOk} ` +
+        `handler=${handlerOk} scopeArray=${arrayOk}`,
     );
     process.exit(2);
   }
@@ -232,6 +258,42 @@ for (const dir of ROUTE_DIRS) {
     }
     if (alias.size === 0) continue;
 
+    /* Array names that carry a company predicate. Two seeds — a push whose
+       argument names company_id, and an array literal that does — then closed
+       transitively over spreads, because feedConds spreads scopeConds. Bounded
+       at four rounds: a fixpoint over one file cannot need more, and an
+       unbounded loop here would be a silent way to acquit everything. */
+    const scopeArrays = new Set();
+    {
+      const chunkAt = (i) => lines.slice(i, Math.min(i + 6, lines.length)).join("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const push = lines[i].match(ARRAY_PUSH);
+        if (push && SCOPED_INLINE.test(chunkAt(i))) scopeArrays.add(push[1]);
+        const init = lines[i].match(ARRAY_INIT);
+        if (init && SCOPED_INLINE.test(chunkAt(i))) scopeArrays.add(init[1]);
+      }
+      for (let round = 0; round < 4; round++) {
+        let grew = false;
+        for (let i = 0; i < lines.length; i++) {
+          const holder = lines[i].match(ARRAY_PUSH)?.[1] ?? lines[i].match(ARRAY_INIT)?.[1];
+          if (!holder || scopeArrays.has(holder)) continue;
+          const chunk = chunkAt(i);
+          SPREAD_OF.lastIndex = 0;
+          for (const s of chunk.matchAll(SPREAD_OF)) {
+            if (scopeArrays.has(s[1])) {
+              scopeArrays.add(holder);
+              grew = true;
+              break;
+            }
+          }
+        }
+        if (!grew) break;
+      }
+    }
+    const scopeArrayUse = scopeArrays.size
+      ? new RegExp("\\.\\.\\.\\s*(?:" + [...scopeArrays].join("|") + ")\\b")
+      : null;
+
     // Which handler each line belongs to (the nearest registration above it).
     let currentHandler = "(module scope)";
     const handlerOf = lines.map((l) => {
@@ -248,13 +310,21 @@ for (const dir of ROUTE_DIRS) {
         const table = alias.get(hit[2]);
         if (!table || !COMPANY_TABLES.has(table)) continue;
         statementsScanned++;
-        /* LOOK BACK as well as forward. A Drizzle chain is written over many
-           lines and `const coId = activeCompanyId(c)` is routinely above the
-           `.from(...)`, while the `.where(...)` is below it. */
-        const from = Math.max(0, i - 8);
-        const to = Math.min(i + 14, lines.length);
-        const stmt = lines.slice(from, to).join("\n");
+        /* THE WINDOW IS THE STATEMENT, not a fixed number of lines. A Drizzle
+           chain runs to wherever its `;` lands — `.where(and(...feedConds))` sat
+           22 lines below its own `.from()` — so a fixed forward window either
+           misses the predicate or has to be widened until it starts acquitting
+           the next statement too. Scan forward to the end of the chain instead,
+           capped so a missing semicolon cannot swallow the file. Backwards stays
+           a small window: `const coId = activeCompanyId(c)` is right above. */
+        const from = Math.max(0, i - 10);
+        let end = i;
+        while (end + 1 < lines.length && end - i < 60 && !/;\s*(\/\/.*)?$/.test(lines[end].trimEnd())) {
+          end++;
+        }
+        const stmt = lines.slice(from, Math.min(end + 1, lines.length)).join("\n");
         if (SCOPED_INLINE.test(stmt)) continue;
+        if (scopeArrayUse && scopeArrayUse.test(stmt)) continue;
         if (ANNOTATION.test(stmt)) continue;
         findings.push({
           file: rel,

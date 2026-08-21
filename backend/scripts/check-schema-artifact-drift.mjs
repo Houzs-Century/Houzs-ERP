@@ -79,12 +79,22 @@ const fatal = (msg) => {
 // ── 2. the artifact ─────────────────────────────────────────────────────────
 const artifactSrc = fs.readFileSync(ARTIFACT, "utf8");
 const { tables: declared, unknownBuilders } = parseSchemaArtifact(artifactSrc);
-if (declared.size < 30) {
-  fatal(
-    `ARTIFACT self-test FAILED - parsed only ${declared.size} pgTable(...) blocks from ` +
-      `src/db/schema.pg.ts, which contains ${(artifactSrc.match(/pgTable\(/g) ?? []).length} ` +
-      "occurrences of pgTable(. Refusing to report drift from a parse that plainly died.",
-  );
+/* The floor is the file's OWN pgTable( count, not a hand-picked number: a
+   hand-picked one is wrong the moment the artifact legitimately shrinks (it went
+   49 -> 19 when the unused tables stopped being generated), and it would then
+   fail every PR for a reason that has nothing to do with drift. Every declared
+   table must be PARSED, and a table with no columns is a parse that died. */
+{
+  const occurrences = (artifactSrc.match(/pgTable\(/g) ?? []).length;
+  const empty = [...declared].filter(([, t]) => t.columns.size === 0).map(([n]) => n);
+  if (declared.size !== occurrences || declared.size === 0 || empty.length) {
+    fatal(
+      `ARTIFACT self-test FAILED - parsed ${declared.size} of ${occurrences} pgTable(...) blocks ` +
+        `in src/db/schema.pg.ts` +
+        (empty.length ? `; ${empty.length} parsed with ZERO columns: ${empty.join(", ")}` : "") +
+        ".\n  Refusing to report drift from a parse that plainly died.",
+    );
+  }
 }
 if (unknownBuilders.length) {
   fatal(

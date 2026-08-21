@@ -4841,9 +4841,24 @@ app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
   // Pull the canonical brand allow-list from project_brands (admins
   // maintain it under Project Maintenance) so newly-added brands flow
   // through CSV without code changes.
+  //
+  // SCOPED to the active company. Every row this import creates is stamped with
+  // activeCompanyId at :5050, so validating the brand against BOTH companies'
+  // lists let a CSV tag a Houzs project with a brand that exists only under
+  // 2990 — and brand names already collide across the two ("BEDFRAME"/"Bedframe",
+  // "SERVICE"/"Service", live 2026-08-21). The predicate degrades to none when
+  // the company is unresolved, matching GET /cost-rates twelve hundred lines
+  // above and every other read-side scope in this file.
+  //
+  // This read was invisible to check-company-scope.mjs and
+  // check-master-read-scope.mjs — one reads supabase builders, the other raw
+  // SQL — and to check-orm-read-scope.mjs too, because schema.pg.ts did not
+  // carry project_brands.company_id until it was regenerated from the live DB.
+  const importCo = activeCompanyId(c);
   const brandRows = await getDb(c.env)
     .select({ name: project_brands.name })
-    .from(project_brands);
+    .from(project_brands)
+    .where(importCo != null ? eq(project_brands.company_id, importCo) : undefined);
   const ALLOWED_BRANDS = new Set(brandRows.map((b) => b.name));
 
   const { createProject } = await import("../services/projects");

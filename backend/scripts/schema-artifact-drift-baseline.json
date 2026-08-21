@@ -1,0 +1,11 @@
+{
+  "//": [
+    "GRANDFATHER BASELINE for backend/scripts/check-schema-artifact-drift.mjs --check.",
+    "Each key is one <table>[.<column>] :: <drift kind> where src/db/schema.pg.ts and the",
+    "LIVE migration tree disagree. This is DEBT, not the standard: a NEW disagreement is",
+    "BLOCKED because it is not in this list. The list may only SHRINK - --update refuses",
+    "to add a key, exactly as lint-ratchet refuses to raise a ceiling.",
+    "To clear one: regenerate the artifact (docs/schema-artifact.md), never hand-edit it."
+  ],
+  "drift": []
+}

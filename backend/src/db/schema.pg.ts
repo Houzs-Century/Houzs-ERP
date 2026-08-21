@@ -1,829 +1,603 @@
 // ---------------------------------------------------------------------------
-// DRAFT - Postgres (pg-core) port of schema.ts. UNTESTED until validated with
-// `drizzle-kit` against the live Supabase DB (Phase 2 of the migration).
+// GENERATED FILE - do not hand-edit.
 //
-// Additive: this file does NOT replace schema.ts yet, so the D1 build stays
-// green. The cutover swaps client.ts to drizzle-orm/postgres-js + this schema
-// and renames it over schema.ts.
+//   DATABASE_URL=... node backend/scripts/gen-schema-artifact.mjs
 //
-// Faithful mapping choices (deliberately low-churn so the 600+ snake_case
-// readers and 685 raw-SQL sites keep working):
-//   - integer("id").primaryKey({autoIncrement:true})  -> serial(...).primaryKey()
-//   - other integer(...)        -> integer(...)        (kept int4)
-//   - 0/1 flag columns          -> integer(...)        (NOT boolean — app r/w 0/1)
-//   - real(...)                 -> doublePrecision(...) (SQLite REAL is float8)
-//   - *_at / created_at columns -> text(...)           (app reads ISO strings,
-//                                  not Date objects; keep them text)
-//   - default (datetime('now')) -> `nowText` (UTC text, same 'YYYY-MM-DD HH:MM:SS' shape)
+// Produced by `drizzle-kit pull` against the LIVE database, restricted to the
+// tables backend/src actually imports from "../db/schema" (the list is derived
+// from those imports, never typed by hand). One mechanical repair pass runs
+// over the output: drizzle-kit 0.31.10 emits invalid TypeScript for a
+// function-call column default, and that shape is rewritten to .default(sql``).
 //
-// REVIEW BEFORE IMPORT (Phase 4): SQLite INTEGER holds int64, Postgres
-// `integer` is int4 (max ~2.1e9). Money/amount columns stored in sen could
-// overflow. Promote these to `bigint({mode:"number"})` if a real value
-// exceeds int4 (the import will fail loudly otherwise — verify per table):
-//   sales_orders.local_total/balance, order_details.total_cost + freight cols,
-//   purchase_orders.amount/unit_price, purchase_order_docs.final_total/local_ex_tax,
-//   project_finance.*, project_finance_lines.amount, sales_entries.amount/deposit_amount,
-//   petty_cash_entries.amount_cents, project_cost_rates.boost_min_sales.
+// WHY IT IS GENERATED. The hand-ported predecessor drifted from production and
+// the drift was invisible: it lacked project_brands.company_id (mig 0093) and
+// .logo_r2_key (mig 0069), so the SO letterhead's drizzle read could not name a
+// company predicate and neither company-scope checker could see the leak that
+// printed Houzs's mark on 69 of 2990's sales orders. It also declared a UNIQUE
+// on project_brands.name that production does not have, and typed `trips` and
+// `lorries` as tables when production has them as VIEWs.
+//
+// backend/scripts/check-schema-artifact-drift.mjs fails a PR when this file and
+// the migration tree disagree, and answers the same question against the live
+// catalog when dispatched. See docs/schema-artifact.md.
 // ---------------------------------------------------------------------------
-import {
-  pgTable,
-  pgEnum,
-  serial,
-  integer,
-  bigint,
-  text,
-  doublePrecision,
-  primaryKey,
-  uuid,
-  boolean,
-  jsonb,
-  timestamp,
-  date,
-  index,
-  uniqueIndex,
-  check,
-} from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { pgTable, index, text, bigint, foreignKey, unique, integer, timestamp, serial, doublePrecision, uuid, uniqueIndex, check, primaryKey, pgSequence, pgEnum } from "drizzle-orm/pg-core"
+import { sql } from "drizzle-orm"
 
-// SQLite datetime('now') yields 'YYYY-MM-DD HH:MM:SS' (UTC). Reproduce the same
-// text shape so existing string parsing/sorting is unchanged.
-const nowText = sql`(to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))`;
+export const addon_kind = pgEnum("addon_kind", ['qty', 'floors_items', 'flat'])
+export const comp_group = pgEnum("comp_group", ['1-seater', '2-seater', 'Corner', 'L-Shape', 'Accessory'])
+export const consignment_do_status = pgEnum("consignment_do_status", ['LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'])
+export const consignment_dr_status = pgEnum("consignment_dr_status", ['PENDING', 'RECEIVED', 'INSPECTED', 'REFUNDED', 'CREDIT_NOTED', 'REJECTED', 'CANCELLED'])
+export const consignment_so_status = pgEnum("consignment_so_status", ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'ON_HOLD', 'CANCELLED'])
+export const currency_code = pgEnum("currency_code", ['MYR', 'RMB', 'USD', 'SGD'])
+export const delivery_return_status = pgEnum("delivery_return_status", ['PENDING', 'RECEIVED', 'INSPECTED', 'REFUNDED', 'CREDIT_NOTED', 'REJECTED', 'CANCELLED'])
+export const do_status = pgEnum("do_status", ['LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'])
+export const fabric_category = pgEnum("fabric_category", ['B.M-FABR', 'S-FABR', 'S.M-FABR', 'LINING', 'WEBBING'])
+export const fabric_price_tier = pgEnum("fabric_price_tier", ['PRICE_1', 'PRICE_2', 'PRICE_3'])
+export const grn_status = pgEnum("grn_status", ['POSTED', 'CLOSED', 'CANCELLED'])
+export const inventory_movement_type = pgEnum("inventory_movement_type", ['IN', 'OUT', 'ADJUSTMENT', 'TRANSFER'])
+export const material_kind = pgEnum("material_kind", ['mfg_product', 'fabric', 'raw'])
+export const mfg_product_category = pgEnum("mfg_product_category", ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE', 'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET'])
+export const mfg_product_status = pgEnum("mfg_product_status", ['ACTIVE', 'INACTIVE'])
+export const mfg_so_status = pgEnum("mfg_so_status", ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'ON_HOLD', 'CANCELLED'])
+export const po_status = pgEnum("po_status", ['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'])
+export const pricing_kind = pgEnum("pricing_kind", ['size_variants', 'sofa_build', 'bedframe_build', 'flat', 'tbc'])
+export const purchase_consignment_order_status = pgEnum("purchase_consignment_order_status", ['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'])
+export const purchase_consignment_receive_status = pgEnum("purchase_consignment_receive_status", ['POSTED', 'CLOSED', 'CANCELLED'])
+export const purchase_consignment_return_status = pgEnum("purchase_consignment_return_status", ['POSTED', 'COMPLETED', 'CANCELLED'])
+export const purchase_invoice_status = pgEnum("purchase_invoice_status", ['POSTED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'])
+export const purchase_return_status = pgEnum("purchase_return_status", ['POSTED', 'COMPLETED', 'CANCELLED'])
+export const sales_invoice_status = pgEnum("sales_invoice_status", ['SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED'])
+export const slip_state = pgEnum("slip_state", ['none', 'pending', 'verified', 'flagged'])
+export const supplier_status = pgEnum("supplier_status", ['ACTIVE', 'INACTIVE', 'BLOCKED'])
 
-// ── users ──────────────────────────────────────────────────
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  name: text("name"),
-  password_hash: text("password_hash"),
-  role_id: integer("role_id").notNull(),
-  status: text("status").notNull().default("invited"),
-  status_reason: text("status_reason"),
-  invited_by: integer("invited_by"),
-  invited_at: text("invited_at"),
-  joined_at: text("joined_at"),
-  last_login_at: text("last_login_at"),
-  created_at: text("created_at").default(nowText),
-  manager_id: integer("manager_id"),
-  department_id: integer("department_id"),
-  // Free-text sub-grouping within a department — drives the org chart's
-  // columns ("divisions"). Super-admin editable (mig 0021).
-  division: text("division"),
-  position_id: integer("position_id"),
-  points_balance: integer("points_balance").notNull().default(0),
-  gifting_balance: integer("gifting_balance").notNull().default(0),
-  gifting_reset_at: text("gifting_reset_at"),
-  current_streak: integer("current_streak").notNull().default(0),
-  profile_pic_r2_key: text("profile_pic_r2_key"),
-  phone: text("phone"),
-  // The member's outward Mail Center alias (e.g. lim@houzscentury.com). Surfaced
-  // in User Management; complements the email_addresses link (mig 0039+).
-  email_alias: text("email_alias"),
-  // Per-user opt-out of ASSR service-case digest/escalation emails. The user
-  // keeps service_cases.manage (can still view + manage cases) — this only
-  // mutes the outbound mail. 0 = receives, 1 = muted.
-  assr_email_muted: integer("assr_email_muted").notNull().default(0),
-});
+export const assr_activity_id_seq = pgSequence("assr_activity_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_alert_acks_id_seq = pgSequence("assr_alert_acks_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_attachments_id_seq = pgSequence("assr_attachments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_cases_id_seq = pgSequence("assr_cases_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_issue_categories_id_seq = pgSequence("assr_issue_categories_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_items_id_seq = pgSequence("assr_items_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_lead_time_activations_id_seq = pgSequence("assr_lead_time_activations_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_lead_time_amendments_id_seq = pgSequence("assr_lead_time_amendments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_lead_time_profiles_id_seq = pgSequence("assr_lead_time_profiles_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_lead_time_scheduled_activations_id_seq = pgSequence("assr_lead_time_scheduled_activations_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_logistics_id_seq = pgSequence("assr_logistics_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_ncr_categories_id_seq = pgSequence("assr_ncr_categories_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_priorities_id_seq = pgSequence("assr_priorities_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_priority_stage_targets_id_seq = pgSequence("assr_priority_stage_targets_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_resolution_methods_id_seq = pgSequence("assr_resolution_methods_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_stage_history_id_seq = pgSequence("assr_stage_history_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_stage_targets_id_seq = pgSequence("assr_stage_targets_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_supplier_tokens_id_seq = pgSequence("assr_supplier_tokens_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const daily_inspections_id_seq = pgSequence("daily_inspections_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const delivery_status_log_id_seq = pgSequence("delivery_status_log_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const email_log_id_seq = pgSequence("email_log_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const events_id_seq = pgSequence("events_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const execution_logs_id_seq = pgSequence("execution_logs_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const idea_comments_id_seq = pgSequence("idea_comments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const lorry_incidents_id_seq = pgSequence("lorry_incidents_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_attachments_id_seq = pgSequence("project_attachments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_id_seq = pgSequence("project_checklist_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_attachments_id_seq = pgSequence("project_checklist_attachments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_comments_id_seq = pgSequence("project_checklist_comments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_sections_id_seq = pgSequence("project_checklist_sections_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_template_items_id_seq = pgSequence("project_checklist_template_items_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_template_sections_id_seq = pgSequence("project_checklist_template_sections_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_templates_id_seq = pgSequence("project_checklist_templates_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_cost_rates_id_seq = pgSequence("project_cost_rates_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_defects_id_seq = pgSequence("project_defects_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_event_types_id_seq = pgSequence("project_event_types_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_finance_project_id_seq = pgSequence("project_finance_project_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_organizers_id_seq = pgSequence("project_organizers_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_phase_photos_id_seq = pgSequence("project_phase_photos_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_sales_reports_id_seq = pgSequence("project_sales_reports_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_stock_transfers_id_seq = pgSequence("project_stock_transfers_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_team_id_seq = pgSequence("project_team_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_venues_id_seq = pgSequence("project_venues_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const purchase_orders_id_seq = pgSequence("purchase_orders_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const salary_records_id_seq = pgSequence("salary_records_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const salary_trip_lines_id_seq = pgSequence("salary_trip_lines_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_commission_tiers_id_seq = pgSequence("sales_commission_tiers_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_entry_activity_id_seq = pgSequence("sales_entry_activity_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_entry_items_id_seq = pgSequence("sales_entry_items_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_entry_payments_id_seq = pgSequence("sales_entry_payments_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_orders_id_seq = pgSequence("sales_orders_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_positions_id_seq = pgSequence("sales_positions_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_rep_commission_tiers_id_seq = pgSequence("sales_rep_commission_tiers_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_reps_id_seq = pgSequence("sales_reps_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const sales_team_activity_id_seq = pgSequence("sales_team_activity_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const supplier_accounts_id_seq = pgSequence("supplier_accounts_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const supplier_communications_id_seq = pgSequence("supplier_communications_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const supplier_invitations_id_seq = pgSequence("supplier_invitations_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const suppliers_id_seq = pgSequence("suppliers_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const trip_proposal_trips_id_seq = pgSequence("trip_proposal_trips_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const trip_proposals_id_seq = pgSequence("trip_proposals_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const trip_stops_id_seq = pgSequence("trip_stops_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const udf_fields_id_seq = pgSequence("udf_fields_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const audit_events_id_seq = pgSequence("audit_events_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "2147483647", cache: "1", cycle: false })
+export const sales_entry_change_requests_id_seq = pgSequence("sales_entry_change_requests_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const assr_product_categories_id_seq = pgSequence("assr_product_categories_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "2147483647", cache: "1", cycle: false })
+export const client_errors_id_seq = pgSequence("client_errors_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "2147483647", cache: "1", cycle: false })
+export const phone_normalisation_backup_id_seq = pgSequence("phone_normalisation_backup_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const project_checklist_attachment_actions_id_seq = pgSequence("project_checklist_attachment_actions_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const tmp_sheet_capture_id_seq = pgSequence("tmp_sheet_capture_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "2147483647", cache: "1", cycle: false })
+export const table_layouts_id_seq = pgSequence("table_layouts_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
+export const ac_snapshot_runs_id_seq = pgSequence("ac_snapshot_runs_id_seq", {  startWith: "1", increment: "1", minValue: "1", maxValue: "9223372036854775807", cache: "1", cycle: false })
 
-// ── roles ──────────────────────────────────────────────────
-export const roles = pgTable("roles", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  description: text("description"),
-  permissions: text("permissions").notNull().default("[]"),
-  is_system: integer("is_system").notNull().default(0),
-  scope_to_pic: integer("scope_to_pic").notNull().default(0),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── push_devices (mig-pg 0266) — iOS push token registry ───
-export const push_devices = pgTable("push_devices", {
-  id: serial("id").primaryKey(),
-  user_id: integer("user_id").notNull(),
-  platform: text("platform").notNull().default("ios"),
-  token: text("token").notNull().unique(),
-  created_at: text("created_at").default(nowText),
-  last_seen_at: text("last_seen_at").default(nowText),
-  disabled_at: text("disabled_at"),
-  last_error: text("last_error"),
-  last_reminder_sent_on: text("last_reminder_sent_on"),
-});
-
-// ── role_page_access (mig 073) ─────────────────────────────
-export const role_page_access = pgTable(
-  "role_page_access",
-  {
-    role_id: integer("role_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
-);
-
-// ── departments ────────────────────────────────────────────
-export const departments = pgTable("departments", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  description: text("description"),
-  color: text("color").notNull().default("64748b"),
-  sort_order: integer("sort_order").notNull().default(0),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── projects ───────────────────────────────────────────────
-export const projects = pgTable("projects", {
-  // Multi-company (mig-pg 0093). Declared for the Drizzle-based readers
-  // (events / notifications / finance rollups); raw-SQL paths reference the
-  // column by name. Nullable in the model — the PG DEFAULT backfills.
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  code: text("code").unique(),
-  name: text("name").notNull(),
-  stage: text("stage").notNull().default("draft"),
-  status: text("status").notNull().default("pending"),
-  start_date: text("start_date"),
-  end_date: text("end_date"),
-  venue: text("venue"),
-  venue_address: text("venue_address"),
-  brand: text("brand"),
-  pic_id: integer("pic_id"),
-  created_by: integer("created_by"),
-  created_at: text("created_at").default(nowText),
-  updated_at: text("updated_at").default(nowText),
-  archived_at: text("archived_at"),
-  setup_start_at: text("setup_start_at"),
-  setup_end_at: text("setup_end_at"),
-  dismantle_start_at: text("dismantle_start_at"),
-  dismantle_end_at: text("dismantle_end_at"),
-  setup_driver_user_id: integer("setup_driver_user_id"),
-  setup_lorry_id: integer("setup_lorry_id"),
-  dismantle_driver_user_id: integer("dismantle_driver_user_id"),
-  dismantle_lorry_id: integer("dismantle_lorry_id"),
-  setup_helper_1_id: integer("setup_helper_1_id"),
-  setup_helper_2_id: integer("setup_helper_2_id"),
-  setup_helper_outsourced: integer("setup_helper_outsourced").notNull().default(0),
-  dismantle_helper_1_id: integer("dismantle_helper_1_id"),
-  dismantle_helper_2_id: integer("dismantle_helper_2_id"),
-  dismantle_helper_outsourced: integer("dismantle_helper_outsourced").notNull().default(0),
-});
-
-// ── project_phase_photos ───────────────────────────────────
-export const project_phase_photos = pgTable("project_phase_photos", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull(),
-  phase: text("phase").notNull(),
-  r2_key: text("r2_key").notNull(),
-  content_type: text("content_type"),
-  caption: text("caption"),
-  uploaded_by: integer("uploaded_by"),
-  uploaded_at: text("uploaded_at").notNull().default(nowText),
-});
-
-// ── project_brands ─────────────────────────────────────────
-export const project_brands = pgTable("project_brands", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  color: text("color").notNull().default("64748b"),
-  sort_order: integer("sort_order").notNull().default(0),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── user_brands (mig 049) ──────────────────────────────────
-export const user_brands = pgTable(
-  "user_brands",
-  {
-    user_id: integer("user_id").notNull(),
-    brand: text("brand").notNull(),
-    created_at: text("created_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.user_id, t.brand] }) }),
-);
-
-// ── user_departments (mig 0020) ────────────────────────────
-// Full set of departments a user belongs to. users.department_id stays the
-// PRIMARY; this carries the primary plus any extras (the primary is one row
-// here too). Replace-set on PATCH /api/users/:id, same shape as user_brands.
-export const user_departments = pgTable(
-  "user_departments",
-  {
-    user_id: integer("user_id").notNull(),
-    department_id: integer("department_id").notNull(),
-    created_at: text("created_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.user_id, t.department_id] }) }),
-);
-
-// ── project_activity ───────────────────────────────────────
-export const project_activity = pgTable("project_activity", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull(),
-  user_id: integer("user_id"),
-  action: text("action").notNull(),
-  from_value: text("from_value"),
-  to_value: text("to_value"),
-  note: text("note"),
-  created_at: text("created_at").default(nowText),
-  archived_at: text("archived_at"),
-});
-
-// ── project_reads (mig 045) ────────────────────────────────
-export const project_reads = pgTable(
-  "project_reads",
-  {
-    project_id: integer("project_id").notNull(),
-    user_id: integer("user_id").notNull(),
-    last_read_at: text("last_read_at").notNull(),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.project_id, t.user_id] }) }),
-);
-
-// ── sessions ───────────────────────────────────────────────
 export const sessions = pgTable("sessions", {
-  token: text("token").primaryKey(),
-  user_id: integer("user_id").notNull(),
-  expires_at: text("expires_at").notNull(),
-  created_at: text("created_at").default(nowText),
+	token: text().primaryKey().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	user_id: bigint({ mode: "number" }).notNull(),
+	expires_at: text().notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	origin: text(),
+}, (table) => [
+	index("idx_sessions_expires").using("btree", table.expires_at.asc().nullsLast().op("text_ops")),
+	index("idx_sessions_user").using("btree", table.user_id.asc().nullsLast().op("int8_ops")),
+]);
+
+export const departments = pgTable("departments", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "departments_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	name: text().notNull(),
+	description: text(),
+	color: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	sort_order: bigint({ mode: "number" }).notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
 });
 
-// ── invitations ────────────────────────────────────────────
-export const invitations = pgTable("invitations", {
-  id: serial("id").primaryKey(),
-  email: text("email").notNull(),
-  role_id: integer("role_id").notNull(),
-  token: text("token").notNull().unique(),
-  invited_by: integer("invited_by").notNull(),
-  expires_at: text("expires_at").notNull(),
-  accepted_at: text("accepted_at"),
-  created_at: text("created_at").default(nowText),
-  // Org dimensions carried by the invite + applied on accept (mig 094).
-  position_id: integer("position_id"),
-  department_id: integer("department_id"),
-  manager_id: integer("manager_id"),
-});
-
-// ── positions (mig 094) — staff org unit (department × position) ──
-export const positions = pgTable("positions", {
-  id: serial("id").primaryKey(),
-  department_id: integer("department_id"),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  level: integer("level").notNull().default(100),
-  sort_order: integer("sort_order").notNull().default(100),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── position_page_access (mig 094) — 4-level matrix (none/view/edit/full) ──
-export const position_page_access = pgTable(
-  "position_page_access",
-  {
-    position_id: integer("position_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.position_id, t.page_key] }) }),
-);
-
-// ── password_resets (mig 027) ──────────────────────────────
 export const password_resets = pgTable("password_resets", {
-  id: serial("id").primaryKey(),
-  user_id: integer("user_id").notNull(),
-  token: text("token").notNull().unique(),
-  requested_by: integer("requested_by"),
-  expires_at: text("expires_at").notNull(),
-  consumed_at: text("consumed_at"),
-  created_at: text("created_at").default(nowText),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "password_resets_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	user_id: bigint({ mode: "number" }).notNull(),
+	token: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	requested_by: bigint({ mode: "number" }),
+	expires_at: text().notNull(),
+	consumed_at: text(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+}, (table) => [
+	index("idx_pr_token").using("btree", table.token.asc().nullsLast().op("text_ops")),
+	index("idx_pr_user").using("btree", table.user_id.asc().nullsLast().op("int8_ops"), table.consumed_at.asc().nullsLast().op("int8_ops")),
+]);
+
+export const project_activity = pgTable("project_activity", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "project_activity_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	project_id: bigint({ mode: "number" }).notNull(),
+	action: text().notNull(),
+	from_value: text(),
+	to_value: text(),
+	note: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	user_id: bigint({ mode: "number" }),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	archived_at: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	company_id: bigint({ mode: "number" }).default(1).notNull(),
+}, (table) => [
+	index("idx_pact_project").using("btree", table.project_id.asc().nullsLast().op("int8_ops"), table.created_at.asc().nullsLast().op("int8_ops")),
+	index("idx_project_activity_company_id").using("btree", table.company_id.asc().nullsLast().op("int8_ops")),
+	index("idx_project_activity_project_created").using("btree", table.project_id.asc().nullsLast().op("int8_ops"), table.created_at.asc().nullsLast().op("int8_ops")),
+	foreignKey({
+			columns: [table.company_id],
+			foreignColumns: [companies.id],
+			name: "project_activity_company_id_fkey"
+		}),
+]);
+
+export const roles = pgTable("roles", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "roles_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	name: text().notNull(),
+	description: text(),
+	permissions: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	is_system: bigint({ mode: "number" }).notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	scope_to_pic: bigint({ mode: "number" }).notNull(),
 });
 
-// ── events ─────────────────────────────────────────────────
-export const events = pgTable("events", {
-  // Multi-company (mig-pg 0093) — see projects.company_id above.
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  type: text("type").notNull(),
-  title: text("title").notNull(),
-  event_date: text("event_date").notNull(),
-  address: text("address"),
-  status: text("status"),
-  notes: text("notes"),
-  created_by: integer("created_by"),
-  created_at: text("created_at").default(nowText),
-  updated_at: text("updated_at").default(nowText),
-});
-
-// ── lorries ────────────────────────────────────────────────
-export const lorries = pgTable("lorries", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  plate: text("plate").notNull(),
-  size: text("size"),
-  default_driver_user_id: integer("default_driver_user_id"),
-});
-
-// ── warehouses ─────────────────────────────────────────────
-export const warehouses = pgTable("warehouses", {
-  code: text("code").primaryKey(),
-  name: text("name").notNull(),
-});
-
-// ── trips ──────────────────────────────────────────────────
-export const trips = pgTable("trips", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  driver_user_id: integer("driver_user_id"),
-  lorry_id: integer("lorry_id"),
-  warehouse: text("warehouse"),
-  trip_date: text("trip_date").notNull(),
-  status: text("status").notNull(),
-  started_at: text("started_at"),
-  completed_at: text("completed_at"),
-});
-
-// ── trip_stops ─────────────────────────────────────────────
-export const trip_stops = pgTable("trip_stops", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  trip_id: integer("trip_id").notNull(),
-  sequence: integer("sequence").notNull(),
-  status: text("status").notNull(),
-  pod_photo_r2_key: text("pod_photo_r2_key"),
-  signature_r2_key: text("signature_r2_key"),
-  updated_at: text("updated_at").default(nowText),
-});
-
-// ── trip_locations ─────────────────────────────────────────
-export const trip_locations = pgTable("trip_locations", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  trip_id: integer("trip_id").notNull(),
-  lat: integer("lat").notNull(),
-  lng: integer("lng").notNull(),
-  accuracy: integer("accuracy"),
-  recorded_at: text("recorded_at").notNull(),
-});
-
-// ── sales_orders ───────────────────────────────────────────
-export const sales_orders = pgTable("sales_orders", {
-  company_id: bigint("company_id", { mode: "number" }),
-  doc_no: text("doc_no").primaryKey(),
-  doc_date: text("doc_date"),
-  ref: text("ref"),
-  branding: text("branding"),
-  debtor_name: text("debtor_name"),
-  phone: text("phone"),
-  sales_location: text("sales_location"),
-  sales_agent: text("sales_agent"),
-  region: text("region"),
-  local_total: integer("local_total"),
-  balance: integer("balance"),
-  remark2: text("remark2"),
-  remark3: text("remark3"),
-  remark4: text("remark4"),
-  /* AutoCount's own UDF field SO.UDF_PDate, mirrored verbatim by
-     services/pull.ts. NOT the ERP's Processing Date — that is exactly ONE
-     column, scm.mfg_sales_orders.internal_expected_dd, on a different table for
-     a different document. Renamed from `processing_date` in mig 0285 so the two
-     can never be confused again. Read by nothing today; kept because the mirror's
-     job is to be a faithful local copy of AutoCount for reconciliation. */
-  ac_udf_pdate: text("ac_udf_pdate"),
-  expiry_date: text("expiry_date"),
-  po_doc_no: text("po_doc_no"),
-  venue: text("venue"),
-  attention: text("attention"),
-  last_modified: text("last_modified"),
-  sync_status: text("sync_status"),
-  updated_at: text("updated_at"),
-  // Houzs-side recipient for auto-sent DO/invoice email; AutoCount debtor sync
-  // carries no email, so this is maintained manually (mig 098/0009).
-  customer_email: text("customer_email"),
-});
-
-// ── order_details ──────────────────────────────────────────
-export const order_details = pgTable("order_details", {
-  company_id: bigint("company_id", { mode: "number" }),
-  doc_no: text("doc_no").primaryKey(),
-  delivery_date: text("delivery_date"),
-  time_range: text("time_range"),
-  time_confirmed: integer("time_confirmed"),
-  lorry_plate: text("lorry_plate"),
-  driver_name: text("driver_name"),
-  driver_contact: text("driver_contact"),
-  days_left: integer("days_left"),
-  internal_purchasing: text("internal_purchasing"),
-  property_type: text("property_type"),
-  new_house_replacement: text("new_house_replacement"),
-  item_details: text("item_details"),
-  done_delivery: integer("done_delivery"),
-  consignment_no: text("consignment_no"),
-  eta_port: text("eta_port"),
-  estimate_delivery: text("estimate_delivery"),
-  m3: integer("m3"),
-  vessel_voyage: text("vessel_voyage"),
-  etd_port_klang: text("etd_port_klang"),
-  eta_destination: text("eta_destination"),
-  transporter_remarks: text("transporter_remarks"),
-  seafreight: integer("seafreight"),
-  local_charges: integer("local_charges"),
-  inland: integer("inland"),
-  agent_fee: integer("agent_fee"),
-  insurance: integer("insurance"),
-  total_cost: integer("total_cost"),
-  shipout_date: text("shipout_date"),
-  warehouse: text("warehouse"),
-  state: text("state"),
-  lat: integer("lat"),
-  lng: integer("lng"),
-  order_type: text("order_type"),
-  proposed_delivery_date: text("proposed_delivery_date"),
-  updated_at: text("updated_at"),
-});
-
-// ── purchase_orders ────────────────────────────────────────
-export const purchase_orders = pgTable("purchase_orders", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  doc_no: text("doc_no").notNull(),
-  doc_date: text("doc_date"),
-  creditor_code: text("creditor_code"),
-  creditor_name: text("creditor_name"),
-  item_code: text("item_code"),
-  item_description: text("item_description"),
-  remaining_qty: integer("remaining_qty"),
-  delivery_date: text("delivery_date"),
-  supplier_date1: text("supplier_date1"),
-  supplier_date2: text("supplier_date2"),
-  supplier_date3: text("supplier_date3"),
-  overdue_days: text("overdue_days"),
-  amount: integer("amount"),
-  unit_price: integer("unit_price"),
-  amount_source: text("amount_source"),
-  amount_updated_at: text("amount_updated_at"),
-  amount_updated_by: integer("amount_updated_by"),
-  updated_at: text("updated_at"),
-});
-
-// ── creditors ──────────────────────────────────────────────
-export const creditors = pgTable("creditors", {
-  company_id: bigint("company_id", { mode: "number" }),
-  creditor_code: text("creditor_code").primaryKey(),
-  company_name: text("company_name"),
-  desc2: text("desc2"),
-  email: text("email"),
-  phone1: text("phone1"),
-  mobile: text("mobile"),
-  tax_register_no: text("tax_register_no"),
-  currency_code: text("currency_code"),
-  type: text("type"),
-  type_description: text("type_description"),
-  purchase_agent: text("purchase_agent"),
-  purchase_agent_description: text("purchase_agent_description"),
-  updated_at: text("updated_at"),
-});
-
-// ── overdue_history ────────────────────────────────────────
-export const overdue_history = pgTable("overdue_history", {
-  id: serial("id").primaryKey(),
-  pull_date: text("pull_date").notNull(),
-  doc_no: text("doc_no").notNull(),
-  debtor_name: text("debtor_name"),
-  location: text("location"),
-  region: text("region"),
-  balance: integer("balance"),
-  original_expiry_date: text("original_expiry_date"),
-  extended_to: text("extended_to"),
-  remark4: text("remark4"),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── purchase_order_docs ────────────────────────────────────
-export const purchase_order_docs = pgTable("purchase_order_docs", {
-  company_id: bigint("company_id", { mode: "number" }),
-  doc_no: text("doc_no").primaryKey(),
-  doc_date: text("doc_date"),
-  ref: text("ref"),
-  creditor_code: text("creditor_code"),
-  creditor_name: text("creditor_name"),
-  cancelled: integer("cancelled"),
-  doc_status: text("doc_status"),
-  final_total: integer("final_total"),
-  local_ex_tax: integer("local_ex_tax"),
-  currency_code: text("currency_code"),
-  updated_at: text("updated_at"),
-});
-
-// ── project_finance ────────────────────────────────────────
-export const project_finance = pgTable("project_finance", {
-  project_id: integer("project_id").primaryKey(),
-  rental: integer("rental"),
-  total_sales: integer("total_sales"),
-  contractor_cost: integer("contractor_cost"),
-  license_fee: integer("license_fee"),
-  updated_at: text("updated_at"),
-});
-
-// ── project_checklist_sections (mig 050) ───────────────────
-export const project_checklist_sections = pgTable("project_checklist_sections", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull(),
-  name: text("name").notNull(),
-  sort_order: integer("sort_order").notNull().default(0),
-  display_mode: text("display_mode").notNull().default("list"),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── project_checklist_template_sections (mig 050) ──────────
-export const project_checklist_template_sections = pgTable(
-  "project_checklist_template_sections",
-  {
-    id: serial("id").primaryKey(),
-    template_id: integer("template_id").notNull(),
-    name: text("name").notNull(),
-    sort_order: integer("sort_order").notNull().default(0),
-    display_mode: text("display_mode").notNull().default("list"),
-    created_at: text("created_at").default(nowText),
-  },
-);
-
-// ── project_checklist_attachments (mig 050) ────────────────
-export const project_checklist_attachments = pgTable(
-  "project_checklist_attachments",
-  {
-    id: serial("id").primaryKey(),
-    item_id: integer("item_id").notNull(),
-    r2_key: text("r2_key").notNull(),
-    file_name: text("file_name").notNull(),
-    content_type: text("content_type"),
-    size_bytes: integer("size_bytes"),
-    uploaded_by: integer("uploaded_by"),
-    uploaded_at: text("uploaded_at").default(nowText),
-    archived_at: text("archived_at"),
-    // Per-attachment remark (owner 2026-07-16): each uploaded photo can carry
-    // its own caption, editable from the Defect List / photo checklist rows.
-    caption: text("caption"),
-  },
-);
-
-// ── project_checklist ──────────────────────────────────────
-export const project_checklist = pgTable("project_checklist", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull(),
-  section_id: integer("section_id"),
-  seq: integer("seq").notNull().default(0),
-  title: text("title").notNull(),
-  description: text("description"),
-  required_perm: text("required_perm"),
-  role_label: text("role_label"),
-  crew_visible: integer("crew_visible").notNull().default(0),
-  due_date: text("due_date"),
-  due_offset_days: integer("due_offset_days"),
-  owner_user_id: integer("owner_user_id"),
-  status: text("status").notNull().default("pending"),
-  evidence_r2_key: text("evidence_r2_key"),
-  completed_by: integer("completed_by"),
-  completed_at: text("completed_at"),
-  notes: text("notes"),
-  review_status: text("review_status"),
-  rejection_reason: text("rejection_reason"),
-  created_at: text("created_at").default(nowText),
-  updated_at: text("updated_at").default(nowText),
-});
-
-// ── project_checklist_templates ────────────────────────────
-export const project_checklist_templates = pgTable("project_checklist_templates", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── project_checklist_template_items (mig 050) ─────────────
-export const project_checklist_template_items = pgTable(
-  "project_checklist_template_items",
-  {
-    id: serial("id").primaryKey(),
-    template_id: integer("template_id").notNull(),
-    section_id: integer("section_id"),
-    seq: integer("seq").notNull(),
-    title: text("title").notNull(),
-    description: text("description"),
-    required_perm: text("required_perm"),
-    role_label: text("role_label"),
-    crew_visible: integer("crew_visible").notNull().default(0),
-    due_offset_days: integer("due_offset_days"),
-    requires_review: integer("requires_review").notNull().default(0),
-  },
-);
-
-// ── sales_entries (mig 041 / 051) ──────────────────────────
-export const sales_entries = pgTable("sales_entries", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  doc_no: text("doc_no"),
-  project_id: integer("project_id"),
-  ref_no: text("ref_no"),
-  customer_name: text("customer_name").notNull(),
-  customer_code: text("customer_code"),
-  customer_address: text("customer_address"),
-  customer_address_2: text("customer_address_2"),
-  customer_postcode: text("customer_postcode"),
-  customer_state: text("customer_state"),
-  customer_phone: text("customer_phone"),
-  customer_phone_2: text("customer_phone_2"),
-  customer_email: text("customer_email"),
-  amount: integer("amount").notNull(),
-  deposit_amount: integer("deposit_amount"),
-  deposit_payment_type: text("deposit_payment_type"),
-  currency: text("currency").notNull().default("MYR"),
-  occurred_at: text("occurred_at").notNull(),
-  /* Legacy native Sales module's own date (mig 070). NOT the SCM Sales Order's
-     Processing Date — a sales_entry has no SO row and none of the SO gates/locks.
-     The SO's Processing Date is scm.mfg_sales_orders.internal_expected_dd, and
-     that is the only column that concept may live in. Kept under this name
-     because a rename would silently drop the field from queued sales change
-     requests; see SO_FORM_TEXT_FIELDS in src/routes/sales.ts. */
-  processing_date: text("processing_date"),
-  delivery_date: text("delivery_date"),
-  status_2: text("status_2"),
-  venue: text("venue"),
-  warehouse: text("warehouse"),
-  branding: text("branding"),
-  po_doc_no: text("po_doc_no"),
-  payment_status: text("payment_status"),
-  source: text("source"),
-  remarks: text("remarks"),
-  notes: text("notes"),
-  status: text("status").notNull().default("draft"),
-  autocount_doc_no: text("autocount_doc_no"),
-  autocount_doc_type: text("autocount_doc_type"),
-  pushed_at: text("pushed_at"),
-  push_error: text("push_error"),
-  sales_person_id: integer("sales_person_id"),
-  created_by: integer("created_by").notNull(),
-  created_at: text("created_at").default(nowText),
-  updated_at: text("updated_at").default(nowText),
-  archived_at: text("archived_at"),
-});
-
-// ── sales_entry_items ──────────────────────────────────────
-export const sales_entry_items = pgTable("sales_entry_items", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  entry_id: integer("entry_id").notNull(),
-  line_no: integer("line_no").notNull().default(0),
-  item_code: text("item_code"),
-  item_description: text("item_description"),
-  remarks: text("remarks"),
-  qty: doublePrecision("qty").notNull().default(1),
-  unit_price: doublePrecision("unit_price").notNull().default(0),
-  amount: doublePrecision("amount").notNull().default(0),
-  group_tag: text("group_tag"),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── sales_entry_payments ───────────────────────────────────
-export const sales_entry_payments = pgTable("sales_entry_payments", {
-  company_id: bigint("company_id", { mode: "number" }),
-  id: serial("id").primaryKey(),
-  entry_id: integer("entry_id").notNull(),
-  paid_at: text("paid_at").notNull(),
-  payment_method: text("payment_method").notNull(),
-  amount: doublePrecision("amount").notNull(),
-  account_sheet: text("account_sheet"),
-  approval_code: text("approval_code"),
-  collected_by: text("collected_by"),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── project_finance_lines ──────────────────────────────────
-export const project_finance_lines = pgTable("project_finance_lines", {
-  id: serial("id").primaryKey(),
-  project_id: integer("project_id").notNull(),
-  kind: text("kind").notNull(),
-  category: text("category"),
-  description: text("description"),
-  amount: integer("amount"),
-  occurred_at: text("occurred_at"),
-  notes: text("notes"),
-  r2_key: text("r2_key"),
-  file_name: text("file_name"),
-  created_at: text("created_at").default(nowText),
-  created_by: integer("created_by"),
-  archived_at: text("archived_at"),
-  auto_source: text("auto_source"),
-});
-
-// ── project_cost_rates (mig 063) ───────────────────────────
-export const project_cost_rates = pgTable("project_cost_rates", {
-  id: serial("id").primaryKey(),
-  brand: text("brand").notNull().unique(),
-  transport_pct: integer("transport_pct").notNull().default(0),
-  merchandise_pct: integer("merchandise_pct").notNull().default(0),
-  commission_normal_pct: integer("commission_normal_pct").notNull().default(0),
-  commission_boost_pct: integer("commission_boost_pct"),
-  boost_min_gp_pct: integer("boost_min_gp_pct"),
-  boost_min_sales: integer("boost_min_sales"),
-  updated_at: text("updated_at").default(nowText),
-  updated_by: integer("updated_by"),
-});
-
-// ── sales_positions / tiers / reps (mig 067) ───────────────
-export const sales_positions = pgTable("sales_positions", {
-  id: serial("id").primaryKey(),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  level: integer("level").notNull().default(20),
-  sort_order: integer("sort_order").notNull().default(0),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").default(nowText),
-});
-
-export const sales_commission_tiers = pgTable("sales_commission_tiers", {
-  id: serial("id").primaryKey(),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  rate: integer("rate").notNull().default(0),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").default(nowText),
-});
-
-export const sales_reps = pgTable("sales_reps", {
-  id: serial("id").primaryKey(),
-  code: text("code").notNull().unique(),
-  name: text("name").notNull(),
-  phone: text("phone"),
-  email: text("email"),
-  nric: text("nric"),
-  position_id: integer("position_id"),
-  upline_id: integer("upline_id"),
-  upline_secondary_id: integer("upline_secondary_id"),
-  user_id: integer("user_id").unique(),
-  status: text("status").notNull().default("active"),
-  is_admin: integer("is_admin").notNull().default(0),
-  commission_rate: integer("commission_rate"),
-  commission_tier_id: integer("commission_tier_id"),
-  commission_min_rate: integer("commission_min_rate").notNull().default(0),
-  joined_on: text("joined_on"),
-  notes: text("notes"),
-  created_at: text("created_at").default(nowText),
-  updated_at: text("updated_at").default(nowText),
-  archived_at: text("archived_at"),
-  archived_by: integer("archived_by"),
-});
-
-export const sales_rep_commission_tiers = pgTable(
-  "sales_rep_commission_tiers",
-  {
-    id: serial("id").primaryKey(),
-    rep_id: integer("rep_id").notNull(),
-    threshold: integer("threshold").notNull().default(0),
-    rate: integer("rate").notNull().default(0),
-    sort_order: integer("sort_order").notNull().default(0),
-    created_at: text("created_at").default(nowText),
-  },
-);
-
-export const sales_rep_brands = pgTable(
-  "sales_rep_brands",
-  {
-    rep_id: integer("rep_id").notNull(),
-    brand: text("brand").notNull(),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.rep_id, t.brand] }) }),
-);
-
-export const sales_team_activity = pgTable("sales_team_activity", {
-  id: serial("id").primaryKey(),
-  rep_id: integer("rep_id").notNull(),
-  action: text("action").notNull(),
-  from_value: text("from_value"),
-  to_value: text("to_value"),
-  note: text("note"),
-  user_id: integer("user_id"),
-  created_at: text("created_at").default(nowText),
-});
-
-// ── project_sales_attendees (mig 087) ──────────────────────
-export const project_sales_attendees = pgTable(
-  "project_sales_attendees",
-  {
-    project_id: integer("project_id").notNull(),
-    sales_rep_id: integer("sales_rep_id").notNull(),
-    created_at: text("created_at").default(nowText),
-    created_by: integer("created_by"),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.project_id, t.sales_rep_id] }) }),
-);
-
-// ── companies (multi-company master; Phase 0a) ─────────
 export const companies = pgTable("companies", {
-  id: bigint("id", { mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
-  code: text("code").notNull().unique(),
-  name: text("name").notNull(),
-  is_active: integer("is_active").notNull().default(1),
-  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "companies_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	code: text().notNull(),
+	name: text().notNull(),
+	is_active: integer().default(1).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("companies_code_key").on(table.code),
+]);
+
+export const positions = pgTable("positions", {
+	id: serial().primaryKey().notNull(),
+	department_id: integer(),
+	slug: text().notNull(),
+	name: text().notNull(),
+	level: integer().default(100).notNull(),
+	sort_order: integer().default(100).notNull(),
+	active: integer().default(1).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.department_id],
+			foreignColumns: [departments.id],
+			name: "positions_department_id_fkey"
+		}),
+	unique("positions_slug_key").on(table.slug),
+]);
+
+export const project_finance_lines = pgTable("project_finance_lines", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "project_finance_lines_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	project_id: bigint({ mode: "number" }).notNull(),
+	kind: text().notNull(),
+	category: text().notNull(),
+	description: text(),
+	amount: doublePrecision().notNull(),
+	occurred_at: text(),
+	r2_key: text(),
+	file_name: text(),
+	mime_type: text(),
+	notes: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	created_by: bigint({ mode: "number" }),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	updated_at: text(),
+	archived_at: text(),
+	auto_source: text(),
+	company_id: integer(),
+}, (table) => [
+	index("idx_pfl_auto_source").using("btree", table.project_id.asc().nullsLast().op("text_ops"), table.auto_source.asc().nullsLast().op("text_ops")),
+	index("idx_pfl_category").using("btree", table.category.asc().nullsLast().op("text_ops")),
+	index("idx_pfl_company_kind").using("btree", table.company_id.asc().nullsLast().op("int4_ops"), table.kind.asc().nullsLast().op("int4_ops")),
+	index("idx_pfl_occurred").using("btree", sql`COALESCE(occurred_at, created_at)`),
+	index("idx_pfl_project").using("btree", table.project_id.asc().nullsLast().op("int8_ops"), table.kind.asc().nullsLast().op("int8_ops"), table.category.asc().nullsLast().op("text_ops")),
+]);
+
+export const projects = pgTable("projects", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "projects_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	code: text(),
+	name: text().notNull(),
+	stage: text().notNull(),
+	start_date: text(),
+	end_date: text(),
+	organizer: text(),
+	state: text(),
+	venue: text(),
+	venue_address: text(),
+	brand: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	event_type_id: bigint({ mode: "number" }),
+	booth_no: text(),
+	size_sqm: doublePrecision(),
+	notion_url: text(),
+	notes: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	created_by: bigint({ mode: "number" }),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	updated_at: text(),
+	archived_at: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	archived_by: bigint({ mode: "number" }),
+	setup_start_at: text(),
+	setup_end_at: text(),
+	dismantle_start_at: text(),
+	dismantle_end_at: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	setup_driver_user_id: bigint({ mode: "number" }),
+	setup_lorry_id: uuid(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	dismantle_driver_user_id: bigint({ mode: "number" }),
+	dismantle_lorry_id: uuid(),
+	banner_message: text(),
+	banner_tone: text(),
+	payment_status: text(),
+	payment_proof_r2_key: text(),
+	payment_proof_file_name: text(),
+	payment_notes: text(),
+	payment_updated_at: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	payment_updated_by: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	pic_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	setup_helper_1_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	setup_helper_2_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	setup_helper_outsourced: bigint({ mode: "number" }).default(0).notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	dismantle_helper_1_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	dismantle_helper_2_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	dismantle_helper_outsourced: bigint({ mode: "number" }).default(0).notNull(),
+	status: text().default('pending').notNull(),
+	setup_crew: text(),
+	dismantle_crew: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	company_id: bigint({ mode: "number" }).default(1).notNull(),
+	service_crew: text(),
+	schedule_remark: text(),
+}, (table) => [
+	index("idx_projects_archived").using("btree", table.archived_at.asc().nullsLast().op("text_ops")),
+	index("idx_projects_brand").using("btree", table.brand.asc().nullsLast().op("text_ops")),
+	index("idx_projects_company_id").using("btree", table.company_id.asc().nullsLast().op("int8_ops")),
+	index("idx_projects_payment").using("btree", table.payment_status.asc().nullsLast().op("text_ops")),
+	index("idx_projects_pic").using("btree", table.pic_id.asc().nullsLast().op("int8_ops")),
+	index("idx_projects_stage").using("btree", table.stage.asc().nullsLast().op("text_ops")),
+	index("idx_projects_start").using("btree", table.start_date.asc().nullsLast().op("text_ops")),
+	index("idx_projects_status").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	index("trgm_proj_brand").using("gin", table.brand.asc().nullsLast().op("gin_trgm_ops")),
+	index("trgm_proj_code").using("gin", table.code.asc().nullsLast().op("gin_trgm_ops")),
+	index("trgm_proj_name").using("gin", table.name.asc().nullsLast().op("gin_trgm_ops")),
+	index("trgm_proj_organizer").using("gin", table.organizer.asc().nullsLast().op("gin_trgm_ops")),
+	index("trgm_proj_venue").using("gin", table.venue.asc().nullsLast().op("gin_trgm_ops")),
+	foreignKey({
+			columns: [table.company_id],
+			foreignColumns: [companies.id],
+			name: "projects_company_id_fkey"
+		}),
+]);
+
+export const invitations = pgTable("invitations", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "invitations_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	email: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	role_id: bigint({ mode: "number" }).notNull(),
+	token: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	invited_by: bigint({ mode: "number" }).notNull(),
+	expires_at: text().notNull(),
+	accepted_at: text(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	position_id: integer(),
+	department_id: integer(),
+	manager_id: integer(),
+}, (table) => [
+	index("idx_invitations_email").using("btree", table.email.asc().nullsLast().op("text_ops")),
+	index("idx_invitations_token").using("btree", table.token.asc().nullsLast().op("text_ops")),
+]);
+
+export const sales_entries = pgTable("sales_entries", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "sales_entries_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	project_id: bigint({ mode: "number" }),
+	customer_name: text().notNull(),
+	customer_code: text(),
+	amount: doublePrecision().notNull(),
+	currency: text().notNull(),
+	occurred_at: text().notNull(),
+	notes: text(),
+	status: text().default('draft').notNull(),
+	autocount_doc_no: text(),
+	autocount_doc_type: text(),
+	pushed_at: text(),
+	push_error: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	created_by: bigint({ mode: "number" }).notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	updated_at: text(),
+	archived_at: text(),
+	ref_no: text(),
+	deposit_amount: doublePrecision(),
+	deposit_payment_type: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	sales_person_id: bigint({ mode: "number" }),
+	customer_address: text(),
+	customer_phone: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	sales_rep_id: bigint({ mode: "number" }),
+	doc_no: text(),
+	processing_date: text(),
+	delivery_date: text(),
+	status_2: text(),
+	customer_address_2: text(),
+	customer_postcode: text(),
+	customer_state: text(),
+	customer_phone_2: text(),
+	customer_email: text(),
+	venue: text(),
+	warehouse: text(),
+	branding: text(),
+	po_doc_no: text(),
+	payment_status: text(),
+	source: text(),
+	remarks: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	company_id: bigint({ mode: "number" }).default(1).notNull(),
+}, (table) => [
+	index("idx_sales_entries_by_project").using("btree", table.project_id.asc().nullsLast().op("text_ops"), table.occurred_at.desc().nullsFirst().op("int8_ops")),
+	index("idx_sales_entries_by_user").using("btree", table.created_by.asc().nullsLast().op("text_ops"), table.occurred_at.desc().nullsFirst().op("text_ops")),
+	index("idx_sales_entries_company_id").using("btree", table.company_id.asc().nullsLast().op("int8_ops")),
+	index("idx_sales_entries_customer_phone").using("btree", table.customer_phone.asc().nullsLast().op("text_ops")),
+	uniqueIndex("idx_sales_entries_doc_no").using("btree", table.doc_no.asc().nullsLast().op("text_ops")).where(sql`(doc_no IS NOT NULL)`),
+	index("idx_sales_entries_occurred").using("btree", table.occurred_at.desc().nullsFirst().op("text_ops")),
+	index("idx_sales_entries_ref_no").using("btree", table.ref_no.asc().nullsLast().op("text_ops")),
+	index("idx_sales_entries_rep").using("btree", table.sales_rep_id.asc().nullsLast().op("int8_ops")),
+	index("idx_sales_entries_sales_person").using("btree", table.sales_person_id.asc().nullsLast().op("int8_ops"), table.occurred_at.desc().nullsFirst().op("text_ops")),
+	index("idx_sales_entries_status").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.company_id],
+			foreignColumns: [companies.id],
+			name: "sales_entries_company_id_fkey"
+		}),
+]);
+
+export const project_brands = pgTable("project_brands", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "project_brands_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	name: text().notNull(),
+	color: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	sort_order: bigint({ mode: "number" }).notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	active: bigint({ mode: "number" }).default(1).notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	logo_r2_key: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	company_id: bigint({ mode: "number" }).default(1).notNull(),
+}, (table) => [
+	index("idx_project_brands_company_id").using("btree", table.company_id.asc().nullsLast().op("int8_ops")),
+	foreignKey({
+			columns: [table.company_id],
+			foreignColumns: [companies.id],
+			name: "project_brands_company_id_fkey"
+		}),
+]);
+
+export const users = pgTable("users", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity({ name: "users_id_seq", startWith: 1, increment: 1, minValue: 1, maxValue: 9223372036854775807, cache: 1 }),
+	email: text().notNull(),
+	name: text(),
+	password_hash: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	role_id: bigint({ mode: "number" }).notNull(),
+	status: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	invited_by: bigint({ mode: "number" }),
+	invited_at: text(),
+	joined_at: text(),
+	last_login_at: text(),
+	last_seen_at: text(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	user_type: text(),
+	phone: text(),
+	ic_number: text(),
+	license_no: text(),
+	license_expiry: text(),
+	emergency_contact_name: text(),
+	emergency_contact_phone: text(),
+	base_salary: doublePrecision(),
+	trip_allowance_rate: doublePrecision(),
+	ot_rate: doublePrecision(),
+	max_continuous_hours: doublePrecision(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	manager_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	department_id: bigint({ mode: "number" }),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	points_balance: bigint({ mode: "number" }).default(0).notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	gifting_balance: bigint({ mode: "number" }).default(0).notNull(),
+	gifting_reset_at: text(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	current_streak: bigint({ mode: "number" }).default(0).notNull(),
+	profile_pic_r2_key: text(),
+	company_phone: text(),
+	position_id: integer(),
+	totp_secret: text(),
+	totp_enabled: integer().default(0).notNull(),
+	totp_enrolled_at: text(),
+	totp_backup_codes: text(),
+	status_reason: text(),
+	division: text(),
+	email_alias: text(),
+	assr_email_muted: integer().default(0).notNull(),
+	last_path: text(),
+}, (table) => [
+	index("idx_users_department").using("btree", table.department_id.asc().nullsLast().op("int8_ops")),
+	index("idx_users_last_seen").using("btree", table.last_seen_at.asc().nullsLast().op("text_ops")),
+	index("idx_users_manager").using("btree", table.manager_id.asc().nullsLast().op("int8_ops")),
+	index("idx_users_position").using("btree", table.position_id.asc().nullsLast().op("int4_ops")),
+	index("idx_users_role").using("btree", table.role_id.asc().nullsLast().op("int8_ops")),
+	index("idx_users_status").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	index("idx_users_type").using("btree", table.user_type.asc().nullsLast().op("text_ops")),
+	index("trgm_users_email").using("gin", table.email.asc().nullsLast().op("gin_trgm_ops")),
+	index("trgm_users_name").using("gin", table.name.asc().nullsLast().op("gin_trgm_ops")),
+	foreignKey({
+			columns: [table.position_id],
+			foreignColumns: [positions.id],
+			name: "users_position_id_fkey"
+		}),
+]);
+
+export const push_devices = pgTable("push_devices", {
+	id: serial().primaryKey().notNull(),
+	user_id: integer().notNull(),
+	platform: text().default('ios').notNull(),
+	token: text().notNull(),
+	created_at: text().default(sql`to_char((now() AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD HH24:MI:SS'::text)`).notNull(),
+	last_seen_at: text().default(sql`to_char((now() AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD HH24:MI:SS'::text)`).notNull(),
+	disabled_at: text(),
+	last_error: text(),
+	last_reminder_sent_on: text(),
+}, (table) => [
+	index("idx_push_devices_user").using("btree", table.user_id.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.user_id],
+			foreignColumns: [users.id],
+			name: "push_devices_user_id_fkey"
+		}).onDelete("cascade"),
+	unique("push_devices_token_key").on(table.token),
+	check("push_devices_platform_check", sql`platform = 'ios'::text`),
+]);
+
+export const user_departments = pgTable("user_departments", {
+	user_id: integer().notNull(),
+	department_id: integer().notNull(),
+	created_at: text().default(sql`to_char((now() AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD HH24:MI:SS'::text)`),
+}, (table) => [
+	index("idx_user_departments_dept").using("btree", table.department_id.asc().nullsLast().op("int4_ops")),
+	primaryKey({ columns: [table.user_id, table.department_id], name: "user_departments_pkey"}),
+]);
+
+export const project_reads = pgTable("project_reads", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	user_id: bigint({ mode: "number" }).notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	project_id: bigint({ mode: "number" }).notNull(),
+	last_read_at: text(),
+}, (table) => [
+	index("idx_project_reads_user").using("btree", table.user_id.asc().nullsLast().op("int8_ops"), table.last_read_at.desc().nullsFirst().op("int8_ops")),
+	primaryKey({ columns: [table.user_id, table.project_id], name: "project_reads_pkey"}),
+]);
+
+export const user_brands = pgTable("user_brands", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	user_id: bigint({ mode: "number" }).notNull(),
+	brand: text().notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+}, (table) => [
+	index("idx_user_brands_brand").using("btree", table.brand.asc().nullsLast().op("text_ops")),
+	primaryKey({ columns: [table.user_id, table.brand], name: "user_brands_pkey"}),
+]);
+
+export const role_page_access = pgTable("role_page_access", {
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	role_id: bigint({ mode: "number" }).notNull(),
+	page_key: text().notNull(),
+	level: text().notNull(),
+	created_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'::text)`),
+	updated_at: text(),
+}, (table) => [
+	index("idx_role_page_access_role").using("btree", table.role_id.asc().nullsLast().op("int8_ops")),
+	primaryKey({ columns: [table.role_id, table.page_key], name: "role_page_access_pkey"}),
+]);
+
+export const position_page_access = pgTable("position_page_access", {
+	position_id: integer().notNull(),
+	page_key: text().notNull(),
+	level: text().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: text().default(sql`to_char(timezone('UTC'::text, now()), 'YYYY-MM-DD HH24:MI:SS'::text)`).notNull(),
+}, (table) => [
+	index("idx_position_page_access_position").using("btree", table.position_id.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.position_id],
+			foreignColumns: [positions.id],
+			name: "position_page_access_position_id_fkey"
+		}).onDelete("cascade"),
+	primaryKey({ columns: [table.position_id, table.page_key], name: "position_page_access_pkey"}),
+	check("position_page_access_level_check", sql`level = ANY (ARRAY['none'::text, 'view'::text, 'edit'::text, 'full'::text])`),
+]);

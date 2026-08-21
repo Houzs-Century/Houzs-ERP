@@ -1,0 +1,82 @@
+name: Schema artifact check (read-only)
+
+# Answers "does backend/src/db/schema.pg.ts still describe production?" and
+# regenerates it, without anyone opening a SQL console.
+#
+# WHY BOTH HALVES EXIST. The PR path already runs
+# `npm --prefix backend run audit:schema-artifact`, which compares the artifact
+# against src/db/migrations-pg — the tree deploy.yml applies — and needs no
+# database. That catches a column a MIGRATION added, which is how
+# project_brands.company_id (0093) and .logo_r2_key (0069) went missing.
+#
+# It cannot catch DDL applied out of band, and out-of-band DDL is documented to
+# exist here: dump-scm-schema.yml records that `DRAFT` is a live value of
+# mfg_so_status present in neither SQL tree, and mig 0106 says the DB, not the
+# repo, is ground truth for several objects. Only a read of the real catalog
+# sees that, and only Actions holds DATABASE_URL — so it runs here and nobody
+# handles the production credential (CLAUDE.md: never ask the owner to run a
+# query, build the check instead).
+#
+# `regenerate` uploads a candidate schema.pg.ts as an artifact for a human to
+# commit. It does NOT push: the file is code, and code goes through a PR.
+#
+# Strictly read-only. `drizzle-kit pull` reads the catalog; the checker issues
+# SELECTs only. No DDL, no writes, no transaction. drizzle-kit is NEVER the
+# migration runner here — the .sql files in src/db/migrations-pg are the only
+# thing that changes production.
+#
+# Manual trigger only. A production DB read must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      regenerate:
+        description: "Also run drizzle-kit pull and upload a candidate schema.pg.ts"
+        required: false
+        default: false
+        type: boolean
+
+# Own concurrency group - touches nothing, must never queue behind or displace
+# a release, and must not share the deploy's group.
+concurrency:
+  group: schema-artifact-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      - name: Artifact vs the LIVE catalog
+        run: npm run check:schema-artifact:live
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (soak-gate-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Regenerate a candidate artifact
+        if: inputs.regenerate
+        run: node scripts/gen-schema-artifact.mjs --out ../out/schema.pg.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.regenerate
+        with:
+          name: generated-schema
+          path: out/schema.pg.ts
+          if-no-files-found: error
+          retention-days: 14

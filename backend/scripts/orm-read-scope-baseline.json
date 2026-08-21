@@ -1,0 +1,14 @@
+{
+  "//": [
+    "GRANDFATHER BASELINE for backend/scripts/check-orm-read-scope.mjs --check.",
+    "Each key is one <route file> :: <METHOD path> :: <table> whose DRIZZLE statement",
+    "names a company-scoped table with no company predicate. This is DEBT, not the",
+    "standard: a NEW one is BLOCKED because it is not in this list. The list may only",
+    "SHRINK - --update refuses to add a key, exactly as lint-ratchet refuses to raise",
+    "a ceiling. To clear one: add the predicate, or annotate the statement",
+    "// company-scope: <why> if it is deliberately global."
+  ],
+  "unscoped": [
+    "backend/src/routes/users.ts :: PUT /:id/brands :: project_brands"
+  ]
+}

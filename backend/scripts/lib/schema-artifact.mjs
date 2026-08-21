@@ -35,13 +35,13 @@ const TABLE_RE = /export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*pgTable\(\s*["'`]([a
    IS the column name. Reading only the first shape would see zero columns in a
    regenerated file - a clean run over nothing. */
 const COLUMN_RE = new RegExp(
-  String.raw`^\s{2,}(?:"([\w$]+)"|([A-Za-z_$][\w$]*))\s*:\s*(` +
+  String.raw`^[ 	]+(?:"([\w$]+)"|([A-Za-z_$][\w$]*))\s*:\s*(` +
     BUILDERS.join("|") +
     String.raw`)\s*\(\s*(?:["'\x60]([a-z_0-9]+)["'\x60])?`,
 );
 /* Catches a builder this file does not know about, so a new column type cannot
    silently drop a column out of the census. */
-const UNKNOWN_RE = /^\s{2,}(?:"[\w$]+"|[A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\(/;
+const UNKNOWN_RE = /^[ 	]+(?:"[\w$]+"|[A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\(/;
 
 export function parseSchemaArtifact(src) {
   const tables = new Map();
@@ -119,10 +119,14 @@ export const FIXTURE = [
   "  (t) => [primaryKey({ columns: [t.alpha_id] })],",
   ");",
   "",
+  /* TAB-INDENTED, one tab, no explicit column name — this is exactly what
+     `drizzle-kit pull` emits, and the first version of this parser required two
+     or more whitespace characters, so it saw ZERO columns in a regenerated
+     file and every check built on it reported an empty table set. */
   'export const gamma = pgTable("gamma", {',
-  "  company_id: bigint({ mode: \"number\" }).notNull(),",
-  "  logo_r2_key: text(),",
-  '  weird: mysteryType("weird"),',
+  '\tcompany_id: bigint({ mode: "number" }).notNull(),',
+  "\tlogo_r2_key: text(),",
+  '\tweird: mysteryType("weird"),',
   "});",
   "",
 ].join("\n");

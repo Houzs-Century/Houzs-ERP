@@ -120,6 +120,11 @@ app.get("/", async (c) => {
       project_start_date: projects.start_date,
       project_end_date: projects.end_date,
     })
+    // company-scope: the predicate is `...scopeConds` (inArray(projects.company_id,
+    // allowedCo) at :76), spread into feedConds at :89 and applied to THIS query
+    // by `.where(and(...feedConds))` at :145. It lands on a later statement
+    // because the chain is split by `.$dynamic()`, so a statement-scoped scan
+    // cannot see it. Verified 2026-08-21.
     .from(project_activity)
     .innerJoin(projects, eq(projects.id, project_activity.project_id))
     .leftJoin(users, eq(users.id, project_activity.user_id))
