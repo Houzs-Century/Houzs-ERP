@@ -162,6 +162,73 @@ try {
     .filter((r) => String(r.so_status).toUpperCase() !== "DELIVERED")
     .reduce((n, r) => n + Number(r.sales_orders), 0);
 
+  // ── 3b. WHY IS ANY OF THEM NOT DELIVERED? ────────────────────────────────
+  // The first dispatch (run 32472511532) returned 15 SOs DELIVERED and 10 still
+  // CONFIRMED, which CONTRADICTS the code reading — so-delivery-sync counts a
+  // DISPATCHED DO as delivered. A contradiction is a finding, not something to
+  // bridge, and there are two candidate explanations that lead to opposite
+  // conclusions:
+  //
+  //   PARTIAL   — the delivery covered only part of the order. syncSoDelivered
+  //               advances the SO only when EVERY deliverable line is fully
+  //               covered, so a CONFIRMED SO here is the rule working. Nothing
+  //               is wrong.
+  //   FULL      — every line is covered and the SO still reads CONFIRMED. Then
+  //               the sync did not run (or ran and did not stick) and there IS
+  //               something behind these rows.
+  //
+  // So: for each Sales Order behind a DISPATCHED DO that is NOT yet DELIVERED,
+  // compare ordered qty against delivered qty line by line. Cancelled SO lines
+  // are excluded, matching every other coverage engine in the codebase.
+  console.log("");
+  console.log("── 3b. the not-yet-DELIVERED ones: partial delivery, or fully covered? ──");
+  const coverage = await pg`
+    WITH target_so AS (
+      SELECT DISTINCT so.id, so.doc_no, so.company_id, so.status::text AS so_status
+        FROM scm.delivery_orders d
+        JOIN scm.mfg_sales_orders so
+          ON so.doc_no = d.so_doc_no AND so.company_id = d.company_id
+       WHERE d.status::text = 'DISPATCHED'
+         AND upper(so.status::text) <> 'DELIVERED'
+    ),
+    delivered AS (
+      SELECT doi.so_item_id, SUM(doi.qty)::numeric AS delivered_qty
+        FROM scm.delivery_order_items doi
+        JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
+       WHERE doi.so_item_id IS NOT NULL
+         AND upper(COALESCE(d.status::text, '')) NOT IN ('DRAFT', 'LOADED', 'CANCELLED')
+       GROUP BY doi.so_item_id
+    )
+    SELECT t.doc_no,
+           t.so_status,
+           COUNT(soi.id)::int                                                  AS lines,
+           COUNT(*) FILTER (WHERE COALESCE(del.delivered_qty, 0) >= soi.qty)::int AS lines_covered,
+           SUM(soi.qty)::numeric                                               AS ordered_qty,
+           SUM(COALESCE(del.delivered_qty, 0))::numeric                        AS delivered_qty
+      FROM target_so t
+      JOIN scm.mfg_sales_order_items soi
+        ON soi.doc_no = t.doc_no AND soi.cancelled = false
+      LEFT JOIN delivered del ON del.so_item_id = soi.id
+     GROUP BY t.doc_no, t.so_status
+     ORDER BY t.doc_no
+  `;
+  let fullyCoveredButNotDelivered = 0;
+  if (coverage.length === 0) {
+    console.log("   (none — every Sales Order behind a DISPATCHED DO reads DELIVERED)");
+  } else {
+    console.log("   SO doc_no        status      lines  covered  ordered  delivered  verdict");
+    for (const r of coverage) {
+      const full = Number(r.lines_covered) === Number(r.lines);
+      if (full) fullyCoveredButNotDelivered += 1;
+      console.log(
+        `   ${String(r.doc_no).padEnd(16)} ${String(r.so_status).padEnd(11)}` +
+          `${String(r.lines).padStart(5)}${String(r.lines_covered).padStart(9)}` +
+          `${String(r.ordered_qty).padStart(9)}${String(r.delivered_qty).padStart(11)}  ` +
+          (full ? "FULLY COVERED — the sync did not advance it" : "partial — sync correctly waiting"),
+      );
+    }
+  }
+
   // ── 4. WHAT THE CLOSED-ONLY MACHINERY SKIPS ──────────────────────────────
   console.log("");
   console.log("── 4. proof-of-delivery evidence on the DISPATCHED ones ──");
@@ -221,7 +288,9 @@ try {
       ? "No delivery order is sitting at DISPATCHED today. Whatever was seen has since moved or was measured differently — re-read section 1 before repeating the figure."
       : soNotDelivered === 0
         ? `${dispatched} delivery order(s) sit at DISPATCHED, and EVERY Sales Order behind them already reads DELIVERED. The order side is finished; what is outstanding is the delivery document's own closing tick, not the sale.`
-        : `${dispatched} delivery order(s) sit at DISPATCHED, and ${soNotDelivered} Sales Order(s) behind them do NOT read DELIVERED. That contradicts so-delivery-sync counting a DISPATCHED DO as delivered — read section 3 before drawing any conclusion from the code.`,
+        : fullyCoveredButNotDelivered === 0
+          ? `${dispatched} delivery order(s) sit at DISPATCHED. ${soNotDelivered} Sales Order(s) behind them still read a pre-DELIVERED status, and section 3b shows EVERY ONE of those is a PARTIAL delivery — lines still undelivered. That is so-delivery-sync working, not failing: it advances an order only when every line is covered. Nothing here is stuck.`
+          : `${dispatched} delivery order(s) sit at DISPATCHED, and ${fullyCoveredButNotDelivered} Sales Order(s) are FULLY COVERED yet still not DELIVERED. Partial delivery does not explain those — the sync did not advance them. Read section 3b; this is a real finding, separate from the DISPATCHED question.`,
   );
   process.exit(0);
 } catch (e) {
