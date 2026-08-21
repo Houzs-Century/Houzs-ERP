@@ -297,6 +297,18 @@ predicate and dropped both `company_id` and the `projects.archived_at IS NULL`
 join, so the row list you get by clicking a cost bucket could not sum to the
 bucket. If you add a filter, add it to the fragment.
 
+**The company of a cost line is its PROJECT's (2026-08-21).** `projectCostFrom`
+scopes on `p.company_id`, not on `project_finance_lines.company_id`. That column
+is a denormalised copy added by mig 0170 and two writers never fill it —
+`services/projectCostRates.ts` stamps it on INSERT only, so an auto row created
+before 0170 keeps NULL through every later UPDATE, and the historical FAIR PNL
+ledger seeds were written without it. Filtering on the copy DROPPED those rows
+from `/api/finance/pnl` while `/projects/finance/by-project` and
+`/projects/analytics/profitability`, which have always scoped on `p.company_id`,
+counted them: measured on production 85 live cost lines carrying NULL, worth
+RM 1,453,336.94, and ZERO lines whose copy disagreed with their project. The
+column stays as provenance; it is not the scoping authority.
+
 **`GET /finance/by-project` date semantics** (owner decision 2026-08-13): the
 `date_from`/`date_to` range filters the SUMs *and* the rows — a project with no
 non-archived line inside the window is dropped from the result, not rendered as
