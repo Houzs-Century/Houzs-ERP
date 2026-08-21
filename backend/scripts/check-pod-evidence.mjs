@@ -51,7 +51,7 @@
 // would be invisible to it, and so would a signature stored in either of the
 // two OTHER tables in this database that carry proof-of-delivery columns.
 //
-// Five sections now, and each exists because the previous one's successful
+// Six sections now, and each exists because the previous one's successful
 // result would ALSO be true of something else:
 //
 //   1  closed delivery orders, by company and status   (the original question)
@@ -65,6 +65,9 @@
 //   5  every closed row listed in closing order, with its company NAME — the
 //      spread of the closing timestamps separates many doorstep deliveries
 //      from one person clearing a backlog from a desk
+//   6  PENDING POD_CHASE proposals — the one thing in this system that
+//      CONSUMES these columns rather than writing them, so a gap that can
+//      never be filled is visible as noise reaching a human, not inferred
 //
 // What NONE of them can tell you: which of the five closing screens was used.
 // The status route writes no audit row, so that fact is not in this database.
@@ -111,7 +114,7 @@ try {
      twelve closed rows were not carried in already-closed either. They were
      created DISPATCHED and flipped to DELIVERED in a single minute on
      2026-07-24 by backfill-2990-delivered-dos.mjs, whose own header records
-     the owner ruling behind it. Sections 2 to 5 below print the evidence
+     the owner ruling behind it. Sections 2 to 6 below print the evidence
      rather than asking anyone to believe this paragraph. */
   const rows = await pg`
     SELECT company_id,
@@ -365,6 +368,42 @@ try {
     `CLOSED BY A PERSON, upper bound: ${reachable} of ${closing.closed} closed delivery orders ` +
       `were not created already-closed by an import — those are the only ones a capture screen could have covered.`,
   );
+
+  /* ── SECTION 6 — IS ANYBODY BEING CHASED FOR EVIDENCE THAT CANNOT EXIST? ───
+     Exactly one thing in this system CONSUMES these columns rather than writing
+     them: the Delivery Agent's POD_CHASE proposal
+     (src/services/agents/delivery-agent.ts), which lists deliveries closed
+     between 1 and 90 days ago carrying neither a photo nor a signature, and is
+     ON by default.
+
+     Every closed delivery in this database qualifies, and none of them can ever
+     be satisfied — they were closed by a repair script, so no driver was ever
+     at a door to sign anything. Whether that reaches a human is not something
+     to reason about: count the PENDING rows.
+
+     Guarded on to_regclass and reported as its own outcome, because the agent
+     tables arrive by their own migration and "the table is not here" is an
+     answer, not a broken check. */
+  const [{ props }] = await pg`
+    SELECT to_regclass('public.delivery_agent_proposals')::text AS props
+  `;
+  console.log("\nIS ANYBODY BEING CHASED FOR IT?");
+  if (props) {
+    const chase = await pg`
+      SELECT status::text AS status, count(*)::int AS rows
+        FROM public.delivery_agent_proposals
+       WHERE kind = 'POD_CHASE'
+       GROUP BY status::text
+       ORDER BY status::text
+    `;
+    if (chase.length === 0) {
+      console.log("  delivery_agent_proposals  no POD_CHASE proposal has ever been raised");
+    } else {
+      for (const r of chase) console.log(`  POD_CHASE ${String(r.status).padEnd(12)} ${r.rows}`);
+    }
+  } else {
+    console.log("  delivery_agent_proposals  — table not present on this database");
+  }
 
   /* THE NUMBER IS THE OUTPUT, NOT A GATE. A non-zero count here is a fact about
      history, not a regression introduced by whoever ran this — failing the job
