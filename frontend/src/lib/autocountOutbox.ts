@@ -1384,14 +1384,13 @@ export interface AcDocSplit {
  * this only gets worse — every refusal that is ever put right leaves one of
  * these behind forever.
  *
- * @param state the filter in force. When it IS `requeued` the reader has
- *   ASKED for the history, so it is the list and nothing is folded. Required
- *   rather than defaulted: a caller that forgot it would fold away the very
- *   documents the Replaced chip exists to show, and answer the chip with an
- *   empty page.
+ * The 2026-08-21 four-tab change dropped the "requeued" tab, so there is no
+ * longer a filter that asks for the replaced history AS a list. Replaced
+ * documents always fold under their live row and are reached through the
+ * Replaced disclosure, never a tab — so the split no longer depends on the
+ * filter in force, and takes no state.
  */
-export function acSplitReplaced(groups: AcDocGroup[], state: AcFilterState): AcDocSplit {
-  if (state === "requeued") return { live: groups, replaced: [] };
+export function acSplitReplaced(groups: AcDocGroup[]): AcDocSplit {
   return {
     live: groups.filter((g) => !acIsReplaced(g)),
     replaced: groups.filter(acIsReplaced),
