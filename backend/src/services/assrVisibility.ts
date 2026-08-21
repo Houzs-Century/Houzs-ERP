@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
 import { isDirectorUser } from "./pmsAccess";
-import { subtreeUserIds } from "./orgScope";
+import { subtreeUserIds, agentNamesForUserIds } from "./orgScope";
 
 /**
  * WHO may see WHICH service case, and what gets stripped from it.
@@ -140,6 +140,107 @@ export function assrVisibilityPredicateSql(
     ` OR ${doc} NOT IN (${erpDocs})` +
     ` OR ${doc} IN (${myErpDocs})`
   );
+}
+
+/**
+ * WHICH cases land in a caller's "My Cases" — as ONE SQL boolean expression.
+ *
+ * ── THE RULE (owner ruling 2026-08-21)
+ *
+ * 「如果是他开的 就算不是他as agent它也可以看啊 … 那就是他submit就代表他认领这个
+ * case了啊」 — a case a person RAISED is theirs, whether or not the order names
+ * them as the sales agent. The reasoning is the load-bearing half: AutoCount's
+ * agent data is unreliable, which is exactly why AutoCount-sourced orders were
+ * opened to every Houzs staff member to raise a case on (see
+ * `assrVisibilityPredicateSql` above and docs/SERVICE-CASE-VISIBILITY-DECISION.md).
+ * Once anyone may raise the case, SUBMITTING IS CLAIMING.
+ *
+ * ── THE TWO ARMS, AND WHY BOTH
+ *
+ *   `created_by IN (subtree ids)`  the ruling. Self + downline BY ID (the
+ *                                  pyramid rule stands — a manager sees their
+ *                                  reps' cases), so nothing depends on spelling.
+ *   `LOWER(sales_agent) LIKE …`    the LEGACY reach, kept.
+ *
+ * The name arm is UNIONED, never replaced, and that is a measurement, not a
+ * preference. Census run 32463589829 against production, 2026-08-21:
+ * 862 non-archived cases, 856 with a `created_by`, but **1,113 user→case pairs
+ * across 28 users are reachable ONLY by the free-text name** — overwhelmingly a
+ * case OFFICE staff raised on a rep's behalf (`created_by` = the office user,
+ * `sales_agent` = the rep). Dropping the name arm would have taken those cases
+ * out of the reps' lists. The creator arm ADDS 2,359 pairs across 20 users.
+ *
+ * The name match remains as brittle as it ever was — a rename or a stray space
+ * still breaks it. That is the point of the creator arm: every case raised in
+ * the ERP from here on is keyed by id and cannot be lost that way. The name arm
+ * only has to keep reaching what is already there.
+ *
+ * ── SHAPE
+ *
+ * Ids are INLINED after being re-validated as positive integers, the same
+ * justification `assrVisibilityPredicateSql` states (they come from OUR users
+ * master via `subtreeUserIds`). Names are BOUND — they are user-controlled text.
+ * `null` means "no arm can match anything": the caller must return an empty
+ * list, never an unfiltered query.
+ */
+export function myCasesPredicateSql(
+  ids: number[],
+  agentNames: string[],
+  prefix = "",
+): { sql: string; binds: string[] } | null {
+  const cleanIds = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const names = [
+    ...new Set(agentNames.map((n) => (n ?? "").trim().toLowerCase()).filter(Boolean)),
+  ];
+  const arms: string[] = [];
+  const binds: string[] = [];
+  if (cleanIds.length > 0) arms.push(`${prefix}created_by IN (${cleanIds.join(",")})`);
+  for (const n of names) {
+    arms.push(`LOWER(COALESCE(${prefix}sales_agent, '')) LIKE ?`);
+    binds.push(`%${n}%`);
+  }
+  if (arms.length === 0) return null; // fail closed — never an unfiltered list
+  return { sql: arms.join(" OR "), binds };
+}
+
+/**
+ * The sales-side "My Cases" list.
+ *
+ * Lives here, not inline in `routes/assr.ts`, because it IS a visibility rule
+ * and this file is where the module's visibility rules are written down — and
+ * because a rule inlined in a route handler cannot be tested without standing up
+ * the whole Hono stack. `companySql` is the caller's already-rendered company
+ * predicate (`assrCompanySql(c)`, a leading `" AND …"` or `""`); the route
+ * resolves it because a company grant is per-REQUEST.
+ */
+export async function listMyCases(
+  env: Env,
+  userId: number,
+  companySql: string,
+): Promise<{ cases: unknown[]; user_name: string }> {
+  const userRow = await env.DB.prepare(`SELECT name FROM users WHERE id = ?`)
+    .bind(userId)
+    .first<{ name: string | null }>();
+  const ownName = (userRow?.name || "").trim();
+  // ONE subtree expansion, both halves off it — ids for the creator arm, display
+  // names for the legacy agent-text arm.
+  const ids = await subtreeUserIds(env, Number(userId));
+  const names = await agentNamesForUserIds(env, ids);
+  const pred = myCasesPredicateSql(ids, names);
+  if (!pred) return { cases: [], user_name: ownName };
+  const rows = await env.DB.prepare(
+    `SELECT id, assr_no, stage, status, priority, doc_no, ref_no,
+            customer_name, phone, complained_date, deadline_at,
+            complaint_issue, item_code, sales_agent
+       FROM assr_cases
+      WHERE (${pred.sql})
+        AND archived_at IS NULL${companySql}
+      ORDER BY complained_date DESC, id DESC
+      LIMIT 200`,
+  )
+    .bind(...pred.binds)
+    .all();
+  return { cases: rows.results ?? [], user_name: ownName };
 }
 
 // Supplier identity (creditor fields) is office + supplier-portal only

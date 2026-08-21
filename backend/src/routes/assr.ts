@@ -42,12 +42,12 @@ import {
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
-import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
+import { subtreeUserIds } from "../services/orgScope";
 /* Row-level case visibility + the creditor strip. Lives in services/ so the
    PRINT route can apply the SAME rule — see assrVisibility.ts. */
 import {
   assrUnrestricted, assrVisibleUserIds, assrVisibilityPredicateSql,
-  assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields,
+  assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields, listMyCases,
 } from "../services/assrVisibility";
 import { notifyServiceCaseResponsible } from "../services/assrNotify";
 import { isDirectorUser } from "../services/pmsAccess";
@@ -1438,42 +1438,16 @@ app.post("/resync-so/:docNo", requirePermission("service_cases.write"), async (c
 });
 
 // ── My Cases (sales-side portal) ──────────────────────────────
-// Lists cases where assr_cases.sales_agent (free text mirrored from
-// AutoCount, mig 010 — typically the rep's name) substring-matches a
-// name in the caller's reporting subtree: their OWN name plus every
-// downline member's (pyramid rule — a manager sees their reps' cases).
-// This bridges the legacy text field to our user accounts without any
-// data backfill.
+// A case is YOURS if you RAISED it (created_by, self + downline BY ID — owner
+// ruling 2026-08-21: submitting is claiming) OR if the legacy free-text
+// `sales_agent` names someone in your reporting subtree. THE RULE and the
+// measurement that says both arms have to stay live in
+// services/assrVisibility.ts `myCasesPredicateSql` — this handler only resolves
+// the per-REQUEST company predicate, which is the one thing a service cannot.
 app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
   const userId = (c as any).get?.("userId") ?? 0;
   if (!userId) return c.json({ cases: [] });
-  const userRow = await c.env.DB.prepare(
-    `SELECT name FROM users WHERE id = ?`
-  )
-    .bind(userId)
-    .first<{ name: string | null }>();
-  const ownName = (userRow?.name || "").trim();
-  // Self + downline display names (lowercased). subtreeAgentNames always
-  // includes the caller's own name, so a rep with no reports matches exactly
-  // as before — the downline names are purely additive.
-  const names = await subtreeAgentNames(c.env, Number(userId));
-  if (names.length === 0) return c.json({ cases: [], user_name: ownName });
-  const likeClauses = names
-    .map(() => `LOWER(COALESCE(sales_agent, '')) LIKE ?`)
-    .join(" OR ");
-  const rows = await c.env.DB.prepare(
-    `SELECT id, assr_no, stage, status, priority, doc_no, ref_no,
-            customer_name, phone, complained_date, deadline_at,
-            complaint_issue, item_code, sales_agent
-       FROM assr_cases
-      WHERE (${likeClauses})
-        AND archived_at IS NULL${assrCompanySql(c)}
-      ORDER BY complained_date DESC, id DESC
-      LIMIT 200`
-  )
-    .bind(...names.map((n) => `%${n}%`))
-    .all();
-  return c.json({ cases: rows.results ?? [], user_name: ownName });
+  return c.json(await listMyCases(c.env, Number(userId), assrCompanySql(c)));
 });
 
 // ── Sales comment ─────────────────────────────────────────────
