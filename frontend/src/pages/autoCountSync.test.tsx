@@ -161,18 +161,14 @@ describe("AutoCountSync — is anything stuck, first", () => {
 
   it("says sending is switched off instead of reporting a stopped sync as healthy", async () => {
     await mount(payload({ writeback: { value: "off", on: false, scope: "off" } }));
-    /* Twice on purpose: the verdict says it, and the line under the strips says
-       it again next to the value the switch is actually set to. */
-    expect((await screen.findAllByText(/Sending to AutoCount is switched off/)).length).toBe(2);
+    /* Once: the verdict (headline) says it. The second line under the strips that
+       repeated it — the writeback bar — was removed in the 2026-08-21 declutter. */
+    expect((await screen.findAllByText(/Sending to AutoCount is switched off/)).length).toBe(1);
   });
 
-  /* A typo like 'On ' is OFF, and the page has to make that visible without
-     naming the config row it lives in. */
-  it("shows a switch value that does not read as on", async () => {
-    await mount(payload({ writeback: { value: "On ", on: false, scope: "off" } }));
-    expect(await screen.findByText(/does not read as on/)).toBeTruthy();
-    expect(screen.queryByText(/autocount_writeback/)).toBeNull();
-  });
+  /* The writeback bar that spelled out a typo'd switch value ("set to 'On ',
+     which does not read as on") was removed in the 2026-08-21 declutter. The
+     headline still says the sync is off; the value-level hint is gone by design. */
 });
 
 describe("AutoCountSync — the counts are on something you can click", () => {
