@@ -199,6 +199,17 @@ dashboard at the same URL — one product, two presentations. See §9.5.
 **The drawer is a quick look, not the record** — see section 12. Everything a
 lorry has ever had lives on `/fleet-health/:lorryId`.
 
+**Every write on this page says so when it is refused (2026-08-21).** Six of
+them did not: the breakdown status dropdown, the work-order stepper, add part,
+remove part, remove component and log component event all caught their rejection
+with `catch { /* surfaced on reload */ }`. Nothing reloads — `onChanged()` is the
+last statement inside the `try`, so a refusal skips it, and the breakdown
+dropdown is a controlled `<select>` that keeps displaying the option the operator
+picked because no render ever happens. They now set an error the card renders,
+through this file's own `apiErrText`, matching the eight handlers that always
+did. Pinned by `frontend/src/pages/fleetHealthWriteFailures.test.tsx`; the trace
+is in `docs/bugs/0489-fleet-health-refused-six-writes-in-silence-under-a-comment-c.md`.
+
 ## 9. Phase 2 — preventive plans + mileage capture
 
 ### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
