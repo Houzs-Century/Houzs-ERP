@@ -114,7 +114,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1057 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
-| `backend/src/scm/routes/po-amendments.ts` | 6 | 652 |
+| `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
@@ -176,7 +176,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1621 files, 610306 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1621 files, 610327 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
