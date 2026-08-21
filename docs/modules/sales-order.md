@@ -596,6 +596,44 @@ Back walk through two detail entries).
 session and STAYS, because the raised-amendment notice it needs to show lives on
 the legacy component.
 
+#### What the primary button does on a locked SO — BOTH halves, always
+
+An edit on a processing-locked SO splits in two (`so-field-policy`): FREE fields
+save directly, CONTROLLED fields and line changes ride an amendment. The button
+must therefore answer THREE questions, not one, and
+`vendor/scm/lib/so-amendment-submit.ts` (`planAmendmentSubmit`) is the single
+place that does:
+
+| Plan | When | What happens |
+|---|---|---|
+| `AMENDMENT` | a line changed, or any CONTROLLED header field did | direct half saved, then the amendment raised for approval |
+| `DIRECT_ONLY` | only FREE fields (name / phone / email / note) or, on mobile, a staged payment | direct half saved; **no** amendment, and the operator is told so |
+| `NOTHING` | both halves empty | the only case that is an error |
+
+Both surfaces share one tail: `DIRECT_ONLY` skips **only** the amendment
+creation. Do not reintroduce a single early return covering both halves — until
+2026-08-21 that was the shape here, and it asked only about the amendment.
+Desktop returned before its direct save ran and **discarded** contact edits;
+mobile PATCHed first and then reported "No changes to submit" about work it had
+just saved. Same missing question, opposite symptoms; see `docs/bugs/0488-*`.
+
+`hasDirectHeaderChanges()` on `CustomerCardHandle` is derived from the very
+patch `save()` would send, so the page cannot be told "nothing to save" about a
+patch that would have been sent.
+
+⚠️ **Every key a surface COLLECTS must also be passed as an original to
+`withFrozenHeaderFieldsReverted`.** It reverts each amendable key present in the
+patch to `original[key]`; an omitted key is `undefined`, which `outValue` turns
+into **NULL** — not "leave it alone". Mobile omitted `address1`/`address2` while
+still emitting them, so its direct PATCH carried `address1: null` and the server
+409'd `so_locked_processing` on every amendment for any SO with an address.
+`AmendableHeaderValues` is a `Partial`, so this does not fail to compile.
+
+The amendment-mode banner and the two-lane "submitted" notice also live in that
+module. They were duplicated per surface and had drifted in both wording and
+truth — both told operators that address lines "save straight away" for three
+weeks after 2026-07-27 moved addresses under Logistics approval.
+
 #### Line photos on the read-only detail
 
 The V2 detail has a **Photos** column: `photo_urls` has ridden on
