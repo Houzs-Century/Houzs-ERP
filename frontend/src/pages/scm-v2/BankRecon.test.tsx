@@ -89,10 +89,10 @@ describe('the statements waiting for money', () => {
     /* The headline total and the one owed statement's line — same number, so
        both must be on screen. */
     expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
-    /* The statement's own total now sits inside its cell, beside the lines it
-       is waiting to be paid for (owner: 这里 pending bank statement matching 的也
-       显示 detail 哦). */
-    expect(screen.getByText(/should pay RM 7,046.45/)).toBeTruthy();
+    /* The statement's total is NOT repeated in its cell — Still owed already
+       says it (owner: 不需要看那么多资料了吧。感觉重复很乱). It reappears only
+       once part of the money has landed, where the split is news. */
+    expect(screen.queryByText(/should pay/)).toBeNull();
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
     expect(screen.queryByText('mbb-aug.csv')).toBeNull();
 
@@ -185,8 +185,9 @@ describe('a statement waiting for money shows what it is waiting FOR', () => {
        so the fee is a cell rather than a phrase glued to the customer. */
     const row = screen.getByText('663554').closest('tr') as HTMLElement;
     const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells).toContain('RM 27.00');      // what the card machine kept
-    expect(cells).toContain('RM 1,773.00');   // the net it should pay
-    expect(cells).toContain('RM 1,800.00');   // the gross the customer paid
+    expect(cells).toContain('RM 1,773.00');   // the net the acquirer will pay
+    /* The fee and the gross belong to step 1 and are NOT repeated here. */
+    expect(cells).not.toContain('RM 27.00');
+    expect(cells).not.toContain('RM 1,800.00');
   });
 });

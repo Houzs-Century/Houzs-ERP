@@ -123,27 +123,33 @@ const WaitingForMoney = () => {
         </div>
       )}
 
-      {/* The same two bands as the merchant screen, for the same reason and on
-          the owner's say-so twice over: 这里的资料同理，整理一下，太乱了.
-          One shape learnt once, read on both screens. */}
+      {/* FEWER COLUMNS THAN THE MERCHANT SCREEN, on purpose. The owner, after
+          I gave both screens the same two bands: 但是等着 bank statement
+          reconciliation 不需要看那么多资料了吧。感觉重复很乱.
+
+          He is right, and the sameness was my mistake. Over there you are
+          COMPARING two sides — what the merchant said against what the ERP
+          said — so the bands and the seam earn their place. Here that
+          comparison is DONE and agreed; this screen is chasing money for
+          statements already reconciled, so there is nothing to hold side by
+          side and the band framing is decoration.
+
+          Gross and Fee are gone because the fee was booked in step 1 and is
+          not what anybody is waiting for; the payment's own Amount is gone
+          because it was the same number as the gross; "should pay" is gone
+          because Still owed already says it. What is left is what identifies
+          the money and what is outstanding. */}
       {shown.length > 0 && (
         <table className={grid.grid}>
           <thead>
             <tr>
-              <th rowSpan={2}>Statement</th>
-              <th colSpan={5} className={grid.band}>What the merchant reported</th>
-              <th colSpan={3} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
-              <th rowSpan={2} className={grid.num}>Still owed</th>
-            </tr>
-            <tr>
+              <th>Statement</th>
               <th>Date</th>
               <th>Reference</th>
-              <th className={grid.num}>Gross</th>
-              <th className={grid.num}>Fee</th>
-              <th className={grid.num}>Net</th>
-              <th className={grid.seam}>Document</th>
+              <th>Document</th>
               <th>Customer</th>
-              <th className={grid.num}>Amount</th>
+              <th className={grid.num}>Net</th>
+              <th className={grid.num}>Still owed</th>
             </tr>
           </thead>
           {shown.map((b) => (
@@ -180,12 +186,12 @@ const StatementLines = ({ batch, owed, onOpen }: {
         <span className={styles.codeChip}>{batch.acquirer_code}</span>
         <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
       </div>
-      {/* The period is on every line below as its own date; what no line
-          carries is the report's TOTAL and what has already landed. */}
-      <div className={grid.sub}>
-        should pay {fmt(payableOf(batch))}
-        {(batch.received_sen ?? 0) !== 0 ? ` · received ${fmt(batch.received_sen)}` : ''}
-      </div>
+      {/* Only what no other cell carries. The total is Still owed's business
+          until part of it has landed — then the split is worth saying, because
+          "owed 3,743.04" alone hides that 2,000.00 already came. */}
+      {(batch.received_sen ?? 0) !== 0 && (
+        <div className={grid.sub}>{fmt(batch.received_sen)} of {fmt(payableOf(batch))} received</div>
+      )}
       <button type="button" style={{ ...btn(owed !== 0), marginTop: 6 }} onClick={onOpen}>
         {owed === 0 ? 'Open' : 'Record the money'}
       </button>
@@ -204,7 +210,7 @@ const StatementLines = ({ batch, owed, onOpen }: {
       <tbody>
         <tr>
           {head}
-          <td colSpan={8}>
+          <td colSpan={5}>
             <span style={softText}>{q.isLoading ? 'Reading its transactions…' : 'This statement has no lines.'}</span>
           </td>
           {owedCell}
@@ -232,14 +238,13 @@ const StatementLines = ({ batch, owed, onOpen }: {
           {i === 0 && head}
           <td>{r.txn_date}</td>
           <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
-          <td className={grid.num}>{fmt(r.gross_sen)}</td>
-          <td className={grid.num}>{fmt(r.fee_sen)}</td>
-          <td className={grid.num}>{fmt(r.net_sen)}</td>
-
-          <td className={grid.seam}>{stack((l) => <b>{l.doc_no ?? l.payment_id}</b>)}</td>
+          <td>{stack((l) => <b>{l.doc_no ?? l.payment_id}</b>)}</td>
           <td>{stack((l) => l.customer_name)}</td>
-          <td className={grid.num}>{stack((l) => fmt(l.amount_sen))}</td>
-
+          {/* The NET — what the acquirer will actually pay for this
+              transaction, which is the only money figure this screen is about.
+              Worth a column even on a one-line statement, because on a
+              several-line one it is what the total is made of. */}
+          <td className={grid.num}>{fmt(r.net_sen)}</td>
           {i === 0 && owedCell}
         </tr>
         );
