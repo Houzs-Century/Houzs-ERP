@@ -23,8 +23,9 @@ import { dirname, resolve } from 'node:path';
  *
  * The `companyId` parameter is nullable, and a null must NOT become
  * `.eq('company_id', null)` (a malformed filter, not "no company"), so the guard
- * is written as the same spread the stamp uses. That is why this test asks for
- * the IDENTIFIER rather than a literal `.eq(` — it must accept both forms.
+ * goes through `scopeToCompanyIdOrOpen` (scm/lib/companyScope.ts). That is why
+ * this test asks for the IDENTIFIER rather than a literal `.eq(` — the stamp
+ * (`companyCol`) and the filter are two different spellings of the same id.
  *
  * Source scan, for the reason permissionDivergence.test.ts and
  * soMaintenanceGate.test.ts are source scans: the helper is not exported and
@@ -80,7 +81,7 @@ describe('DO rack stock-out is bounded to the order\'s own company', () => {
   for (const table of RACK_TABLES) {
     test(`every ${table} statement in the helper carries company_id`, () => {
       const offenders = statements(BODY, table)
-        .filter((s) => !/company_id|companyCol|companyFilter/.test(s.text))
+        .filter((s) => !/company_id|companyCol|scopeToCompanyIdOrOpen/.test(s.text))
         .map((s) => `delivery-orders-mfg.ts:~${s.line}`);
       expect(offenders).toEqual([]);
     });
@@ -92,7 +93,7 @@ describe('DO rack stock-out is bounded to the order\'s own company', () => {
     const explicit = statements(BODY, 'warehouse_racks').filter((s) => /explicitRackId/.test(s.text));
     expect(explicit.length).toBeGreaterThanOrEqual(1);
     for (const s of explicit) {
-      expect(/company_id|companyCol|companyFilter/.test(s.text), `delivery-orders-mfg.ts:~${s.line}`).toBe(true);
+      expect(/company_id|companyCol|scopeToCompanyIdOrOpen/.test(s.text), `delivery-orders-mfg.ts:~${s.line}`).toBe(true);
     }
   });
 });
