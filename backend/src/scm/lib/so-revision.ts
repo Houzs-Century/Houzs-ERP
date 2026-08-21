@@ -166,6 +166,10 @@ type AmendmentLineRow = {
      real request to clear it. The `!= null` test at the write is the ONE gate,
      so approving an old amendment can never blank a remark typed since. */
   new_remark: string | null;
+  /* Mig 0317 — the requested DISCOUNT in sen, same NULL semantics as new_remark.
+     The sanctioned lever for reducing a derived price (the delivery fee), and
+     the one money field the amendment road did not carry. */
+  new_discount_sen: number | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -325,7 +329,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, new_remark, old_snapshot')
+      'new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -667,7 +671,14 @@ export async function applySoAmendment(
     }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
-    const discount = Number(row.discount_sen ?? 0);
+    /* Mig 0317 — the request may carry a new discount; otherwise the line keeps
+       the one it has. Clamped HERE, where the final qty and unit are known (both
+       can change in this same amendment): an approved discount can never exceed
+       the line's gross or push its total negative — the same bound the fee
+       editor enforces client-side (feeDiscountForAmount). */
+    const discount = diff.new_discount_sen != null
+      ? Math.min(Math.max(Math.round(Number(diff.new_discount_sen)), 0), qty * unit)
+      : Number(row.discount_sen ?? 0);
     const lineTotal = (qty * unit) - discount;
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
@@ -693,6 +704,10 @@ export async function applySoAmendment(
          column is NULL by definition) from blanking a remark somebody typed on
          the line in the meantime. '' IS a request — clear it. */
       ...(diff.new_remark != null ? { remark: diff.new_remark } : {}),
+      /* Mig 0317 — same conditional-write rule as the remark: NULL is "not
+         requested", so a pre-0317 amendment approving today cannot clear a
+         discount booked on the line since it was raised. */
+      ...(diff.new_discount_sen != null ? { discount_sen: discount } : {}),
     }).eq('id', diff.sales_order_item_id);
     if (updErr) throw new Error(`applySoAmendment: ${change} update failed for line ${diff.sales_order_item_id}: ${updErr.message}`);
     /* Keyed by the line's ORIGINAL item code so the drawer reads as one line's
@@ -713,6 +728,8 @@ export async function applySoAmendment(
       );
       // Mig 0280 — only when the request touched it (noteChange drops a no-op).
       if (diff.new_remark != null) noteChange(`line_${key}_remark`, row.remark, diff.new_remark);
+      // Mig 0317 — audit the CLAMPED value actually written, not the raw request.
+      if (diff.new_discount_sen != null) noteChange(`line_${key}_discount_sen`, row.discount_sen, discount);
     }
     touched.push({ change, itemCode, qty });
   }

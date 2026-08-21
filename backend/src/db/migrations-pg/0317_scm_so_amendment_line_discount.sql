@@ -1,0 +1,75 @@
+-- ----------------------------------------------------------------------------
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0316 when branched.
+--
+-- 0317 — an SO amendment can finally carry a line's DISCOUNT.
+--
+-- THE DEFECT (operator report, 2026-08-21, on 2990-SO-2608-020)
+--   The operator tried to reduce the delivery fee from RM 250 to RM 125 on a
+--   processing-locked SO. The fee is a DERIVED price (owner 2026-08-07, "every
+--   ringgit is a LINE"): typing 125 into the fee cell books a line DISCOUNT of
+--   RM 125 against the derived RM 250 — that is the one sanctioned lever, and
+--   the re-derive preserves it (rederiveDeliveryFee reads the row's
+--   discount_sen and re-applies it after every rebuild).
+--
+--   But scm.so_amendment_lines carries new_item_code, new_variants, new_qty,
+--   new_unit_price_sen and (since 0281) new_remark. discount has no column, so
+--   on a LOCKED SO the discount edit had nowhere to go: the frontend dirtiness
+--   test (amendmentLineSig) is built from the same fields, scored the line as
+--   "nothing amendable moved", and the submit produced no amendment row at
+--   all. Since #2597 the operator is then told "Saved without an amendment" —
+--   a true statement about the header half that reads as success for the fee
+--   edit it silently dropped.
+--
+--   Known and written down, twice: SalesOrderDetail.tsx has carried the
+--   nine-fields-with-no-channel comment since 2026-07-16, and 0281 — which
+--   closed the remark gap in this exact shape — names "discount" among the
+--   eight still open. The owner's rule (2026-08-16, pinned by
+--   so-revision.amendmentPrice.test.ts) is that the amendment IS the
+--   sanctioned road for changing money on a locked SO. A discount is money;
+--   this closes the gap.
+--
+-- SHAPE
+--   ONE nullable bigint column, new_discount_sen, mirroring new_remark's
+--   nullability semantics: NULL = "this request does not touch the discount"
+--   (every existing row, and every future line whose discount did not move),
+--   0 = "clear it". applySoAmendment writes the line's discount ONLY when
+--   new_discount_sen is non-null, clamped to [0, qty * unit] at apply time —
+--   the same bound the fee editor enforces — so an approved amendment can
+--   never push a line total negative.
+--
+--   The BEFORE value rides in the existing old_snapshot jsonb (`discountSen`
+--   key, stamped server-side by buildAmendmentLineRows from
+--   mfg_sales_order_items — read from the record, never trusted from the
+--   browser asking to change it), so the approver's before/after needs no
+--   second column.
+--
+-- Houzs SCM port conventions (mirrors 0281, which added the remark half):
+-- schema-qualified to scm.*, plain ADD COLUMN IF NOT EXISTS (NOT a DO block —
+-- the pg-migrate runner splits each file on ";\n" and would fragment a
+-- dollar-quoted block), additive + nullable + re-run safe, so the auto-apply on
+-- every deploy is a no-op after the first.
+--
+-- VIEW-TRAP NOTE: no view projects scm.so_amendment_lines (checked 2026-08-21,
+-- same result as 0281's check — the amendment surfaces read the base table
+-- directly through the route), so adding a column cannot break a
+-- column-enumerated view the way 0189 did.
+--
+-- MIRROR NOTE: routes/amendment-mirror.ts writes 2990-authored amendment rows
+-- into D1 through createMirrorMapper, which filters the payload to the DEST
+-- table's own columns. A 2990 row simply carries no new_discount_sen and lands
+-- NULL — correct, since 2990's amendment editor has no discount channel either.
+--
+-- REVERSAL: ALTER TABLE scm.so_amendment_lines DROP COLUMN new_discount_sen;
+-- Safe at any time: every reader treats an absent/NULL value as "not
+-- requested", which is the pre-0317 behaviour exactly. Ship the reversal as a
+-- NEW migration — this file is checksummed the moment it reaches prod.
+--
+-- Backward compatible: NULL on every existing row = today's behaviour exactly.
+-- No backfill (the fee on 2990-SO-2608-020 is repaired by resubmitting the
+-- amendment once this ships — an amendment record must keep saying what was
+-- requested).
+-- ----------------------------------------------------------------------------
+
+SET search_path = scm, public;
+
+ALTER TABLE scm.so_amendment_lines ADD COLUMN IF NOT EXISTS new_discount_sen bigint;

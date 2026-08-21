@@ -144,7 +144,11 @@ and:
 1. EXCLUDE `replacementDisposal` from the direct PATCH body;
 2. raise it through `useCreateAmendment`
    (`frontend/src/vendor/scm/lib/so-amendment-queries.ts`) as a header-only
-   amendment (`headerChanges: { replacementDisposal }`, no lines);
+   amendment (`headerChanges: { replacementDisposal }`, no lines). The same
+   payload's LINE half gained `newDiscountSen` in mig 0317 (the delivery fee's
+   reduction lever on a locked SO) — irrelevant to this drawer, which sends no
+   lines, but the type is shared, so it is named here for the next reader
+   diffing it;
 3. show the lock warning as soon as the order is locked — before the field is
    dirty, not after.
 
