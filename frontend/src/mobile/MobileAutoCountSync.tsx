@@ -443,7 +443,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const groups = acGroupsOfType(loaded, docType);
   /* History folds away here too — a phone has less room to spend on documents
      that already went through, not more. Same helper, same default. */
-  const split = acSplitReplaced(groups, state);
+  const split = acSplitReplaced(groups);
 
   return (
     <div className="hz-m" style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
