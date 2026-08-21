@@ -123,14 +123,27 @@ const WaitingForMoney = () => {
         </div>
       )}
 
+      {/* The same two bands as the merchant screen, for the same reason and on
+          the owner's say-so twice over: 这里的资料同理，整理一下，太乱了.
+          One shape learnt once, read on both screens. */}
       {shown.length > 0 && (
         <table className={grid.grid}>
           <thead>
             <tr>
-              <th>Statement</th>
-              <th>The transactions it is waiting to be paid for</th>
+              <th rowSpan={2}>Statement</th>
+              <th colSpan={5} className={grid.band}>What the merchant reported</th>
+              <th colSpan={3} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
+              <th rowSpan={2} className={grid.num}>Still owed</th>
+            </tr>
+            <tr>
+              <th>Date</th>
+              <th>Reference</th>
+              <th className={grid.num}>Gross</th>
+              <th className={grid.num}>Fee</th>
               <th className={grid.num}>Net</th>
-              <th className={grid.num}>Still owed</th>
+              <th className={grid.seam}>Document</th>
+              <th>Customer</th>
+              <th className={grid.num}>Amount</th>
             </tr>
           </thead>
           {shown.map((b) => (
@@ -167,7 +180,8 @@ const StatementLines = ({ batch, owed, onOpen }: {
         <span className={styles.codeChip}>{batch.acquirer_code}</span>
         <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
       </div>
-      <div className={grid.sub}>{batch.period_from} → {batch.period_to}</div>
+      {/* The period is on every line below as its own date; what no line
+          carries is the report's TOTAL and what has already landed. */}
       <div className={grid.sub}>
         should pay {fmt(payableOf(batch))}
         {(batch.received_sen ?? 0) !== 0 ? ` · received ${fmt(batch.received_sen)}` : ''}
@@ -190,7 +204,7 @@ const StatementLines = ({ batch, owed, onOpen }: {
       <tbody>
         <tr>
           {head}
-          <td colSpan={2}>
+          <td colSpan={8}>
             <span style={softText}>{q.isLoading ? 'Reading its transactions…' : 'This statement has no lines.'}</span>
           </td>
           {owedCell}
@@ -206,26 +220,26 @@ const StatementLines = ({ batch, owed, onOpen }: {
            `linked: linksByRow.get(id) ?? []`. Empty means the line claimed no
            payment, which is a state to SHOW, not to guard against. */
         const links = r.linked;
+        /* One line settling several orders stacks INSIDE its cell — the rare
+           case, and the only place stacking is still the honest shape. */
+        const stack = (pick: (l: typeof links[number]) => React.ReactNode) => (
+          links.length === 0
+            ? <span className={grid.sub}>no sale linked</span>
+            : links.map((l) => <div key={l.payment_id}>{pick(l) ?? '—'}</div>)
+        );
         return (
         <tr key={r.id}>
           {i === 0 && head}
-          <td>
-            <div>
-              {r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}
-              {/* WHOSE sale it was, not just which document — the thing that
-                  makes a number checkable rather than merely displayed. */}
-              {links.length > 0 && (
-                <> · <b>{links.map((l) => l.doc_no ?? l.payment_id).join(' + ')}</b></>
-              )}
-            </div>
-            <div className={grid.sub}>
-              {links.length > 0
-                ? [...new Set(links.map((l) => l.customer_name).filter(Boolean))].join(', ') || 'gross ' + fmt(r.gross_sen)
-                : 'no sale linked'}
-              {r.fee_sen !== 0 ? ` · fee ${fmt(r.fee_sen)}` : ''}
-            </div>
-          </td>
+          <td>{r.txn_date}</td>
+          <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
+          <td className={grid.num}>{fmt(r.gross_sen)}</td>
+          <td className={grid.num}>{fmt(r.fee_sen)}</td>
           <td className={grid.num}>{fmt(r.net_sen)}</td>
+
+          <td className={grid.seam}>{stack((l) => <b>{l.doc_no ?? l.payment_id}</b>)}</td>
+          <td>{stack((l) => l.customer_name)}</td>
+          <td className={grid.num}>{stack((l) => fmt(l.amount_sen))}</td>
+
           {i === 0 && owedCell}
         </tr>
         );

@@ -181,9 +181,12 @@ describe('a statement waiting for money shows what it is waiting FOR', () => {
     expect(screen.getByText('663554')).toBeTruthy();
     expect(screen.getByText('SO-2608-020')).toBeTruthy();
     expect(screen.getByText(/Chong Wei Ming/)).toBeTruthy();
-    /* And what the card machine kept, so the net is checkable rather than
-       merely displayed. */
-    expect(screen.getByText(/fee RM 27.00/)).toBeTruthy();
-    expect(screen.getByText('RM 1,773.00')).toBeTruthy();
+    /* Every fact in its own column now (owner: 这里的资料同理，整理一下，太乱了),
+       so the fee is a cell rather than a phrase glued to the customer. */
+    const row = screen.getByText('663554').closest('tr') as HTMLElement;
+    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
+    expect(cells).toContain('RM 27.00');      // what the card machine kept
+    expect(cells).toContain('RM 1,773.00');   // the net it should pay
+    expect(cells).toContain('RM 1,800.00');   // the gross the customer paid
   });
 });
