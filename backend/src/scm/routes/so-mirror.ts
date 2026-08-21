@@ -39,7 +39,10 @@
 //
 //   doc_no absent for company 2   -> import it exactly as before (header, then
 //                                    the whole item + payment set).
-//   doc_no already present        -> touch NOTHING. 200 + skipped_existing.
+//   doc_no already present        -> touch NOTHING. 200 + skipped_existing —
+//                                    or skipped_conflict when the delivery
+//                                    names a DIFFERENT customer than the row
+//                                    Houzs holds (see soMirrorSkipAction).
 //   deleted:true on a present doc -> REFUSE. 200 + refused_delete. Houzs owns
 //                                    the lifecycle of these orders now, so a
 //                                    2990-side delete must not drop one.
@@ -183,7 +186,7 @@ const { tableMap, applyMap } = createMirrorMapper({
  * queue — the exact failure the 200 exists to avoid. Swallowed is not silent:
  * the console line is still emitted above, and the ledger going quiet while the
  * queue is moving is itself visible in check-so-mirror-skips.mjs. */
-async function recordSkip(DB: Env['DB'], doc: string, action: 'skipped_existing' | 'refused_delete') {
+async function recordSkip(DB: Env['DB'], doc: string, action: 'skipped_existing' | 'skipped_conflict' | 'refused_delete') {
   try {
     await DB.prepare(
       `INSERT INTO scm."so_mirror_skips" (company_id, doc_no, action)
@@ -194,6 +197,44 @@ async function recordSkip(DB: Env['DB'], doc: string, action: 'skipped_existing'
   } catch (e) {
     console.error('[so-mirror] could not record the declined delivery — the refusal still stands:', doc, action, (e as Error).message);
   }
+}
+
+/* SKIPPED-EXISTING CONFLATES TWO CASES, and only one of them is benign
+ * (2026-08-21, found while investigating 2990-SO-2607-019):
+ *
+ *   1. A RE-DELIVERY of an order Houzs already imported — the outbox retrying,
+ *      or a full re-send. Skipping is correct and boring.
+ *   2. A DIFFERENT ORDER wearing a doc_no Houzs already holds. 2990's own SO
+ *      series is minted bare (`SO-2607-019`, max+1 over ITS rows) and cannot
+ *      see the numbers Houzs mints natively for company 2 (`2990-SO-2607-019`),
+ *      so both sides can hand out the same suffix — a split-brain double-mint.
+ *      prefixDoc then lands both on ONE Houzs key. Before import-once (#2515)
+ *      that OVERWROTE: on 2026-07-26 a POS-side order took `SO-2607-019` and
+ *      its delivery replaced 2990-SO-2607-019 — Larding Chen's paid sofa —
+ *      wholesale (header, items, deposit) with a different customer's order,
+ *      leaving no audit trail. Import-once stops the overwrite, but a silent
+ *      skip would now DROP the new order instead — the same loss, mirrored.
+ *
+ * The classifier below separates them by the customer name on the delivery vs
+ * the row Houzs holds. A mismatch cannot be auto-resolved here (which order
+ * rightfully owns the number is a human call), so it stays a SKIP — but a
+ * loud one: action 'skipped_conflict' in scm.so_mirror_skips + console.error,
+ * so check-so-mirror-skips.mjs surfaces it instead of it hiding among benign
+ * re-deliveries. A Houzs-side rename of the debtor followed by a re-delivery
+ * of the original row false-positives into 'skipped_conflict'; that is
+ * acceptable for a tripwire — it is evidence, not state, and nothing reads it
+ * to decide behaviour. */
+const normDebtorName = (v: unknown): string =>
+  String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export function soMirrorSkipAction(
+  held: { debtor_name?: unknown } | null | undefined,
+  inboundHeader: Record<string, unknown> | null | undefined,
+): 'skipped_existing' | 'skipped_conflict' {
+  const heldName = normDebtorName(held?.debtor_name);
+  const offeredName = normDebtorName(inboundHeader?.['debtor_name']);
+  if (heldName && offeredName && heldName !== offeredName) return 'skipped_conflict';
+  return 'skipped_existing';
 }
 
 soMirror.post('/', async (c) => {
@@ -212,8 +253,8 @@ soMirror.post('/', async (c) => {
        database can never be mistaken for "not imported yet" and overwrite a
        live order — the fail-closed direction. */
     const existing = await DB.prepare(
-      `SELECT 1 AS hit FROM scm."mfg_sales_orders" WHERE company_id=? AND doc_no=? LIMIT 1`,
-    ).bind(C2990, doc).first<{ hit: number }>();
+      `SELECT debtor_name FROM scm."mfg_sales_orders" WHERE company_id=? AND doc_no=? LIMIT 1`,
+    ).bind(C2990, doc).first<{ debtor_name: string | null }>();
 
     if (existing) {
       /* A 2990-side DELETE of an order Houzs already holds. Refused, not
@@ -226,9 +267,17 @@ soMirror.post('/', async (c) => {
         await recordSkip(DB, doc, 'refused_delete');
         return c.json({ ok: true, docNo: doc, action: 'refused_delete', refused: true });
       }
-      console.warn('[so-mirror] skipped_existing — 2990 re-delivered an order Houzs already holds:', doc);
-      await recordSkip(DB, doc, 'skipped_existing');
-      return c.json({ ok: true, docNo: doc, action: 'skipped_existing', skipped: true });
+      const action = soMirrorSkipAction(existing, body.header);
+      if (action === 'skipped_conflict') {
+        console.error(
+          '[so-mirror] skipped_conflict — 2990 delivered a DIFFERENT order under a doc_no Houzs already holds (split-brain double-mint):',
+          doc, 'held:', existing.debtor_name, 'offered:', body.header?.['debtor_name'],
+        );
+      } else {
+        console.warn('[so-mirror] skipped_existing — 2990 re-delivered an order Houzs already holds:', doc);
+      }
+      await recordSkip(DB, doc, action);
+      return c.json({ ok: true, docNo: doc, action, skipped: true });
     }
 
     /* DELETE for a doc we do not hold: unchanged. The statement matches nothing
