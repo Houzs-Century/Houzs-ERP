@@ -188,6 +188,35 @@ const SOFA_BRAND_HOUZS = 'ZANOTTI';
 const SOFA_BRAND_2990 = '2990s Sofa';
 
 /**
+ * The house sofa brand NAME for a company, or null when the company cannot be
+ * identified.
+ *
+ * WHY THIS IS EXPORTED, and why it returns null instead of defaulting.
+ * `brandingLabel` below must always print SOMETHING, so its unknown-company
+ * case falls to the 2990 reading — that is a LABEL, and a slightly wrong word
+ * in a grid cell is recoverable. A LETTERHEAD is not: the SO PDF stamps a
+ * brand's LOGO over the company's own, and a document that carries the wrong
+ * company's mark is a customer-facing legal document making a false claim
+ * about who sold the goods. That happened — the owner found a "2990 HOME SDN.
+ * BHD." Sales Order printing the Zanotti mark on 2026-08-21, and production
+ * counted 69 orders in that state. So the letterhead caller needs the honest
+ * "I do not know", and null is it; the PDF then keeps the company letterhead,
+ * which is never wrong.
+ *
+ * The two equations themselves are unchanged (owner 2026-08-18):
+ * 「houzs sofa=zanotti / 2990 sofa=2990s sofa」.
+ */
+export function houseSofaBrandName(companyCode?: string | null): string | null {
+  const code = (companyCode ?? '').trim().toUpperCase();
+  if (!code) return null;
+  if (code === HOUZS) return SOFA_BRAND_HOUZS;
+  if (code === '2990') return SOFA_BRAND_2990;
+  /* A THIRD company has no house sofa brand recorded, and inventing one is how
+     this defect happened in the first place. Unknown -> null. */
+  return null;
+}
+
+/**
  * Shown when an order has NO readable line at all (every line cancelled, or
  * none yet). It is not a brand and cannot be mistaken for one, and it does not
  * quietly imply the order is fine — an empty read is never evidence on its own.
@@ -214,14 +243,18 @@ export function brandingLabel(
   if (!noun) return NO_ITEMS_LABEL;
 
   const brand = (branding ?? '').trim();
-  const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;
 
   if (bucket === 'SOFA') {
     /* The line's brand text is deliberately IGNORED for BOTH companies now.
        2990's side has been pinned this way since 2026-05-28; Houzs joined it on
        2026-08-18 («houzs sofa=zanotti»), which also retires the "Sofa" label
-       that the 11 unbranded 5526 SKUs used to produce. */
-    return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;
+       that the 11 unbranded 5526 SKUs used to produce.
+
+       `?? SOFA_BRAND_2990` keeps this function's own contract EXACTLY as it was
+       — an omitted or unrecognised company still reads as 2990, because a
+       label may never be blank. It is the letterhead caller, not this one, that
+       needs the null; see houseSofaBrandName above for why the two differ. */
+    return houseSofaBrandName(companyCode) ?? SOFA_BRAND_2990;
   }
 
   if (bucket === 'BEDFRAME') {
