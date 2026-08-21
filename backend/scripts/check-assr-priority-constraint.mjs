@@ -179,7 +179,51 @@ try {
   `;
   for (const r of prioChecks) console.log(`   ${r.name}\n      ${r.definition}`);
 
+  // ── 5. THE OTHER WAY A MAINTAINED PRIORITY CAN GO WRONG ──────────────────
+  // `pg_constraint` above cannot see a bare `CREATE UNIQUE INDEX` — an index
+  // created outside a constraint has no `pg_constraint` row at all. This repo
+  // has already been wrong about a unique index existing, in both directions
+  // ("the unique index does not exist" — it did, four of them), so ask
+  // `pg_indexes`, which sees every index however it was created.
+  //
+  // It matters here because `POST /api/assr/lookups/priorities` inserts with
+  // `ON CONFLICT DO NOTHING`, a clause that silently does nothing at all when
+  // there is no unique index for it to conflict ON — and the endpoint derives
+  // the slug from the NAME, so adding a priority named "High" derives `high`.
   console.log("");
+  console.log("── 5. indexes on assr_priorities (pg_indexes sees bare CREATE INDEX too) ──");
+  const idx = await pg`
+    SELECT indexname, indexdef
+      FROM pg_indexes
+     WHERE schemaname = 'public' AND tablename = 'assr_priorities'
+     ORDER BY indexname
+  `;
+  for (const r of idx) console.log(`   ${r.indexname}\n      ${r.indexdef}`);
+  const uniqueOnSlug = idx.some(
+    (r) => /UNIQUE/i.test(String(r.indexdef)) && /\(\s*slug\s*\)/i.test(String(r.indexdef)),
+  );
+  console.log("");
+  console.log(`   UNIQUE index on slug: ${uniqueOnSlug ? "YES" : "NO"}`);
+
+  const dupes = await pg`
+    SELECT slug, COUNT(*) AS rows
+      FROM assr_priorities
+     GROUP BY slug
+    HAVING COUNT(*) > 1
+     ORDER BY slug
+  `;
+  console.log(
+    dupes.length === 0
+      ? "   duplicate slugs today: none"
+      : `   duplicate slugs today: ${dupes.map((d) => `${d.slug} x${d.rows}`).join(", ")}`,
+  );
+
+  console.log("");
+  if (!uniqueOnSlug) {
+    notice(
+      "assr_priorities has NO unique index on `slug`, so the lookup POST's `ON CONFLICT DO NOTHING` has nothing to conflict on. Two rows can hold the same slug, and slaHoursForPriority's `WHERE slug = ? LIMIT 1` would then pick one arbitrarily. This is a SEPARATE finding from the CHECK question below.",
+    );
+  }
   notice(
     priorityChecks.length === 0
       ? "public.assr_cases.priority carries NO CHECK constraint in production. A priority added in Service Maintenance is accepted on case create — the reported defect does NOT exist on this database, and no migration is warranted."
