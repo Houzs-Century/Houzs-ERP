@@ -612,3 +612,93 @@ describe("MobileAutoCountSync — Send now", () => {
     expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
   });
 });
+
+/* ───────────────────────────────────────────────────────────────────────────
+   WHAT CROSSED OVER FROM THE 2026-08-21 REGISTER, AND WHAT DID NOT.
+
+   The desktop became an eight-column table; this screen kept its cards, because
+   a table does not fit 375 px. That is a PRESENTATION difference and it is
+   allowed. What is not allowed is a VERDICT or a CONTROL living on one surface
+   only — the recurring bug class this repo names — so the mismatch flag, the day
+   buckets, the date range and the closing line all had to come with it, from the
+   same helpers in lib/autocountRegister.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
+  const booked = (over: Partial<AcOutboxRow>): AcOutboxRow => row({
+    status: "sent", state: "sent", sent_at: "2026-08-15T01:00:00.000Z", ...over,
+  });
+
+  const twoBooked = payload({
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    rows: [
+      booked({ id: "m", doc_no: "HC-PO-2608-001", doc_type: "PO", op: "create_po",
+        ac_doc_no: "PO-009968" }),
+      booked({ id: "q", doc_no: "HC-SO-2608-009", ac_doc_no: "HC-SO-2608-009" }),
+    ],
+  });
+
+  /* THE OWNER USES THIS SCREEN ON THE FLOOR. A flag he only gets at his desk is
+     a flag he does not get, and this one went three days unseen already. */
+  it("flags a document the account book filed under its own number", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-PO-2608-001");
+    const card = cardOf("HC-PO-2608-001");
+    expect(within(card).getByText("Different number")).toBeTruthy();
+    /* A phone has no hover, so the sentence is ON the card, not in a title. */
+    expect(within(card).getAllByText(/PO-009968/).length).toBeGreaterThan(0);
+  });
+
+  it("says nothing when the book used the number on the paperwork", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-SO-2608-009");
+    expect(cardOf("HC-SO-2608-009").querySelector("[data-ac-book-flag]")).toBeNull();
+  });
+
+  /* A document already in the account book has nothing to OPEN — the ruling is
+     the same on both surfaces, and the flag must not smuggle an opener in. */
+  it("flags it without giving the card anything to open", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-PO-2608-001");
+    expect(within(cardOf("HC-PO-2608-001")).queryByRole("button")).toBeNull();
+  });
+
+  it("breaks the cards on the day, and closes the list with what is on screen", async () => {
+    await mount(payload({
+      counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+      rows: [
+        booked({ id: "a", doc_no: "SO-A", ac_doc_no: "SO-A", created_at: "2026-08-15T02:00:00.000Z", sent_at: "2026-08-15T02:00:00.000Z" }),
+        booked({ id: "b", doc_no: "SO-B", ac_doc_no: "SO-B", created_at: "2026-08-14T02:00:00.000Z", sent_at: "2026-08-14T02:00:00.000Z" }),
+        booked({ id: "c", doc_no: "SO-C", ac_doc_no: "SO-C", created_at: "2026-08-14T01:00:00.000Z", sent_at: "2026-08-14T01:00:00.000Z" }),
+      ],
+    }));
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findAllByText("SO-A");
+    expect(document.querySelectorAll("[data-ac-day]").length).toBe(2);
+    expect(screen.getByText("Showing 1–3 of 3 documents")).toBeTruthy();
+  });
+
+  /* THE DATE RANGE IS A FILTER, and a filter on one surface only is the split
+     the shared layer exists to stop. It is component state here — the mobile
+     shell has no router — so what proves it works is the list changing without
+     the server being asked again. */
+  it("carries the date range the desktop has, and applies it without a refetch", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-PO-2608-001");
+    const before = apiGet.mock.calls.length;
+    await userEvent.click(chip(/^Today$/));
+    expect(await screen.findByText(/Nothing here/)).toBeTruthy();
+    expect(apiGet.mock.calls.length).toBe(before);
+  });
+
+  it("turns the order round on the phone too", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-PO-2608-001");
+    await userEvent.click(chip(/Newest first/));
+    expect(await screen.findByText("Oldest first")).toBeTruthy();
+  });
+});

@@ -2774,9 +2774,9 @@ below, whose output is an Actions log.
 
 | | |
 |---|---|
-| Desktop | `frontend/src/pages/AutoCountSync.tsx`, route `/autocount-sync`, Sidebar section **System**, next to System Health |
-| Mobile | `frontend/src/mobile/MobileAutoCountSync.tsx`, menu group **System** |
-| Shared logic | `frontend/src/lib/autocountOutbox.ts` — the hook, the filter shape and the words, so the two surfaces differ only in presentation |
+| Desktop | `frontend/src/pages/AutoCountSync.tsx`, route `/autocount-sync`, Sidebar section **System**, next to System Health. An eight-column REGISTER since 2026-08-21 — see below |
+| Mobile | `frontend/src/mobile/MobileAutoCountSync.tsx`, menu group **System**. Keeps its CARDS: a table does not fit 375 px |
+| Shared logic | `frontend/src/lib/autocountOutbox.ts` — the hook, the filter shape and the words; and `frontend/src/lib/autocountRegister.ts` — the columns, the account book's verdict on a document number, the day buckets, the two lenses and the footer. Two files, ONE layer: both are imported by both surfaces and by nothing else, and the split is the 2,000-line file cap, not a design |
 | Endpoint (read) | `GET /api/scm/autocount-outbox` — `backend/src/scm/routes/autocount-outbox.ts` |
 | Endpoint (re-send) | `POST /api/scm/autocount-outbox/:id/requeue` — same file |
 | Permission (read) | `scm.autocount.read` **or** `settings.manage` (Owner / IT Admin pass on `*`) |
@@ -3027,8 +3027,133 @@ permission), 409 (company unresolved), 404 (`row-not-found`), 500
 The workflow below is unchanged and remains the way to work a whole backlog, and
 the only way to get a DRY RUN.
 
-**Filters are in the URL** (`?state=`, `?docType=`, `?docNo=`) on desktop;
-the mobile shell has no router, so they are component state there.
+**Filters are in the URL** (`?state=`, `?docType=`, `?docNo=`, and since
+2026-08-21 `?range=` and `?sort=`) on desktop; the mobile shell has no router, so
+they are component state there. An unreadable value on any of the five falls back
+to its default rather than travelling — the server refuses an unknown `state`
+with a 400, and a hand-edited URL must not turn this page into an error message
+or an empty register.
+
+#### Rebuilt as a REGISTER, 2026-08-21 — eight columns, and the one that pays for the table
+
+The owner reviewed a mockup at the size the queue actually is — the sales order
+slice alone is 2,726 documents and the whole register will be a few thousand —
+and chose the dense-table direction over the card list. **Every column reads a
+field the payload already carries; no endpoint changed and none needs to.**
+
+| # | column | content | field |
+|---|---|---|---|
+| 1 | Status | the state pill (In AutoCount / Waiting / Not accepted / Held back / Replaced) | `state` |
+| 2 | Document | the ERP's own number, monospace | `doc_no` |
+| 3 | Type | Sales order / Delivery order / … | `doc_type` via `AC_DOC_TYPE_LABEL` |
+| 4 | What was sent | the operation in plain words | `op` via `acOpLabel` — the map that already existed, not a second one |
+| 5 | **In the book as** | what AutoCount answered with, **flagged when it differs from column 2** | `ac_doc_no` |
+| 6 | Sends | `×N` when the document went more than once, blank at one; the cell IS the opener for the send history | the group length from `acGroupByDocument` |
+| 7 | When | arrived, or last tried; the default sort, newest first | `sent_at ?? created_at` |
+| 8 | (action) | Send now / Send again, only where the server says one is possible | `can_send_now` / `can_requeue` |
+
+**Column 5 is why the table exists.** `HC-PO-2608-001` was written into
+`AED_HOUZS` and the account book filed it under its own `PO-009968` — see §7g,
+where supplying our own `DocNo` is described along with the fact that AutoCount's
+series keeps running in parallel. Nobody saw it for three days, because no screen
+held the ERP's number and the book's number up against each other. `acBookNumber`
+now does, and gives four answers rather than two:
+
+| verdict | when | how it reads |
+|---|---|---|
+| `same` | the book used the number on the paperwork — the normal case since §7g | the number, quiet |
+| `different` | the book used a number of its own | the number in warning ink, plus a **Different number** flag, ON the row, unclicked; the whole sentence is the cell's `title` on desktop and printed on the card on mobile |
+| `not-recorded` | `state` is `sent` and no `ac_doc_no` came back | a dash, with a note saying the book has it and we kept no number |
+| `not-yet` | it is not in the book at all | a dash, and nothing else — the Status column has already said it |
+
+The comparison is trimmed and case-folded. **A mismatch it misses is cheaper than
+one it invents**: a flag that fires on a healthy row teaches everyone to ignore
+the flag, and then the real one is invisible too.
+
+**Deliberately NOT columns**, so the next reader does not "restore" one:
+
+| dropped | why |
+|---|---|
+| Tries | reads as a dash on nearly every row. It is not lost — `acRowStatusLine` prints it INSIDE the problem row's reason block, where "Tried 3 times, will keep trying up to 6" is a sentence that says whether the queue is still working on it |
+| the reason SENTENCE | a paragraph in a cell wrecks the row height for every row. The headline stays on the row when there IS a problem; the rest opens under it |
+| raw `op` / `reason_kind` / `remedy` | column names and an SDK primitive. They stay in the API and out of the operator's table |
+| Company | the endpoint is already scoped to the active company, so the column would be identical on every row |
+
+**The rest of the shape:**
+
+| | |
+|---|---|
+| **The rulings that did not move** | A problem row keeps its plain-language headline ON the row, unclicked — he rejected a design that hid it behind a click. The page still opens on Needs attention. A document already in the account book still has nothing to open, mismatch flag included: the flag is on the row, not behind a control the row does not have. Nothing the server wrote is in the page's own voice. |
+| **Day separators** | *"Today · 21 Aug"* / *"Yesterday · 20 Aug"* / *"19 Aug"*, from `acRegisterItems`, which returns ONE flat list of separators and documents. Flat because the register is windowed — a separator outside the virtualiser either scrolls away from its own day or forces the whole table back into the DOM. |
+| **The footer** | *"Showing 1–N of M documents"* (`acShowingLine`) and *"Sorted by When, newest first"*. A windowed list draws its scrollbar from estimates, so the scrollbar cannot honestly answer "am I looking at all of it"; this can. The existing partial-count caveat is unchanged and still shows when `counts_complete` is false. |
+| **Two new lenses, both client-side** | a date range (All time / Today / Last 7 days / This month) beside the document chips, and the sort. Both narrow the LOADED page and neither re-asks the server, for the same reason `docType` does not: the route pages by recency and cannot answer "how many in August" without every other chip reading zero. **All time is the default** — a register that opened on This month would hide a document stuck since July from the one screen whose job is finding it. |
+| **Sticky heading** | the column heading row lives INSIDE the same pinned block as the filter strips, at `var(--page-header-offset)`. Two sticky boxes at separately-derived offsets overlap the first time either changes height; one box cannot get out of step with itself. |
+| **Column widths** | one `gridTemplateColumns` string (`AC_COLS`) shared by the heading and every row — two class names that agree today are two things to keep in step. The minimums total 998 px as of 2026-08-21, which keeps the register inside a 1280-wide laptop's content area with no sideways scrollbar. That total is a budget: widening one track means narrowing another, and *In the book as* is the widest fixed track because a clipped flag is a flag nobody trusts. |
+| **Windowing is unchanged** | still `<MobileVirtualList>`, the component `DataTable` and eight mobile screens already use. |
+
+**MOBILE KEEPS ITS CARDS** — eight columns do not fit 375 px, and a table that
+scrolls sideways on a phone is a table nobody reads. That is a presentation
+difference and it is allowed. What crossed over is everything that is a VERDICT
+or a CONTROL, all from the shared layer: the mismatch flag (with the whole
+sentence on the card, because a phone has no hover), the day separators, the date
+range, the sort and the closing line. A flag the owner only gets at his desk is a
+flag he does not get on the floor, which is where he uses this screen.
+
+**`frontend/src/lib/autocountRegister.ts` is a SECOND FILE in the same shared
+logic layer, not a second layer.** Everything in it is imported by both surfaces
+and by nothing else. It is separate only because `autocountOutbox.ts` is 1,767
+lines against this repo's 2,000-line cap, and the repo's own instruction at a
+ceiling is a new module, never a bigger number (`scripts/file-size-ceilings.json`,
+CLAUDE.md). Its pure exports are pinned by
+`frontend/src/lib/autocountRegister.test.ts`.
+
+**Measured in `frontend/perf-lab` (`?scenario=autocount-sync&rows=400`,
+`&surface=mobile` for the phone), 2026-08-21, 400 rows, desktop at 1440x900 and
+mobile at 375 px.** Each shape was measured under its OWN status filter, so the
+row being measured is inside the mounted window whatever the sort is doing:
+
+| | before | after |
+|---|---|---|
+| desktop, in AutoCount | 36.5 px | **37.0 px** |
+| desktop, in AutoCount, **sent four times** | 62.8 px | **37.0 px** |
+| desktop, in AutoCount, **different number** | 36.5 px, saying nothing | **37.0 px, flagged** |
+| desktop, held back (collapsed) | 64.3 px | **64.8 px** |
+| desktop, not accepted (collapsed) | 69.8 px | **64.8 px** |
+| mobile 375 px, in AutoCount | 53.5 px | **53.5 px** |
+| mobile 375 px, in AutoCount, different number | 53.5 px, saying nothing | **131.4 px, flagged** |
+| mobile 375 px, held back (collapsed) | 83.8 px | **83.8 px** |
+| mobile 375 px, not accepted (collapsed) | 88.5 px | **88.5 px** |
+
+Read that table for what it says and not for a headline. **The quiet row did not
+get shorter and was never going to** — it was already 36.5 px, which is one line
+of text, and the 2026-08-16 pass is what bought that. What the register bought is
+two different things: a document sent four times is now ONE line instead of two
+(the *Sends* cell is its own history opener, so folding the audit trail no longer
+costs a second row), and a misfiled document is now visible at all. The mobile
+mismatch card is the only thing that grew, by 78 px, on rows that in production
+should be rare — since §7g the ERP supplies its own number and the two agree.
+
+> **THE LAB'S SENT ROWS CHANGED on 2026-08-21, and the before/after above was
+> re-measured on both sides of the change.** The fixture had every arrived
+> document coming back as `SO-000NN` — the pre-§7g shape, from when AutoCount
+> auto-numbered — so the new flag fired on **every** sent row and the lab
+> measured a page production does not have. Arrived rows now echo the ERP's own
+> number, and ONE row carries the real mismatch (`HC-PO-2608-001` →
+> `PO-009968`). One loud row in four hundred is the thing worth measuring; a flag
+> that fires on all of them is wallpaper.
+
+The lab scenario renders the REAL page with the queue stubbed at `fetch`, so
+everything above the network is the real code and a height measured there is a
+height the app produces. Re-measure with
+`document.querySelectorAll("[data-ac-row]")[i].getBoundingClientRect().height`.
+
+**Test hooks are contract, not styling.** `data-ac-row` (one document),
+`data-ac-doc` (the cell holding the ERP number — needed because a healthy row
+prints that number TWICE, here and in column 5, so "the element with this text"
+stopped identifying a row), `data-ac-why` (the headline that is the opener),
+`data-ac-book-flag` (the mismatch), `data-ac-day` (a separator), `data-ac-send`
+(one earlier send), `data-ac-technical` (the collapsed disclosure).
+
 
 ### One taxonomy, three readers
 
