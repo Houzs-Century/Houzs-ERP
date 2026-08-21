@@ -76,6 +76,7 @@ import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -758,7 +759,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const notify = useNotify();
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  const staffQ = usePickableStaff({ onlySales: true });
+  /* `include` carries the salesperson already ON this document, so someone the
+     onlySales narrowing hides is still named. "(former staff)" below is then
+     only reachable for a row that genuinely is gone. */
+  const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
   const { can } = useHouzsAuth();
   const venuesQ = useVenues();
@@ -832,7 +836,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     const list = stateWarehousesQ.data?.mappings ?? [];
     if (list.length === 0) return;
     const hit = list.find((m) => m.state === form.state);
-    const code = hit?.warehouse?.code ?? hit?.warehouse?.name ?? null;
+    const code = warehouseLabel(hit?.warehouse);
     if (!code) return;
     if (form.salesLocation === code) return;
     setForm((s) => ({ ...s, salesLocation: code }));

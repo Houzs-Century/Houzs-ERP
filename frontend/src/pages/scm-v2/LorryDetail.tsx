@@ -54,6 +54,7 @@ import {
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -247,7 +248,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
 
   const whName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const w of warehouses.data ?? []) m.set(w.id, w.code || w.name);
+    for (const w of warehouses.data ?? []) m.set(w.id, warehouseLabel(w) ?? '');
     return m;
   }, [warehouses.data]);
   const coName = useMemo(() => {
@@ -318,7 +319,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           <span className={styles.fieldLabel}>Region (home warehouse)</span>
           <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
             <option value="">Any region (unpinned)</option>
-            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{w.code || w.name}</option>))}
+            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{warehouseLabel(w)}</option>))}
           </select>
         </label>
         <label className={styles.field}>

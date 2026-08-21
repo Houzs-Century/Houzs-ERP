@@ -44,6 +44,15 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+
+/* The picker rows carry the PO line's warehouse as two FLAT columns, not a
+   nested object, so the ONE display rule is reached through this adapter rather
+   than re-spelled per cell (vendor/scm/lib/warehouse-label.ts — code, then name). */
+const whLabel = (
+  r: { warehouseLocationCode?: string | null; warehouseLocationName?: string | null } | null | undefined,
+): string | null =>
+  warehouseLabel(r ? { code: r.warehouseLocationCode, name: r.warehouseLocationName } : null);
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -251,7 +260,7 @@ export const GrnFromPo = () => {
   const lockedWarehouseLabel = useMemo(() => {
     if (!lockedWarehouse) return null;
     const row = items.find((r) => r.warehouseLocationId === lockedWarehouse);
-    return row?.warehouseLocationCode ?? row?.warehouseLocationName ?? lockedWarehouse;
+    return whLabel(row) ?? lockedWarehouse;
   }, [lockedWarehouse, items]);
 
   // A row is LOCKED when a different warehouse is already picked. Grey these out
@@ -343,11 +352,11 @@ export const GrnFromPo = () => {
       key: 'warehouse', label: 'Warehouse', width: 150, sortable: true, groupable: true,
       accessor: (r) => (
         <span className={styles.muted}>
-          {r.warehouseLocationCode ?? r.warehouseLocationName ?? '—'}
+          {whLabel(r) ?? '—'}
         </span>
       ),
       searchValue: (r) => `${r.warehouseLocationCode ?? ''} ${r.warehouseLocationName ?? ''}`.trim(),
-      groupValue: (r) => r.warehouseLocationCode ?? r.warehouseLocationName ?? '(no warehouse)',
+      groupValue: (r) => whLabel(r) ?? '(no warehouse)',
       sortFn: (a, b) => (a.warehouseLocationCode ?? '').localeCompare(b.warehouseLocationCode ?? ''),
     },
     {

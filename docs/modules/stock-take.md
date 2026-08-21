@@ -26,7 +26,7 @@ ADJUSTMENT movements) → CANCELLED (cancel, or reverse-of-posted).
 
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop list | `frontend/src/pages/scm-v2/StockTakesListV2.tsx` | Assignee column; variance shows "Hidden" on a blind OPEN take for non-supervisors. |
+| Desktop list | `frontend/src/pages/scm-v2/StockTakesListV2.tsx` | Assignee column; variance shows "Hidden" on a blind OPEN take for non-supervisors. The Warehouse column shows the CODE — it reads through the shared `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts`, code first then name, 2026-08-21); it used to print the NAME. The mobile Stock Take card was the same fix. |
 | Desktop create | `frontend/src/pages/scm-v2/StockTakeNew.tsx` | Warehouse + **Assignee (required)** + Scope + Date + Notes + **Blind** toggle. |
 | Desktop detail / count sheet | `frontend/src/pages/scm-v2/StockTakeDetail.tsx` | Model view (default) / flat toggle; per-cell Counted By; blind-aware. |
 | Model-grouping fold | `frontend/src/pages/scm-v2/stock-take-grouping.ts` | Pure; tested beside itself. |

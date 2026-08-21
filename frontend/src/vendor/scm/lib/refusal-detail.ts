@@ -41,7 +41,7 @@ import { normaliseTypographicQuotes } from '../../shared/mfg-pricing';
  *    Gap           SoLineCard.tsx:938  label="Gaps"
  *    Divan Height  SoLineCard.tsx:945  label="Divan Heights"
  *    Leg Height    SoLineCard.tsx:952  label="Leg Heights"
- *    Seat Height   SoLineCard.tsx:988  label="Seat Heights"
+ *    Seat Size     SoLineCard.tsx:1062 label="Seat Size"
  *    Total Height  SoLineCard.tsx:958  "Total height (auto): … (Divan + Leg + Gap)"
  *    Size          Products.tsx:713 `label: 'Size'`, ProductModelDetail.tsx:717 <th>Size</th>
  *    Compartment   ProductModelDetail.tsx:1183 label="Compartments"
@@ -53,7 +53,7 @@ const FIELD_LABEL: Record<string, string | undefined> = {
   gap:          'Gap',
   divan_height: 'Divan Height',
   leg_height:   'Leg Height',
-  seat_size:    'Seat Height',
+  seat_size:    'Seat Size',
   total_height: 'Total Height',
   size_code:    'Size',
   compartment:  'Compartment',

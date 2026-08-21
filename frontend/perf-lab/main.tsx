@@ -200,11 +200,50 @@ const AC_REPEATED_SENDS: AcOutboxRow[] = [
      tries left (acRowCanSendNow, backend scm/lib/autocount-outbox-status.ts).
      These four are SENT, so false is what the route would publish for them. */
   can_send_now: false,
-  ac_doc_no: "SO-00002",
+  /* THE SAME NUMBER, and that is the point of it being this value. Since the
+     change written up in docs/modules/autocount-writeback.md §7g the ERP sends
+     its OWN document number on all six types, so a document sent today comes
+     back under the number on the paperwork and the register's "In the book as"
+     column is SILENT. This fixture said `SO-00002` until 2026-08-21, which is
+     the pre-§7g shape AutoCount auto-numbered — it made the mismatch flag fire
+     on every sent row in the lab and measured a page production does not have.
+     The one row that legitimately mismatches is AC_BOOK_MISMATCH below. */
+  ac_doc_no: "HC-SO-2608-002",
   created_at: s.createdAt,
   updated_at: s.sentAt,
   sent_at: s.sentAt,
 }));
+
+/**
+ * THE ROW THE "In the book as" COLUMN EXISTS FOR — and it is a real one.
+ *
+ * `HC-PO-2608-001` was written into `AED_HOUZS` on 2026-08-17 and the account
+ * book filed it under its own `PO-009968`. Nobody saw it for three days,
+ * because no screen held the ERP's number and the book's number up against each
+ * other. It is one row out of four hundred here on purpose: a flag that fires
+ * on every row is wallpaper, and the thing worth measuring is what ONE loud row
+ * costs in a register of quiet ones.
+ */
+const AC_BOOK_MISMATCH: AcOutboxRow = {
+  id: "ob-book-mismatch",
+  op: "create_po",
+  doc_type: "PO",
+  doc_no: "HC-PO-2608-001",
+  doc_id: null,
+  status: "sent",
+  state: "sent",
+  attempts: 0,
+  reason: null,
+  reason_kind: null,
+  remedy: null,
+  needs_attention: false,
+  can_requeue: false,
+  can_send_now: false,
+  ac_doc_no: "PO-009968",
+  created_at: "2026-08-17T02:10:00.000Z",
+  updated_at: "2026-08-17T02:10:30.000Z",
+  sent_at: "2026-08-17T02:10:30.000Z",
+};
 
 function acRows(total: number): AcOutboxRow[] {
   return Array.from({ length: total }, (_, i) => {
@@ -310,7 +349,10 @@ function acRows(total: number): AcOutboxRow[] {
       doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
       status: "sent",
       state: "sent",
-      ac_doc_no: `SO-${String(i).padStart(5, "0")}`,
+      /* The ERP's OWN number, echoed back — see AC_REPEATED_SENDS above. This
+         is what a document sent since §7g looks like, so the register's fifth
+         column is quiet on it, which is the case that has to be measured. */
+      ac_doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
       sent_at: "2026-08-15T01:00:00.000Z",
       reason: null,
       reason_kind: null,
@@ -321,7 +363,7 @@ function acRows(total: number): AcOutboxRow[] {
 }
 
 function acPayload(total: number): AcOutboxResponse {
-  const rows = [...AC_REPEATED_SENDS, ...acRows(total)];
+  const rows = [...AC_REPEATED_SENDS, AC_BOOK_MISMATCH, ...acRows(total)];
   /* COUNTS ARE DOCUMENTS, because the route's are. A lab whose counts were rows
      would render a page that agrees with itself and disagrees with production —
      which is the defect this fixture exists to reproduce, not to hide. Distinct

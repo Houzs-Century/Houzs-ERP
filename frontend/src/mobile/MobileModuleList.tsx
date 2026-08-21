@@ -19,6 +19,7 @@ import {
 } from "../vendor/scm/lib/status-pill";
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
+import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -2002,8 +2003,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     endpoint: "/stock-transfers",
     listKey: "transfers",
     primary: (r) => {
-      const from = pick(r, "fromWarehouse", "from_warehouse")?.name ?? pick(r, "fromWarehouse", "from_warehouse")?.code;
-      const to = pick(r, "toWarehouse", "to_warehouse")?.name ?? pick(r, "toWarehouse", "to_warehouse")?.code;
+      const [from, to] = [pick(r, "fromWarehouse", "from_warehouse"), pick(r, "toWarehouse", "to_warehouse")].map(warehouseLabel);
       return from && to ? `${from} → ${to}` : pick(r, "transferNo", "transfer_no") ?? "—";
     },
     secondary: (r) => join(pick(r, "transferNo", "transfer_no"), pick(r, "status"), dm(pick(r, "transferDate", "transfer_date"))),
@@ -2032,7 +2032,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     placeholder: "Search stock take · warehouse",
     endpoint: "/stock-takes",
     listKey: "takes",
-    primary: (r) => pick(r, "warehouse")?.name ?? pick(r, "warehouse")?.code ?? pick(r, "takeNo", "take_no") ?? "—",
+    primary: (r) => warehouseLabel(pick(r, "warehouse")) ?? pick(r, "takeNo", "take_no") ?? "—",
     secondary: (r) => join(pick(r, "takeNo", "take_no"), pick(r, "status"), dm(pick(r, "takeDate", "take_date"))),
     search: (r) => join(pick(r, "takeNo", "take_no"), pick(r, "warehouse")?.name, pick(r, "scopeValue", "scope_value")),
     statusDocType: "stockTake",
