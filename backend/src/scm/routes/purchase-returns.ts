@@ -189,6 +189,52 @@ purchaseReturns.get('/', async (c) => {
   return c.json({ purchaseReturns: data ?? [] });
 });
 
+/* The lines a PO-sourced return may draw from (2026-08-21, audit B6). The PO
+   detail's "Raise Return" used to prefill the PO's OWN lines with no
+   grn_item_id — which made every line "manual": uncapped, consuming nothing,
+   and deducting the company DEFAULT warehouse instead of the receiving one. A
+   return of received goods draws from RECEIPTS, so this read answers the
+   POSTED GRN lines received against the PO with remaining (accepted − returned)
+   above zero — the same pool /from-grn offers, keyed by PO.
+   Registered BEFORE '/:id' or that route swallows the literal path. */
+purchaseReturns.get('/returnable-grn-lines', async (c) => {
+  const sb = c.get('supabase');
+  const poId = c.req.query('poId');
+  if (!poId) return c.json({ error: 'po_id_required' }, 400);
+  const { data: grnRows, error: gErr } = await scopeToCompany(sb.from('grns')
+    .select('id, grn_number, supplier_id, status')
+    .eq('purchase_order_id', poId)
+    .eq('status', 'POSTED'), c);
+  if (gErr) return c.json({ error: 'load_failed', reason: gErr.message }, 500);
+  const grnList = (grnRows ?? []) as Array<{ id: string; grn_number: string; supplier_id: string | null }>;
+  if (grnList.length === 0) return c.json({ lines: [], supplierId: null });
+  const byGrn = new Map(grnList.map((g) => [g.id, g.grn_number]));
+  const { data: itRows, error: iErr } = await sb.from('grn_items')
+    .select('id, grn_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason')
+    .in('grn_id', grnList.map((g) => g.id))
+    .gt('qty_accepted', 0);
+  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
+  const lines = ((itRows ?? []) as Array<{
+    id: string; grn_id: string; material_kind: string | null; item_code: string;
+    material_name: string | null; item_group: string | null; variants: Record<string, unknown> | null;
+    qty_accepted: number; returned_qty: number; unit_price_sen: number; rejection_reason: string | null;
+  }>)
+    .map((r) => ({
+      grnItemId: r.id,
+      grnNumber: byGrn.get(r.grn_id) ?? null,
+      materialKind: r.material_kind,
+      itemCode: r.item_code,
+      materialName: r.material_name,
+      itemGroup: r.item_group,
+      variants: r.variants,
+      unitPriceSen: r.unit_price_sen ?? 0,
+      rejectionReason: r.rejection_reason,
+      remaining: Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)),
+    }))
+    .filter((l) => l.remaining > 0);
+  return c.json({ lines, supplierId: grnList[0]?.supplier_id ?? null });
+});
+
 purchaseReturns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
