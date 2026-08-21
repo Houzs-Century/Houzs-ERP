@@ -635,7 +635,7 @@ async function agingFreshness() {
        WHERE a.attrelid = ${'scm.' + view}::regclass AND a.attnum > 0 AND NOT a.attisdropped`);
     const have = new Set(cols.map((c) => c.col));
     if (!have.size) { note(`${view}: UNPROVEN — could not read its columns.`); return; }
-    const dateCol = ['created_at', 'doc_date', 'so_date', 'updated_at'].find((c) => have.has(c));
+    const dateCol = ['created_at', 'po_date', 'invoice_date', 'doc_date', 'so_date', 'updated_at'].find((c) => have.has(c));
     const idCol = idCandidates.find((c) => have.has(c));
     const amtCol = amtCandidates.find((c) => have.has(c));
     if (!dateCol || !idCol) {
@@ -655,11 +655,34 @@ async function agingFreshness() {
     for (const r of rows) note('   ' + JSON.stringify(r));
   }
 
-  await since('v_po_outstanding', ['doc_no', 'po_number', 'document_no'], ['total_sen']);
-  await since('v_so_outstanding', ['doc_no', 'so_doc_no', 'document_no'], ['local_total_sen']);
-  await since('v_pi_outstanding', ['doc_no', 'invoice_number', 'pi_number'], ['total_sen']);
-  await since('v_si_outstanding', ['doc_no', 'invoice_number'], ['total_sen']);
-  note('\nA snapshot-minus-live delta is only FRESHNESS when a row above accounts for it.');
+  /* The outstanding VIEWS expose the document's own date (po_date,
+     invoice_date, so_date), not when the row was WRITTEN — and a document
+     dated yesterday can be entered this morning, so a document date can
+     neither prove nor refute lag. The base table's created_at can. Joined on
+     the view's `id`, which every one of them exposes. */
+  async function createdSince(view, base, amtCol) {
+    let rows;
+    try {
+      rows = await sql`
+        SELECT v.id, v.company_id, v.${sql(amtCol)} AS amt, b.created_at
+          FROM ${sql('scm.' + view)} v
+          JOIN ${sql('scm.' + base)} b ON b.id = v.id
+         WHERE v.is_outstanding AND b.created_at > ${at}
+         ORDER BY b.created_at`;
+    } catch (e) {
+      note(`${view}: UNPROVEN — the query failed: ${e.code ?? ''} ${e.message}`);
+      return;
+    }
+    note(`${view}: ${rows.length} outstanding row(s) CREATED after the refresh, worth ${rm(rows.reduce((s, r) => s + Number(r.amt ?? 0), 0))}`);
+    for (const r of rows) note('   ' + JSON.stringify(r));
+  }
+
+  await since('v_po_outstanding', ['po_number'], ['total_sen']);
+  await since('v_so_outstanding', ['doc_no', 'so_doc_no'], ['local_total_sen']);
+  note('\n--- by the base row\'s created_at, which is when it was actually entered ---');
+  await createdSince('v_po_outstanding', 'purchase_orders', 'total_sen');
+  await createdSince('v_so_outstanding', 'mfg_sales_orders', 'local_total_sen');
+  note('\nA snapshot-minus-live delta is only FRESHNESS when a created-after row accounts for it.');
 }
 
 async function main() {
