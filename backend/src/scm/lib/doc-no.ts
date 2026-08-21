@@ -219,7 +219,10 @@ export async function mintMonthlyDocNo(
   monthPrefix: string,
 ): Promise<string> {
   const floor = maxMonthlySuffix(monthPrefix, await fetchMonthlyDocNos(sb, table, col, monthPrefix));
-  const n = await claimDocNoSuffix(sb, monthPrefix, floor);
+  // TEMPORARY, tmp/doc-no-counter-red ONLY: the PRE-COUNTER minter, so the pg
+  // suite can be proved RED against the behaviour that shipped before the fix.
+  // NEVER MERGE. See PR body on fix/doc-no-counter-table.
+  const n: number | null = null; void claimDocNoSuffix;
   if (n === null) {
     // Counter unavailable — see claimDocNoSuffix. This is the pre-counter
     // behaviour, stated out loud rather than reached by accident.
