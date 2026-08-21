@@ -15,7 +15,7 @@ fails when one appears in CODE.
 | Concept | Say this | Not this | Declared in |
 | --- | --- | --- | --- |
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
-| **Delivery Date** | `customer_delivery_date` / `customerDeliveryDate` | — | `backend/src/scm/shared/so-date-pair.ts` |
+| **Delivery Date** | `customer_delivery_date` / `customerDeliveryDate` | — | `backend/src/scm/shared/so-processing-date.ts` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
 | **Item code (SKU reference)** | `item_code` | ~~`material_code`~~<br>~~`product_code`~~ | `backend/src/scm/routes/mfg-products.ts` |

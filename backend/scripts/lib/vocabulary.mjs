@@ -89,7 +89,7 @@ export const VOCABULARY = [
        likewise its own column (the rescheduled date the delivery board writes),
        not a spelling of this one. */
     retired: [],
-    declaredIn: "backend/src/scm/shared/so-date-pair.ts",
+    declaredIn: "backend/src/scm/shared/so-processing-date.ts",
     allow: [
       "scripts/lib/vocabulary.mjs",
       "scripts/lib/drift-catalogue.mjs",
