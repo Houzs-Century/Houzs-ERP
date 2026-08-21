@@ -941,7 +941,7 @@ projects(payment_status)`.
 | Line | Table | Notable columns |
 |---|---|---|
 | 159 | `project_phase_photos` | project_id, phase, r2_key, caption, uploaded_by |
-| 171 | `project_brands` | name (unique), color, sort_order, active |
+| 171 | `project_brands` | name, color, sort_order, active — **plus `company_id` and `logo_r2_key`, which `schema.pg.ts` does NOT model** (migs 0093 / 0069). The `.unique()` on `name` in that file is drift too: production carries only `project_brands_pkey (id)`, and "bedframe" / "service" already exist under both companies (read-only run 32455140536, 2026-08-21). Treat the drizzle model as incomplete for this table; the raw-SQL handlers in `routes/projects.ts` are what production runs. |
 | 206 | `project_activity` | project_id, user_id, action, from_value, to_value, note, created_at |
 | 219 | `project_reads` | PK (project_id, user_id), last_read_at |
 | 500 | `project_finance` | project_id PK, rental, total_sales, contractor_cost, license_fee |
