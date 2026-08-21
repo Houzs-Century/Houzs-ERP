@@ -461,9 +461,16 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
 }
 
 /** Canvas signature pad — pointer/touch strokes; exposes hasSignature to the
- *  parent. The captured strokes can be read via canvasRef.current.toDataURL()
- *  when a backend field to persist them exists (none today). Bumping
- *  `clearNonce` wipes the pad and re-arms the "signed" latch. */
+ *  parent, which reads the strokes with canvasRef.current.toDataURL() and sends
+ *  them as `signatureData`. Bumping `clearNonce` wipes the pad and re-arms the
+ *  "signed" latch.
+ *
+ *  This used to end "when a backend field to persist them exists (none today)",
+ *  which stopped being true on 2026-07-14 — the DO status handler has persisted
+ *  `signature_data` since then. A stale sentence in a JSDoc is worse than none:
+ *  it tells the next reader the capture is decorative and there is nothing to
+ *  protect. `onChange` is the ONLY thing that lets a signature through, so
+ *  MobilePodSignatureCapture.test.tsx pins it in both directions. */
 function SignaturePad({ canvasRef, onChange, clearNonce }: {
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
   onChange: (hasSignature: boolean) => void;

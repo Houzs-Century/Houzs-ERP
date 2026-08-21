@@ -14,10 +14,12 @@
 //
 // THE TWO HALVES OF AN EDIT ON A PROCESSING-LOCKED SO:
 //   * FROZEN header columns (this module)   -> ride the amendment, need approval.
-//   * everything else (customer contact, address lines, city, note, payment)
+//   * everything else (customer type, emergency contact, note, payment)
 //     -> saved DIRECTLY by the normal header PATCH, no amendment, no approval.
-//        Those never reach the supplier, so they were never amendment material
-//        (Owner: "有些東西原本不需要 SO amendment 都可以 edit 的 例如顧客名字 電話號碼").
+//        (Customer name / phone / email USED to be in this half — the owner's
+//        2026-07-16 "例如顧客名字 電話號碼" — until the 2026-08-21 ruling moved
+//        the contact block onto the DELIVERY-lane amendment. Address lines and
+//        City made the same journey on 2026-07-27/17.)
 //
 // The key set below mirrors the backend's SO_PROCESSING_LOCK_COLS
 // (scm/routes/mfg-sales-orders.ts) EXACTLY — that Set is what the header PATCH
@@ -76,6 +78,12 @@ export const AMENDABLE_HEADER_KEYS = [
   'billToAddress',
   'installToAddress',
   'replacementDisposal',
+  /* Customer info joined 2026-08-21 (owner: "需要加上更新客户信息") — the
+     contact block rides the DELIVERY lane. Same order as the policy table:
+     so-field-policy.test.ts asserts this literal equals soAmendableHeaderKeys(). */
+  'debtorName',
+  'phone',
+  'email',
 ] as const;
 
 export type AmendableHeaderKey = (typeof AMENDABLE_HEADER_KEYS)[number];
@@ -106,6 +114,9 @@ export const AMENDABLE_HEADER_LABELS: Record<AmendableHeaderKey, string> = {
   billToAddress:        'Bill-to address',
   installToAddress:     'Install-to address',
   replacementDisposal:  'Replacement / disposal',
+  debtorName:           'Customer name',
+  phone:                'Phone',
+  email:                'Email',
 };
 
 /** Loose equality mirroring the backend's `norm()` — null / undefined / '' all
@@ -200,8 +211,8 @@ export function amendmentHeaderDiffRows(
  * back to its ORIGINAL value so the direct PATCH stays inside the server's
  * field-scoped lock (it 409s `so_locked_processing` on a genuine change to a
  * frozen column, and passes an unchanged one). The requested new values travel
- * on the amendment instead. Non-frozen fields in `patch` (name / phone / email /
- * address lines / note) pass through untouched and save immediately.
+ * on the amendment instead. Non-frozen fields in `patch` (customer type /
+ * emergency contact / note) pass through untouched and save immediately.
  *
  * `salesLocation` needs its own treatment. It is a frozen column server-side
  * (SO_PROCESSING_LOCK_COLS) but it is not amendable directly — it is DERIVED

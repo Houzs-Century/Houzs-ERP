@@ -233,12 +233,6 @@
       "whoSetIt": "Owner, 2026-07-14, restated 2026-07-31: 'Houzs 30%, 2990 50%'."
     },
     {
-      "file": "backend/src/scm/shared/so-branding-label.ts",
-      "text": "const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;",
-      "why": "The Branding column's label: a sofa or mattress line under the non-HOUZS company reads '2990 Sofa' / '2990 Mattress'. A label on a row, not a capability. Frontend twin is byte-identical and pinned by check-shared-mirrors.",
-      "whoSetIt": "Owner, 2026-08-17 — the complaint that a branding cell must never be blank."
-    },
-    {
       "file": "backend/src/services/agents/agent-company.ts",
       "text": "const base = list.find((r) => r.code === BASE_COMPANY_CODE);",
       "why": "Resolving the BASE company as the default when an agent has no company in hand. Asymmetric on purpose — one company has to be the base — and it is constrained to the caller's allowed set downstream.",
@@ -461,28 +455,34 @@
       "whoSetIt": "House branding."
     },
     {
-      "file": "frontend/src/vendor/shared/so-branding-label.ts",
-      "text": "const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;",
-      "why": "Byte-identical vendored twin of backend/src/scm/shared/so-branding-label.ts; check-shared-mirrors.mjs --strict pins the pair. Same reason as the backend copy.",
-      "whoSetIt": "Owner, 2026-08-17 — same rule, vendored copy."
-    },
-    {
-      "file": "frontend/src/vendor/shared/so-branding-label.ts",
-      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
-      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
-      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
-    },
-    {
-      "file": "backend/src/scm/shared/so-branding-label.ts",
-      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
-      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
-      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
-    },
-    {
       "file": "backend/src/scm/lib/doc-no.ts",
       "text": "if (upper === BASE_COMPANY_CODE) return '';",
       "why": "THE JE-NUMBER PREFIX — numbering, which is the one per-company difference the rule names as legitimate. HOUZS mints journal entries BARE (JE-2607-0001) and always has; every other company keys off the SAME resolver the SO/PO minters use, so 2990 gets '2990-' and a future third company gets '<CODE>-'. Deliberately unlike its own SO/PO numbers, which do carry 'HC-'. Renaming a live series would orphan every reference to an existing JE number. NOT a capability: both organisations post, read and reverse journals through identical code.",
       "whoSetIt": "Owner — it is his live JE book's existing series. The design is recorded in docs/MULTICOMPANY-SCALING.md section 1 ('journal entries use jePrefixForCompany()'), and #2427 preserved the bare HOUZS series on purpose when it moved the resolver off a hardcoded companies.id."
+    },
+    {
+      "file": "backend/src/scm/shared/so-branding-label.ts",
+      "text": "if (code === HOUZS) return SOFA_BRAND_HOUZS;",
+      "why": "A sofa's house brand IS the company - the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. MOVED here from brandingLabel on 2026-08-21 so the SO PDF letterhead resolves the same equation instead of hardcoding 'ZANOTTI' - a 2990 Sales Order was printing Houzs's mark. One rule, one home, two callers. Frontend twin is byte-identical and pinned by check-shared-mirrors.mjs --strict.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 - see #2402; moved to houseSofaBrandName by #2599)"
+    },
+    {
+      "file": "backend/src/scm/shared/so-branding-label.ts",
+      "text": "if (code === '2990') return SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company - the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. MOVED here from brandingLabel on 2026-08-21 so the SO PDF letterhead resolves the same equation instead of hardcoding 'ZANOTTI' - a 2990 Sales Order was printing Houzs's mark. One rule, one home, two callers. Frontend twin is byte-identical and pinned by check-shared-mirrors.mjs --strict.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 - see #2402; moved to houseSofaBrandName by #2599)"
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-branding-label.ts",
+      "text": "if (code === HOUZS) return SOFA_BRAND_HOUZS;",
+      "why": "A sofa's house brand IS the company - the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. MOVED here from brandingLabel on 2026-08-21 so the SO PDF letterhead resolves the same equation instead of hardcoding 'ZANOTTI' - a 2990 Sales Order was printing Houzs's mark. One rule, one home, two callers. Frontend twin is byte-identical and pinned by check-shared-mirrors.mjs --strict.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 - see #2402; moved to houseSofaBrandName by #2599)"
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-branding-label.ts",
+      "text": "if (code === '2990') return SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company - the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. MOVED here from brandingLabel on 2026-08-21 so the SO PDF letterhead resolves the same equation instead of hardcoding 'ZANOTTI' - a 2990 Sales Order was printing Houzs's mark. One rule, one home, two callers. Frontend twin is byte-identical and pinned by check-shared-mirrors.mjs --strict.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 - see #2402; moved to houseSofaBrandName by #2599)"
     }
   ]
 }
