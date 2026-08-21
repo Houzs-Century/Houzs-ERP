@@ -658,15 +658,17 @@ async function agingFreshness() {
   /* The outstanding VIEWS expose the document's own date (po_date,
      invoice_date, so_date), not when the row was WRITTEN — and a document
      dated yesterday can be entered this morning, so a document date can
-     neither prove nor refute lag. The base table's created_at can. Joined on
-     the view's `id`, which every one of them exposes. */
-  async function createdSince(view, base, amtCol) {
+     neither prove nor refute lag. The base table's created_at can. The join
+     key differs per view — v_po_outstanding exposes `id`, v_so_outstanding
+     exposes `doc_no` — so the caller names it rather than the function
+     assuming one and reporting 0 when the assumption is wrong. */
+  async function createdSince(view, base, amtCol, joinCol) {
     let rows;
     try {
       rows = await sql`
-        SELECT v.id, v.company_id, v.${sql(amtCol)} AS amt, b.created_at
+        SELECT v.${sql(joinCol)} AS doc, v.company_id, v.${sql(amtCol)} AS amt, b.created_at
           FROM ${sql('scm.' + view)} v
-          JOIN ${sql('scm.' + base)} b ON b.id = v.id
+          JOIN ${sql('scm.' + base)} b ON b.${sql(joinCol)} = v.${sql(joinCol)}
          WHERE v.is_outstanding AND b.created_at > ${at}
          ORDER BY b.created_at`;
     } catch (e) {
@@ -680,8 +682,8 @@ async function agingFreshness() {
   await since('v_po_outstanding', ['po_number'], ['total_sen']);
   await since('v_so_outstanding', ['doc_no', 'so_doc_no'], ['local_total_sen']);
   note('\n--- by the base row\'s created_at, which is when it was actually entered ---');
-  await createdSince('v_po_outstanding', 'purchase_orders', 'total_sen');
-  await createdSince('v_so_outstanding', 'mfg_sales_orders', 'local_total_sen');
+  await createdSince('v_po_outstanding', 'purchase_orders', 'total_sen', 'id');
+  await createdSince('v_so_outstanding', 'mfg_sales_orders', 'local_total_sen', 'doc_no');
   note('\nA snapshot-minus-live delta is only FRESHNESS when a created-after row accounts for it.');
 }
 
