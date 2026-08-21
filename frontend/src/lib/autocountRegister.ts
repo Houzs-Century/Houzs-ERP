@@ -162,29 +162,38 @@ export function acWhenText(row: AcOutboxRow): string {
   return AC_DMY.test(key) ? `${key.slice(0, 5)} ${fmtTime(acWhenIso(row))}` : AC_NO_VALUE;
 }
 
-const AC_MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-] as const;
-
 /** A row whose timestamp cannot be read still belongs somewhere, and it says so
  *  rather than being quietly filed under today. */
 export const AC_NO_DAY_LABEL = "No date recorded";
 
 /**
- * "Today · 21 Aug" / "Yesterday · 20 Aug" / "19 Aug" / "19 Aug 2025".
+ * "Today · 21/08/2026" / "Yesterday · 20/08/2026" / "19/08/2026".
  *
  * Cheap and quiet by design — a separator that shouts is one more thing between
  * the reader and the row it is introducing. `now` is a parameter so the label is
  * testable without a clock, and so both surfaces bucket against one instant.
+ *
+ * THE DATE IS NUMERIC, and that is a decision rather than a shortcut. The
+ * approved mockup wrote *"Today · 21 Aug"*, and a month ABBREVIATION needs a
+ * twelve-name list — which `backend/scripts/check-duplicated-decisions.mjs`
+ * correctly refused, because two already exist (`routes/finance.ts`,
+ * `routes/projects_print.ts`) and a third home for the Gregorian calendar in a
+ * file nothing else imports is exactly the shape that gate watches for. Neither
+ * of those can be imported from the frontend, so the honest choices were a third
+ * copy on an allowlist or no copy at all.
+ *
+ * No copy at all is also the more consistent answer: `fmtDate` is THE date
+ * format in this app — numeric, unambiguous, DD/MM/YYYY on every other screen —
+ * and taking the separator off it means the separator, the When cell and every
+ * other date the operator sees are one rule with one implementation. The cost is
+ * four characters that read slightly less warmly.
  */
 export function acDayLabel(key: string, now: number = Date.now()): string {
-  const m = AC_DMY.exec(key);
-  if (!m) return AC_NO_DAY_LABEL;
-  const date = `${Number(m[1])} ${AC_MONTHS[Number(m[2]) - 1]}`;
+  if (!AC_DMY.test(key)) return AC_NO_DAY_LABEL;
   const today = fmtDate(new Date(now));
-  if (key === today) return `Today · ${date}`;
-  if (key === fmtDate(new Date(now - 86_400_000))) return `Yesterday · ${date}`;
-  return m[3] === today.slice(6) ? date : `${date} ${m[3]}`;
+  if (key === today) return `Today · ${key}`;
+  if (key === fmtDate(new Date(now - 86_400_000))) return `Yesterday · ${key}`;
+  return key;
 }
 
 /**

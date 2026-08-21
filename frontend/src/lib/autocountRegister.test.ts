@@ -163,15 +163,17 @@ describe("when a document landed", () => {
 
 describe("the day a run of rows happened on", () => {
   it("names today and yesterday, and dates everything else", () => {
-    expect(acDayLabel("21/08/2026", NOW)).toBe("Today · 21 Aug");
-    expect(acDayLabel("20/08/2026", NOW)).toBe("Yesterday · 20 Aug");
-    expect(acDayLabel("19/08/2026", NOW)).toBe("19 Aug");
+    expect(acDayLabel("21/08/2026", NOW)).toBe("Today · 21/08/2026");
+    expect(acDayLabel("20/08/2026", NOW)).toBe("Yesterday · 20/08/2026");
+    expect(acDayLabel("19/08/2026", NOW)).toBe("19/08/2026");
   });
 
-  /* A year that is not this one is worth four more characters — a register goes
-     back as far as the queue does, and the queue is append-only. */
-  it("carries the year when the day is not in this one", () => {
-    expect(acDayLabel("19/08/2025", NOW)).toBe("19 Aug 2025");
+  /* THE SEPARATOR IS `fmtDate` AND NOTHING ELSE — no month-name list, which
+     would be a third home for the Gregorian calendar and is what
+     check-duplicated-decisions refused. The label a day older than the queue is
+     the same rule as the label on a row from this morning. */
+  it("dates a day from another year the same way as any other", () => {
+    expect(acDayLabel("19/08/2025", NOW)).toBe("19/08/2025");
   });
 
   /* THE SEPARATOR AND THE CELL ARE ONE RULE. Both come off `fmtDate`, so a row
@@ -179,7 +181,7 @@ describe("the day a run of rows happened on", () => {
   it("files a row under the day its own When cell shows", () => {
     const r = row({ sent_at: "2026-08-20T20:00:00.000Z" });
     expect(acWhenText(r)).toBe("21/08 04:00");
-    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 21 Aug");
+    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 21/08/2026");
   });
 });
 
@@ -203,7 +205,7 @@ describe("the flat list of separators and documents", () => {
   it("labels the days from the same buckets it split on", () => {
     const days = acRegisterItems(three, NOW).filter((i) => i.kind === "day");
     expect(days.map((d) => (d as { label: string }).label))
-      .toEqual(["Today · 21 Aug", "19 Aug"]);
+      .toEqual(["Today · 21/08/2026", "19/08/2026"]);
   });
 
   /* A separator sharing a key with a document unmounts one of them, and a
