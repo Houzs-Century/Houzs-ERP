@@ -75,6 +75,23 @@ Desktop routes: `frontend/src/App.tsx:542-545`, behind
 - `useGrnFromPos` (`:44`), `usePurchaseInvoiceFromGrn` (`:233`),
   `usePurchaseReturnFromGrn` (`:284`), `usePurchaseReturnFromGrns` (`:60`).
 
+**The failure rule (2026-08-21):** `usePostGrn` is the commit chokepoint for
+inventory IN, and until this date it had an `onSuccess` and NO `onError` — three
+of its four call sites pass none either, and the global `MutationCache`
+(`frontend/src/lib/queryClient.ts`) carries only `onSuccess`. A storekeeper who
+confirmed *"Inventory will be received into the warehouse"* and was refused saw
+nothing at all. It now carries `onError: writeFailedAs('GRN not posted — the
+stock was NOT received')`.
+
+It also reads the IN-BAND failure: `PATCH /grns/:id/post` answers **200** with
+`{ grn, movementErrors }`, so a refused inventory write is a success as far as
+`onError` is concerned. `usePostGrn` now calls
+`reportInBandFailure('GRN posted, but the stock was not received', data)` in its
+`onSuccess`, the same way `useCancelGrn` has read `cancelErrors` since
+2026-08-13. Pinned by
+`frontend/src/vendor/scm/lib/post-commit-failures.test.tsx`; the trace is in
+`docs/bugs/0490-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
+
 **The stock-side invalidation rule:** every mutation that can move inventory also
 invalidates `['inventory']` — `usePostGrn` (`:146`) and `useCancelGrn` (`:222`).
 And because a GRN's stock IN changes the PO's `received_qty` and status,
