@@ -1,13 +1,22 @@
 name: DB view audit (read-only)
 
-# Manual, read-only. Lists scm/public VIEWs via the prod DATABASE_URL secret so
-# the Phase 0f multi-company migration can recreate any scoped view. No writes.
+# TEMPORARY BRANCH OVERRIDE - fix/schema-artifact-and-rate-card.
+# A NEW workflow file is not dispatchable until it is on the default branch
+# (`gh workflow run` answers 404), so this already-dispatchable read-only job is
+# borrowed on this branch to answer the two live questions the work needs. It is
+# reverted to main's version before the PR is opened; the permanent home is
+# .github/workflows/schema-and-rate-card-check.yml.
 on:
   workflow_dispatch:
+
+concurrency:
+  group: db-audit-branch-probe
+  cancel-in-progress: true
 
 jobs:
   audit:
     runs-on: ubuntu-latest
+    environment: Production
     defaults:
       run:
         working-directory: backend
@@ -16,7 +25,38 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/audit-views.mjs
+
+      - name: Schema artifact vs LIVE catalog
+        run: node scripts/check-schema-artifact-drift.mjs --source=live
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Fair P&L rate card measurement
+        if: always()
+        run: node scripts/check-project-cost-rates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: drizzle-kit pull (declared tables, casing preserved)
+        if: always()
+        run: npx drizzle-kit pull --config=drizzle.config.pull.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      - name: Show what pull produced
+        if: always()
+        run: ls -la drizzle-pull && wc -l drizzle-pull/*.ts || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drizzle-pull
+          path: backend/drizzle-pull/**
+          if-no-files-found: warn
+          retention-days: 7
