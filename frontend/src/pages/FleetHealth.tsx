@@ -1284,37 +1284,26 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
     setBusy(true);
     setErr(null);
     try {
-      const res = await api.post<{ grounding: boolean; affectedTrips: unknown[]; replacementSuggestions: { plate: string }[] }>(
-        `/api/fleet-maintenance/vehicles/${vehicleId}/breakdowns`,
-        { faultType: faultType.trim() || undefined, severity, stillDrivable, driverDescription: description.trim() || undefined, breakdownStart: new Date().toISOString() },
-      );
+      const res = await api.post<{ grounding: boolean; affectedTrips: unknown[]; replacementSuggestions: { plate: string }[] }>(`/api/fleet-maintenance/vehicles/${vehicleId}/breakdowns`, { faultType: faultType.trim() || undefined, severity, stillDrivable, driverDescription: description.trim() || undefined, breakdownStart: new Date().toISOString() });
       if (res.grounding) setImpact({ trips: res.affectedTrips.length, suggestions: res.replacementSuggestions ?? [] });
       setAdding(false); setFaultType(""); setDescription(""); setSeverity("MAJOR"); setStillDrivable(false);
       onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
-  /* The dropdown is CONTROLLED on `b.status`, and React only pushes a
-     controlled value back into the DOM when a render happens. A refusal
-     changes no state here, so no render happens, so the browser keeps showing
-     the option the operator just picked — the row reads "Resolved" while the
-     lorry is still grounded in the database. The old "surfaced on reload" comment
-     was a claim about a reload that never comes: `onChanged()` is the refetch
-     and it only runs on the success path. */
+  /* No render on a refusal, so this CONTROLLED select keeps the picked option:
+     the row reads "Resolved" while the lorry is still grounded. */
   const setStatus = async (id: string, status: BreakdownView["status"]) => {
     setErr(null);
-    try {
-      const patch: Record<string, unknown> = { status };
-      if (status === "RESOLVED") patch.recoveryTime = new Date().toISOString();
-      await api.patch(`/api/fleet-maintenance/breakdowns/${id}`, patch);
-      onChanged();
-    } catch (e) { setErr(apiErrText(e)); }
+    const patch: Record<string, unknown> = { status };
+    if (status === "RESOLVED") patch.recoveryTime = new Date().toISOString();
+    try { await api.patch(`/api/fleet-maintenance/breakdowns/${id}`, patch); onChanged(); }
+    catch (e) { setErr(apiErrText(e)); }
   };
 
   return (
     <div className="space-y-2">
-      {/* Section-level, not inside the add form: a refused STATUS change has no
-          form to sit under, and it is the one the operator acts on. */}
+      {/* Section-level: a refused STATUS change has no form to sit under. */}
       {err && !adding && <div className="rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[11px] text-err">{err}</div>}
       {impact && (
         <div className="rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[11.5px] text-err">
@@ -1689,11 +1678,8 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
   const [pName, setPName] = useState("");
   const [pQty, setPQty] = useState("1");
   const [pPrice, setPPrice] = useState("");
-  /* Every write below refused in silence until 2026-08-21. `onChanged()` — the
-     refetch the old "surfaced on reload" comment was pointing at — runs
-     only on the success path, so a refusal produced no toast, no message and no
-     re-render: the stepper button, the part row and the money total all stayed
-     exactly as they were, which reads as "the button does nothing". */
+  /* Every write below refused in silence: the refetch runs only on the success
+     path, so a refusal reads as "the button does nothing". */
   const [err, setErr] = useState<string | null>(null);
 
   const transition = async (to: WorkOrderState) => {
@@ -1701,14 +1687,11 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
     setBusy(true); setErr(null);
     try { await api.post(`/api/fleet-maintenance/work-orders/${wo.id}/transition`, { to }); onChanged(); }
     catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
-  };
-  const addPart = async () => {
+  };  const addPart = async () => {
     if (busy || !pName.trim()) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/work-orders/${wo.id}/parts`, {
-        name: pName.trim(), qty: Number(pQty) || 1, unitPriceSen: Math.round((Number(pPrice) || 0) * 100),
-      });
+      await api.post(`/api/fleet-maintenance/work-orders/${wo.id}/parts`, { name: pName.trim(), qty: Number(pQty) || 1, unitPriceSen: Math.round((Number(pPrice) || 0) * 100) });
       setAddingPart(false); setPName(""); setPQty("1"); setPPrice(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
@@ -1899,18 +1882,14 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
   const [logging, setLogging] = useState(false);
   const [eventType, setEventType] = useState<(typeof EVENT_TYPES)[number]>("ROTATION");
   const [eventNote, setEventNote] = useState("");
-  /* A refused removal left the tyre reading "still fitted" with nothing said —
-     the card's own km/cost figures keep accruing against a component the
-     workshop has already taken off. */
+  /* A refused removal left the tyre reading "still fitted", nothing said. */
   const [err, setErr] = useState<string | null>(null);
 
   const remove = async () => {
     if (busy) return;
     setBusy(true); setErr(null);
-    try {
-      await api.patch(`/api/fleet-maintenance/components/${c.id}`, { status: "REMOVED", removedDate: new Date().toISOString().slice(0, 10), removedKm: currentKm ?? undefined });
-      onChanged();
-    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+    try { await api.patch(`/api/fleet-maintenance/components/${c.id}`, { status: "REMOVED", removedDate: new Date().toISOString().slice(0, 10), removedKm: currentKm ?? undefined }); onChanged(); }
+    catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
   const logEvent = async () => {
     if (busy) return;
