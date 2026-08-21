@@ -56,7 +56,7 @@ import {
 import { getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
-import { hasPermission, holdsChecklistApproval } from "../services/permissions";
+import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
@@ -1058,8 +1058,9 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // (stock_in.approve) surfaced in NO approver's My Pending at all and sat
     // "IN REVIEW" forever. These do NOT affect branch selection below, so
     // Peter / Kris keep their director staffing lanes.
-    const heldExplicit = ["stock_transfer.approve", "stock_in.approve", "agreement.approve"]
-      .filter((k) => holdsChecklistApproval(granted, k));
+    const heldExplicit = [...EXPLICIT_APPROVAL_KEYS].filter((k) =>
+      holdsChecklistApproval(granted, k),
+    );
     const r = (user.role_name || "").toLowerCase();
     if (r.includes("bd")) {
       // BD (owner 2026-07-29 "why empty my pending"): the BD role now holds
