@@ -712,11 +712,17 @@ A cancel is an UPDATE of `{ status, version, updated_at }`; `doc_no` is never
 written and the row is never deleted (the only two `mfg_sales_orders.delete()`
 call sites are the create rollback and the DRAFT discard route). `mintMonthlyDocNo`
 reads the month through `fetchMonthlyDocNos`, whose query carries only
-`.like(col, '<prefix>-%')` and **no status predicate**, then takes max+1. So a
-cancelled order keeps its number, still counts toward the max, and the next order
-takes the next integer — contiguous, never reused. Only a hard DELETE (discard
-draft) leaves a gap, which max+1 deliberately tolerates rather than re-minting
-into (see the 2026-06-12 note in `scm/lib/doc-no.ts`).
+`.like(col, '<prefix>-%')` and **no status predicate**, and hands that max to
+`scm.next_doc_no_n` as a FLOOR. So a cancelled order keeps its number, still
+counts toward the floor, and the next order takes the next integer — contiguous,
+never reused.
+
+A hard DELETE (discard draft) leaves a gap, and since migration 0316 that gap is
+**permanent in both directions**: deleting the newest draft of a month no longer
+hands its number back either, because the counter is a stored row rather than a
+query over the survivors. That is the fix for the 2026-08-20 re-issue, not a
+regression — see `docs/doc-number-reissue-coe.md` and the 2026-06-12 note in
+`scm/lib/doc-no.ts`.
 
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
@@ -2747,12 +2753,26 @@ are a VIEW; allocation is computed; SO readiness is binary.
 
 ### The doc number: how it is minted, when a gap is permanent, how to rename
 
-- Minted **`max(suffix) + 1`** per company+month prefix (`scm/lib/doc-no.ts:17`),
-  deliberately NOT `count + 1` — `count+1` re-mints a surviving number forever
-  once a row is deleted, and took down POS order creation on 2026-06-12.
-- So deleting the **top** of a month returns those numbers to the pool and the
-  sequence self-heals. Deleting from the **middle** leaves a gap the minter will
-  never go back and fill. That is by design, not a bug.
+- Minted from **`scm.doc_number_counters`** (migration 0316) — one row per
+  series (`HC-SO-2608`), claimed by `scm.next_doc_no_n` in a single
+  `INSERT … ON CONFLICT … RETURNING`, so two concurrent saves cannot read the
+  same value. The counter only ever goes UP.
+- The live rows are still read, and are now only a FLOOR: the answer is
+  `GREATEST(counter, max(suffix) + 1)`, so a row inserted out of band pushes the
+  counter up and a deleted row cannot pull it down.
+- **Deleting a document does NOT return its number** — neither from the middle
+  of a month nor from the top. Gaps are normal and permanent, exactly as in
+  AutoCount, SAP, Odoo and NetSuite. There is deliberately no gap-filling.
+
+  > **CORRECTED 2026-08-21.** This bullet used to read *"deleting the top of a
+  > month returns those numbers to the pool and the sequence self-heals"*. That
+  > was accurate and it is the defect: on 2026-08-20 the go-live wipe emptied
+  > Houzs Century's months, the counter read max=0, and the ERP re-issued
+  > `HC-SO-2608-001/002`, `HC-PO-2608-001` and `HC-PI-2608-001` — which the
+  > licensed AED_HOUZS account book had held since 2026-08-14/17. AutoCount
+  > refused them with `Primary Key Error` and was right. Once a number leaves
+  > this system the surviving rows stop being a record of what was issued.
+  > `docs/doc-number-reissue-coe.md`.
 - `doc_no` is the real PRIMARY KEY and **every FK pointing at it is
   `ON UPDATE NO ACTION`**, not CASCADE (`2990s-full-schema.sql:1652-1768`).
   `UPDATE ... SET doc_no = ...` is therefore REFUSED by Postgres while any child

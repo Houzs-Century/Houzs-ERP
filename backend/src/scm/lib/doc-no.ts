@@ -164,6 +164,23 @@ export async function claimDocNoSuffix(
   floor: number,
 ): Promise<number | null> {
   const f = Number.isFinite(floor) && floor > 0 ? Math.floor(floor) : 0;
+  /* THE CLIENT HAS NO `.rpc` AT ALL — a THIRD shape of "not available", beside
+     isMissingRpc's PostgREST error and isUnsupportedTransactionRpc's throw. It
+     is a property of the CLIENT, checked before the call, and is therefore not
+     an error being swallowed: nothing has failed yet.
+
+     Unreachable in production. @supabase/supabase-js's SupabaseClient always
+     has rpc(), and so does pgTransactionSupabase (it throws for names outside
+     its whitelist, which is the second shape above). What DOES reach here is a
+     hand-built test stub — 17 suites across payments, journals and the
+     AutoCount queue build `{ from() {…} }` objects with no rpc, and none of
+     them is a test about numbering. Widening them all to answer a counter RPC
+     would have made 66 unrelated tests assert doc numbers they do not care
+     about.
+
+     Pinned by tests/docNoCounterFallback.test.ts, which also proves the shape
+     NEXT to it: an rpc that EXISTS and FAILS must throw, never fall back. */
+  if (typeof sb?.rpc !== 'function') return null;
   let data: unknown;
   try {
     const res = await sb.rpc(DOC_NO_COUNTER_RPC, { p_series: series, p_floor: f });

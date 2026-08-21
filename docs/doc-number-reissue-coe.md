@@ -1,7 +1,8 @@
 # COE — the document counter re-issued numbers the account book already held
 
-**Date** 2026-08-20 · **Status** diagnosed, NOT fixed — three options below await
-the owner's choice · **Area** SCM document numbering, AutoCount write-back
+**Date** 2026-08-20 · **Status** FIXED 2026-08-21 — option B shipped as
+`scm.doc_number_counters` (migration 0316), branch `fix/doc-no-counter-table`,
+bug ledger entry 0489 · **Area** SCM document numbering, AutoCount write-back
 
 ---
 
@@ -91,7 +92,49 @@ Deleting it is why the queue could truthfully report `sentBefore=0` for numbers
 the book demonstrably already held: **after the wipe, AutoCount is the only party
 that still remembers.**
 
+### 2.3a The backup that would have saved the evidence was never uploaded
+
+The wipe dumps every CLEAR row to a backup directory BEFORE it deletes, and
+`golive-wipe-hc.yml` uploaded it with `if: mode == 'apply'` and no `always()`.
+A step failure skips a later step, so **the run that most needs its backup
+uploaded is the one that fails.**
+
+Run 32357340470 — the only run that actually deleted anything (§2.4) — dumped
+30 `scm.autocount_outbox` rows to the runner, deleted 35,328 HC rows, committed,
+then failed its verification. `gh api .../runs/32357340470/artifacts` returns an
+EMPTY list. The rolled-back apply before it lost its dump the same way.
+
+The one artifact that does exist is from run 32358148080, the no-op apply
+afterwards, and its `_manifest.json` reads `"scm.autocount_outbox": 0` with a
+2-byte `[]` file — which is indistinguishable from "there was nothing to back
+up". **So the ERP's record of what it had exported is unrecoverable**, and
+`ac-live-proof.json` is the only surviving evidence of the numbers the account
+book holds. That is the whole reason migration 0316's seed has a hardcoded part.
+
+Fixed in the same PR: `if: ${{ always() && ... }}`, and the artifact named per
+run+attempt so a failed apply's dump cannot be confused with a later one's.
+
 ### 2.4 The wipe ran, in production, before the documents were raised
+
+> **CORRECTED 2026-08-21.** This section said the wipe *"ran in production with
+> `MODE=apply` twelve times"*, and the bug-ledger entry repeated it. Twelve runs
+> is right; twelve APPLIES is not. Re-measured per run from the step names,
+> which the plan and apply paths give different labels
+> (`gh api repos/Houzs-Century/Houzs-ERP/actions/runs/<id>/jobs`):
+>
+> | runs | mode | outcome |
+> | --- | --- | --- |
+> | 8 | plan | read-only, wrote nothing |
+> | 2 | — | cancelled before the step ran |
+> | 32355449066 | **apply** | FK error, rolled back, **nothing deleted** |
+> | 32357340470 | **apply** | **deleted 35,328 HC rows and COMMITTED**, then failed its post-commit verification |
+> | 32358148080 | **apply** | found everything already 0; a no-op that passed |
+>
+> So exactly ONE run destroyed data — 32357340470 at 10:07 UTC — and it is the
+> one that exited 1. The correction matters because it names which run to fetch
+> the backup from, and that turns out to be the run whose backup was thrown
+> away (§2.3a). "Twelve applies" came from counting dispatches instead of
+> reading them.
 
 `gh run list --workflow=golive-wipe-hc.yml` — twelve `workflow_dispatch` runs on
 2026-08-20 between **09:03 and 10:16 UTC**. Run 32358148080's log confirms the
@@ -347,7 +390,61 @@ simply know. **It must also be excluded from the wipe's CLEAR list, or it is
 wiped along with everything else and buys nothing** — which is the same trap that
 took out the outbox.
 
-### Recommendation
+### DECIDED — Option B shipped 2026-08-21 (A absorbed into its seed)
+
+The owner approved *"advance the counter past the book, then move to a real
+counter"*, and those collapse into ONE change: the counter table is SEEDED above
+both the surviving ERP rows and the numbers the book is evidenced to hold, so
+the seed performs the advance. There was no separate step A.
+
+**What shipped** — migration 0316, `scm.doc_number_counters` +
+`scm.next_doc_no_n(series, floor)`, changed inside `mintMonthlyDocNo` so all 29
+call sites inherit it, and inside `nextJeNo` for the 4-pad JE series. The live
+scan stays as a FLOOR (`GREATEST(counter, floor + 1)`), which self-seeds any
+series the migration never covered and makes the 1000-row PostgREST truncation
+trap unable to cause a re-issue. Full detail in bug ledger entry 0489.
+
+**The seed, with a source per value.** Measured read-only on production BEFORE
+it was written (run 32454881949, section G):
+
+| series | next number | where that number comes from |
+| --- | --- | --- |
+| `HC-SO-2608` | 3 | book holds `-001`/`-002` since 2026-08-14 — `ac-live-proof.json` `proof.create_so` |
+| `HC-PO-2608` | 2 | book holds `-001` since 2026-08-17 — `proof.so_to_po` |
+| `HC-DO-2608` | 3 | book holds `-001`/`-002` since 2026-08-17 — `proof.so_to_do`, **and** `public.autocount_delivery_orders` (the DO mirror pulled FROM the book, mig 0215) still carries both |
+| `HC-SI-2608` | 2 | book holds `-001` since 2026-08-17 — `proof.do_to_iv` |
+| `HC-PI-2608` | 2 | book holds `-001` since 2026-08-17 — `proof.gr_to_pi` |
+| `HC-GRN-2608` | 2 | **NOT a book number** — see below |
+| every `2990-…` series | live max + 1 | seed 1, i.e. exactly today's answer. 2990 was never wiped and nothing 2990 mints has reached AED_HOUZS, so it does not move |
+| everything else | not seeded | self-seeds from its own live max on first mint |
+
+**The one value that is not book evidence, said plainly.** `HC-GRN-2608` is
+seeded to 2 because the ERP ISSUED `HC-GRN-2608-001` and queued it for export —
+found in `scm.grns` (2026-08-20T12:29:50Z) and `scm.autocount_outbox`
+(12:29:51Z) by run 32454881949, both since deleted by the 2026-08-21 wipe, so
+that run is now the only record of them. The book's goods-receipt number is
+`HC-GR-2608-001`, a DIFFERENT string that no minter here produces, and whether
+the office host maps one onto the other is **UNKNOWN**. Seeding costs one number
+and stops a number already offered to the book being offered again; if the
+answer turns out to be no, `HC-GRN-2608-001` simply goes unused. The counter row
+says this in its own `seed_source`.
+
+**Series left without book evidence, and therefore exposed if one exists that
+nobody recorded:** every HC type other than the six above — PV, DR, PRT, STK,
+ST, the six consignment types, TRIP and JE. None has ever been enqueued to
+AutoCount (§4), so a re-issue there is an internal numbering question rather
+than an account-book divergence. That stops being true the moment another type
+is enqueued.
+
+**What could still be missed.** The outbox held 30 rows before the wipe and
+`ac-live-proof.json` names 8 document numbers across 6 operations. If any of the
+other rows carried a number that reached the book and was never recorded in that
+file, the seed cannot know about it — §2.3a explains why the evidence is gone.
+The residual risk is bounded and detectable in the same way as before: AutoCount
+refuses with `Primary Key Error`, now for one document rather than a whole
+series.
+
+### Superseded recommendation (kept for the record)
 
 **Option A now, Option B as the fix.**
 
@@ -366,14 +463,26 @@ what it has sent, and the account book stays the only party that remembers.
 
 ## 7. Deferred / open
 
-- **Owner decision on all of §6.** Nothing is implemented; numbering is a money
-  path and a wrong fix is worse than the bug.
-- **`HC-DO-2608-001/002` and `HC-SI-2608-001` are armed.** Until a decision
-  lands, the next HC delivery order or sales invoice this month will collide.
-  UNKNOWN whether anyone has been told not to raise one.
-- **`HC-PI-2608-001` is re-issued but reported as `skipped`, not `failed`.** The
-  outbox health report cannot currently distinguish "skipped for its own reason"
-  from "skipped AND carrying a number the book already holds".
+- ~~**Owner decision on all of §6.**~~ DECIDED — option B, shipped 2026-08-21.
+- ~~**`HC-DO-2608-001/002` and `HC-SI-2608-001` are armed.**~~ CLOSED by the
+  seed: those two series start at 003 and 002.
+- **The five re-issued ERP documents no longer exist.** A second go-live wipe
+  ran in apply mode on 2026-08-21 (runs 32455489040 then 32456178028) and
+  deleted every HC transaction row, including `HC-SO-2608-001/002`,
+  `HC-PO-2608-001`, `HC-PI-2608-001` and the GRN. **So there is nothing left to
+  re-raise or repair** — the operational follow-up is now only that those
+  numbers must never be handed out again, which is what the seed does. The
+  "Send now" question is moot: the documents are gone, and re-creating them is a
+  business decision about whether those orders still exist, not a repair.
+- **`HC-PI-2608-001` was re-issued but reported as `skipped`, not `failed`.** The
+  outbox health report still cannot distinguish "skipped for its own reason"
+  from "skipped AND carrying a number the book already holds". Open.
+- **The wipe cleared `scm.autocount_outbox` a SECOND time on 2026-08-21**, in
+  front of this investigation, taking 8 rows with it. The fix in
+  `fix/doc-no-counter-table` moves the outbox to the wipe's KEEP list and
+  cancels HC's `pending` rows instead of deleting them — but that fix had not
+  merged when the wipe ran, so the loss is real and the third set of outbox
+  evidence is gone too.
 - **GRN vs GR naming.** Our minter writes `HC-GRN-…`; the book holds
   `HC-GR-2608-001`. UNKNOWN whether the host derives one from the other. Worth
   settling before the GRN path goes through the queue.
