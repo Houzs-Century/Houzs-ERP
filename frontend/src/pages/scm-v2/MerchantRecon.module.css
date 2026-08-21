@@ -56,3 +56,26 @@
 
 .good { color: var(--c-secondary-a, #2F5D4F); }
 .bad { color: var(--c-festive-b, #B8331F); }
+
+/* Two bands, one seam.
+   The owner, on a Report cell holding five different facts: 可以分成多个 column
+   吗？不然有一点点难看，太多信息 — 我理想中应该左手边都是 merchant report 的资料，
+   然后紧挨着就是订单的资料.
+
+   The band captions carry the two-tier header; the seam is the rule between
+   what the merchant said and what the ERP said, so the eye finds the join
+   without reading a single word. */
+
+.grid thead th.band {
+  text-align: center;
+  font-weight: 600;
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-ink-soft, #777);
+}
+
+.grid th.seam,
+.grid td.seam {
+  border-left: 2px solid var(--c-ink);
+}

@@ -550,16 +550,35 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
 const LinesTable = ({ batches, onOpen, openOnly }: {
   batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
 }) => (
+  /* TWO BANDS, not one column of stacked text. The owner, on a Report cell
+     holding a chip, a file name, a period, a total and a button: 可以分成多个
+     column 吗？不然有一点点难看，太多信息 — 我理想中应该左手边都是 merchant
+     report 的资料，然后紧挨着就是订单的资料.
+
+     So the header says it in two tiers: everything the MERCHANT said on the
+     left, everything the ERP said immediately beside it, and a rule down the
+     seam. Each fact gets a column of its own, which is what makes a
+     reconciliation readable down as well as across — the same gross under the
+     same gross, the same fee under the same fee. */
   <table className={grid.grid}>
     <thead>
       <tr>
-        <th>Report</th>
-        <th>The merchant&rsquo;s line</th>
+        <th rowSpan={2}>Report</th>
+        <th colSpan={5} className={grid.band}>What the merchant reported</th>
+        <th colSpan={5} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
+        <th rowSpan={2}>Status</th>
+      </tr>
+      <tr>
+        <th>Date</th>
+        <th>Reference</th>
         <th className={grid.num}>Gross</th>
         <th className={grid.num}>Fee</th>
         <th className={grid.num}>Net</th>
-        <th>The sale it matched</th>
-        <th>Status</th>
+        <th className={grid.seam}>Document</th>
+        <th>Customer</th>
+        <th>Paid on</th>
+        <th>Approval</th>
+        <th className={grid.num}>Amount</th>
       </tr>
     </thead>
     {batches.map((b) => <BatchRows key={b.id} batch={b} onOpen={onOpen} openOnly={openOnly} />)}
@@ -582,7 +601,9 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
         <span className={styles.codeChip}>{batch.acquirer_code}</span>
         <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
       </div>
-      <div className={grid.sub}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</div>
+      {/* The period is on every line below as its own date; only the report's
+          TOTAL is worth repeating here, because no single line carries it. */}
+      <div className={grid.sub}>net {fmt(batch.net_sen)}</div>
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -594,7 +615,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       <tbody>
         <tr>
           {reportCell(1)}
-          <td colSpan={6}>
+          <td colSpan={11}>
             <span className={grid.sub}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
           </td>
         </tr>
@@ -609,41 +630,52 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
            pre-ticked but not taken. Neither = a human's job. */
         const sale = r.linked.length > 0 ? r.linked : null;
         const guess = r.suggested ?? [];
+        /* Whichever side is showing, the ORDER columns read from one shape, so
+           a claimed payment and a suggested one line up under the same
+           headings instead of each inventing its own layout. */
+        const orders = sale
+          ? sale.map((l) => ({
+            key: l.payment_id,
+            docNo: l.doc_no ?? l.payment_id,
+            customer: l.customer_name ?? null,
+            paidOn: l.paid_on ?? null,
+            code: l.approval_code ?? null,
+            amountSen: l.amount_sen,
+          }))
+          : guess.map((p) => ({
+            key: p.id, docNo: p.docNo, customer: p.customerName ?? null,
+            paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
+          }));
+        /* One line settling several orders stacks INSIDE its cell — the rare
+           case, and the only place stacking is still the honest shape. */
+        const stack = (pick: (o: typeof orders[number]) => React.ReactNode) => (
+          orders.length === 0
+            ? <span className={grid.sub}>—</span>
+            : orders.map((o) => <div key={o.key}>{pick(o) ?? '—'}</div>)
+        );
+
         return (
           <tr key={r.id}>
             {i === 0 && reportCell(rows.length)}
             <td>
-              <div>{r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}</div>
+              <div>{r.txn_date}</div>
               <div className={grid.sub}>line {r.line_no}</div>
             </td>
+            <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
             <td className={grid.num}>{fmt(r.gross_sen)}</td>
             <td className={grid.num}>{fmt(r.fee_sen)}</td>
             <td className={grid.num}>{fmt(r.net_sen)}</td>
-            <td>
-              {sale && sale.map((l) => (
-                <div key={l.payment_id}>
-                  <b>{l.doc_no ?? l.payment_id}</b>
-                  {l.customer_name ? ` · ${l.customer_name}` : ''}
-                  <div className={grid.sub}>
-                    {[l.paid_on ? `paid ${l.paid_on}` : null,
-                      l.approval_code ? `code ${l.approval_code}` : null,
-                      fmt(l.amount_sen)].filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-              ))}
-              {!sale && guess.length > 0 && guess.map((p) => (
-                <div key={p.id}>
-                  <b>{p.docNo}</b>{p.customerName ? ` · ${p.customerName}` : ''}
-                  <div className={grid.sub}>
-                    {[`paid ${p.paidOn}`, p.approvalCode ? `code ${p.approvalCode}` : null, fmt(p.amountSen)]
-                      .filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-              ))}
-              {!sale && guess.length === 0 && (
-                <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-              )}
+
+            <td className={grid.seam}>
+              {orders.length === 0
+                ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+                : stack((o) => <b>{o.docNo}</b>)}
             </td>
+            <td>{stack((o) => o.customer)}</td>
+            <td>{stack((o) => o.paidOn)}</td>
+            <td>{stack((o) => o.code)}</td>
+            <td className={grid.num}>{stack((o) => fmt(o.amountSen))}</td>
+
             <td>
               {r.confirmed_at
                 ? <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>

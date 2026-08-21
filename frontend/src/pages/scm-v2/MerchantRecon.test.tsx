@@ -172,8 +172,8 @@ describe('the reconcile tab', () => {
     expect(screen.getAllByText('no sale in the ERP').length).toBeGreaterThan(0);
     /* …and every LINE the upload read, with the sale it matched — not a count
        per file (owner: 显示 transaction detail 和 sales order detail). */
-    expect(screen.getByText(/The merchant.s line/)).toBeTruthy();
-    expect(screen.getByText('The sale it matched')).toBeTruthy();
+    expect(screen.getByText('What the merchant reported')).toBeTruthy();
+    expect(screen.getByText('The sale it paid for')).toBeTruthy();
     expect(screen.getByText('SO-2608-043')).toBeTruthy();       // the matched sale, by name
     /* And one button finishes the easy half of the whole upload. */
     expect(screen.getByText(/Confirm all 1 matched/)).toBeTruthy();
@@ -185,7 +185,7 @@ describe('the reconcile tab', () => {
     draw();
     /* The report's OWN LINES, with the sale each matched — the same two columns
        as the upload summary. A file name is not a transaction. */
-    expect(screen.getAllByText(/The merchant.s line/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('What the merchant reported').length).toBeGreaterThan(0);
     expect(screen.getByText('SO-2608-043')).toBeTruthy();          // the matched sale
     expect(screen.getByText('Reconcile')).toBeTruthy();
     /* Lines already decided are not work, so they are not on the work list. */
@@ -357,7 +357,7 @@ describe('when every line is decided', () => {
     expect(screen.queryByText('ready to confirm')).toBeNull();
     /* And so are the lines: 他confirm 了下面就不应该显示了，就应该显示在 bank
        statement reconciliation 那个区域. */
-    expect(screen.queryByText('The sale it matched')).toBeNull();
+    expect(screen.queryByText('The sale it paid for')).toBeNull();
     expect(screen.queryByText('SO-2608-043')).toBeNull();
     /* Hidden, not lost — the journal numbers are one press away. */
     fireEvent.click(screen.getByText('Show what was posted'));
@@ -381,5 +381,42 @@ describe('when every line is decided', () => {
     expect(screen.queryByText(/Still to come/)).toBeNull();
 
     setBatchList([BATCH]);
+  });
+});
+
+/* 可以分成多个 column 吗？不然有一点点难看，太多信息 — 我理想中应该左手边都是
+   merchant report 的资料，然后紧挨着就是订单的资料 (owner, 2026-08-20).
+   Each fact in a column of its own is what makes a reconciliation readable
+   DOWN as well as across: the same gross under the same gross. */
+describe('the two bands', () => {
+  test('every fact has its own column, on the side it came from', () => {
+    draw();
+    expect(screen.getAllByText('What the merchant reported').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('The sale it paid for').length).toBeGreaterThan(0);
+    for (const h of ['Date', 'Reference', 'Gross', 'Fee', 'Net', 'Document', 'Customer', 'Paid on', 'Approval', 'Amount']) {
+      expect(screen.getAllByText(h).length, h).toBeGreaterThan(0);
+    }
+  });
+
+  test('a matched line puts the merchant half and the ERP half in their own cells', () => {
+    draw();
+    const row = screen.getByText('969745').closest('tr') as HTMLElement;
+    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
+    /* The reference stands alone rather than being glued to the date. */
+    expect(cells).toContain('969745');
+    /* And the document stands alone rather than being glued to the customer. */
+    expect(cells).toContain('SO-2608-043');
+  });
+
+  /* A suggestion reads under the SAME headings as a claimed payment — it is
+     the same kind of fact, and two layouts for one thing is how a reader stops
+     trusting either. */
+  test('a suggested sale fills the same columns as a confirmed one', () => {
+    draw();
+    const row = screen.getByText('TYPO9').closest('tr') as HTMLElement;
+    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
+    expect(cells).toContain('SO-2608-050');
+    expect(cells).toContain('114220');
+    expect(cells).toContain('2026-08-03');
   });
 });
