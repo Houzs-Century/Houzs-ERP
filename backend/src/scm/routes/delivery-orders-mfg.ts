@@ -2667,12 +2667,10 @@ async function soRemainingByItemId(
    is wrong. Mirrors the purchasing-side rule that a GRN's parent PO must be
    SUBMITTED / PARTIALLY_RECEIVED (grns.ts /outstanding-po-items).
 
-   THE SET MOVED to shared/so-deliverable-states.ts on 2026-08-21 and is imported
-   here rather than declared. It was hand-written in this file AND, as an
-   allow-list of one value, in the Sales Order list's row-drawer CTA — so the
-   button vanished on READY_TO_SHIP, a status the stock allocator writes BY
-   ITSELF the moment the goods are all in. That module's header carries the
-   trace. Nothing about this guard's behaviour changed. */
+   THE SET MOVED to shared/so-deliverable-states.ts on 2026-08-21. It was ALSO
+   hand-written, as an allow-list of ONE value, in the Sales Order list's CTA —
+   so the button vanished on READY_TO_SHIP, which the allocator writes by itself
+   when the goods land. Behaviour here is unchanged; that header has the trace. */
 async function firstUndeliverableSo(
   sb: any,
   soDocNos: Array<string | null | undefined>,

@@ -709,21 +709,11 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                /* EVERY deliverable status, not just CONFIRMED. This read
-                   `s === "confirmed"` until 2026-08-21 — an allow-list of one
-                   against the server's deny-list of three, so the button went
-                   ABSENT on READY_TO_SHIP, which the stock allocator writes BY
-                   ITSELF the moment the goods are all in. The order became most
-                   ready to ship and the button disappeared, with nothing on
-                   screen saying why. shared/so-deliverable-states.ts is now the
-                   one home for the rule and the backend imports the same
-                   predicate. */
                 if (soCanRaiseDo(row.status)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
-                  /* Was "Deliver" until 2026-08-17: the SO already reports a
-                     "Delivered" STATUS, so an action of the same name blurred
-                     the two. Statuses report; buttons act. */
+                  /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
+                     "Delivered" STATUS, and statuses report while buttons act. */
                   return (
                     <Button
                       variant="primary"
