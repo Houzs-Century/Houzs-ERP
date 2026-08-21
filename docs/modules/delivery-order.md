@@ -116,6 +116,15 @@ business decision to take, not a defect to fix.
 used. `patchDeliveryOrderStatusHandler` writes no `entity_audit_log` row, so
 that fact is not in this database. Do not infer it from these counts.
 
+**Nobody is being chased about it, and that was measured rather than assumed.**
+Exactly one thing CONSUMES these columns instead of writing them — the Delivery
+Agent's `POD_CHASE` proposal (`backend/src/services/agents/delivery-agent.ts`),
+which lists deliveries closed 1 to 90 days ago with neither photo nor signature
+and is ON by default. Every closed delivery here qualifies and none could ever
+be satisfied, so the obvious worry was that it had been raising unfixable
+proposals for a month. It has not: `delivery_agent_proposals` holds **no
+`POD_CHASE` row of any status, ever**. Section 6 of the census is that count.
+
 **What a non-null column would still not prove.** The signature is stored inline
 (base64 PNG in `signature_data`), so a non-null value there IS the image. The
 PHOTO is not: `pod_r2_key` is an R2 object key, written after the upload but in
