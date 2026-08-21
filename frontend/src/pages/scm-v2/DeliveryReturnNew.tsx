@@ -68,11 +68,18 @@ export const DeliveryReturnNew = () => {
      useCreateDeliveryReturn), so a re-press after a stalled submit books the
      goods back IN twice unless it replays. */
   const idemKey = useIdempotencyKey();
-  const staffQ = usePickableStaff({ onlySales: true });
   const loc = useLocalities();
 
   // Prefill source — the DO this return is being issued from (if any).
   const doDetail = useMfgDeliveryOrderDetail(fromDo);
+  /* `include` carries the salesperson already on the SOURCE document this one is
+     being raised from, so someone the onlySales narrowing hides is still named.
+     "(former staff)" below is then only reachable for a row that genuinely is
+     gone. Declared after the source query so the id is in scope. */
+  const staffQ = usePickableStaff({
+    onlySales: true,
+    include: [(doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+  });
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
   const buildingTypeOptsQ = useSoDropdownOptions('building_type');

@@ -612,7 +612,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 }, ref) => {
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  const staffQ = usePickableStaff({ onlySales: true });
+  /* `include` carries the salesperson already ON this document, so someone the
+     onlySales narrowing hides is still named. "(former staff)" below is then
+     only reachable for a row that genuinely is gone. */
+  const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');

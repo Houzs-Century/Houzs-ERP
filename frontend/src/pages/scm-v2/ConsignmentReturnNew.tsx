@@ -76,9 +76,16 @@ export const ConsignmentReturnNew = () => {
      stalled submit, fresh on remount. */
   const idemKey = useIdempotencyKey();
   const create = useCreateConsignmentReturn();
-  const staffQ = usePickableStaff({ onlySales: true });
   const loc = useLocalities();
   const cnDetail = useConsignmentNoteDetail(fromConsignmentNote);
+  /* `include` carries the salesperson already on the SOURCE document this one is
+     being raised from, so someone the onlySales narrowing hides is still named.
+     "(former staff)" below is then only reachable for a row that genuinely is
+     gone. Declared after the source query so the id is in scope. */
+  const staffQ = usePickableStaff({
+    onlySales: true,
+    include: [(cnDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+  });
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
   const buildingTypeOptsQ = useSoDropdownOptions('building_type');

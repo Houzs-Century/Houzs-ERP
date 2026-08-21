@@ -280,9 +280,6 @@ type PaymentsResp = { payments: SoPayment[] };
    snapValue returns null, never a bad method). It dropped nothing while that list
    was a superset, and was one edit from silently blanking a scanned method — the
    re-guard this paragraph records removing for customer type. */
-/* Sentinel for "the signed-in creator has no scm.staff row" — shows their name
-   in the Salesperson select but sends null so the backend stamps the caller. */
-const SELF_SALESPERSON = "__self__";
 const LINE_CATS: Array<{ value: LineCat; label: string }> = [
   { value: "", label: "General item" },
   { value: "sofa", label: "Sofa" },
@@ -602,7 +599,14 @@ export function MobileNewSO({
      collected_by_name (PaymentInfoBlock), so no full roster is needed here. */
   // Salesperson picker (owner 2026-07-22) — sales-only, mirrors desktop
   // SalesOrderNew's narrowed dropdown.
-  const pickableStaffQ = usePickableStaff({ onlySales: true });
+  /* The PERSISTED salesperson, kept apart from the editable `salespersonId`.
+     It is what the picker must be able to NAME — feeding the live state to
+     `include` instead would re-key the roster query on every pick. */
+  const [origSalespersonId, setOrigSalespersonId] = useState<string>("");
+  /* `include` carries the salesperson already ON this order (edit mode), so
+     someone the onlySales narrowing hides is still named rather than dropping
+     out of the picker. */
+  const pickableStaffQ = usePickableStaff({ onlySales: true, include: [origSalespersonId] });
   const { staff: authStaff } = useAuth();
   /* FIX A — the app-level Houzs auth exposes the permission gate + the signed-in
      user (name/email/id), which the vendor auth bridge doesn't. Drives the
@@ -948,6 +952,7 @@ export function MobileNewSO({
            below is seeded to the SAME value, so an untouched picker still diffs
            to {} and still sends nothing. */
         setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
+        setOrigSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         originalHeaderPatchRef.current = soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
@@ -1101,10 +1106,12 @@ export function MobileNewSO({
   const outgoingVenueId = effectiveVenueId;
   const outgoingVenueName = effectiveVenueName;
 
-  /* Salesperson to SEND — the "self" sentinel maps to null so the backend
-     stamps the logged-in caller (a real staff id is sent as-is). */
-  const outgoingSalespersonId =
-    salespersonId && salespersonId !== SELF_SALESPERSON ? salespersonId : null;
+  /* Salesperson to SEND — always a real scm.staff uuid. The `__self__` sentinel
+     that used to stand in for "the creator has no staff row" is gone: the
+     roster now always carries the caller (staff.ts, THE ALWAYS-HOLDS RULE), so
+     there is nothing to map. Null only while the roster is still loading, where
+     the backend falls back to its own caller-based resolution. */
+  const outgoingSalespersonId = salespersonId || null;
 
   /* ── FIX A — locality cascade (desktop SalesOrderNew parity) ──────────────
      State → City → Postcode all derive from the my_localities dataset. City
@@ -1197,13 +1204,10 @@ export function MobileNewSO({
     }),
     [staffList, currentUser?.id, currentUser?.email, currentUser?.name],
   );
-  const selfDisplayName =
-    (currentUser?.name ?? "").trim() || (currentUser?.email ?? "").trim() || "Me";
   useEffect(() => {
     if (isEdit) return; // edit keeps the persisted salesperson
     if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
-    else if (selfDisplayName) setSalespersonId((prev) => prev || SELF_SALESPERSON);
-  }, [isEdit, selfStaffMatch, selfDisplayName]);
+  }, [isEdit, selfStaffMatch]);
 
   /* Customer Type default (owner 2026-07-03, re-stated 2026-07-16) — a NEW SO
      defaults to the real DB option whose label reads "New Customer". The pick
@@ -2246,9 +2250,6 @@ export function MobileNewSO({
                       onChange={setSalespersonId}
                       disabled={!canChangeSalesperson}
                       options={[
-                        ...(!selfStaffMatch
-                          ? [{ value: SELF_SALESPERSON, label: `${selfDisplayName} (me)` }]
-                          : []),
                         ...(canChangeSalesperson
                           ? staffList
                               .map((s) => ({ value: s.id, label: s.name }))
