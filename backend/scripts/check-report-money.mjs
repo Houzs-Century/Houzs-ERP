@@ -12,7 +12,7 @@
    legitimate answer (including "the relation does not exist" — that IS the
    answer for that section).
 
-   SECTION=all|schema|raterate|aging|... node scripts/check-report-money.mjs */
+   SECTION=all|schema|ratecard|autolines|pnl|aging node scripts/check-report-money.mjs */
 import postgres from 'postgres';
 
 const DSN = process.env.DATABASE_URL;
@@ -35,7 +35,7 @@ const want = (s) => SECTION === 'all' || SECTION === s;
 
 // ── 0. schema census — read the LIVE catalog, never a migration file ────────
 async function schemaCensus() {
-  hr('0. schema census (live catalog — pg_class / information_schema / pg_matviews)');
+  hr('0. schema census (live catalog — pg_index / information_schema / pg_matviews)');
 
   const rateCols = await tryQ('project_cost_rates cols', () => sql`
     SELECT table_schema, column_name, data_type
@@ -47,8 +47,8 @@ async function schemaCensus() {
   if (!rateCols.length) note('   (relation not found)');
 
   const rateIdx = await tryQ('project_cost_rates indexes', () => sql`
-    SELECT n.nspname AS schema, c.relname AS tbl, i.relname AS idx,
-           ix.indisunique AS uniq, pg_get_indexdef(ix.indexrelid) AS def
+    SELECT n.nspname AS schema, i.relname AS idx, ix.indisunique AS uniq,
+           pg_get_indexdef(ix.indexrelid) AS def
       FROM pg_index ix
       JOIN pg_class c ON c.oid = ix.indrelid
       JOIN pg_class i ON i.oid = ix.indexrelid
@@ -62,60 +62,91 @@ async function schemaCensus() {
     SELECT schemaname, matviewname FROM pg_matviews ORDER BY 1,2`);
   note(`materialized views (${mvs.length}): ${mvs.map((m) => `${m.schemaname}.${m.matviewname}`).join(', ') || '(none)'}`);
 
-  const senCols = await tryQ('sen/centi census', () => sql`
-    SELECT count(*) FILTER (WHERE column_name LIKE '%\\_sen') AS sen,
-           count(*) FILTER (WHERE column_name LIKE '%centi%') AS centi
-      FROM information_schema.columns
-     WHERE table_schema IN ('scm','public','connect')`);
-  note(`money column census: *_sen=${senCols[0]?.sen} *centi*=${senCols[0]?.centi}`);
+  // The _centi -> _sen rename (mig 0305). A leftover *centi* column next to a
+  // *_sen twin is exactly where a factor-of-100 hides, so name them.
+  const centi = await tryQ('centi survivors', () => sql`
+    SELECT c.table_schema, c.table_name, c.column_name, t.table_type
+      FROM information_schema.columns c
+      JOIN information_schema.tables t
+        ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+     WHERE c.column_name LIKE '%centi%'
+     ORDER BY 1,2,3`);
+  note(`columns still named *centi*: ${centi.length}`);
+  const byKind = {};
+  for (const c of centi) {
+    const k = `${c.table_schema}|${c.table_type}`;
+    (byKind[k] ||= []).push(`${c.table_name}.${c.column_name}`);
+  }
+  for (const [k, v] of Object.entries(byKind)) note(`   ${k}: ${v.length} — e.g. ${v.slice(0, 6).join(', ')}`);
+
+  const twins = await tryQ('centi/sen twins', () => sql`
+    SELECT a.table_schema, a.table_name, a.column_name AS centi_col
+      FROM information_schema.columns a
+     WHERE a.column_name LIKE '%centi%'
+       AND EXISTS (SELECT 1 FROM information_schema.columns b
+                    WHERE b.table_schema = a.table_schema AND b.table_name = a.table_name
+                      AND b.column_name = replace(a.column_name, 'centi', 'sen'))
+     ORDER BY 1,2,3`);
+  note(`*centi* columns that ALSO have a *_sen twin on the same relation (two homes for one number): ${twins.length}`);
+  for (const t of twins.slice(0, 40)) note(`   ${t.table_schema}.${t.table_name}.${t.centi_col}`);
 }
 
 // ── 1. the Fair P&L rate card: is it company-scoped? ────────────────────────
 async function rateCard() {
   hr('1. Fair P&L rate card (project_cost_rates) — brand-name keyed, company-blind?');
 
-  const rows = await tryQ('rate rows', () => sql`
-    SELECT * FROM project_cost_rates ORDER BY brand`);
+  const rows = await tryQ('rate rows', () => sql`SELECT * FROM project_cost_rates ORDER BY brand`);
   note(`rate rows: ${rows.length}`);
   for (const r of rows) note('   ' + JSON.stringify(r));
 
-  // Duplicate brand keys — `WHERE brand = ?` + .first() picks an ARBITRARY row.
   const dupes = await tryQ('dupe brand keys', () => sql`
     SELECT brand, count(*)::int AS n FROM project_cost_rates
      GROUP BY brand HAVING count(*) > 1 ORDER BY 2 DESC`);
-  note(`brands with MORE THAN ONE rate row (arbitrary pick): ${dupes.length}`);
+  note(`brands with MORE THAN ONE rate row (lookup would pick an arbitrary one): ${dupes.length}`);
   for (const d of dupes) note(`   brand=${JSON.stringify(d.brand)} rows=${d.n}`);
 
-  // Case/whitespace collisions: the lookup is exact `brand = ?`, so
-  // 'Bedframe' vs 'bedframe' is a MISS (no card => zero overhead), and two
-  // spellings both matching one card is a silent share.
   const brandUse = await tryQ('project brands by company', () => sql`
     SELECT p.company_id, p.brand, count(*)::int AS projects
       FROM projects p
-     WHERE p.brand IS NOT NULL AND btrim(p.brand) <> ''
+     WHERE p.brand IS NOT NULL AND btrim(p.brand) <> '' AND p.archived_at IS NULL
      GROUP BY 1,2 ORDER BY 2,1`);
-  note('\nprojects.brand usage by company:');
+  note('\nlive projects.brand usage by company:');
   for (const b of brandUse) note(`   company=${b.company_id} brand=${JSON.stringify(b.brand)} projects=${b.projects}`);
 
   const shared = await tryQ('brands shared across companies', () => sql`
-    SELECT brand, count(DISTINCT company_id)::int AS companies,
-           array_agg(DISTINCT company_id ORDER BY company_id) AS cos,
-           count(*)::int AS projects
+    SELECT brand, array_agg(DISTINCT company_id ORDER BY company_id) AS cos, count(*)::int AS projects
       FROM projects
-     WHERE brand IS NOT NULL AND btrim(brand) <> ''
+     WHERE brand IS NOT NULL AND btrim(brand) <> '' AND archived_at IS NULL
      GROUP BY brand HAVING count(DISTINCT company_id) > 1
-     ORDER BY 2 DESC, 1`);
-  note(`\nbrand names used by MORE THAN ONE company: ${shared.length}`);
+     ORDER BY 1`);
+  note(`\nbrand names used by MORE THAN ONE company (one rate card serves both): ${shared.length}`);
   for (const s of shared) note(`   brand=${JSON.stringify(s.brand)} companies=${JSON.stringify(s.cos)} projects=${s.projects}`);
+
+  // How much money does the shared card actually drive on the MINORITY company?
+  const bleed = await tryQ('minority-company overhead', () => sql`
+    WITH shared AS (
+      SELECT brand FROM projects
+       WHERE brand IS NOT NULL AND btrim(brand) <> '' AND archived_at IS NULL
+       GROUP BY brand HAVING count(DISTINCT company_id) > 1
+    )
+    SELECT p.id, p.company_id, p.code, p.brand,
+           COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.category='sales' AND l.auto_source IS NULL AND l.archived_at IS NULL), 0) AS sales,
+           COALESCE(SUM(l.amount) FILTER (WHERE l.auto_source IS NOT NULL AND l.archived_at IS NULL), 0) AS auto_overhead
+      FROM projects p
+      JOIN shared s ON s.brand = p.brand
+      LEFT JOIN project_finance_lines l ON l.project_id = p.id
+     WHERE p.archived_at IS NULL
+     GROUP BY 1,2,3,4
+     HAVING COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.category='sales' AND l.auto_source IS NULL AND l.archived_at IS NULL), 0) > 0
+     ORDER BY p.company_id DESC, sales DESC LIMIT 20`);
+  note('\nprojects on a SHARED brand name, by company (the card that priced them is company-blind):');
+  for (const b of bleed) note(`   project ${b.id} co=${b.company_id} ${JSON.stringify(b.code)} brand=${JSON.stringify(b.brand)} sales=RM ${Number(b.sales).toFixed(2)} auto_overhead=RM ${Number(b.auto_overhead).toFixed(2)}`);
 }
 
-// ── 2. the auto cost lines the rate engine wrote vs what the rate says now ──
+// ── 2. auto cost lines stored vs the rate card recomputed from source ───────
 async function autoLines() {
   hr('2. project_finance_lines auto rows vs the rate card recomputed from source');
 
-  // Recompute each project's auto lines the way projectCostRates.ts would, and
-  // compare with the row that is actually stored (what /finance/by-project and
-  // the Financial Snapshot SUM).
   const recomputed = await tryQ('auto-line recompute', () => sql`
     WITH base AS (
       SELECT p.id, p.company_id, btrim(p.brand) AS brand, p.archived_at,
@@ -131,8 +162,7 @@ async function autoLines() {
              r.commission_boost_pct, r.boost_min_gp_pct, r.boost_min_sales
         FROM base b LEFT JOIN project_cost_rates r ON r.brand = b.brand
     ), calc AS (
-      SELECT w.*,
-        CASE WHEN w.sales > 0 THEN ((w.sales - w.cogs) / w.sales) * 100 ELSE 0 END AS gp_pct
+      SELECT w.*, CASE WHEN w.sales > 0 THEN ((w.sales - w.cogs) / w.sales) * 100 ELSE 0 END AS gp_pct
         FROM withrate w
     ), pick AS (
       SELECT c.*,
@@ -160,32 +190,224 @@ async function autoLines() {
      GROUP BY project_id`);
   const byId = new Map(stored.map((s) => [Number(s.project_id), s]));
 
-  let bad = 0, worst = null, totalDelta = 0, noRate = 0;
+  let bad = 0, worst = null, totalDelta = 0, noRate = 0, missingAll = 0, live = 0;
+  let wantSum = 0, gotSum = 0;
   for (const r of recomputed) {
     if (r.archived) continue;
+    live += 1;
     const s = byId.get(Number(r.id)) || { got_transport: 0, got_merchandise: 0, got_commission: 0, n: 0 };
-    if (r.no_rate) { noRate += 1; }
-    const wt = Number(r.no_rate || Number(r.sales) <= 0 ? 0 : r.want_transport ?? 0);
-    const wm = Number(r.no_rate || Number(r.sales) <= 0 ? 0 : r.want_merchandise ?? 0);
-    const wc = Number(r.no_rate || Number(r.sales) <= 0 ? 0 : r.want_commission ?? 0);
-    const d = Math.abs(Number(s.got_transport) - wt) + Math.abs(Number(s.got_merchandise) - wm) + Math.abs(Number(s.got_commission) - wc);
+    if (r.no_rate) noRate += 1;
+    const zero = r.no_rate || Number(r.sales) <= 0;
+    const wt = zero ? 0 : Number(r.want_transport ?? 0);
+    const wm = zero ? 0 : Number(r.want_merchandise ?? 0);
+    const wc = zero ? 0 : Number(r.want_commission ?? 0);
+    const gt = Number(s.got_transport), gm = Number(s.got_merchandise), gc = Number(s.got_commission);
+    wantSum += wt + wm + wc; gotSum += gt + gm + gc;
+    const d = Math.abs(gt - wt) + Math.abs(gm - wm) + Math.abs(gc - wc);
     if (d > 0.011) {
       bad += 1; totalDelta += d;
-      if (!worst || d > worst.d) worst = { d, id: r.id, co: r.company_id, brand: r.brand, sales: r.sales, want: [wt, wm, wc], got: [Number(s.got_transport), Number(s.got_merchandise), Number(s.got_commission)] };
+      if (s.n === 0 && (wt || wm || wc)) missingAll += 1;
+      if (!worst || d > worst.d) worst = { d, id: r.id, co: r.company_id, brand: r.brand, sales: r.sales, want: [wt, wm, wc], got: [gt, gm, gc] };
     }
   }
-  note(`projects examined: ${recomputed.filter((r) => !r.archived).length}; without a rate card: ${noRate}`);
+  note(`live (unarchived) projects examined: ${live}; with no rate card for their brand: ${noRate}`);
   note(`projects whose STORED auto cost lines disagree with the rate card recomputed: ${bad}`);
-  note(`total absolute disagreement: RM ${totalDelta.toFixed(2)}`);
-  if (worst) note(`worst row: project ${worst.id} (company ${worst.co}, brand ${JSON.stringify(worst.brand)}, sales ${worst.sales}) want=${JSON.stringify(worst.want)} got=${JSON.stringify(worst.got)} delta=RM ${worst.d.toFixed(2)}`);
-  if (!bad) note('AGREES — every live project\'s auto cost lines match the rate card.');
+  note(`  ...of those, projects carrying NO auto rows at all while the card says they should: ${missingAll}`);
+  note(`stored auto overhead total:     RM ${gotSum.toFixed(2)}`);
+  note(`rate-card recomputed total:     RM ${wantSum.toFixed(2)}`);
+  note(`DELTA (recomputed − stored):    RM ${(wantSum - gotSum).toFixed(2)}`);
+  note(`total ABSOLUTE disagreement:    RM ${totalDelta.toFixed(2)}`);
+  if (worst) note(`worst row: project ${worst.id} (company ${worst.co}, brand ${JSON.stringify(worst.brand)}, sales RM ${Number(worst.sales).toFixed(2)}) want=[T ${worst.want[0]}, M ${worst.want[1]}, C ${worst.want[2]}] got=[T ${worst.got[0]}, M ${worst.got[1]}, C ${worst.got[2]}] delta=RM ${worst.d.toFixed(2)}`);
+  if (!bad) note("AGREES — every live project's auto cost lines match the rate card.");
+
+  // Which side is stale? If auto rows exist but the sales base moved, the row
+  // is stale; if none exist at all the engine never ran for that project.
+  const ages = await tryQ('auto row ages', () => sql`
+    SELECT count(*)::int AS auto_rows,
+           count(DISTINCT project_id)::int AS projects_with_auto,
+           min(created_at)::text AS oldest, max(created_at)::text AS newest
+      FROM project_finance_lines WHERE auto_source IS NOT NULL AND archived_at IS NULL`);
+  note('auto row census: ' + JSON.stringify(ages[0] ?? {}));
+}
+
+// ── 3. legacy cross-module P&L (/api/finance/pnl) row set ───────────────────
+async function pnlRowSet() {
+  hr('3. /api/finance/pnl — revenue + cost row set vs the source documents');
+
+  const soCols = await tryQ('sales_orders cols', () => sql`
+    SELECT column_name, data_type FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='sales_orders' ORDER BY ordinal_position`);
+  note('sales_orders columns: ' + soCols.map((c) => c.column_name).join(', '));
+
+  const pflCols = await tryQ('project_finance_lines cols', () => sql`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='project_finance_lines' ORDER BY ordinal_position`);
+  note('project_finance_lines columns: ' + pflCols.map((c) => c.column_name).join(', '));
+
+  const assrCols = await tryQ('assr_cases cols', () => sql`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='assr_cases' ORDER BY ordinal_position`);
+  note('assr_cases columns: ' + assrCols.map((c) => c.column_name).join(', '));
+
+  // 3a — cancelled sales orders inside the report's revenue window.
+  const cancelCol = soCols.find((c) => /cancel/i.test(c.column_name))?.column_name;
+  const hasStatus = soCols.some((c) => c.column_name === 'doc_status');
+  note(`\n3a. revenue arm: sales_orders cancellation marker = ${cancelCol ?? '(none)'}; doc_status present = ${hasStatus}`);
+  if (cancelCol) {
+    const dist = await tryQ('cancel marker distribution', () => sql`
+      SELECT company_id, ${sql(cancelCol)}::text AS marker, count(*)::int AS n,
+             COALESCE(SUM(COALESCE(local_total,0)),0) AS amt
+        FROM sales_orders WHERE doc_date IS NOT NULL
+       GROUP BY 1,2 ORDER BY 1,4 DESC LIMIT 20`);
+    note(`   ${cancelCol} distribution over dated sales_orders:`);
+    for (const d of dist) note(`     company=${d.company_id} ${cancelCol}=${JSON.stringify(d.marker)} rows=${d.n} RM ${Number(d.amt).toFixed(2)}`);
+  }
+  if (hasStatus) {
+    const dist = await tryQ('doc_status distribution', () => sql`
+      SELECT company_id, doc_status::text AS st, count(*)::int AS n,
+             COALESCE(SUM(COALESCE(local_total,0)),0) AS amt
+        FROM sales_orders WHERE doc_date IS NOT NULL
+       GROUP BY 1,2 ORDER BY 1,4 DESC LIMIT 20`);
+    note('   doc_status distribution over dated sales_orders:');
+    for (const d of dist) note(`     company=${d.company_id} doc_status=${JSON.stringify(d.st)} rows=${d.n} RM ${Number(d.amt).toFixed(2)}`);
+  }
+
+  // 3b — cost lines the company-scoped pull silently DROPS (company_id NULL).
+  const hasCo = pflCols.some((c) => c.column_name === 'company_id');
+  note(`\n3b. cost arm: project_finance_lines.company_id present = ${hasCo}`);
+  if (hasCo) {
+    const orph = await tryQ('null-company cost lines', () => sql`
+      SELECT l.company_id IS NULL AS unscoped, l.auto_source IS NOT NULL AS is_auto,
+             count(*)::int AS n, COALESCE(SUM(COALESCE(l.amount,0)),0) AS amt
+        FROM project_finance_lines l
+        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+       WHERE l.kind='cost' AND l.archived_at IS NULL
+       GROUP BY 1,2 ORDER BY 1 DESC, 2`);
+    note('   live cost lines by scoping (this is what /finance/pnl sums):');
+    for (const r of orph) note(`     company_id_null=${r.unscoped} auto=${r.is_auto} lines=${r.n} RM ${Number(r.amt).toFixed(2)}`);
+
+    const mism = await tryQ('cost line company mismatch', () => sql`
+      SELECT count(*)::int AS n, COALESCE(SUM(COALESCE(l.amount,0)),0) AS amt
+        FROM project_finance_lines l
+        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+       WHERE l.kind='cost' AND l.archived_at IS NULL
+         AND l.company_id IS NOT NULL AND p.company_id IS NOT NULL
+         AND l.company_id <> p.company_id`);
+    note(`   cost lines whose company_id DISAGREES with their project's: ${mism[0]?.n} (RM ${Number(mism[0]?.amt ?? 0).toFixed(2)})`);
+
+    const worst = await tryQ('worst unscoped project', () => sql`
+      SELECT p.id, p.company_id, p.code, p.name,
+             COALESCE(SUM(COALESCE(l.amount,0)),0) AS amt, count(*)::int AS n
+        FROM project_finance_lines l
+        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+       WHERE l.kind='cost' AND l.archived_at IS NULL AND l.company_id IS NULL
+       GROUP BY 1,2,3,4 ORDER BY amt DESC LIMIT 5`);
+    note('   worst projects hidden from a company-scoped cost total:');
+    for (const w of worst) note(`     project ${w.id} project.company_id=${w.company_id} ${JSON.stringify(w.code)} lines=${w.n} RM ${Number(w.amt).toFixed(2)}`);
+
+    // Income side too — the report only pulls cost from here, but an unscoped
+    // income line would distort any per-company ledger view.
+    const inc = await tryQ('income scoping', () => sql`
+      SELECT l.company_id IS NULL AS unscoped, count(*)::int AS n,
+             COALESCE(SUM(COALESCE(l.amount,0)),0) AS amt
+        FROM project_finance_lines l
+        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+       WHERE l.kind='income' AND l.archived_at IS NULL
+       GROUP BY 1 ORDER BY 1 DESC`);
+    note('   live INCOME lines by scoping:');
+    for (const r of inc) note(`     company_id_null=${r.unscoped} lines=${r.n} RM ${Number(r.amt).toFixed(2)}`);
+  }
+
+  // 3c — assr_cases (service cost) unscoped rows.
+  if (assrCols.some((c) => c.column_name === 'company_id')) {
+    const a = await tryQ('assr null company', () => sql`
+      SELECT company_id IS NULL AS unscoped, count(*)::int AS n,
+             COALESCE(SUM(COALESCE(po_amount,0)),0) AS amt
+        FROM assr_cases WHERE po_amount IS NOT NULL AND archived_at IS NULL
+       GROUP BY 1 ORDER BY 1 DESC`);
+    note('\n3c. service cost (assr_cases) by company scoping:');
+    for (const r of a) note(`   company_id_null=${r.unscoped} cases=${r.n} RM ${Number(r.amt).toFixed(2)}`);
+  }
+}
+
+// ── 4. AR aging snapshot (scm.mv_ar_aging) vs the live rule ─────────────────
+async function arAging() {
+  hr('4. AR aging: scm.mv_ar_aging snapshot vs the live Outstanding rule');
+
+  const cols = await tryQ('mv cols', () => sql`
+    SELECT a.attname AS col, format_type(a.atttypid, a.atttypmod) AS typ
+      FROM pg_attribute a
+     WHERE a.attrelid = 'scm.mv_ar_aging'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+     ORDER BY a.attnum`);
+  note('mv_ar_aging columns: ' + cols.map((c) => `${c.col}::${c.typ}`).join(', '));
+
+  const def = await tryQ('mv def', () => sql`
+    SELECT pg_get_viewdef('scm.mv_ar_aging'::regclass, true) AS d`, [{ d: null }]);
+  note('\n--- deployed definition (truncated to 3000 chars) ---\n' + String(def[0]?.d ?? '(missing)').slice(0, 3000));
+
+  const meta = await tryQ('mv meta', () => sql`SELECT * FROM scm.mv_ar_aging_meta`);
+  note('mv_ar_aging_meta: ' + JSON.stringify(meta));
+
+  const snap = await tryQ('mv rows', () => sql`SELECT * FROM scm.mv_ar_aging ORDER BY company_id, module`);
+  note('\nsnapshot rows:');
+  for (const r of snap) note('   ' + JSON.stringify(r));
+
+  const live = await tryQ('live recompute', () => sql`
+    SELECT COALESCE(company_id,0)::bigint AS company_id, 'po'::text AS module, count(*)::bigint AS cnt,
+           COALESCE(SUM(total_sen),0)::bigint AS total_sen, 0::bigint AS total_outstanding_sen
+      FROM scm.v_po_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'grn'::text, count(*)::bigint, 0::bigint, 0::bigint
+      FROM scm.v_grn_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'pi'::text, count(*)::bigint,
+           COALESCE(SUM(total_sen),0)::bigint, COALESCE(SUM(outstanding_sen),0)::bigint
+      FROM scm.v_pi_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'pr'::text, count(*)::bigint, 0::bigint, 0::bigint
+      FROM scm.v_pr_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'so'::text, count(*)::bigint,
+           COALESCE(SUM(local_total_sen),0)::bigint, 0::bigint
+      FROM scm.v_so_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'do'::text, count(*)::bigint, 0::bigint, 0::bigint
+      FROM scm.v_do_outstanding WHERE is_outstanding GROUP BY 1
+    UNION ALL SELECT COALESCE(company_id,0)::bigint, 'si'::text, count(*)::bigint,
+           COALESCE(SUM(total_sen),0)::bigint, COALESCE(SUM(outstanding_sen),0)::bigint
+      FROM scm.v_si_outstanding WHERE is_outstanding AND status <> 'DRAFT' GROUP BY 1
+    ORDER BY 1,2`);
+  note('\nlive recompute (endpoint predicates, now):');
+  for (const r of live) note('   ' + JSON.stringify(r));
+
+  const key = (r) => `${r.company_id}/${r.module}`;
+  const sm = new Map(snap.map((r) => [key(r), r]));
+  let disagree = 0;
+  for (const l of live) {
+    const s = sm.get(key(l));
+    const d = {
+      cnt: Number(s?.cnt ?? 0) - Number(l.cnt),
+      total: Number(s?.total_sen ?? 0) - Number(l.total_sen),
+      outs: Number(s?.total_outstanding_sen ?? 0) - Number(l.total_outstanding_sen),
+    };
+    if (d.cnt || d.total || d.outs) {
+      disagree += 1;
+      note(`   DELTA ${key(l)}: snapshot-minus-live cnt=${d.cnt} total=${rm(d.total)} outstanding=${rm(d.outs)}`);
+    }
+  }
+  const draft = await tryQ('SI status census', () => sql`
+    SELECT COALESCE(company_id,0) AS company_id, status, count(*)::int AS n,
+           COALESCE(SUM(total_sen),0)::bigint AS total_sen,
+           COALESCE(SUM(outstanding_sen),0)::bigint AS outstanding_sen
+      FROM scm.v_si_outstanding WHERE is_outstanding GROUP BY 1,2 ORDER BY 1,2`);
+  note('\nv_si_outstanding by status (is_outstanding rows only):');
+  for (const r of draft) note('   ' + JSON.stringify(r));
+  note(`\nmodules where the snapshot disagrees with a live recompute: ${disagree}`);
+  if (!disagree) note('AGREES — the nightly snapshot reproduces the live rule exactly.');
 }
 
 async function main() {
   note(`check-report-money — section=${SECTION} — READ ONLY`);
   if (want('schema')) await schemaCensus();
-  if (want('raterate') || want('ratecard')) await rateCard();
+  if (want('ratecard')) await rateCard();
   if (want('autolines')) await autoLines();
+  if (want('pnl')) await pnlRowSet();
+  if (want('aging')) await arAging();
   await sql.end({ timeout: 5 });
 }
 
