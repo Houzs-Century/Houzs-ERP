@@ -42,6 +42,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 
 export const consignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -820,6 +821,16 @@ consignmentReturns.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the note-line ids are
+     caller-supplied and resolve the stored cost (and feed the over-return
+     bound); a foreign id booked the other tenant's line onto this company's
+     return unchecked. Same guard the GRN/DR/DO trio always had. */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
+      items.map((it) => (it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined));
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   /* The "no DO, no Return" hard requirement is still DROPPED vs DR — a
      consignment return may be free-entry. The over-return guard is NOT: it now
      bounds every NOTE-LINKED line (owner 2026-08-13). Free-entry lines carry no
@@ -840,7 +851,7 @@ consignmentReturns.post('/', async (c) => {
   const sourceCostByNoteItem = await sourceUnitCostByItemId(
     sb, 'consignment_delivery_order_items',
     items.map((it: Record<string, unknown>) => (it.doItemId ?? it.consignmentDoItemId) as string | undefined),
-  );
+    activeCompanyId(c) ?? null);
   const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByNoteItem));
   const { error: iErr } = await sb.from('consignment_delivery_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('consignment_delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -953,9 +964,16 @@ consignmentReturns.post('/:id/items', async (c) => {
   const { data: header } = await scopeToCompanyId(sb.from('consignment_delivery_returns').select('id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
+  /* Same cross-company line guard as the create path (2026-08-21, audit A3). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
+      [(it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'consignment_delivery_order_items', [(it.doItemId ?? it.consignmentDoItemId) as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('consignment_delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* The ITEM select echoes the stored line back — cost/margin included. A

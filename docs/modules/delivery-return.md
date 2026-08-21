@@ -188,6 +188,19 @@ resync is the first thing to try, not the last.
 | `scm.delivery_returns` | Header — `return_number`, `status`, `delivery_order_id`, `warehouse_id`, `company_id` |
 | `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_sen` |
 
+> **Source-cost reads are company-scoped (2026-08-21, docs/bugs/0501).**
+> `lib/source-cost.ts sourceUnitCostByItemId` now takes a REQUIRED `companyId`
+> and predicates the line read on it — the link ids are caller-supplied and the
+> client is service-role, so an unscoped read resolved the OTHER tenant's stored
+> cost. This router already refused foreign ids upstream
+> (`crossCompanySourceRefusal`); the consignment clones
+> (`consignment-notes.ts` / `consignment-returns.ts`) did NOT, and gained the
+> full guard set in the same change: `assertSourceLinesInCompany` on the create
+> and add-line paths, a company-scoped `consignment_so_doc_no` existence check
+> on the note create, and a company predicate on the note's CO-line warehouse
+> resolver (a foreign CO line id used to deduct stock out of the other
+> company's warehouse under this company's stamp).
+
 Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already
 normalised. `CANCELLED` is the value that matters — it is what drives the
