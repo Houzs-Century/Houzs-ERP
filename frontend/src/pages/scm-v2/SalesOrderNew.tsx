@@ -991,18 +991,22 @@ export const SalesOrderNew = () => {
   }, [staffList, salespersonAllowedEmails, currentUser?.email]);
 
   /* Owner 2026-06-23 — the Salesperson must NEVER be blank for whoever creates
-     the order: the creator IS the salesperson. The 2990 bridge only knew the
-     creator when they had a scm.staff row, so a user without one (the owner)
-     got "Pick staff". We now resolve the creator from the staff list FIRST
-     (by id, then email, then name) so a real staff user keeps their canonical
-     id; when no staff row matches we synthesize a UI-only "self" option from
-     the Houzs auth user so their NAME is always selectable + shown. */
-  const SELF_SALESPERSON = '__self__';
-  /* The ladder itself is the SHARED `resolveSelfStaff` (vendor/scm/lib) — user_id
+     the order: the creator IS the salesperson.
+
+     Owner 2026-08-21 — and it must never be the word "me" either: it has to be
+     a REAL employee. This used to synthesize a UI-only `__self__` option
+     labelled "<name> (me)" whenever the creator was missing from the roster,
+     and then drop it at submit time so the backend re-derived the id. The
+     creator was missing for one reason only — GET /staff/pickable?onlySales=1
+     narrows to Sales positions and the owner is not one — so the sentinel was
+     papering over a roster that had been asked the wrong question. The roster
+     now ALWAYS carries the caller (staff.ts, THE ALWAYS-HOLDS RULE), so this
+     resolves to a real staff id on every account and the sentinel is gone.
+
+     The ladder itself is the SHARED `resolveSelfStaff` (vendor/scm/lib) — user_id
      FIRST, then the bridge staff id, then email, then name. It was written here
      and mobile MobileNewSO carried a THIRD, older copy that stopped at
-     email-then-name; one module is what stops them disagreeing again. Behaviour
-     is unchanged on this screen: same order, same inputs. */
+     email-then-name; one module is what stops them disagreeing again. */
   const selfStaffMatch = useMemo(
     () => resolveSelfStaff(staffList, {
       userId: currentUser?.id,
@@ -1014,26 +1018,12 @@ export const SalesOrderNew = () => {
     [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id],
   );
 
-  /* The creator's display name for the synthesized self-option (only used when
-     selfStaffMatch is undefined — i.e. they have no scm.staff row). */
-  const selfDisplayName =
-    (currentUser?.name ?? '').trim() ||
-    (currentStaff?.name ?? '').trim() ||
-    (currentUser?.email ?? '').trim() ||
-    'Me';
-
-  /* Seed salespersonId to the creator once auth/staff resolve. A real staff
-     row seeds its canonical id; a creator with NO staff row seeds the
-     SELF_SALESPERSON sentinel so the field shows their name (never blank).
-     Only seeds when the user hasn't already picked someone (don't stomp an
-     admin's manual choice on re-render). */
+  /* Seed salespersonId to the creator once auth/staff resolve — always their
+     canonical staff id. Only seeds when the user hasn't already picked someone
+     (don't stomp an admin's manual choice on re-render). */
   useEffect(() => {
-    if (selfStaffMatch) {
-      setSalespersonId((prev) => prev || selfStaffMatch.id);
-    } else if (selfDisplayName) {
-      setSalespersonId((prev) => prev || SELF_SALESPERSON);
-    }
-  }, [selfStaffMatch, selfDisplayName]);
+    if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
+  }, [selfStaffMatch]);
 
   /* Derive the resolved venue from whichever salesperson is currently
      picked. Falls back to the auth user's own venue_id if the staff list
@@ -1595,13 +1585,11 @@ export const SalesOrderNew = () => {
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
         email: email || undefined,
-        /* The SELF_SALESPERSON sentinel is a UI-only placeholder for a creator
-           with no scm.staff row — never send it as an id (it isn't one). A real
-           staff id submits normally; the sentinel is omitted so the backend
-           keeps its own caller-based resolution rather than choking on a fake
-           id. */
-        salespersonId:
-          salespersonId && salespersonId !== SELF_SALESPERSON ? salespersonId : undefined,
+        /* Always a real scm.staff uuid now — the roster carries the caller, so
+           there is no sentinel to strip. Omitted only when the field is
+           genuinely empty (roster still loading), where the backend falls back
+           to its own caller-based resolution. */
+        salespersonId: salespersonId || undefined,
         customerType: customerType || undefined,
         customerSoNo: customerSoNo || undefined,
         /* Commander 2026-05-27: Venue is locked to the picked salesperson's
@@ -1880,17 +1868,14 @@ export const SalesOrderNew = () => {
                   disabled={!canChangeSalesperson}
                 >
                   {/* Owner 2026-06-23 — the creator is ALWAYS a selectable
-                      option so Salesperson is never blank. When the creator has
-                      a scm.staff row, selfStaffMatch carries its canonical id +
-                      code; when they don't (e.g. the owner), a synthesized
-                      "self" option (SELF_SALESPERSON) shows their name and sits
-                      at the TOP of the list. */}
-                  {!selfStaffMatch && (
-                    <option value={SELF_SALESPERSON}>{selfDisplayName} (me)</option>
-                  )}
+                      option so Salesperson is never blank; owner 2026-08-21 —
+                      and always a REAL person. selfStaffMatch carries their
+                      canonical id + staff code on every account, because
+                      GET /staff/pickable appends the caller's own row whatever
+                      narrowing it applied. */}
                   {/* Non-admin roles are pinned to themselves: only the creator
                       option renders. Admin / director / super-admin get the full
-                      pickable list (with the self option already on top). */}
+                      pickable list (which already contains the creator). */}
                   {!canChangeSalesperson && selfStaffMatch && (
                     <option value={selfStaffMatch.id}>
                       {selfStaffMatch.name} ({selfStaffMatch.staffCode})

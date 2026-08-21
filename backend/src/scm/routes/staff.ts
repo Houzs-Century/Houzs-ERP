@@ -19,7 +19,14 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm, hasHouzsPerm } from "../lib/houzs-perms";
 import { activeCompanyId, scopeToCompany } from "../lib/companyScope";
-import { rowUserId, scopeStaffRowsToActiveCompany } from "../lib/staffCompanyScope";
+import {
+  rowUserId,
+  scopeStaffRowsToActiveCompany,
+  alwaysPickableStaffIds,
+  unionAlwaysPickable,
+  parseIncludeIds,
+  MAX_INCLUDE_IDS,
+} from "../lib/staffCompanyScope";
 import { derivePosRole } from "../lib/pos-staff-role";
 import { isSalesUser } from "../../services/pmsAccess";
 import type { Env, Variables } from "../env";
@@ -218,9 +225,34 @@ staff.get("/by-ids", async (c) => {
 //   · master LOADED + active company UNRESOLVED (a caller restricted to no
 //     active company) — FAIL CLOSED to []. In a live multi-company world an
 //     unknown active company must NEVER dump every company's salespeople.
+//
+// THE ALWAYS-HOLDS RULE (owner 2026-08-21, "『我』不应该存在 —— 永远要是一个真人").
+// Whatever narrowing is asked for, the answer ALSO carries:
+//   · the CALLER's own active staff row — so the screen the person is standing
+//     on can always resolve them to a real employee. Without it SalesOrderNew
+//     synthesized a fake "<name> (me)" option and Payments' "Collected By"
+//     defaulted to blank;
+//   · every id passed in `?include=<uuid>,…` — the ids the screen ALREADY has
+//     to name, i.e. the salesperson_id stored on the document it is showing.
+//     Without it seven pickers labelled a sitting employee "(former staff)".
+// Both defeat `onlySales` ONLY. Neither resurrects a deactivated row, so
+// "(former staff)" still means what it says. `include` cannot enumerate: it
+// answers exactly the ids the caller already holds and nothing else — strictly
+// narrower than GET /staff/by-ids, which is unscoped by design for the same
+// reason and additionally returns email + phone.
 staff.get("/pickable", async (c) => {
   const supabase = c.get("supabase");
   const onlySales = c.req.query("onlySales") === "1";
+  const includeIds = parseIncludeIds(c.req.query("include"));
+  if (includeIds === null) {
+    return c.json(
+      {
+        error: "too_many_include_ids",
+        reason: `Cap is ${MAX_INCLUDE_IDS} ids per call — ?include= carries the ids already on the document, not a roster.`,
+      },
+      400,
+    );
+  }
   const { data, error } = await supabase
     .from("staff")
     .select(STAFF_COLUMNS)
@@ -231,7 +263,29 @@ staff.get("/pickable", async (c) => {
     return c.json({ error: "load_failed", reason: error.message }, 500);
   }
   const rows = (data ?? []) as Array<Record<string, unknown>>;
-  const { scoped } = await scopeStaffRowsToActiveCompany(c, rows);
+  const { scoped, failClosed } = await scopeStaffRowsToActiveCompany(c, rows);
+
+  /* The ids this answer must hold whatever else it narrows away — see THE
+     ALWAYS-HOLDS RULE above. Resolved against `rows` (every ACTIVE staff row)
+     rather than `scoped`, because an id the screen already displays is one the
+     caller can see on the document regardless of which company owns the person.
+
+     FAIL-CLOSED STAYS CLOSED: when the company gate could not resolve an active
+     company it returns [], and a self/include union on top of [] would be a
+     hatch straight through the gate. No ids, no union. */
+  const alwaysIds = failClosed
+    ? new Set<string>()
+    : alwaysPickableStaffIds(rows, Number(c.get("houzsUser")?.id) || null, includeIds);
+
+  /* EVERY exit from this handler goes through here, so no narrowing branch —
+     present or future — can be the one that forgets the rule. */
+  const answer = async (narrowed: Array<Record<string, unknown>>) =>
+    c.json({
+      staff: await toStaffRowsWithDerivedRoles(
+        c.env,
+        unionAlwaysPickable(rows, narrowed, alwaysIds),
+      ),
+    });
 
   /* Owner 2026-07-22: the SO / SI / DR / consignment SALESPERSON dropdowns
      were showing every ACTIVE staff row granted to the active company,
@@ -240,14 +294,12 @@ staff.get("/pickable", async (c) => {
      (position "Sales …" OR department containing "sales"). Left OFF by
      default so the PaymentsTable "Collected By" picker + any other
      legitimate all-staff caller still gets the full active roster. */
-  if (!onlySales) {
-    return c.json({ staff: await toStaffRowsWithDerivedRoles(c.env, scoped) });
-  }
+  if (!onlySales) return answer(scoped);
 
   const linkedIds = Array.from(
     new Set(scoped.map(rowUserId).filter((n): n is number => n != null)),
   );
-  if (linkedIds.length === 0) return c.json({ staff: [] });
+  if (linkedIds.length === 0) return answer([]);
   let positionByUserId = new Map<number, { position_name: string | null; department_name: string | null }>();
   try {
     const placeholders = linkedIds.map(() => "?").join(",");
@@ -274,7 +326,7 @@ staff.get("/pickable", async (c) => {
   } catch {
     // users / positions / departments absent (pre-migration / D1 test
     // mirror) — degrade to no-filter rather than blanking the picker.
-    return c.json({ staff: await toStaffRowsWithDerivedRoles(c.env, scoped) });
+    return answer(scoped);
   }
 
   const salesOnly = scoped.filter((r) => {
@@ -288,7 +340,7 @@ staff.get("/pickable", async (c) => {
       permissions_set: null,
     } as any);
   });
-  return c.json({ staff: await toStaffRowsWithDerivedRoles(c.env, salesOnly) });
+  return answer(salesOnly);
 });
 
 /* ── SHOWROOM PARKING (owner 2026-07-19, migration 0148) ────────────────────

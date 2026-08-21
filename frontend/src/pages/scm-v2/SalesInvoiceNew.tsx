@@ -85,11 +85,18 @@ export const SalesInvoiceNew = () => {
      so they don't double either. */
   const idemKey = useIdempotencyKey();
   const addPayment = useAddSalesInvoicePayment();
-  const staffQ = usePickableStaff({ onlySales: true });
   const loc = useLocalities();
 
   // Prefill source — the DO this invoice is being raised from (if any).
   const doDetail = useMfgDeliveryOrderDetail(fromDo);
+  /* `include` carries the salesperson already on the SOURCE document this one is
+     being raised from, so someone the onlySales narrowing hides is still named.
+     "(former staff)" below is then only reachable for a row that genuinely is
+     gone. Declared after the source query so the id is in scope. */
+  const staffQ = usePickableStaff({
+    onlySales: true,
+    include: [(doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+  });
   const doPayments = useDeliveryOrderPayments(fromDo);
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');

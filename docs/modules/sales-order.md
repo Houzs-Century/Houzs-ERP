@@ -980,6 +980,39 @@ is invisible to it; its natural-key pass understands `doc_no` but walks
 between the two passes — and its header explains why that count is an upper
 bound on exposure rather than a defect list.
 
+### There is no "(me)" — the Salesperson is always a real employee (owner 2026-08-21)
+
+His ruling, on `HC-SO-2608-003`, an order he had raised himself minutes earlier
+and which named him **"(former staff)"**: *「『我』不应该存在，永远要是一个真人。」*
+
+`SalesOrderNew` / `MobileNewSO` used to carry a `SELF_SALESPERSON = '__self__'`
+sentinel, rendered as `<name> (me)` whenever `resolveSelfStaff` could not find
+the creator on the roster, and stripped again at submit
+(`salespersonId !== SELF_SALESPERSON ? … : undefined`). **Both are deleted.**
+The creator was missing for exactly one reason — `GET /staff/pickable?onlySales=1`
+narrows to Sales positions and the owner is not one — so the sentinel was
+covering for a roster that had been asked the wrong question. The roster now
+always contains the caller (`team-members.md`, *"`GET /staff/pickable` ALWAYS
+holds the caller"*), so `selfStaffMatch` resolves to a real `scm.staff` uuid on
+every account and three things follow with no further code:
+
+- the Salesperson field seeds to that id and SUBMITS it, instead of omitting it
+  and leaving the backend to re-derive the caller;
+- `defaultCollectedBy={selfStaffMatch?.id}` is a real id, so the Payments row's
+  "Collected By" defaults to the person operating the screen instead of `—`
+  (it stays changeable — `PaymentsTable`'s `collectedByAllowedIds` filter has
+  always kept `s.id === defaultStaffId`);
+- the pickers that must name a STORED `salesperson_id` pass it through
+  `usePickableStaff({ onlySales: true, include: [<that id>] })` —
+  `SalesOrderDetail`, `SalesInvoiceNew`, `DeliveryReturnNew`,
+  `ConsignmentNote/Order/Return New+Detail` and `MobileNewSO`'s edit mode — so
+  **`(former staff)` is now reachable only for a row that really is gone**, never
+  for a person the filter merely hid.
+
+The 2026-07-22 narrowing is untouched: an ordinary sales user's pick list is
+exactly what it was. Trace:
+`docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
 Two changes to the header PATCH, both because a resigning rep's orders have to

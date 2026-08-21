@@ -1,0 +1,39 @@
+name: Salesperson picker roster (read-only)
+
+# Answers "who does the SO / SI / DR / consignment salesperson dropdown hide,
+# and how many live documents does that leave unnameable?" WITH EVIDENCE,
+# without anyone opening a SQL console. Strictly read-only (SELECT only).
+# Prints counts and POSITION names only — this repository is public.
+#
+# Manual trigger only — a question, not a gate, and a production DB read must
+# never become routine CI noise. Actions already holds secrets.DATABASE_URL for
+# the deploy, so nobody handles the credential.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release.
+concurrency:
+  group: salesperson-picker-roster-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-salesperson-picker-roster.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs.
+          NODE_OPTIONS: --dns-result-order=ipv4first
