@@ -71,7 +71,9 @@ import {
   soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
 } from '../../vendor/scm/lib/so-amendment-header';
-import { diffHeaderPayload } from '../../vendor/scm/lib/so-header-diff';
+import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-header-diff';
+import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
+  AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
@@ -1173,13 +1175,16 @@ export const SalesOrderDetail = () => {
 
     const { changes: headerChanges } = handle.getLockedHeaderChanges();
     const lines = buildAmendmentLines();
-    if (lines.length === 0 && !hasAmendmentHeaderChanges(headerChanges)) {
-      setSaveError(
-        'No changes to submit — edit a line, a date or the delivery location first, then submit the amendment.',
-      );
-      return;
-    }
-    const reason = await askPrompt({
+
+    // Asks about BOTH halves — see vendor/scm/lib/so-amendment-submit.
+    const plan = planAmendmentSubmit({
+      hasLineChanges: lines.length > 0,
+      hasFrozenHeaderChanges: hasAmendmentHeaderChanges(headerChanges),
+      hasDirectHeaderChanges: handle.hasDirectHeaderChanges(),
+    });
+    if (plan === 'NOTHING') { setSaveError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
+    // DIRECT_ONLY needs no reason: nothing is going for approval.
+    const reason = plan === 'AMENDMENT' ? await askPrompt({
       title: `Submit amendment for ${header.doc_no}?`,
       body: 'This Sales Order is already ordered from the supplier, so your changes go out as an '
         + 'amendment request. Coordinator + supplier confirm it before the order is revised. '
@@ -1187,7 +1192,7 @@ export const SalesOrderDetail = () => {
       placeholder: 'e.g. customer changed the fabric colour',
       multiline: true,
       confirmLabel: 'Submit amendment',
-    });
+    }) : '';
     if (reason == null) return; // cancelled the prompt
     setSavingOrder(true);
     try {
@@ -1200,39 +1205,25 @@ export const SalesOrderDetail = () => {
           { keepLockedColsAsOriginal: true },
         );
       });
-      /* 2. The approval half — frozen header fields + line diffs. */
-      amendKeyRef.current ??= newIdempotencyKey();
-      const createdRes = await createAmendment.mutateAsync({
-        docNo: header.doc_no,
-        reason: reason.trim() || undefined,
-        lines,
-        headerChanges,
-        idempotencyKey: amendKeyRef.current,
-      });
+      /* 2. The approval half — frozen header fields + line diffs. DIRECT_ONLY
+            skips ONLY this: the save above is the whole of that edit. */
+      let createdRes: unknown = null;
+      if (plan === 'AMENDMENT') {
+        amendKeyRef.current ??= newIdempotencyKey();
+        createdRes = await createAmendment.mutateAsync({
+          docNo: header.doc_no,
+          reason: reason.trim() || undefined,
+          lines,
+          headerChanges,
+          idempotencyKey: amendKeyRef.current,
+        });
+      }
       setSavingOrder(false);
       endEditSession();
       /* Two-lane rework: the server classifies (and may SPLIT) the request —
          product changes go to Purchasing, delivery changes to Logistics, each
          applied by ONE signature. Tell the operator exactly what was raised. */
-      const createdList = ((createdRes as unknown as {
-        amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
-      } | undefined)?.amendments ?? []);
-      const laneName = (l?: string | null) =>
-        l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
-      notify(createdList.length > 1
-        ? {
-          title: 'Amendment split into two approvals',
-          body: `${createdList.map((a) => `${a.amendment_no ?? ''} → ${laneName(a.lane)}`).join('; ')}. Each applies as soon as its approver signs.`,
-        }
-        : createdList[0]?.lane
-          ? {
-            title: 'Amendment submitted',
-            body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.`,
-          }
-          : {
-            title: 'Amendment submitted',
-            body: 'It now needs approval before the order is revised.',
-          });
+      notify(amendmentSubmittedNotice(plan, createdRes));
     } catch (e) {
       setSavingOrder(false);
       // Same dead end as saveEdit: the amendment's direct-half header PATCH
@@ -2129,10 +2120,8 @@ export const SalesOrderDetail = () => {
           fontSize: 'var(--fs-13)',
         }}>
           <Lock {...ICON} />
-          <span>This SO is already ordered from the supplier. Edit the lines, dates or delivery
-            location as usual — your {' '}<strong>Submit amendment request</strong> sends those
-            changes for the coordinator and supplier to confirm before the order is revised.
-            Contact details and address lines save straight away.</span>
+          {/* Shared copy — both surfaces were wrong about addresses. */}
+          <span>{AMENDMENT_MODE_BANNER}</span>
         </div>
       )}
 
@@ -2733,9 +2722,10 @@ type CustomerCardHandle = {
   validate: () => string | null;
   /** `keepLockedColsAsOriginal` (amendment mode) — send every FROZEN header
       column at its ORIGINAL value so this direct PATCH stays inside the server's
-      field-scoped processing lock, while the customer's contact details / address
-      lines / note in the same payload still save immediately. The changed frozen
-      values ride the amendment instead (getLockedHeaderChanges below). */
+      field-scoped processing lock, while the customer's contact details and note
+      in the same payload still save immediately. The changed frozen values ride
+      the amendment instead (getLockedHeaderChanges below). NOT address lines:
+      they joined the CONTROLLED set 2026-07-27 and ride the amendment too. */
   save: (
     // `raw` (optional 2nd arg) carries the original Error, whose `.body` holds
     // the server's aggregated `problems` list — so the page Save can show EVERY
@@ -2755,6 +2745,9 @@ type CustomerCardHandle = {
     changes: SoAmendmentHeaderChanges;
     oldSnapshot: SoAmendmentHeaderChanges;
   };
+  /** Is the DIRECT half dirty? Tells "nothing to submit" apart from "nothing
+      needs APPROVAL" — the two the old single return could not. */
+  hasDirectHeaderChanges: () => boolean;
 };
 
 type CustomerCardProps = {
@@ -3225,6 +3218,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     address2:             header.address2 ?? '',
   };
 
+  /* The EXACT body the direct half sends in amendment mode; trySave and
+     hasDirectHeaderChanges share it so the two cannot disagree. */
+  const directHeaderPatch = () => diffHeaderPayload(originalPayloadRef.current,
+    withFrozenHeaderFieldsReverted(buildPayload(), lockedHeaderOriginal));
+
   const trySave = (
     cb?: { onSuccess?: () => void; onError?: (msg: string, raw?: unknown) => void },
     opts?: { keepLockedColsAsOriginal?: boolean },
@@ -3235,15 +3233,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       else notify({ title: 'Check the dates', body: err, tone: 'error' });
       return;
     }
-    const payload = opts?.keepLockedColsAsOriginal
-      ? withFrozenHeaderFieldsReverted(buildPayload(), lockedHeaderOriginal)
-      : buildPayload();
     /* Send ONLY what the operator changed. The diff runs AFTER the frozen-field
        revert, so a reverted column equals its seeded value and drops out
        entirely — which is strictly safer than sending it back unchanged: the
        server's lock diffs `col in updates`, so a column we never send cannot
        409 so_locked_processing at all. */
-    onSave(diffHeaderPayload(originalPayloadRef.current, payload), cb);
+    onSave(opts?.keepLockedColsAsOriginal ? directHeaderPatch()
+      : diffHeaderPayload(originalPayloadRef.current, buildPayload()), cb);
   };
 
   /* PR-A — Expose imperative save()/reset() so the page-level Edit/Save/
@@ -3263,6 +3259,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     getPhone: () => form.phone ?? '',
     getLockedHeaderChanges: () =>
       buildAmendmentHeaderChanges(lockedHeaderNow, lockedHeaderOriginal),
+    hasDirectHeaderChanges: () => hasHeaderChanges(directHeaderPatch()),
   }));
 
   /* PR-A — Inputs are read-only when the page isn't in edit mode OR the

@@ -23,6 +23,7 @@ import {
 } from "../vendor/scm/lib/so-amendment-header";
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
+import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
 import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
 import {
   useSoDropdownOptions,
@@ -1907,6 +1908,7 @@ export function MobileNewSO({
             address2:             origAddress2,
           },
         );
+        // EVERY key collected must appear here — an omitted one reverts to NULL, not "leave alone", and 409s the lock (so-amendment-header.test.ts).
         const outgoingPatch = amendmentMode
           ? withFrozenHeaderFieldsReverted(patch, {
               processingDate:   origProcDate,
@@ -1914,6 +1916,8 @@ export function MobileNewSO({
               customerState:        origState,
               postcode:             origPostcode,
               city:                 origCity,
+              address1:             origAddress1,
+              address2:             origAddress2,
             })
           : patch;
 
@@ -1931,7 +1935,9 @@ export function MobileNewSO({
            server's delivery-date cascade (keyed on PRESENCE, not change) and
            wipes every per-line override. Skipping loses no refresh: this branch
            invalidates everything itself once the whole composite save settles. */
-        if (amendmentMode && hasHeaderChanges(dirtyPatch)) {
+        // Captured once: the plan must ask about the SAME patch this branch sends.
+        const directDirty = hasHeaderChanges(dirtyPatch);
+        if (amendmentMode && directDirty) {
           /* Attach the mandatory loaded token after the dirty check, so `version`
              never turns an otherwise-empty patch into a mutation. A 409 throws;
              the catch leaves every input in place and shows the curated conflict. */
@@ -1945,33 +1951,36 @@ export function MobileNewSO({
 
         if (amendmentMode) {
           const amLines = buildAmendmentLines();
-          /* An amendment may now be header-only (e.g. just a new Delivery Date) —
-             previously a header-only edit hit this empty check and NEVER created
-             an amendment, so nothing ever reached the approval queue. */
-          if (amLines.length === 0 && !hasAmendmentHeaderChanges(headerChanges)) {
-            setSubmitting(false);
-            setError("No changes to submit — edit a line, a date or the delivery location first, then submit the amendment.");
-            return;
-          }
-          const reason = await prompt({
-            title: `Submit amendment for ${docNo}?`,
-            body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Add a short reason (optional).",
-            placeholder: "e.g. customer changed the fabric colour",
-            multiline: true,
-            confirmLabel: "Submit amendment",
+          // Asks about BOTH halves — see vendor/scm/lib/so-amendment-submit.
+          const plan = planAmendmentSubmit({
+            hasLineChanges: amLines.length > 0,
+            hasFrozenHeaderChanges: hasAmendmentHeaderChanges(headerChanges),
+            hasDirectHeaderChanges: directDirty,
+            hasStagedPayments: pays.some((p) => toSen(p.amount) > 0),
           });
-          if (reason == null) { setSubmitting(false); return; } // cancelled the prompt
+          if (plan === "NOTHING") { setSubmitting(false); setError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
           let amendCreatedRes: unknown = null;
-          try {
-            amendCreatedRes = await createAmendment.mutateAsync({
-              docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
-              idempotencyKey: amendIdemKey,
+          // DIRECT_ONLY skips ONLY this block; the tail after it is shared.
+          if (plan === "AMENDMENT") {
+            const reason = await prompt({
+              title: `Submit amendment for ${docNo}?`,
+              body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Add a short reason (optional).",
+              placeholder: "e.g. customer changed the fabric colour",
+              multiline: true,
+              confirmLabel: "Submit amendment",
             });
-          } catch (e) {
-            setSubmitting(false);
-            // authed-fetch already humanises the API error to one plain sentence.
-            setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
-            return;
+            if (reason == null) { setSubmitting(false); return; } // cancelled
+            try {
+              amendCreatedRes = await createAmendment.mutateAsync({
+                docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
+                idempotencyKey: amendIdemKey,
+              });
+            } catch (e) {
+              setSubmitting(false);
+              // authed-fetch already humanises the API error to one plain sentence.
+              setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
+              return;
+            }
           }
           // A payment recorded alongside the amendment still posts, slip or not.
           await recordNewPayments(docNo);
@@ -1982,18 +1991,7 @@ export function MobileNewSO({
           await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
           /* Two-lane rework — the server classifies (and may split) the request:
              product changes wait on Purchasing, delivery changes on Logistics. */
-          {
-            const createdList = ((amendCreatedRes as {
-              amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
-            } | null)?.amendments ?? []);
-            const laneName = (l?: string | null) =>
-              l === "LINES" ? "Purchasing" : l === "DELIVERY" ? "Logistics" : "";
-            void notify(createdList.length > 1
-              ? { title: "Amendment split into two approvals", body: `${createdList.map((a) => `${a.amendment_no ?? ""} → ${laneName(a.lane)}`).join("; ")}. Each applies when its approver signs.` }
-              : createdList[0]?.lane
-                ? { title: "Amendment submitted", body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.` }
-                : { title: "Amendment submitted", body: "It now needs approval before the order is revised." });
-          }
+          void notify(amendmentSubmittedNotice(plan, amendCreatedRes));
           if (onSaved) onSaved(docNo);
           else onBack();
           return;
@@ -2462,12 +2460,12 @@ export function MobileNewSO({
                     </div>
                     {addressIdentityLocked ? (
                       <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
-                        State, City and Postcode are locked — this order&apos;s processing date has passed and it is now on order to the supplier. Address lines can still be updated.
+                        State, City, Postcode and the address lines are locked — this order&apos;s processing date has passed and it is now on order to the supplier.
                       </div>
                     ) : null}
                     {amendmentMode && (
                       <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
-                        Changing the State, City or Postcode submits an amendment request — it applies once approved. Address lines save straight away.
+                        Changing the State, City, Postcode or an address line submits an amendment request — it applies once approved.
                       </div>
                     )}
               </div>
@@ -2484,7 +2482,8 @@ export function MobileNewSO({
                 {amendmentMode && (
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                    <span>This order is already ordered from the supplier. Edit the lines, dates or delivery location as usual — your <b>Save</b> submits an <b>amendment request</b> that the coordinator and supplier confirm before the order is revised. Contact details and address lines save straight away.</span>
+                    {/* Shared with desktop — both were wrong about addresses. */}
+                    <span>{AMENDMENT_MODE_BANNER}</span>
                   </div>
                 )}
                 {lineEditingBlocked ? (
