@@ -25,6 +25,15 @@
  * is correctly skipped. So that run is NEUTRAL on this question, not evidence
  * against it. Measure the document numbers themselves.
  *
+ * IT HAS NOW BEEN MEASURED, AND THE HYPOTHESIS IS REFUTED (run 32504616506,
+ * 2026-08-21, production): ZERO document numbers lack their company prefix.
+ * Every purchase order carries `2990-`. So the two chips are NOT two spellings
+ * of one purchase order, and the next reader should stop looking here and start
+ * at the two ARMS of soPoChips.ts — in particular whether `source_po_union`
+ * renders a raw `batch_no` (free text, never a document-number column and so
+ * NOT covered by this check) rather than a resolved purchase-order number.
+ * That reading is the open question; this file has closed its own.
+ *
  * SCOPE. Every doc-number column the 2990 importer prefixes (its DOCNO_COL
  * map), for every company, split by whether the value carries the prefix its
  * company mints under. Company 1 (Houzs Century) mints BARE numbers by design,
@@ -51,8 +60,8 @@ const DOC_TABLES = [
   ["sales_invoices",     "invoice_number"],
   ["grns",               "grn_number"],
   ["purchase_invoices",  "invoice_number"],
-  ["delivery_returns",   "dr_number"],
-  ["purchase_returns",   "pr_number"],
+  ["delivery_returns",   "return_number"],
+  ["purchase_returns",   "return_number"],
 ];
 
 /* Company 2 is the only tenant whose numbers carry a document prefix — the
@@ -81,7 +90,12 @@ async function main() {
          WHERE ${sql(col)} IS NOT NULL`;
     } catch (e) {
       /* A table or column that does not exist is a FINDING (the importer map and
-         the schema disagree), not a crash — say so and carry on. */
+         the schema disagree), not a crash — say so and carry on. The first live
+         run reported TWO: `dr_number` and `pr_number` were invented here, and
+         both tables call the column `return_number`. So the verdict was computed
+         over SIX of eight document types while reading as if it covered all
+         eight — the "verdict computed over nothing" shape CLAUDE.md names. Fixed;
+         the message stays, because the next wrong guess surfaces the same way. */
       note(`  ${table}.${col}: could not read — ${e.message}`);
       continue;
     }
