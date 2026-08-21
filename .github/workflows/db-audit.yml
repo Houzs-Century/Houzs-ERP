@@ -42,21 +42,21 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
-      - name: drizzle-kit pull (declared tables, casing preserved)
+      - name: Regenerate the schema artifact from the live catalog
         if: always()
-        run: npx drizzle-kit pull --config=drizzle.config.pull.ts
+        run: node scripts/gen-schema-artifact.mjs --out ../out/schema.pg.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
-      - name: Show what pull produced
+      - name: Show what it produced
         if: always()
-        run: ls -la drizzle-pull && wc -l drizzle-pull/*.ts || true
+        run: wc -l ../out/schema.pg.ts && head -40 ../out/schema.pg.ts || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: drizzle-pull
-          path: backend/drizzle-pull/**
+          name: generated-schema
+          path: out/schema.pg.ts
           if-no-files-found: warn
           retention-days: 7

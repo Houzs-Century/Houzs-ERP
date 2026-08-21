@@ -158,6 +158,56 @@ try {
     );
   }
 
+  // ── 3b. the RAW rows, exact case ──────────────────────────────────────────
+  /* The assignment of an existing rate row to a company is the risky part of
+     this work, so the evidence has to be exact. GET /cost-rates joins
+     `pb.name = cr.brand` CASE-SENSITIVELY, and lowercasing for the collision
+     census above would hide a card that joins to nothing. */
+  h("project_brands, raw");
+  for (const b of brands) {
+    console.log(
+      `  company ${String(b.company_id).padEnd(3)} ${Number(b.active) === 1 ? "active  " : "inactive"} ${b.name}`,
+    );
+  }
+  h("exact-case join: project_cost_rates.brand -> project_brands.name");
+  const exact = await pg`
+    SELECT r.brand,
+           (SELECT array_agg(b.company_id ORDER BY b.company_id)
+              FROM public.project_brands b WHERE b.name = r.brand) AS exact_companies,
+           (SELECT array_agg(b.company_id ORDER BY b.company_id)
+              FROM public.project_brands b WHERE lower(b.name) = lower(r.brand)) AS ci_companies
+      FROM public.project_cost_rates r
+     ORDER BY r.brand`;
+  for (const e of exact) {
+    console.log(
+      `  ${String(e.brand).padEnd(24)} exact={${(e.exact_companies ?? []).join(",")}}  ` +
+        `case-insensitive={${(e.ci_companies ?? []).join(",")}}`,
+    );
+  }
+  const noExact = exact.filter((e) => !e.exact_companies || e.exact_companies.length === 0);
+  if (noExact.length) {
+    notice(
+      `${noExact.length} rate card(s) whose brand does NOT match any project_brands.name exactly: ` +
+        noExact.map((e) => e.brand).join(", "),
+    );
+  }
+
+  h("projects.brand raw values, by company");
+  const rawCohorts = await pg`
+    SELECT p.company_id, btrim(p.brand) AS brand,
+           count(*) FILTER (WHERE p.archived_at IS NULL) AS live_projects,
+           count(*) AS all_projects
+      FROM public.projects p
+     WHERE p.brand IS NOT NULL AND btrim(p.brand) <> ''
+     GROUP BY 1, 2
+     ORDER BY 1, 2`;
+  for (const r of rawCohorts) {
+    console.log(
+      `  company ${String(r.company_id).padEnd(3)} ${String(r.brand).padEnd(24)} ` +
+        `${String(r.live_projects).padStart(5)} live / ${String(r.all_projects).padStart(5)} total`,
+    );
+  }
+
   // ── 4. do the collisions actually carry a rate card? ──────────────────────
   h("collision x rate card");
   const rateNames = new Set(rates.map((r) => String(r.brand).toLowerCase()));
