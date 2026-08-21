@@ -148,13 +148,43 @@ describe('a movement still to decide', () => {
   test('ticks the statement the MATCHER chose, not the first candidate', () => {
     openStatement();
     /* Candidate 3 is listed first; 7 is the one whose day and amount agreed. */
-    expect((screen.getByLabelText('Report other.csv for line 2') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('Report mbb-credit.csv for line 2') as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(screen.getAllByText('Money received')[0]!);
     expect(bookMutate).toHaveBeenCalledWith({
       lineId: 1, allocations: [{ batchId: 7, amountSen: 227700 }],
     });
+  });
+
+  /* 如果他很多，那么他会显示很多比哦？(owner, 2026-08-20). It did: every
+     outstanding report of that acquirer, on every row, even where the matcher
+     had already worked out which one it was. With ten reports open that is ten
+     tick boxes a row and the one that matters is buried among nine that are
+     not. A decided line shows its decision alone. */
+  test('a decided line shows only its match, with the rest one press away', () => {
+    openStatement();
+    expect(screen.queryByLabelText('Report other.csv for line 2')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Other reports for line 2'));
+    expect((screen.getByLabelText('Report other.csv for line 2') as HTMLInputElement).checked).toBe(false);
+    /* And it folds back, so one look does not leave the screen noisy. */
+    fireEvent.click(screen.getByLabelText('Other reports for line 2'));
+    expect(screen.queryByLabelText('Report other.csv for line 2')).toBeNull();
+  });
+
+  /* The escape hatch has to be visible, or a wrong match is a dead end. */
+  test('says how many other reports there are', () => {
+    openStatement();
+    expect(screen.getByText('Not this one? 1 other report(s)')).toBeTruthy();
+  });
+
+  /* An UNSURE line has decided nothing, so hiding candidates would hide the
+     whole question. Every one stays on screen. */
+  test('an unsure line still shows every report to choose from', () => {
+    openStatement();
+    expect(screen.getByLabelText('Report other.csv for line 7')).toBeTruthy();
+    expect(screen.getByLabelText('Report mbb-credit.csv for line 7')).toBeTruthy();
+    expect(screen.queryByLabelText('Other reports for line 7')).toBeNull();
   });
 
   /* Anything less than certain is left blank: a pre-filled guess is a guess

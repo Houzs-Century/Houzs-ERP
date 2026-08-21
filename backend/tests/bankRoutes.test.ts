@@ -494,3 +494,62 @@ describe('splitting one credit across several statements', () => {
     expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
   });
 });
+
+/* 这个 statement 如果我同一个月 submit 多次，他会想要重新 check 过？还是已经
+   settle 了就不见了 (owner, 2026-08-20).
+
+   The exact same FILE is refused by its hash. But a LONGER export of the same
+   month is a different file carrying the same days, and its credits cannot be
+   booked twice — the reports they paid are fully received, so the matcher finds
+   nothing waiting and would call them PAYOUT_NO_BATCH, whose clue sends him off
+   to reconcile a merchant report that is already done. Correct about the money,
+   useless as an instruction. */
+describe('uploading an overlapping period again', () => {
+  const ready = () => harness({ acc_settlement_batches: [BATCH], acc_settlement_rows: [CONFIRMED_ROW] });
+
+  test('names what was already recorded instead of calling it unexplained', async () => {
+    const { app } = ready();
+    const first = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${first.statementId}`)).json() as any;
+    const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
+    await post(app, `/bank/lines/${payout.id}/receipt`, {
+      allocations: [{ batchId: payout.matched_batch_id, amountSen: payout.amount_sen }],
+    });
+
+    /* The same month again, one line longer — a different file, same days. */
+    const longer = `${STATEMENT}\n${row('20260813', '000000000050000', 'CR', 'CDM CASH DEPOSIT', 'DEP1')}`;
+    const again = await (await upload(app, { fileName: 'aug-v2.csv', content: longer })).json() as any;
+    expect(again.ok).toBe(true);
+    expect(again.kinds.DUPLICATE).toBe(1);
+
+    const d2 = await (await app.request(`/bank/statements/${again.statementId}`)).json() as any;
+    const dup = d2.lines.find((l: any) => l.kind === 'DUPLICATE');
+    expect(dup.reference).toBe('00113107');
+    expect(dup.note).toMatch(/already recorded/);
+    expect(dup.note).toMatch(/Leave it out unless the bank really paid twice/);
+  });
+
+  test('the exact same file is refused outright, so nothing is re-checked', async () => {
+    const { app } = ready();
+    await upload(app);
+    const again = await upload(app, { fileName: 'a-different-name.csv' });
+    expect(again.status).toBe(409);
+    expect((await again.json() as any).error).toBe('already_uploaded');
+  });
+
+  /* Keyed on all three, not the reference alone: three AEON payouts share a
+     reference on one day and only the amount tells them apart. */
+  test('a different amount on the same reference and day is NOT a duplicate', async () => {
+    const { app } = ready();
+    const first = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${first.statementId}`)).json() as any;
+    const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
+    await post(app, `/bank/lines/${payout.id}/receipt`, {
+      allocations: [{ batchId: payout.matched_batch_id, amountSen: payout.amount_sen }],
+    });
+
+    const other = [HEAD, row('20260803', '000000000999999', 'CR', 'CR/CARD SALES MN 32410011 DATED 31072026', '00113107')].join('\n');
+    const again = await (await upload(app, { fileName: 'other.csv', content: other })).json() as any;
+    expect(again.kinds.DUPLICATE).toBeUndefined();
+  });
+});

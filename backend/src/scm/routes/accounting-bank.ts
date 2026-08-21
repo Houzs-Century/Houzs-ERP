@@ -128,6 +128,33 @@ export const bankUpload = guard(async (c) => {
   const movements = groupBankMovements(parsed.lines);
   const decisions = matchBankMovements({ movements, rules: rules.rules, batches: batches.batches });
 
+  /* MOVEMENTS THIS ACCOUNT HAS ALREADY DEALT WITH.
+     The owner: 这个 statement 如果我同一个月 submit 多次，他会想要重新 check 过？
+     还是已经 settle 了就不见了.
+
+     The exact same FILE is refused below by its hash. But a LONGER export of
+     the same month is a different file carrying the same days, and its credits
+     cannot be booked twice — the reports they paid are fully received, so the
+     matcher finds nothing waiting and calls them PAYOUT_NO_BATCH, whose clue
+     tells him to go and reconcile a merchant report that is already done.
+     Correct about the money, useless as an instruction.
+
+     So a movement whose reference, day and amount are already POSTED on this
+     account is named for what it is. Keyed on all three, not on the reference
+     alone: three AEON payouts share a reference on one day, and only the amount
+     tells them apart. */
+  const seenBefore = new Map<string, string>();
+  {
+    const { data, error: seenErr } = await sb.from('acc_bank_statement_lines')
+      .select('booked_on, reference, amount_sen, state, posted_je_no, statement_id')
+      .eq('company_id', co.companyId).eq('state', 'POSTED');
+    if (seenErr) return c.json({ error: 'load_failed', reason: seenErr.message }, 500);
+    for (const r of (data ?? []) as Array<Record<string, any>>) {
+      const key = `${String(r.booked_on).slice(0, 10)}|${r.reference ?? ''}|${r.amount_sen}`;
+      seenBefore.set(key, String(r.posted_je_no ?? `statement ${r.statement_id}`));
+    }
+  }
+
   const fileHash = await sha256Hex(content);
   const { data: stmtRow, error: stmtErr } = await sb.from('acc_bank_statements').insert({
     company_id: co.companyId,
@@ -156,7 +183,22 @@ export const bankUpload = guard(async (c) => {
   const statementId = (stmtRow as { id: number }).id;
 
   const { error: linesErr } = await sb.from('acc_bank_statement_lines').insert(
-    decisions.map((d) => ({
+    decisions.map((raw) => {
+      const already = seenBefore.get(
+        `${raw.movement.bookedOn}|${raw.movement.reference ?? ''}|${raw.movement.amountSen}`,
+      );
+      /* Named, not silently dropped: a movement that looks identical is not
+         PROVEN identical, and the person who uploaded the file is the one who
+         can say. What the screen owes him is the truth about why it is here. */
+      const d = already
+        ? {
+          ...raw,
+          kind: 'DUPLICATE' as const,
+          clue: `This movement is already recorded — ${already} on a statement uploaded earlier.`
+            + ' Leave it out unless the bank really paid twice.',
+        }
+        : raw;
+      return {
       statement_id: statementId,
       company_id: co.companyId,
       line_no: d.movement.lines[0]!.lineNo,
@@ -182,12 +224,15 @@ export const bankUpload = guard(async (c) => {
          three trading days with one advice, so this is ordinary. */
       split: d.split.length > 0 ? d.split : null,
       note: d.clue,
-    })),
+      };
+    }),
   );
   if (linesErr) return c.json({ error: 'save_failed', reason: linesErr.message }, 500);
 
   const counts = decisions.reduce<Record<string, number>>((acc, d) => {
-    acc[d.kind] = (acc[d.kind] ?? 0) + 1;
+    const kind = seenBefore.has(`${d.movement.bookedOn}|${d.movement.reference ?? ''}|${d.movement.amountSen}`)
+      ? 'DUPLICATE' : d.kind;
+    acc[kind] = (acc[kind] ?? 0) + 1;
     return acc;
   }, {});
 

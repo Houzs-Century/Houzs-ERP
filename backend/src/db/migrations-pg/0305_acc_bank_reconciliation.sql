@@ -239,7 +239,13 @@ CREATE TABLE scm.acc_bank_statement_lines (
   note            TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT acc_bank_line_kind  CHECK (kind IN ('PAYOUT', 'PAYOUT_UNSURE', 'PAYOUT_NO_BATCH', 'OTHER')),
+  -- PAYOUT_SPLIT: one credit paying SEVERAL reconciled reports — Public Bank's
+  --   ordinary behaviour, one advice for three trading days.
+  -- DUPLICATE: this exact movement was already recorded from another upload of
+  --   an overlapping period. Not a payout to book and not ordinary banking, so
+  --   it needs its own answer: without one, re-uploading a longer export of the
+  --   same month reads as six unexplained credits.
+  CONSTRAINT acc_bank_line_kind  CHECK (kind IN ('PAYOUT', 'PAYOUT_SPLIT', 'PAYOUT_UNSURE', 'PAYOUT_NO_BATCH', 'DUPLICATE', 'OTHER')),
   CONSTRAINT acc_bank_line_state CHECK (state IN ('OPEN', 'POSTED', 'IGNORED')),
   CONSTRAINT acc_bank_line_charge CHECK (charge_sen >= 0),
   CONSTRAINT acc_bank_line_once  UNIQUE (statement_id, line_no)

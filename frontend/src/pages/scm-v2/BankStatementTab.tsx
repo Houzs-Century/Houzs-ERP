@@ -345,6 +345,7 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
   PAYOUT_SPLIT: 'one payout for several reports',
   PAYOUT_UNSURE: 'a card payout — check which',
   PAYOUT_NO_BATCH: 'a card payout with no report waiting',
+  DUPLICATE: 'already recorded from an earlier upload',
   OTHER: 'not card money',
 };
 
@@ -364,6 +365,12 @@ const OpenLine = ({ line }: { line: BankLine }) => {
   );
   const toggle = (id: number) =>
     setPicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id]));
+
+  /* Did the matcher settle this one? Then the other reports are noise until
+     asked for — and "asked for" has to stay possible, because the matcher is
+     sometimes wrong and that is the whole reason a person is here. */
+  const decided = line.kind === 'PAYOUT' || line.kind === 'PAYOUT_SPLIT';
+  const [showAll, setShowAll] = useState(false);
 
   /* Each statement takes what it is still owed. The shares must add up to the
      credit to the sen — the same rule the merchant side applies to a swipe
@@ -405,15 +412,34 @@ const OpenLine = ({ line }: { line: BankLine }) => {
       <td>
         {line.amount_sen > 0 && line.candidates.length > 0 && (
           <div style={{ display: 'grid', gap: 4 }}>
-            {/* Tick boxes, not a dropdown: one credit can settle more than one
-                report, and a dropdown cannot say so. */}
-            {line.candidates.map((b) => (
-              <label key={b.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 'var(--fs-12)' }}>
-                <input type="checkbox" checked={picked.includes(b.id)} onChange={() => toggle(b.id)}
-                  aria-label={`Report ${b.fileName ?? b.id} for line ${line.line_no}`} />
-                <span>{b.fileName ?? `report ${b.id}`} · owed <b>{fmt(b.outstandingSen)}</b></span>
-              </label>
-            ))}
+            {/* ONLY THE ANSWER, when there is one. The owner, on a month with
+                four reports outstanding and 286 movements: 如果他很多，那么他会
+                显示很多比哦？
+
+                Yes it did — every outstanding report of that acquirer, on every
+                row, whether or not the matcher had already worked out which one
+                it was. With ten reports open that is ten tick boxes a row, and
+                the one that matters is buried among nine that do not.
+
+                So a decided line shows its decision and nothing else. The rest
+                are one press away, for the times the matcher is wrong. */}
+            {(decided && !showAll ? line.candidates.filter((b) => picked.includes(b.id)) : line.candidates)
+              .map((b) => (
+                <label key={b.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 'var(--fs-12)' }}>
+                  <input type="checkbox" checked={picked.includes(b.id)} onChange={() => toggle(b.id)}
+                    aria-label={`Report ${b.fileName ?? b.id} for line ${line.line_no}`} />
+                  <span>{b.fileName ?? `report ${b.id}`} · owed <b>{fmt(b.outstandingSen)}</b></span>
+                </label>
+              ))}
+            {decided && line.candidates.length > picked.length && (
+              <button type="button" style={{ ...btn(), padding: '2px 8px', justifySelf: 'start' }}
+                aria-label={`Other reports for line ${line.line_no}`}
+                onClick={() => setShowAll(!showAll)}>
+                {showAll
+                  ? 'Just the match'
+                  : `Not this one? ${line.candidates.length - picked.length} other report(s)`}
+              </button>
+            )}
             {/* Only when it does NOT add up — a running total nobody needs is
                 one more number in the way. */}
             {picked.length > 0 && shortSen !== 0 && (

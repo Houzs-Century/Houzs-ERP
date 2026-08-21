@@ -40,7 +40,7 @@ export type BankStatement = {
 };
 
 /** What the matcher made of one movement. */
-export type BankLineKind = 'PAYOUT' | 'PAYOUT_SPLIT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'OTHER';
+export type BankLineKind = 'PAYOUT' | 'PAYOUT_SPLIT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'DUPLICATE' | 'OTHER';
 
 export type BankCandidate = {
   id: number;
