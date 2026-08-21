@@ -614,8 +614,9 @@ app.get("/banner", async (c) => {
   // dimension is the USER id. The family version orphans every user's entry
   // on any broadcast-shaped mutation (create/edit/delete/remind below);
   // per-user changes (own ack, a private notice) bust just that user's key.
-  // 60s TTL matches the frontend's poll and sessionCache's freshness window
-  // for role/dept edits. Best-effort: any KV trouble serves the live build.
+  // TTL (configCache.ts) deliberately exceeds the frontend's 60s poll so the
+  // poll can actually hit — at TTL==poll every poll landed on a just-expired
+  // key. Best-effort: any KV trouble serves the live build.
   const bannerVersion = await configCacheVersion(c.env, "banner");
   // Only the SYSTEM slice bypasses the snapshot (the cache key is not keyed on
   // the scope) — a cheap live read + in-memory filter; the mobile bell polls at

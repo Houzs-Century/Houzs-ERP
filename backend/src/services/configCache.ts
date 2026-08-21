@@ -50,9 +50,15 @@ export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
   // recomputes prices server-side from the live DB (mfg-pricing-recompute
   // reads the table directly, never this HTTP cache).
   maintcfg: 120,
-  // Per-user banner snapshot. 60s = the same freshness window sessionCache
-  // already grants role/department edits, and the frontend polls at 60s.
-  banner: 60,
+  // Per-user banner snapshot. Must OUTLIVE the frontend's 60s poll: at 60s the
+  // entry expired exactly as the next poll arrived, so a single-tab user missed
+  // on every poll (measured live 2026-08-21: hits ~0.4s, misses ~1s+ — the
+  // steady [perf] slow lines in the owner's console). Freshness does not ride
+  // this TTL: any broadcast-shaped mutation bumps the family version (orphaning
+  // every entry at once) and a user's own ack busts their own key. The TTL only
+  // bounds targeting drift that bypasses both (e.g. a user moved departments),
+  // where a few minutes' delay on a banner popup is harmless.
+  banner: 300,
   // Shared who's-online row list. Short by design: presence must stay live, and
   // this rides the EDGE-cache tier (caches.default, read-your-write in the same
   // colo) NOT the KV tier — a 15s KV entry never survives KV's up-to-60s
