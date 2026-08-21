@@ -1,0 +1,73 @@
+name: probe-grn-po-link
+
+# Which goods receipts told their purchase order they had arrived, and which
+# ones did not?
+#
+# Owner, 2026-08-21, asked two things that turned out to be ONE column:
+#   「然后我不是收货了吗？为什么是show PO outstanding？还显示ordered？」
+#   「为什么 AutoCount 这一边 GRN 是进不进去的？不是 convert 而已嘛？」
+#
+# `grn_items.purchase_order_item_id` answers both. MRP calls a PO line
+# outstanding while `qty > received_qty` (routes/mrp.ts:862), and the recount
+# that writes `received_qty` drops every null link before it starts
+# (routes/grns.ts:844). The AutoCount conversion resolves WHICH PO lines it took
+# from the same column. A receipt line added with the New GRN form's dashed
+# "Add another item" button carries no link, by design — so the goods land in
+# the warehouse, the order stays open, and the receipt has nothing to name.
+#
+# This is the COMPLEMENT of diag-po-receipt-drift, which opens with
+# `WHERE gi.purchase_order_item_id IS NOT NULL` and therefore cannot see this
+# population at all. Run both; they watch different failures.
+#
+# Read-only: SELECTs only, no writes, no DDL, no transaction, no lock. It cannot
+# block or alter anything in production.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990, blank = both)"
+        required: false
+        default: "1"
+        type: string
+      grn:
+        description: "One receipt number to print line by line (e.g. HC-GRN-2608-002). Blank = corpus only."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-grn-po-link
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count the receipts that never told their PO
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          GRN: ${{ inputs.grn }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-grn-po-link.mjs | tee grn-po-link.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-grn-po-link
+          path: backend/grn-po-link.txt
+          retention-days: 14
