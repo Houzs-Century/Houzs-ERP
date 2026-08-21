@@ -27,8 +27,12 @@ const patch = {
   customerDeliveryDate: '2026-09-01',
 };
 
-/* What the SO actually holds — the values a revert must restore. */
+/* What the SO actually holds — the values a revert must restore. Customer
+   name / phone joined the frozen set 2026-08-21 (owner: "需要加上更新客户
+   信息"), so they carry originals here like the address block does. */
 const original = {
+  debtorName: 'Hee Wai Loon',
+  phone: '+60129999999',
   address1: '51, Jln Utara',
   address2: 'Pjs 12',
   postcode: '46200',
@@ -45,12 +49,19 @@ describe('withFrozenHeaderFieldsReverted', () => {
     expect(out.address2).toBe('Pjs 12');
     expect(out.processingDate).toBe('2026-08-20');
     expect(out.customerDeliveryDate).toBe('2026-08-30');
+    // Customer info is frozen since 2026-08-21: the requested change rides the
+    // amendment while the direct-PATCH half reverts to what the SO holds.
+    expect(out.debtorName).toBe('Hee Wai Loon');
+    expect(out.phone).toBe('+60129999999');
   });
 
   it('leaves the FREE fields alone — they are what the direct PATCH exists to save', () => {
-    const out = withFrozenHeaderFieldsReverted(patch, original);
-    expect(out.debtorName).toBe('Hee Wai loon');
-    expect(out.phone).toBe('+60123456789');
+    const out = withFrozenHeaderFieldsReverted(
+      { ...patch, note: 'ring the bell', emergencyContactName: 'Fatimah' },
+      original,
+    );
+    expect(out.note).toBe('ring the bell');
+    expect(out.emergencyContactName).toBe('Fatimah');
   });
 
   /* THE MOBILE DEFECT (2026-08-21). MobileNewSO collected address1/address2

@@ -2724,6 +2724,24 @@ Flow:
    different string than the list for the same order. That divergence predates
    this change and is unfixed.
 
+   **The PDF LETTERHEAD is a different code path from the grid LABEL, and it
+   had the same rule only half-implemented.** `GET /:docNo` stamps
+   `resolvedBrandLogoKey` — the R2 key of a brand LOGO the SO PDF prints IN
+   PLACE OF the company logo (`frontend/src/vendor/scm/lib/sales-order-pdf.ts`
+   passes it to `drawHeader`; the company letterhead is the fallback when it is
+   null). Until 2026-08-21 that resolver read `project_brands` with **no company
+   predicate** and hardcoded the name `'ZANOTTI'`, so a 2990 HOME SDN. BHD.
+   Sales Order printed Houzs's mark — the owner found it on
+   `2990-SO-2607-026`, and production counted 69 orders in that state. The rule
+   now lives in `backend/src/scm/lib/brand-letterhead.ts`, reads the pool with
+   `activeCompanySql(c)`, and resolves the company's house sofa brand through
+   `houseSofaBrandName(companyCode)` — the SAME shared module the label uses.
+   It returns **null** for an unidentifiable company, where `brandingLabel`
+   keeps its 2990 default: a label may never be blank, a letterhead may never be
+   wrong. `"2990s Sofa"` exists as a 2990 brand row with no `logo_r2_key`, so
+   2990 sofa orders print the 2990 company letterhead until the owner uploads
+   one. Entry `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.
+
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
 
