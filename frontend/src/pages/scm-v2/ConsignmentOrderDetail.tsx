@@ -76,6 +76,7 @@ import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -832,7 +833,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     const list = stateWarehousesQ.data?.mappings ?? [];
     if (list.length === 0) return;
     const hit = list.find((m) => m.state === form.state);
-    const code = hit?.warehouse?.code ?? hit?.warehouse?.name ?? null;
+    const code = warehouseLabel(hit?.warehouse);
     if (!code) return;
     if (form.salesLocation === code) return;
     setForm((s) => ({ ...s, salesLocation: code }));

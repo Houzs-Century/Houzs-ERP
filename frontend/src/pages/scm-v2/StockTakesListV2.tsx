@@ -29,11 +29,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { fmtDate } from "../../vendor/shared/format";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
 
+/* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts). */
 const warehouseOf = (r: StockTakeRow): string =>
-  r.warehouse?.name || r.warehouse?.code || r.warehouse_id || "—";
+  warehouseLabel(r.warehouse) || r.warehouse_id || "—";
 
 const STATUS_TONE: Record<
   string,
