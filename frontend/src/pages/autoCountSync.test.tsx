@@ -94,14 +94,29 @@ const chip = (name: RegExp) => screen.getByRole("button", { name });
 
 /* `data-ac-row`, not `li`: the list is windowed now and the windowing component
    owns the element that wraps each row. A test that reaches for the wrapper is
-   asserting the virtualiser's markup, which is not this page's contract. */
-const cardOf = (docNo: string) =>
-  screen.getByText(docNo).closest("[data-ac-row]") as HTMLElement;
+   asserting the virtualiser's markup, which is not this page's contract.
+   `data-ac-doc` is looked at FIRST because the register prints a document number
+   twice on a healthy row — in *Document* and, identically, in *In the book as* —
+   so `getByText` finds two nodes and throws. The text fallback stays for
+   anything that is not a register cell. */
+const cardOf = (docNo: string): HTMLElement => {
+  const cell = [...document.querySelectorAll<HTMLElement>("[data-ac-doc]")]
+    .find((el) => el.textContent === docNo);
+  return (cell ?? screen.getByText(docNo)).closest("[data-ac-row]") as HTMLElement;
+};
 
-/** Open a row by its always-visible reason line — the line IS the opener. */
+/**
+ * Open a row by its always-visible reason line — the line IS the opener.
+ *
+ * Asked for by `data-ac-why` rather than by "the first collapsed button in the
+ * row", which stopped being unambiguous when the register gave the *Sends* cell
+ * its own `aria-expanded` for the send history. Two openers on one row is the
+ * normal shape now, and a test that picks by position picks whichever the
+ * markup happens to put first.
+ */
 async function openRow(docNo: string) {
   const card = cardOf(docNo);
-  await userEvent.click(within(card).getAllByRole("button", { expanded: false })[0]!);
+  await userEvent.click(card.querySelector("[data-ac-why]") as HTMLElement);
   return cardOf(docNo);
 }
 
@@ -343,9 +358,14 @@ describe("AutoCountSync — the reason is on the row", () => {
     expect(within(card).getByText(/timeout opening the book/)).toBeTruthy();
   });
 
+  /* The account book's own number is on the ROW now, in its own column, rather
+     than folded into a sentence — and `GR-S` came back as `GR-00123`, so this
+     one is also the flagged case. The unflagged case is in the register block
+     at the bottom of this file. */
   it("proves an arrived document with the account book's own number", async () => {
     await mount(busy);
-    expect(await screen.findByText(/In the account book as GR-00123/)).toBeTruthy();
+    await screen.findByText("GR-S");
+    expect(within(cardOf("GR-S")).getByText("GR-00123")).toBeTruthy();
   });
 });
 
@@ -372,11 +392,15 @@ describe("AutoCountSync — no coding words anywhere", () => {
 
   it("names each operation and each type in words", async () => {
     await mount(busy);
-    /* Substring matchers: the operation is one part of the row's single line of
-       detail now, not a fragment of its own. The words are what is asserted. */
-    expect(await screen.findByText(/^Delivery order from a sales order · /)).toBeTruthy();
-    expect(screen.getByText(/^Goods received from a purchase order · /)).toBeTruthy();
-    expect(screen.getAllByText(/^New sales order · /).length).toBe(2);
+    await screen.findByText("DO-K");
+    /* EXACT matches now: the operation has its own column (*What was sent*) and
+       the type has another (*Type*), so neither is a fragment of a longer
+       sentence any more. The words are still what is asserted. */
+    expect(within(cardOf("DO-K")).getByText("Delivery order from a sales order")).toBeTruthy();
+    expect(within(cardOf("DO-K")).getByText("Delivery order")).toBeTruthy();
+    expect(within(cardOf("GR-S")).getByText("Goods received from a purchase order")).toBeTruthy();
+    expect(within(cardOf("SO-F")).getByText("New sales order")).toBeTruthy();
+    expect(within(cardOf("SO-F")).getByText("Sales order")).toBeTruthy();
   });
 
   /* The five tiles are gone. Their subtitles were the only place these phrases
@@ -603,7 +627,9 @@ describe("AutoCountSync — a thousand documents", () => {
     expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
     expect(within(card).queryByText("To fix")).toBeNull();
     expect(within(card).queryByText("AutoCount replied")).toBeNull();
-    expect(within(card).getByText(/In the account book as GR-00123/)).toBeTruthy();
+    /* It still SAYS the thing — in the register's fifth column rather than in a
+       sentence. Nothing to open is not the same as nothing to read. */
+    expect(within(card).getByText("GR-00123")).toBeTruthy();
   });
 
   /* The number the owner actually complained about. 400 rows in the DOM is the
@@ -613,7 +639,11 @@ describe("AutoCountSync — a thousand documents", () => {
       rows: manyRows(400),
       counts: { pending: 0, sent: 320, failed: 80, skipped: 0, requeued: 0, attention: 80, total: 400 },
     }));
-    await screen.findByText("SO-0");
+    /* `SO-1`, not `SO-0`: the register sorts by WHEN, newest first, and the 320
+       arrived documents carry a `sent_at` an hour after everything else's
+       `created_at`, so they are the top of the list. `SO-0` is one of the 80
+       refusals and is 320 rows down. */
+    await screen.findByText("SO-1");
     const mounted = document.querySelectorAll("[data-ac-row]").length;
     expect(mounted).toBeGreaterThan(0);
     expect(mounted).toBeLessThan(400);
@@ -900,8 +930,11 @@ describe("AutoCountSync — one document, one row", () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findAllByText("HC-SO-2608-002");
     const card = cardOf("HC-SO-2608-002");
-    expect(within(card).getByText(/^Change to the sales order · /)).toBeTruthy();
-    expect(within(card).queryByText(/^New sales order · /)).toBeNull();
+    /* *What was sent* is the newest send's operation. The TYPE is beside it in
+       its own column, which is why the operation no longer repeats it. */
+    expect(within(card).getByText("Change to the document")).toBeTruthy();
+    expect(within(card).getByText("Sales order")).toBeTruthy();
+    expect(within(card).queryByText("New sales order")).toBeNull();
   });
 
   /* A document sent once has no second opener at all — the majority row must
@@ -989,5 +1022,163 @@ describe("AutoCountSync — Send now", () => {
     /* The documented failure class this repo names: a refusal that reaches
        nobody reads as "the button does nothing". */
     expect(await within(cardOf("SO-P")).findByText(/never got through/i)).toBeTruthy();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   THE REGISTER — 2026-08-21.
+
+   The owner reviewed a mockup at the size the queue actually is and chose the
+   dense-table direction over the card list. What is asserted below is the
+   CONTRACT that change was signed off on, not the markup: the eight columns are
+   there and named, the fifth one is silent on a match and loud on a mismatch,
+   the days break the register up, the footer says how much is on screen, and
+   the two lenses that were added narrow the page without narrowing the request.
+
+   Four rulings from the earlier rounds are asserted elsewhere in this file and
+   MUST keep passing: the headline stays on a problem row unclicked, the page
+   opens on Needs attention, a document in the account book has nothing to open,
+   and several hundred rows do not all go into the DOM.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("AutoCountSync — eight columns", () => {
+  it("heads the register with the eight the owner approved, in order", async () => {
+    await mount(busy);
+    await screen.findByText("SO-F");
+    for (const label of [
+      "Status", "Document", "Type", "What was sent", "In the book as", "Sends", "When",
+    ]) {
+      expect(screen.getByText(label, { selector: "div,button" }), label).toBeTruthy();
+    }
+  });
+
+  it("puts the ERP number, the type and the plain-words operation on the row", async () => {
+    await mount(busy);
+    await screen.findByText("DO-K");
+    const card = cardOf("DO-K");
+    expect(within(card).getByText("DO-K")).toBeTruthy();
+    expect(within(card).getByText("Delivery order")).toBeTruthy();
+    expect(within(card).getByText("Delivery order from a sales order")).toBeTruthy();
+  });
+
+  /* The try count was DELIBERATELY not made a column — it reads as a dash on
+     nearly every row. It is not lost: it is a sentence inside the problem row's
+     own block, where it says whether the queue is still working on this. */
+  it("keeps the try count inside the problem row, not in a column of dashes", async () => {
+    await mount(busy);
+    await screen.findByText("SO-F");
+    expect(screen.queryByText("Tries")).toBeNull();
+    const card = await openRow("SO-F");
+    expect(within(card).getByText(/Tried 6 times, then stopped/)).toBeTruthy();
+  });
+});
+
+/* THE COLUMN THAT EARNS THE TABLE ITS KEEP.
+   `HC-PO-2608-001` is in AED_HOUZS as `PO-009968` and nobody saw it for three
+   days, because no screen held the two numbers up against each other. */
+describe("AutoCountSync — In the book as", () => {
+  const inBook = (over: Partial<AcOutboxRow>): AcOutboxRow => row({
+    status: "sent", state: "sent", op: "create_so", sent_at: "2026-08-15T01:00:00.000Z", ...over,
+  });
+
+  const twoBooked = payload({
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    rows: [
+      inBook({ id: "m", doc_no: "HC-PO-2608-001", doc_type: "PO", op: "create_po",
+        ac_doc_no: "PO-009968" }),
+      inBook({ id: "q", doc_no: "HC-SO-2608-009", ac_doc_no: "HC-SO-2608-009" }),
+    ],
+  });
+
+  it("is SILENT when the account book used the number on the paperwork", async () => {
+    await mount(twoBooked, "/autocount-sync?state=sent");
+    await screen.findAllByText("HC-SO-2608-009");
+    const card = cardOf("HC-SO-2608-009");
+    expect(card.querySelector("[data-ac-book-flag]")).toBeNull();
+  });
+
+  it("is LOUD when AutoCount filed it under a number of its own", async () => {
+    await mount(twoBooked, "/autocount-sync?state=sent");
+    await screen.findByText("HC-PO-2608-001");
+    const card = cardOf("HC-PO-2608-001");
+    expect(within(card).getByText("PO-009968")).toBeTruthy();
+    expect(within(card).getByText("Different number")).toBeTruthy();
+    expect(card.querySelector("[data-ac-book-flag]")).toBeTruthy();
+  });
+
+  /* A document already in the account book has nothing to OPEN — that ruling
+     does not move — so the flag has to be readable without a click, and the
+     sentence spelling it out has to reach the reader some other way. */
+  it("flags it without giving the row anything to open", async () => {
+    await mount(twoBooked, "/autocount-sync?state=sent");
+    await screen.findByText("HC-PO-2608-001");
+    const card = cardOf("HC-PO-2608-001");
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(card.querySelector("[title*='PO-009968']")).toBeTruthy();
+  });
+
+  it("says nothing at all about a document that is not in the book yet", async () => {
+    await mount(busy);
+    await screen.findByText("SO-P");
+    expect(cardOf("SO-P").querySelector("[data-ac-book-flag]")).toBeNull();
+  });
+});
+
+describe("AutoCountSync — days, the footer and the two lenses", () => {
+  const onDay = (id: string, docNo: string, iso: string): AcOutboxRow => row({
+    id, doc_no: docNo, status: "sent", state: "sent", op: "create_so",
+    ac_doc_no: docNo, created_at: iso, sent_at: iso,
+  });
+
+  const threeDays = payload({
+    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+    rows: [
+      onDay("a", "SO-A", "2026-08-15T02:00:00.000Z"),
+      onDay("b", "SO-B", "2026-08-14T02:00:00.000Z"),
+      onDay("c", "SO-C", "2026-08-14T01:00:00.000Z"),
+    ],
+  });
+
+  it("breaks the register on the day, once per day and not once per row", async () => {
+    await mount(threeDays, "/autocount-sync?state=sent");
+    await screen.findAllByText("SO-A");
+    expect(document.querySelectorAll("[data-ac-day]").length).toBe(2);
+  });
+
+  it("closes the register with how much of the company is on screen", async () => {
+    await mount(threeDays, "/autocount-sync?state=sent");
+    await screen.findAllByText("SO-A");
+    expect(screen.getByText("Showing 1–3 of 3 documents")).toBeTruthy();
+    expect(screen.getByText("Sorted by When, newest first")).toBeTruthy();
+  });
+
+  /* THE SORT IS A LENS, not a request: pressing it must not re-ask the server,
+     which pages by recency and would answer a different question. */
+  it("turns the order round without asking the server again", async () => {
+    await mount(threeDays, "/autocount-sync?state=sent");
+    await screen.findAllByText("SO-A");
+    const before = apiGet.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: /^When/ }));
+    expect(await screen.findByText("Sorted by When, oldest first")).toBeTruthy();
+    expect(apiGet.mock.calls.length).toBe(before);
+  });
+
+  /* AND SO IS THE DATE RANGE. Both live in the URL on desktop, per CLAUDE.md. */
+  it("keeps the date range in the URL and narrows the loaded page only", async () => {
+    await mount(threeDays, "/autocount-sync?state=sent");
+    await screen.findAllByText("SO-A");
+    const before = apiGet.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Today" }));
+    /* Every fixture row is dated 2026-08-14/15, so Today empties the register
+       — which is the proof the lens is applied at all. */
+    expect(await screen.findByText(/Nothing here/)).toBeTruthy();
+    expect(apiGet.mock.calls.length).toBe(before);
+    for (const call of apiGet.mock.calls) expect(String(call[0])).not.toContain("range");
+  });
+
+  it("ignores a hand-edited range or sort rather than emptying the register", async () => {
+    await mount(threeDays, "/autocount-sync?state=sent&range=fortnight&sort=sideways");
+    await screen.findAllByText("SO-A");
+    expect(screen.getByText("Showing 1–3 of 3 documents")).toBeTruthy();
+    expect(screen.getByText("Sorted by When, newest first")).toBeTruthy();
   });
 });
