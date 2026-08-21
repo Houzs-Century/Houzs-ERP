@@ -428,6 +428,24 @@ try {
     log(`  outbox total rows=${obTotal}; rows created before 2026-08-20=${obOldest}`);
   }
 
+  /* ═════ (E2) EVERY OUTBOX ROW ══════════════════════════════════════
+     (E) asks only about the numbers ac-live-proof.json names. This lists the
+     whole queue, because the ERP's export memory is now small enough to print
+     and the interesting rows are the ones NOBODY thought to ask about — a
+     `pending` row carrying a number the book may already hold is a refusal
+     that has not happened yet. */
+  if (obExists.length) {
+    log("");
+    log("=== (E2) EVERY scm.autocount_outbox ROW ===");
+    const all = await pg`
+      SELECT doc_type, doc_no, op, status, attempts, ac_doc_no, created_at, sent_at
+        FROM scm.autocount_outbox ORDER BY created_at`;
+    log(`  ${all.length} row(s).`);
+    for (const r of all) {
+      console.log(`    ${new Date(r.created_at).toISOString()}  ${String(r.doc_type).padEnd(3)} ${String(r.doc_no).padEnd(18)} op=${String(r.op).padEnd(10)} status=${String(r.status).padEnd(8)} attempts=${r.attempts} ac_doc_no=${r.ac_doc_no ?? "-"}`);
+    }
+  }
+
   /* ═════ (F) CREATED-AT INVERSIONS ═════════════════════════════════════════ */
   log("");
   log("=== (F) CREATED-AT INVERSIONS (a lower suffix created later than a higher one) ===");
