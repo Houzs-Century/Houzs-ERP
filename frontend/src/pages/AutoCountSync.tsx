@@ -478,7 +478,7 @@ export function AutoCountSync() {
      folded under the list, and the Replaced chip still shows them as the
      list — but they no longer stand between the reader and a live refusal. The
      counts on the chips are untouched: they are the server's. */
-  const split = acSplitReplaced(groups, state);
+  const split = acSplitReplaced(groups);
 
   /* The state counts are the SERVER's, exact and whole-company. The type counts
      are of the rows actually loaded — a different kind of number, and the only

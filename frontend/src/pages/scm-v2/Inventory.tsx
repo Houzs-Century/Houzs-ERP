@@ -1797,13 +1797,13 @@ const MovementsTab = ({
 /* ════════════════════════════════════════════════════════════════════════
    COGS tab — FIFO consumption stream
    ════════════════════════════════════════════════════════════════════════ */
-const CogsTab = ({
+export const CogsTab = ({
   warehouseId, search,
 }: {
   warehouseId: string | null;
   search: string;
 }) => {
-  const { data, isLoading } = useCogsEntries({
+  const { data, isLoading, isError, error } = useCogsEntries({
     warehouseId: warehouseId ?? undefined,
     itemCode: search.trim() || undefined,
   });
@@ -1817,13 +1817,19 @@ const CogsTab = ({
           label="Total COGS"
           value={fmtRm(totalCogs)}
           subtitle={`${cogs.length} consumptions`}
-          /* Sum over an empty-because-unloaded list. RM 0.00 for "we haven't
-             fetched the consumptions yet" is a lie the operator can act on. */
-          pending={isLoading}
+          /* Sum over an empty-because-unloaded list. RM 0.00 for "we have not
+             fetched the consumptions yet" is a lie the operator can act on —
+             and `isLoading` is FALSE after a FAILED fetch, which is the other
+             way this list is empty for a reason unrelated to cost of goods. */
+          pending={isLoading || isError}
         />
       </div>
 
-      <p className={styles.eyebrow}>{isLoading ? 'Loading…' : `${cogs.length} consumption entries`}</p>
+      <p className={styles.eyebrow} style={isError ? { color: 'var(--c-festive-b, #B8331F)' } : undefined}>
+        {isLoading ? 'Loading…'
+          : isError ? `Not loaded — the COGS entries could not be read, which is not the same as there being none. ${error instanceof Error ? error.message : ''}`
+          : `${cogs.length} consumption entries`}
+      </p>
 
       {/* Batch 2: DataTable. The icon-decorated empty state flattens to the
           shared emptyLabel sentence (same trade every converted page made). */}
@@ -1831,9 +1837,10 @@ const CogsTab = ({
         tableId="inventory-cogs"
         layoutFamily="inventory-cogs"
         exportName="inventory-cogs"
-        rows={isLoading ? null : cogs}
+        rows={isLoading || isError ? null : cogs}
         loading={isLoading}
-        emptyLabel="No COGS entries yet — COGS is auto-posted when a DO or Purchase Return consumes a lot."
+        emptyLabel={isError ? 'The COGS entries could not be loaded.'
+          : 'No COGS entries yet — COGS is auto-posted when a DO or Purchase Return consumes a lot.'}
         getRowKey={(c) => c.id}
         columns={[
           { key: 'when', label: 'When', width: '150px', getValue: (c) => c.consumed_at, render: (c) => <span className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</span> },

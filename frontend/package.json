@@ -15,6 +15,7 @@
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "check:sw": "node scripts/check-service-worker.mjs",
     "check:raw-fetch": "node scripts/check-raw-fetch-inventory.mjs",
+    "check:silent-writes": "node scripts/check-silent-writes.mjs",
     "check:test-focus": "node scripts/check-test-focus.mjs",
     "test:smoke-script": "node --test scripts/smoke-check.test.mjs",
     "dev:perf-lab": "vite --config perf-lab/vite.config.ts",

@@ -583,7 +583,7 @@ const GlTab = () => {
 
 /* ── Trial Balance ───────────────────────────────────────────────────── */
 
-const TrialBalanceTab = () => {
+export const TrialBalanceTab = () => {
   const q = useAccountBalances();
   // Pre-sort into the canonical statement order — DataTable's groupBy buckets
   // in first-seen row order, so this IS the group order until the user sorts.
@@ -608,20 +608,43 @@ const TrialBalanceTab = () => {
   }, [rows]);
 
   type BalanceRow = (typeof rows)[number];
+  /* A self-check folded over a list that is empty BECAUSE THE READ FAILED
+     computes dr === cr === 0, which reads as "the books balance" — in the green
+     frame, as a finding. It is not a finding about the ledger, it is the
+     absence of one. `isLoading` alone cannot tell them apart: it is FALSE after
+     a failed fetch, which is exactly when `rows` is emptiest. So the tiles show
+     the unknown marker and the failure is stated. */
+  const unknown = q.isError || (!q.isSuccess && rows.length === 0);
+  const NOT_KNOWN = '—';
   return (
     <div className="space-y-3">
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
-        <SummaryTile label="Σ Debit" value={fmt(totals.dr)} />
-        <SummaryTile label="Σ Credit" value={fmt(totals.cr)} />
+      {q.isError && (
         <div style={{
           padding: 'var(--space-3) var(--space-4)',
-          background: totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
-          border: `1px solid ${totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
+          background: 'rgba(184, 51, 31, 0.10)',
+          border: '1px solid var(--c-festive-b, #B8331F)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: 'var(--fs-13)',
+          color: 'var(--c-festive-b, #B8331F)',
+        }}>
+          <strong>The account balances could not be loaded, so this report is not a statement about the books.</strong>{' '}
+          {q.error instanceof Error ? q.error.message : 'Please try again.'}
+        </div>
+      )}
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
+        <SummaryTile label="Σ Debit" value={unknown ? NOT_KNOWN : fmt(totals.dr)} />
+        <SummaryTile label="Σ Credit" value={unknown ? NOT_KNOWN : fmt(totals.cr)} />
+        <div style={{
+          padding: 'var(--space-3) var(--space-4)',
+          background: unknown ? 'var(--c-cream)' : totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
+          border: `1px solid ${unknown ? 'var(--c-line, rgba(34,31,32,0.08))' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
           borderRadius: 'var(--radius-md)',
         }}>
           <div className={styles.subtitle} style={{ marginBottom: 2 }}>Difference (must be 0.00)</div>
-          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
-            {fmt(totals.diff)}{totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}
+          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: unknown ? 'var(--c-ink)' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
+            {unknown
+              ? `${NOT_KNOWN} — not checked`
+              : `${fmt(totals.diff)}${totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}`}
           </div>
         </div>
       </section>
@@ -630,9 +653,9 @@ const TrialBalanceTab = () => {
         tableId="accounting-balances"
         layoutFamily="accounting-balances"
         exportName="trial-balance"
-        rows={q.isLoading ? null : rows}
+        rows={q.isLoading || q.isError ? null : rows}
         loading={q.isLoading}
-        emptyLabel="No balances yet."
+        emptyLabel={q.isError ? 'The account balances could not be loaded.' : 'No balances yet.'}
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[

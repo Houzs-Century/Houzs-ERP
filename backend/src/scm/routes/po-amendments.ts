@@ -29,6 +29,7 @@ import type { Env, Variables } from '../env';
 import type { Context } from 'hono';
 import { canTransition, nextStatus, type PoAmendStatus, type PoAmendAction } from '../shared/po-amendment';
 import { applyPoAmendment, ReceivedFloorError } from '../lib/po-revision';
+import { recomputePoReceived } from './grns';
 import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
 /* Two-lane rework: a follow-up row's approve re-derives its PO from the SO's
    current truth. po-revision re-exports so-revision's ReceivedFloorError (same
@@ -371,6 +372,26 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     // eslint-disable-next-line no-console
     console.error('[po-amendment] approve apply failed:', e);
     return c.json({ error: 'apply_failed', reason: e instanceof Error ? e.message : 'Failed to apply the Purchase Order revision.' }, 500);
+  }
+
+  /* The apply moves line QUANTITIES; the received status is a derived cache
+     (grns.ts recomputePoReceived) and nothing above re-derives it. Without this,
+     a fully-received PO amended UPWARD stays RECEIVED — and the whole GRN
+     surface gates on isReceivablePoStatus, so the added quantity cannot be
+     received through any path; amended DOWN to the received qty, it sits at
+     PARTIALLY_RECEIVED in the outstanding bucket with nothing receivable behind
+     it. Best-effort like the recount's other callers: the amendment applied, so
+     a recount hiccup is a warning, never a rollback. */
+  {
+    const { data: poLines, error: plErr } = await sb.from('purchase_order_items')
+      .select('id').eq('purchase_order_id', amendment.po_id);
+    const recount = plErr
+      ? { ok: false as const, reason: plErr.message }
+      : await recomputePoReceived(sb, ((poLines ?? []) as Array<{ id: string }>).map((r) => r.id));
+    if (!recount.ok) {
+      appliedWarnings = [...appliedWarnings,
+        'The received-status recount failed — the PO may show a stale received state until its next receipt or return.'];
+    }
   }
 
   const { data: updated, error: updErr } = await sb.from('po_amendments').update({

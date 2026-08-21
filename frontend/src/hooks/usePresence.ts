@@ -78,7 +78,8 @@ async function beat(): Promise<void> {
       path: window.location.pathname,
     });
   } catch {
-    // ignore — next interval will retry
+    // silent-write-ok: a presence heartbeat. The next interval retries and
+    // nothing on screen claims it landed.
   }
 }
 

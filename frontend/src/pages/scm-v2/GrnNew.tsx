@@ -219,14 +219,28 @@ export const GrnNew = () => {
      the lines are not reset on success, so a re-press submits the SAME goods and
      replay is the correct answer; raising a genuinely different receipt goes
      through the picker route (/scm/grns/from-po), which remounts this page and
-     mints a new key. It is also not silent — the dialog names the FIRST GRN's
-     number. Fixing the residual properly means retiring the key only after the
-     whole create+post sequence lands, which needs a rotate() that
+     mints a new key. Fixing the residual properly means retiring the key only
+     after the whole create+post sequence lands, which needs a rotate() that
      lib/idempotency.ts deliberately does not have; not worth inventing here for
-     a path the picker already covers. */
+     a path the picker already covers.
+
+     AND SINCE 2026-08-21 THE REPLAY ANNOUNCES ITSELF. "The dialog names the
+     FIRST GRN's number" was true and insufficient: an operator receiving a
+     SECOND identical batch pressed Create on the stale form, and a dialog
+     titled "created" told them the new batch was received when nothing was
+     written. lastCreatedIdRef below detects the replay (same mount + same key
+     can only mint one id) and the dialog says no second GRN was written and
+     points at the picker for a genuinely new batch. */
   const idemKey = useIdempotencyKey();
   const post   = usePostGrn();
   const saving = create.isPending || post.isPending;
+  /* Replay detector for the residual above. authedFetch exposes no response
+     headers, but one mount + one key can only ever mint ONE GRN — so a second
+     successful submit answering the SAME id IS the middleware's verbatim replay.
+     The dialog then says so instead of "created": the silent branch was an
+     operator receiving a second identical batch, pressing Create on the stale
+     form, and being told the goods were received when nothing was written. */
+  const lastCreatedIdRef = useRef<string | null>(null);
 
   const [receivedAt, setReceivedAt]           = useState<string>(() => todayMyt());
   const [deliveryNoteRef, setDeliveryNoteRef] = useState<string>('');
@@ -693,7 +707,22 @@ export const GrnNew = () => {
       });
       // Non-draft → confirm immediately (the historical Receive & Post). A draft
       // is left at DRAFT for review; the detail page's Confirm runs the commit.
+      /* Same mount, same key, same id back = the middleware replayed the earlier
+         201; nothing new was written. Post still runs (idempotent, and it is the
+         recovery path when the first submit's post half failed), but the dialog
+         must not say "created". */
+      const isReplay = lastCreatedIdRef.current === createRes.id;
+      lastCreatedIdRef.current = createRes.id;
       if (!asDraft) await post.mutateAsync(createRes.id);
+      if (isReplay) {
+        setDialog({
+          title: `GRN ${createRes.grnNumber} was already created`,
+          body: 'This submit repeated the earlier one — the same receipt was answered again and no second GRN or stock movement was written. '
+            + 'If another batch of the same goods has arrived, start a fresh receipt via Transfer from Purchase Order.',
+          goTo: `/scm/grns/${createRes.id}`,
+        });
+        return;
+      }
       /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A goods receipt raised
          from a purchase order is TRANSFERRED into AutoCount, and the transfer
          route applies a narrower set of header fields than an edit does — so

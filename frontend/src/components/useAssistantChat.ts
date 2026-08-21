@@ -180,7 +180,10 @@ export function useAssistantChat(): AssistantChatController {
     try {
       await api.del(`/api/assistant/conversations/${id}`);
     } catch {
-      // best-effort; the row reappears on the next refresh if the delete failed
+      // silent-write-ok: OPTIMISTIC WITH RECONCILE. The row reappears the next
+      // time history is opened if the delete never landed, so the list
+      // self-corrects. Worth knowing: within THIS session it does not, and the
+      // only feedback the delete button gives is the row vanishing.
     }
   }
 

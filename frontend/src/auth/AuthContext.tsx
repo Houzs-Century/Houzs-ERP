@@ -312,7 +312,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     unregisterNativePush();
     try {
       await api.post("/api/auth/logout");
-    } catch {}
+    } catch {
+      // silent-write-ok: the local token is cleared either way. Reporting a
+      // failed server-side session delete would only argue with a person who
+      // has already left, and it must never keep them signed in.
+    }
     tokenStore.clear();
     /* The Keychain vault is NOT flag-gated here, on purpose: if the biometric
        flag is turned off while a session is already saved, signing out must

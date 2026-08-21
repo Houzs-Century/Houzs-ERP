@@ -109,7 +109,7 @@ describe("buildAcOutboxQs", () => {
   /* The type strip has to count EVERY type. A server already narrowed to one
      would make every other chip read zero, so the type never goes on the wire. */
   it("never sends the document type — the type is a lens on this side", () => {
-    expect(buildAcOutboxQs({ state: "failed", docNo: "" })).not.toContain("docType");
+    expect(buildAcOutboxQs({ state: "attention", docNo: "" })).not.toContain("docType");
   });
 });
 
@@ -194,21 +194,23 @@ describe("acHeadline — the owner's question, answered in one line", () => {
     expect(acHeadline(payload()).text).toContain("nothing has ever been queued");
   });
 
-  it("counts the not-accepted and the held-back together and names both", () => {
+  it("counts the not-accepted and held-back together as one plain line", () => {
     const h = acHeadline(payload({
       counts: { pending: 0, sent: 3, failed: 1, skipped: 2, requeued: 4, attention: 3, total: 10 },
     }));
     expect(h.tone).toBe("bad");
-    expect(h.text).toContain("3 documents need your attention");
-    expect(h.text).toContain("1 was not accepted");
-    expect(h.text).toContain("2 held back");
+    /* The four-tab change merged failed + skipped into "Not accepted", so the
+       headline no longer breaks the two out — it names the merged total only. */
+    expect(h.text).toContain("3 documents are not in the account book");
+    expect(h.text).toContain("need your attention");
+    expect(h.text).not.toContain("held back");
   });
 
   it("agrees with itself about one document", () => {
     const h = acHeadline(payload({
       counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
     }));
-    expect(h.text).toContain("1 document needs your attention");
+    expect(h.text).toContain("1 document is not in the account book");
   });
 
   /* A re-queued skip is history. If it leaked into `attention` the owner would
@@ -468,14 +470,14 @@ describe("the type strip counts", () => {
     });
     expect(acStateCount(d, "all")).toBe(15);
     expect(acStateCount(d, "attention")).toBe(7);
-    expect(acStateCount(d, "failed")).toBe(3);
-    expect(acStateCount(null, "failed")).toBe(0);
+    expect(acStateCount(d, "pending")).toBe(1);
+    expect(acStateCount(null, "pending")).toBe(0);
   });
 
   it("names the two filters in force over the list", () => {
     expect(acListTitle("all", "")).toBe("All documents");
-    expect(acListTitle("failed", "")).toBe("Not accepted");
-    expect(acListTitle("failed", "GR")).toBe("Not accepted · Goods received");
+    expect(acListTitle("attention", "")).toBe("Not accepted");
+    expect(acListTitle("attention", "GR")).toBe("Not accepted · Goods received");
   });
 });
 
@@ -493,10 +495,14 @@ describe("the words", () => {
     expect(acStateLabel("something-new")).toBe("something-new");
   });
 
-  it("uses ONE set of five labels for the badge and the chip", () => {
-    for (const s of ["pending", "sent", "failed", "skipped", "requeued"] as const) {
-      expect(AC_FILTER_STATE_LABEL[s]).toBe(acStateLabel(s));
-    }
+  it("shares its words with the badge where a tab and a state overlap", () => {
+    /* Since 2026-08-21 the four tabs and the five row-badges are no longer the
+       same list — but where they DO name the same thing the words must match, so
+       a reader sees one vocabulary. pending and sent map straight across; the
+       "Not accepted" tab (attention) carries the failed badge's word. */
+    expect(AC_FILTER_STATE_LABEL.pending).toBe(acStateLabel("pending"));
+    expect(AC_FILTER_STATE_LABEL.sent).toBe(acStateLabel("sent"));
+    expect(AC_FILTER_STATE_LABEL.attention).toBe(acStateLabel("failed"));
   });
 
   it("says where a row stands, per state", () => {
@@ -601,7 +607,7 @@ describe("the page opens on what is stuck", () => {
     expect(acEmptyLine(healthy, "attention")).toMatch(/Nothing needs your attention/);
     /* Same company, a filter the reader CHOSE: "try another" is the right
        answer there and the wrong one on arrival. */
-    expect(acEmptyLine(healthy, "failed")).toMatch(/Try another status/);
+    expect(acEmptyLine(healthy, "sent")).toMatch(/Try another status/);
     expect(acEmptyLine(payload(), "attention")).toMatch(/Nothing has ever been queued/);
   });
 });
@@ -1091,11 +1097,10 @@ describe("one row per document", () => {
 describe("the replaced state does not read as an instruction", () => {
   it("no longer wears the button's words", () => {
     expect(AC_STATE_LABEL.requeued).toBe("Replaced");
-    expect(AC_FILTER_STATE_LABEL.requeued).toBe("Replaced");
     /* The button is unchanged and still says Send again — which is the whole
        reason the badge may not. */
     expect(AC_SEND_AGAIN_LABEL).toBe("Send again");
-    for (const s of [AC_STATE_LABEL.requeued, AC_FILTER_STATE_LABEL.requeued]) {
+    for (const s of [AC_STATE_LABEL.requeued]) {
       expect(s.toLowerCase()).not.toContain("send again");
     }
   });
@@ -1126,7 +1131,7 @@ describe("the replaced state does not read as an instruction", () => {
      are the server's words and stay there. */
   it("uses none of the machinery's words for it", () => {
     for (const s of [
-      AC_STATE_LABEL.requeued, AC_FILTER_STATE_LABEL.requeued, AC_REPLACED_LINE,
+      AC_STATE_LABEL.requeued, AC_REPLACED_LINE,
       AC_REPLACED_NOTE, AC_REPLACED_GROUP_NOTE, AC_ONLY_REPLACED_LINE,
       AC_STATE_PLAIN_MEANING.requeued, acReplacedHeading(2),
     ]) {
@@ -1163,24 +1168,17 @@ describe("replaced documents are a record, not the list", () => {
     expect(first.earlier.map((r) => r.id)).toEqual(["b"]);
   });
 
-  it("takes the records out of the list under every filter except their own", () => {
-    for (const s of ["all", "attention", "pending", "sent", "failed", "skipped"] as const) {
-      const split = acSplitReplaced(mixed, s);
-      expect(split.live.map((g) => g.docNo), s).toEqual(["HC-DO-2608-001"]);
-      expect(split.replaced.map((g) => g.docNo), s).toEqual(["HC-DO-2608-002"]);
-    }
-  });
-
-  /* The Replaced chip exists to show exactly these. Folding them there would
-     answer the chip with an empty page. */
-  it("leaves them as the list when the reader asked for them by name", () => {
-    const split = acSplitReplaced(mixed, "requeued");
-    expect(split.live).toEqual(mixed);
-    expect(split.replaced).toEqual([]);
+  /* Since the four-tab change there is no "requeued" tab to expand the history
+     into, so the fold is unconditional — a replaced record leaves the list on
+     every filter and is reached through the Replaced disclosure instead. */
+  it("takes the records out of the list, on every filter", () => {
+    const split = acSplitReplaced(mixed);
+    expect(split.live.map((g) => g.docNo)).toEqual(["HC-DO-2608-001"]);
+    expect(split.replaced.map((g) => g.docNo)).toEqual(["HC-DO-2608-002"]);
   });
 
   it("loses nothing — every document is on exactly one side", () => {
-    const split = acSplitReplaced(mixed, "all");
+    const split = acSplitReplaced(mixed);
     expect(split.live.length + split.replaced.length).toBe(mixed.length);
   });
 

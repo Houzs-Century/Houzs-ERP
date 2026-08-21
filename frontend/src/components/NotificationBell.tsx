@@ -95,8 +95,13 @@ export function NotificationBell({
       try {
         await api.post(`/api/announcements/${a.id}/ack`);
       } catch {
-        // Best-effort: the local hide stands for this session; the next poll
-        // re-surfaces the notice if the server never got the ack.
+        // silent-write-ok: OPTIMISTIC WITH RECONCILE, deliberately. The local
+        // hide stands for this session and the next poll re-surfaces the notice
+        // if the server never got the ack, so the screen self-corrects rather
+        // than trapping the reader behind a failing request. NOTE for whoever
+        // revisits this: the publisher's read-receipt list is the record, and
+        // it does NOT self-correct. Whether a compulsory notice should refuse
+        // to dismiss on a failed ack is the owner's call, not this file's.
       }
       // Same invalidation the pop-up's ack performs — every consumer of the
       // feed namespace (mobile badge, mobile bell) drops the notice at once.
