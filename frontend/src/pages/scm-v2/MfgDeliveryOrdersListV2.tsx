@@ -155,7 +155,8 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-type StatusTab = "all" | "open" | "in_transit" | "delivered" | "cancelled";
+// 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
+type StatusTab = "all" | "draft" | "loaded" | "dispatched" | "in_transit" | "delivered" | "invoiced" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -182,23 +183,24 @@ const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   return "warning";
 };
 
-// DO lifecycle: LOADED → DISPATCHED → IN_TRANSIT → SIGNED → DELIVERED →
-// INVOICED, plus CANCELLED. Compress into 4 buckets for the filter pills
-// (open / in_transit / delivered / cancelled) so the row of tabs stays
-// scannable — the full status shows in each row's Badge.
+// DO lifecycle: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED →
+// INVOICED, plus CANCELLED. ONE BUCKET PER STATUS since 2026-08-21 (页签＝状态);
+// SIGNED folds into `delivered` because the enum keeps the label for ever.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
-  draft:       { tone: "warning", label: "Draft",       bucket: "open" },
-  loaded:      { tone: "warning", label: "Confirmed",   bucket: "open" },
+  draft:       { tone: "warning", label: "Draft",       bucket: "draft" },
+  loaded:      { tone: "warning", label: "Confirmed",   bucket: "loaded" },
   // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
   // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Dispatched",  bucket: "in_transit" },
+  dispatched:  { tone: "warning", label: "Shipped",     bucket: "dispatched" },
   in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  signed:      { tone: "success", label: "Signed",      bucket: "delivered" },
+  // SIGNED: merged into DELIVERED (owner, 2026-08-21). No tab of its own.
+  signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },
   delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
-  invoiced:    { tone: "success", label: "Invoiced",    bucket: "delivered" },
+  invoiced:    { tone: "success", label: "Invoiced",    bucket: "invoiced" },
+  // Not a do_status member; kept so such a row lands in a tab, not a raw slug.
   completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
   cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
   cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
@@ -876,13 +878,7 @@ export function MfgDeliveryOrdersListV2() {
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
   // Full-set status-tab counts from the server (stable while paging / searching).
-  const counts = data?.statusCounts ?? {
-    all: 0,
-    open: 0,
-    in_transit: 0,
-    delivered: 0,
-    cancelled: 0,
-  };
+  const counts: Record<string, number> = data?.statusCounts ?? {};
 
   /* The rows the TABLE is showing — the server page minus whatever the
      per-column funnels hide (owner 2026-08-13, following the Purchase Orders
@@ -904,13 +900,15 @@ export function MfgDeliveryOrdersListV2() {
      handful of rows, which is the exact contradiction this change exists to
      remove. So while a funnel is narrowing the page, they describe the visible
      set instead; with no funnel they are byte-identical to before. */
+  /* The TABS split one-per-status; these two cards must NOT — an invoiced
+     delivery was delivered, and en-route is dispatched + in transit. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;
     for (const r of visible.rows) {
       const b = statusFor(r.status).bucket;
-      if (b === "in_transit") inTransit += 1;
-      if (b === "delivered") delivered += 1;
+      if (b === "dispatched" || b === "in_transit") inTransit += 1;
+      if (b === "delivered" || b === "invoiced") delivered += 1;
     }
     return { inTransit, delivered };
   }, [visible.rows]);
@@ -1655,13 +1653,11 @@ export function MfgDeliveryOrdersListV2() {
       : ([] satisfies Column<DoRow>[])),
   ];
 
-  const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
-    { value: "all", label: `All · ${counts.all}` },
-    { value: "open", label: `Open · ${counts.open}` },
-    { value: "in_transit", label: `In transit · ${counts.in_transit}` },
-    { value: "delivered", label: `Delivered · ${counts.delivered}` },
-    { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
-  ];
+  const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
+    [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
+     ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
+     ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
+  ).map(([value, label]) => ({ value, label: `${label} · ${counts[value] ?? 0}` }));
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
@@ -1755,9 +1751,9 @@ export function MfgDeliveryOrdersListV2() {
               label="In transit"
               value={(visible.filtered
                 ? visibleBucketCounts.inTransit
-                : counts.in_transit
+                : counts.dispatched + counts.in_transit
               ).toLocaleString("en-MY")}
-              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
+              subtitle={visible.filtered ? "En route · filtered" : "Shipped · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
@@ -1766,10 +1762,10 @@ export function MfgDeliveryOrdersListV2() {
               label="Delivered"
               value={(visible.filtered
                 ? visibleBucketCounts.delivered
-                : counts.delivered
+                : counts.delivered + counts.invoiced
               ).toLocaleString("en-MY")}
               subtitle={
-                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+                visible.filtered ? "Delivered · filtered" : "Delivered · including invoiced"
               }
               tone="success"
               rail="bg-synced"

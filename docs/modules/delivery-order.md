@@ -386,6 +386,56 @@ holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test
 > company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
 > failed count now returns `500 status_counts_failed` instead of a zero.
 
+### The list shows ONE TAB PER STATUS (owner ruling, 2026-08-21)
+
+Until this date the list had **four tabs over eight statuses** — Open, In
+Transit, Delivered, Cancelled — so the screen could not tell a DRAFT from a
+LOADED delivery, or a DISPATCHED one from an IN_TRANSIT one. The owner:
+「draft和load要分开吧？」and「怎么定义这几个状态呢？我不明白」. He asked for the
+shape the Sales Order list already has: 页签＝状态.
+
+| tab | status | what it means |
+|---|---|---|
+| Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
+| Confirmed | `LOADED` | the document is real, goods packed. **Stock still untouched** |
+| Shipped | `DISPATCHED` | **the first entry here writes the inventory OUT**, once. The only status that emails the customer |
+| In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
+| Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it |
+| Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
+| Cancelled | `CANCELLED` | final; stock returned |
+
+`DO_STATUS_BUCKETS` is still the one source for both the tab filter and the
+counts, and the counts are now DERIVED from that map rather than hand-listed —
+so a bucket added there cannot be left without a count. Every enum member is in
+exactly one bucket and every bucket value is a member, pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`. That pin is not
+decoration: `COMPLETED` once sat in `delivered` while not being an enum member,
+and the tab 500'd with `22P02` while its count silently read 0.
+
+**The two KPI cards deliberately did NOT split with the tabs.** "On the road" is
+`dispatched + in_transit` and "Delivered" counts `delivered + invoiced` — an
+invoiced delivery was delivered. Splitting them the way the tabs split would
+have quietly halved both numbers on the owner's dashboard.
+
+### SIGNED is merged into DELIVERED (owner ruling, 2026-08-21)
+
+「SIGNED 和 DELIVERED 意思几乎重叠 … 这个整合」. The two agree on every question
+this system asks of a delivery order's status — both are in
+`DO_STOCK_OUT_STATES`, both in `SI_TRANSFERABLE_DO_STATES`, both outside
+`DO_NOT_DELIVERED_STATES` — and nothing in the tree branches on one and not the
+other.
+
+**The label cannot be removed.** Postgres has no `DROP VALUE` for an enum, so
+`SIGNED` stays in `scm.do_status` for ever. The app therefore keeps folding it
+into the `delivered` bucket and rendering it as "Delivered", permanently, so a
+row written by anything outside this repo still lands in a tab and still shows a
+word rather than a raw slug.
+
+**The DATA move is separate and gated**:
+`backend/scripts/merge-do-signed-into-delivered.mjs` +
+`.github/workflows/merge-do-signed-into-delivered.yml`. Dry-run is the default
+and performs the real UPDATE inside a transaction it rolls back.
+
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
 DB type is the `scm.do_status` ENUM (base body in

@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { soCanRaiseDo } from '../shared/so-deliverable-states';
+import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
@@ -2706,12 +2707,6 @@ function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
    until 2026-08-17 and is NOT a member: the tab 500'd (`22P02 invalid input value for enum do_status`) and its COUNT failed to
    a silent 0 — measured in prod that day, company 1 `all:27 delivered:0` with 25 DOs in no tab, company 2 `all:36 delivered:0`
    with 12. COMPLETED stays in shared/do-shipped-states.ts on purpose: those sets compare a status already in hand, in JS, where an impossible value is inert. This map is the one copy Postgres has to PARSE, which is why only this one was fatal. */
-const DO_STATUS_BUCKETS: Record<string, string[]> = {
-  open: ['DRAFT', 'LOADED'],
-  in_transit: ['DISPATCHED', 'IN_TRANSIT'],
-  delivered: ['SIGNED', 'DELIVERED', 'INVOICED'],
-  cancelled: ['CANCELLED'],
-};
 
 // ── List ────────────────────────────────────────────────────────────────
 deliveryOrdersMfg.get('/', async (c) => {
@@ -2744,7 +2739,10 @@ deliveryOrdersMfg.get('/', async (c) => {
   let total = 0;
   let page = 0;
   let pageSize = 50;
-  let statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } | undefined;
+  /* Keyed by BUCKET NAME, not a hand-written literal shape: the buckets are
+     declared once in DO_STATUS_BUCKETS and the counts are derived from that
+     map, so adding a tab cannot leave a count behind. */
+  let statusCounts: Record<string, number> | undefined;
   let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
@@ -2810,15 +2808,17 @@ deliveryOrdersMfg.get('/', async (c) => {
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
       return cq;
     };
-    const [allC, openC, transitC, deliveredC, cancelledC] = await Promise.all([
+    /* One count per BUCKET, derived from the map — a bucket added there cannot
+       be left without a count, the shape that renders a tab beside a silent 0. */
+    const bucketNames = Object.keys(DO_STATUS_BUCKETS);
+    const [allC, ...bucketC] = await Promise.all([
       countBase(),
-      countBase().in('status', DO_STATUS_BUCKETS.open),
-      countBase().in('status', DO_STATUS_BUCKETS.in_transit),
-      countBase().in('status', DO_STATUS_BUCKETS.delivered),
-      countBase().in('status', DO_STATUS_BUCKETS.cancelled),
+      ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
     ]);
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-    const counted = readStatusCounts({ all: allC, open: openC, in_transit: transitC, delivered: deliveredC, cancelled: cancelledC });
+    const counted = readStatusCounts(Object.fromEntries([
+      ['all', allC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
+    ]));
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

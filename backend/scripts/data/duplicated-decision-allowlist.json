@@ -382,11 +382,6 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED|backend/src/scm/lib/so-lifecycle-guards.ts frontend/src/pages/scm-v2/SalesOrderDetail.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: SO_STATUSES, SO_STATUS_LABEL. Cost of divergence is a blank chip, not a wrong number."
-    },
-    {
-      "check": "D1",
       "key": "CANCELLED,CLOSED,ON_HOLD|frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-status.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number."
     },
@@ -827,18 +822,8 @@
     },
     {
       "check": "D2",
-      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
-      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CANCELLED/ON_HOLD. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
-    },
-    {
-      "check": "D2",
       "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
       "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
-    },
-    {
-      "check": "D2",
-      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,RETURNED,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
-      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CANCELLED/RETURNED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
     },
     {
       "check": "D2",
@@ -899,11 +884,6 @@
       "check": "D2",
       "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN ~ ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN",
       "why": "TWO DOCUMENT FAMILIES' MONEY-COLUMN LISTS, differing by DEPOSIT_SEN/SERVICE_SEN/SERVICE_COST_SEN — and that difference is the SCHEMA: a sales order carries deposit_sen, a DO and an SI carry service_sen, a consignment note carries neither. The sets are meant to differ and they differ in exactly the right places."
-    },
-    {
-      "check": "D2",
-      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
-      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT/CANCELLED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
     },
     {
       "check": "D2",
@@ -1022,11 +1002,6 @@
     },
     {
       "check": "D2",
-      "key": "CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
-      "why": "THE SO STATUS RANK VERSUS THE AR STATUSES, differing by CLOSED/DRAFT. A rank table needs every status; AR needs the ones that can still carry a balance."
-    },
-    {
-      "check": "D2",
       "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR ~ COLORCODE,FABRICCODE,FABRICCOLOR",
       "why": "TWO SUBSETS OF ONE VOCABULARY differing by COLOURCODE; the smaller side is a filtered view (one screen's options, one agent's interest), not a competing definition."
     },
@@ -1124,6 +1099,31 @@
       "check": "D1",
       "key": "DELIVERED,DISPATCHED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
       "why": "THE STATES A DELIVERY MAY BE INVOICED FROM — a VENDORED TWIN of one declaration, not a second decision. The rule has one home in backend/src/scm/shared/do-shipped-states.ts and a byte-identical copy under frontend/src/vendor/shared/ so the browser can gate the transfer button on the same list the server enforces. Four hand-typed spellings of this rule are what the parent PR removes; keeping the twin is the price of a browser that cannot import backend/src. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "CLOSED is RETIRED from the SO vocabulary and KEPT in the label map, and that asymmetry is the point (owner ruling 2026-08-21, 「照你的流程做，只删 Closed」). SO_STATUSES is the manual PATCH whitelist and the source the status TABS are generated from, so dropping CLOSED there is what actually retires it. SO_STATUS_LABEL must still answer for it: Postgres cannot drop an enum label, so a row can carry CLOSED for ever, and a status with no label falls through to printing its raw slug — ASSR paid for exactly that when `voided` reached the customer portal as the word \"voided\". PROVEN empty before retiring it: company 1 holds 0 sales orders (probe run 32487749630) and company 2's tab counts sum to its total with CLOSED at 0."
+    },
+    {
+      "check": "D2",
+      "key": "CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "A DIFFERENT QUESTION, and AR_STATUSES says so in its own comment: \"a draft has no money story yet and a cancelled one is closed\". It is the receivables population, deliberately narrower than the lifecycle vocabulary — not the same rule enforced at N-1 of N places."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "Same asymmetry as the SO_STATUS_LABEL pair, plus RETURNED. status-pill's SO map is a DISPLAY vocabulary and is entitled to be wider than the write vocabulary: it must render a word for CLOSED (retired, but permanent in the enum) and for RETURNED, which is a lifecycle word soStatusDisplay computes and no column ever stores. A label map that only covered writable statuses would print raw slugs for both."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "Two different documents' label maps. The Consignment Order has no DRAFT — a consignment order is not saved as one — and keeps CLOSED for the same permanent-enum reason as every other label map here. Neither difference is a rule half-applied."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
+      "why": "TWO ARMS OF ONE DECLARATION, eight lines apart in so-lifecycle-guards.ts, and they are meant to differ: SO_STATUS_RANK is the FORWARD SPINE and CANCELLED / ON_HOLD are deliberately UNRANKED side states — the file says so directly above them. Ranking them would make ON_HOLD comparable to DELIVERED and turn a legal pause into an illegal backward jump."
     }
   ]
 }

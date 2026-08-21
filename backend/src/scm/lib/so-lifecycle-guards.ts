@@ -22,17 +22,44 @@
    Status set grepped from the codebase (list/detail pills, so-stock-allocation,
    so-delivery-sync, delivery-returns, inventory SO_DONE, the amend-terminal set):
      DRAFT → CONFIRMED → IN_PRODUCTION → READY_TO_SHIP → SHIPPED → DELIVERED
-       → INVOICED → CLOSED, plus the side states CANCELLED and ON_HOLD.
+       → INVOICED, plus the side states CANCELLED and ON_HOLD.
    Conservative by owner rule: reject ONLY an UNKNOWN target and a clearly-illegal
    BACKWARD jump; every forward move, idempotent no-op, ON_HOLD pause/resume and
    known regression is allowed. */
+
+/* ── CLOSED IS RETIRED (owner ruling, 2026-08-21) ────────────────────────────
+   He wrote the lifecycle he actually runs and CLOSED is not in it:
+     Draft → Confirm → In Production → Ready to Ship → Shipped → Delivered
+       → Invoice → On Hold → Cancel
+   Asked directly whether to remove it along with two others, he narrowed it to
+   this one: 「照你的流程做，只删 Closed」.
+
+   PROVEN EMPTY before removing it, not assumed. probe-so-date-xor run
+   32487749630 (2026-08-21): company 1 holds 0 sales orders at all. Company 2's
+   own tab counts sum to its total with CLOSED at zero —
+   2 + 62 + 17 + 22 + 1 = 104 of 104. So no live document loses its status here.
+
+   WHAT "REMOVED" CAN AND CANNOT MEAN. Postgres cannot drop a value from an
+   enum, so the label `CLOSED` stays in scm.mfg_so_status for ever. Removing it
+   HERE is what actually matters: this set is both the manual PATCH whitelist
+   and the source the status TABS are generated from (mfg-sales-orders.ts builds
+   statusCounts by walking it), so nothing offers CLOSED and the route now
+   refuses it with `invalid_status`.
+
+   TWO PLACES IT DELIBERATELY STAYS, and taking it out of either would be a bug:
+     · SO_TERMINAL_STATES (shared/so-terminal-states.ts) — a legacy CLOSED row
+       must keep being terminal. Dropping it there would turn such an order back
+       into live demand for MRP and the stock allocator.
+     · the status-pill label map — a row that somehow carries CLOSED must still
+       render a WORD. ASSR paid for this exact lesson: a status with no label
+       fell through to printing its raw slug on the customer portal. */
 export const SO_STATUSES = new Set([
   'DRAFT', 'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED',
-  'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'ON_HOLD',
+  'DELIVERED', 'INVOICED', 'CANCELLED', 'ON_HOLD',
 ]);
 export const SO_STATUS_RANK: Record<string, number> = {
   DRAFT: 0, CONFIRMED: 1, IN_PRODUCTION: 2, READY_TO_SHIP: 3,
-  SHIPPED: 4, DELIVERED: 5, INVOICED: 6, CLOSED: 7,
+  SHIPPED: 4, DELIVERED: 5, INVOICED: 6,
 };
 /* Backward edges the system legitimately performs — stock regress (all-lines
    not-ready) + delivery-return re-open. Everything else backward is rejected.
