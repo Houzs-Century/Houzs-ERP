@@ -136,16 +136,15 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
  *   MobileModuleDetail.tsx      A DECLARATIVE action table shared by ~10
  *     document types — each row is `{ path, method, body }` run by one generic
  *     mutation, so it cannot call a DO-specific hook without special-casing the
- *     table. It is on this list rather than fixed because its DO ladder stops
- *     at SIGNED and never writes DELIVERED (`if (st === "CANCELLED" || st ===
- *     "DELIVERED" …) return out`), by an explicit decision recorded there:
- *     "DELIVERED is the POD screen's job, so it is never offered here."
+ *     table. It is on this list rather than fixed because its DO ladder now stops
+ *     at IN_TRANSIT ("Mark In Transit") and never writes SIGNED or DELIVERED
+ *     (`if (st === "CANCELLED" || st === "DELIVERED" …) return out`). SIGNED /
+ *     DELIVERED are the POD screen's job, which closes a delivery WITH a
+ *     signature.
  *
- *     KNOWN-OPEN, and deliberately not silent: SIGNED still counts as delivered
- *     everywhere downstream (it is in the `delivered` list bucket and satisfies
- *     the Sales-Invoice gate), so "Mark Signed" here closes a delivery with no
- *     signature — the same class of hole, one rung lower. Logged as a bug entry
- *     rather than fixed in the same PR as the type change.
+ *     The "Mark Signed" rung that used to sit here (writing SIGNED with no
+ *     evidence, the same class of hole one rung lower — bug 0481) was REMOVED on
+ *     2026-08-21 (owner: drop "Mark signed" system-wide), which closes that hole.
  */
 const ALLOWED_WRITERS = [
   "mobile/MobileModuleDetail.tsx",

@@ -15,9 +15,7 @@ import {
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
-  AC_STATE_PLAIN_MEANING,
   AC_TECHNICAL_LABEL,
-  acAge,
   acDocTypePlural,
   acDocTypeCounts,
   acEarlierSendsHeading,
@@ -34,7 +32,6 @@ import {
   acStateCount,
   acStateLabel,
   acStateTone,
-  acWritebackLine,
   useAcExpandedRows,
   useAcReplacedGroup,
   useAcRequeue,
@@ -535,13 +532,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
         {d && (
           <>
-            <div style={{ fontSize: 10.5, color: "var(--mut)", background: "var(--bg)", border: "1px dashed var(--line)", borderRadius: 9, padding: "8px 10px", marginBottom: 11 }}>
-              <b style={{ color: d.writeback.on ? "var(--green)" : "var(--mut)" }}>{acWritebackLine(d)}</b>
-              {" "}Documents go out every five minutes and give up after {maxAttempts} tries.
-              {d.oldest_pending
-                ? ` Oldest still waiting: ${d.oldest_pending.doc_no}, ${acAge(d.oldest_pending.created_at)}.`
-                : " Nothing waiting."}
-            </div>
 
             <input
               value={docNo}
@@ -664,19 +654,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               </div>
             )}
 
-            <details style={{ marginTop: 14, background: "var(--card)", border: "1px solid var(--line-card)", borderRadius: 11, padding: "10px 12px" }}>
-              <summary style={{ fontSize: 12, fontWeight: 700, color: "var(--ink)" }}>
-                What each of these words means
-              </summary>
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7 }}>
-                {Object.entries(AC_STATE_PLAIN_MEANING).map(([k, v]) => (
-                  <div key={k} style={{ display: "flex", gap: 7, alignItems: "flex-start", flexWrap: "wrap" }}>
-                    <StateBadge state={k} />
-                    <span style={{ flex: 1, minWidth: 180, fontSize: 11, color: "var(--mut)" }}>{v}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
           </>
         )}
       </div>

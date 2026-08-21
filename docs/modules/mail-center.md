@@ -151,6 +151,32 @@ Before this, both reads returned every company's rows — including `body_html`,
 which carries the one-time `/invite/<token>` and `/reset/<token>` links minted in
 `routes/auth.ts`.
 
+### The scoping helpers this section reaches for, and the third one added 2026-08-21
+
+`activeCompanyCodePred` is one of a small family in
+`backend/src/scm/lib/companyScope.ts`, and picking the wrong member is how a
+scope quietly stops scoping. Three of them take a company **id**:
+
+| helper | takes | when the company is unresolved |
+|---|---|---|
+| `requireActiveCompanyId(c)` | the request ctx | returns `{ok:false, refusal}` — the caller REFUSES with 409. This is what a route does. |
+| `scopeToCompanyId(query, id)` | a **required** `number` | no such branch — the type will not let you reach it without an id |
+| `scopeToCompanyIdOrOpen(query, id)` | `number \| null \| undefined` | returns the query **untouched** — open, matching every company |
+
+`scopeToCompanyIdOrOpen` is new (2026-08-21). It exists because a helper that
+already holds a nullable id would otherwise write `.eq('company_id', null)`,
+and that is not "no company" — it is a **malformed filter that matches
+nothing**, so the caller silently reads an empty set instead of its own rows.
+The new helper collapses the nullable case to the same open branch
+`scopeToCompany` has always used for an unresolved context.
+
+**Do not reach for it from a route.** Its open branch means "the id was never
+resolved", which for a request is the case that must 409, not the case that
+runs wide. It is for a helper *below* the route that has already been handed an
+id — the route above it still calls `requireActiveCompanyId` and refuses.
+Reading a whole company's `email_outbox` rows is exactly the leak the
+2026-08-18 section above records, and an open branch is how you get it back.
+
 ## Mobile shares the desktop's rules — it does not re-derive them (2026-08-20)
 
 `frontend/src/mobile/MobileMailCenter.tsx` is the phone twin of the desktop

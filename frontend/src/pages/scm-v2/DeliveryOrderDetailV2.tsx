@@ -46,7 +46,6 @@ import { NextStepNote } from "../../components/NextStepNote";
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
-  doCloseWithoutEvidenceWarning,
   siTransferBlockReason,
 } from "../../vendor/scm/lib/do-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -798,11 +797,9 @@ export function DeliveryOrderDetailV2() {
     if (!deliveryOrder) return;
     const step = doAdvanceStep(deliveryOrder.status);
     if (!step) return;
-    /* NAMED, NOT REFUSED — see doCloseWithoutEvidenceWarning for why the office
-       is still allowed to do this. Until now this control closed a delivery
-       with no signature, no photo and no word about either. */
-    const warning = doCloseWithoutEvidenceWarning(step, deliveryOrder);
-    if (warning && !window.confirm(`${warning}\n\nMark ${deliveryOrder.do_number} delivered anyway?`)) return;
+    /* The only advance step now is DRAFT → Confirm (owner 2026-08-21 removed
+       "Mark signed"); closing a delivery with its signature is the driver's
+       Proof-of-Delivery screen. So there is nothing to warn about here. */
     updateStatus.mutate({ id: deliveryOrder.id, status: step.status });
   };
   const goConvertToSi = () =>
@@ -1122,16 +1119,13 @@ export function DeliveryOrderDetailV2() {
                 documents. That is the other half of the complaint: the operator
                 should not have to read a status badge to learn what the primary
                 button will do. ── */}
-            {canWriteDo && (
+            {canWriteDo && advanceStep && (
               <Button
                 variant="secondary"
                 icon={<CheckCircle2 size={14} />}
                 onClick={doAdvance}
-                disabled={!advanceStep}
-                title={advanceReason ?? undefined}
-                aria-describedby={advanceReason ? "do-advance-reason" : undefined}
               >
-                {advanceStep?.label ?? "Mark signed"}
+                {advanceStep.label}
               </Button>
             )}
             {/* The transfer takes the PRIMARY slot; the advance above stays
@@ -1520,15 +1514,15 @@ export function DeliveryOrderDetailV2() {
         )}
         {canWriteDo && (
           <div className="mb-2 flex items-center gap-2">
+            {advanceStep && (
             <button
               type="button"
               onClick={doAdvance}
-              disabled={!advanceStep}
-              aria-describedby={advanceReason ? "do-advance-reason-phone" : undefined}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim disabled:opacity-40"
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
             >
-              <CheckCircle2 size={16} /> {advanceStep?.label ?? "Mark signed"}
+              <CheckCircle2 size={16} /> {advanceStep.label}
             </button>
+            )}
             <button
               type="button"
               onClick={goConvertToSi}
