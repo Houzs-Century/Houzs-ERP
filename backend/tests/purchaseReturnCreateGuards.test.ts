@@ -93,7 +93,7 @@ describe('POST /purchase-returns — post-insert over-return verification (B4)',
 describe('POST /purchase-returns — refusals release the idempotency claim (B2)', () => {
   it('routes the early validation refusals through the marking helper', () => {
     const seg = bareCreate();
-    expect(seg).toContain('const refuse = (status: number');
+    expect(seg).toContain('const refuse = (status: 400 | 404 | 409 | 500');
     // The helper itself marks; the early exits must use it, not bare c.json.
     expect(seg).toContain("return refuse(400, { error: 'supplier_required' })");
     expect(seg).toContain("return refuse(400, { error: 'items_required' })");
