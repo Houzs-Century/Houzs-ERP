@@ -693,7 +693,9 @@ export function MobileScan({
       await authedFetch("/scan-so/jobs/clear-failed", { method: "POST" });
       await refetchJobs();
     } catch {
-      /* fail-soft — keep the rows; the button stays for another try */
+      /* silent-write-ok: nothing is claimed. The failed rows stay on screen
+         and the Clear button stays with them, so the screen still shows the
+         truth and the operator can simply press it again. */
     } finally {
       setClearingFailed(false);
     }

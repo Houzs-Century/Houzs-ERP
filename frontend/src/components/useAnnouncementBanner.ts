@@ -298,8 +298,11 @@ export function useAnnouncementBanner(options?: {
       try {
         await api.post(`/api/announcements/${a.id}/ack`);
       } catch {
-        // Best-effort: the local stamp keeps the banner dismissed even if the
-        // server didn't get the ack. The next reload will reconcile.
+        // silent-write-ok: OPTIMISTIC WITH RECONCILE — the same trade as
+        // NotificationBell.markRead, and the same caveat. The local stamp keeps
+        // the banner dismissed so a failing server cannot hard-lock the reader,
+        // and the next reload reconciles the BANNER. It does not reconcile the
+        // publisher's read-receipt list, which is the actual record.
       }
       // Every scope's ackedIds just changed, so refresh the whole namespace —
       // that is what drops the mobile unread badge immediately instead of

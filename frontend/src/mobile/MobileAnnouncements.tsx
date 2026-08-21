@@ -819,7 +819,10 @@ function Detail({
     try {
       await api.post(`/api/announcements/${encodeURIComponent(ann.id)}/ack`);
     } catch {
-      /* best-effort; still reflect the tap so the user isn't stuck. */
+      /* silent-write-ok: OPTIMISTIC WITH RECONCILE — same trade as the desktop
+         banner (components/useAnnouncementBanner.ts). The tap is reflected so a
+         failing server cannot strand the reader on a must-acknowledge notice;
+         the feed reconciles on the next load. The read-receipt list does not. */
     }
     setLocalAck(true);
     setAcking(false);

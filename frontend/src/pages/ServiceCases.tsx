@@ -3248,7 +3248,8 @@ function DetailContent({
           onUpdated();
         }
       } catch {
-        // Silent — no perm, non-fatal.
+        // silent-write-ok: this also fires for callers WITHOUT the permission,
+      // where a 403 is the expected answer and nothing on screen depends on it.
       }
     })();
   }, [detail.data]);
