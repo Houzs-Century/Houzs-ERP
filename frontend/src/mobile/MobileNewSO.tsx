@@ -805,6 +805,13 @@ export function MobileNewSO({
      so a locked-SO address edit diffs into the amendment request. */
   const [origAddress1, setOrigAddress1] = useState<string>("");
   const [origAddress2, setOrigAddress2] = useState<string>("");
+  /* Customer info joined the frozen set 2026-08-21 — name/phone/email ride the
+     DELIVERY-lane amendment on a locked SO. origPhone is stored E164, matching
+     both the phone state seed and the pristine baseline (soHeaderPatchFrom),
+     so an untouched phone diffs clean on every map. */
+  const [origName, setOrigName] = useState<string>("");
+  const [origPhone, setOrigPhone] = useState<string>("");
+  const [origEmail, setOrigEmail] = useState<string>("");
   /* PERSISTED SO status — feeds the SHARED procLockActive() so the processing
      lock keeps a DRAFT / CANCELLED SO editable (status guard), matching the
      mobile detail screen + desktop instead of the old status-blind copy. */
@@ -933,6 +940,9 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
+        setOrigName(h.debtor_name ?? "");
+        setOrigPhone(toE164(h.phone));
+        setOrigEmail(h.email ?? "");
         /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
            salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
            直接变成我的名字了，那么奇怪".
@@ -1897,6 +1907,10 @@ export function MobileNewSO({
                rides the amendment instead of being silently dropped. */
             address1:             addr1.trim(),
             address2:             addr2.trim(),
+            /* Customer info joined 2026-08-21 — same rule, same lane. */
+            debtorName:           name,
+            phone:                phone,
+            email:                email,
           },
           {
             processingDate:   origProcDate,
@@ -1906,6 +1920,9 @@ export function MobileNewSO({
             city:                 origCity,
             address1:             origAddress1,
             address2:             origAddress2,
+            debtorName:           origName,
+            phone:                origPhone,
+            email:                origEmail,
           },
         );
         // EVERY key collected must appear here — an omitted one reverts to NULL, not "leave alone", and 409s the lock (so-amendment-header.test.ts).
@@ -1918,6 +1935,9 @@ export function MobileNewSO({
               city:                 origCity,
               address1:             origAddress1,
               address2:             origAddress2,
+              debtorName:           origName,
+              phone:                origPhone,
+              email:                origEmail,
             })
           : patch;
 
