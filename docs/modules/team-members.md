@@ -239,6 +239,8 @@ why an unscoped LIST endpoint beside it was a full directory disclosure.
 
 ### `GET /staff/pickable` ALWAYS holds the caller, and whatever you name in `?include=` (2026-08-21)
 
+Route: `backend/src/scm/routes/staff.ts`.
+
 `?onlySales=1` narrows the roster to Sales positions / departments (owner
 2026-07-22 — keep office, admin, owner and test accounts out of the SALESPERSON
 dropdown). That narrowing is unchanged. What is new is that the answer also
