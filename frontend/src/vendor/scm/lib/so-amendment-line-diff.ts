@@ -59,6 +59,10 @@ export type AmendmentOldSnapshot = {
      browser asking to change it. Absent on rows raised before 0280 and on ADD
      lines (which have no before). */
   remark?: string | null;
+  /* The line's DISCOUNT in sen before the request (mig 0317), stamped
+     server-side from mfg_sales_order_items.discount_sen. Absent on rows raised
+     before 0317 and on lines carrying no discount — both read as 0. */
+  discountSen?: number | null;
 };
 
 /** The subset of an amendment line this module reads. Structural, so the
@@ -72,6 +76,10 @@ export type DiffableAmendmentLine = {
   /* mig 0280 — the requested line REMARK. null/absent = the request does not
      touch it (true of every row raised before 0280); '' = clear it. */
   new_remark?: string | null;
+  /* mig 0317 — the requested DISCOUNT in sen. null/absent = the request does
+     not touch it; 0 = clear it. The lever a derived price (the delivery fee)
+     is reduced with, so without this field a fee reduction cannot ride. */
+  new_discount_sen?: number | null;
   old_snapshot?: unknown;
 };
 
@@ -85,10 +93,11 @@ export type AmendmentLineChangedFields = {
   unitPrice: boolean;
   variants: boolean;
   remark: boolean;
+  discount: boolean;
 };
 
 const EVERYTHING: AmendmentLineChangedFields = {
-  itemCode: true, qty: true, unitPrice: true, variants: true, remark: true,
+  itemCode: true, qty: true, unitPrice: true, variants: true, remark: true, discount: true,
 };
 
 /* ── item group: the branch selector buildVariantSummary reads ──────────────
@@ -261,13 +270,54 @@ export function amendmentLineChangedFields(
        before IS one — clearing an instruction is a real request. */
     remark: l.new_remark != null
       && l.new_remark.trim() !== (old.remark ?? '').trim(),
+    /* mig 0317. Unlike the remark, an absent before-side discount is not
+       unknown — a line with no discount HAS one, of zero — so the compare
+       falls back to 0 rather than refusing to flag. */
+    discount: l.new_discount_sen != null
+      && Math.round(l.new_discount_sen) !== Math.round(old.discountSen ?? 0),
   };
 }
+
+/* ── amendmentLineSig ── the dirtiness test for the amendment editor ──────────
+
+   Serialised signature of exactly the fields an AMENDMENT LINE can carry — the
+   CreateAmendmentLine payload's fields, and no more. Owner 2026-07-16
+   ("完全看不出有什麼變動申請？"): testing dirtiness with the 13-field line-PATCH
+   signature recorded phantom SPEC rows for fields the amendment cannot deliver
+   (the header Delivery Date cascade mass-produced them). Both sides must be
+   draftFromItem output so canonicalisation never false-positives.
+
+   REMARK joined 2026-08-11 (mig 0280): a remark-only edit scored as "unmoved",
+   so the instruction that was a service line's entire point was never
+   requested. DISCOUNT joined 2026-08-21 (mig 0317) for the identical reason:
+   the delivery fee's one sanctioned reduction lever is the line discount, so a
+   fee edit on a locked SO scored as "unmoved" and the operator was told
+   "Saved without an amendment" about work that went nowhere. A field may join
+   this signature ONLY together with its payload field, its so_amendment_lines
+   column and its applySoAmendment write — a signature entry without the
+   channel behind it recreates the phantom-SPEC defect this replaced. */
+export type AmendmentSigDraft = {
+  itemCode: string;
+  qty: number;
+  unitPriceSen: number;
+  variants?: unknown;
+  remark?: string | null;
+  discountSen?: number | null;
+};
+
+export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify({
+  itemCode:     d.itemCode,
+  qty:          d.qty,
+  unitPriceSen: d.unitPriceSen,
+  variants:     d.variants ?? null,
+  remark:       d.remark ?? '',
+  discountSen:  Math.round(d.discountSen ?? 0),
+});
 
 /** True when the line requests at least one field change. */
 export const amendmentLineIsChange = (l: DiffableAmendmentLine): boolean => {
   const f = amendmentLineChangedFields(l);
-  return f.itemCode || f.qty || f.unitPrice || f.variants || f.remark;
+  return f.itemCode || f.qty || f.unitPrice || f.variants || f.remark || f.discount;
 };
 
 /** The field ATOMS an SO amendment line moves — the input to amendment-routing's
@@ -287,6 +337,9 @@ export const amendmentLineFieldKinds = (l: DiffableAmendmentLine): AmendmentFiel
      whoever executes the line, so it routes LINE (Production / Design), exactly
      as amendment-routing's LABEL_TO_KIND already maps a 'notes' field. */
   if (f.remark) kinds.push('LINE');
+  /* A discount changes what the customer pays — money routes exactly as a
+     price change does. */
+  if (f.discount) kinds.push('PRICE');
   return kinds;
 };
 

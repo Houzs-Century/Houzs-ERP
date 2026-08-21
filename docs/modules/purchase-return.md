@@ -138,6 +138,30 @@ cannot carry the failure at all. Every sibling line-delete
 (`consignment-notes.ts`, `consignment-returns.ts`, `delivery-returns.ts`) already
 answered 200 `{ ok, movementErrors? }`.
 
+### 4b. The create-path guards (2026-08-21)
+
+The bare `POST /` used to be the thinnest stock-moving path in the module; four
+guards brought it level with its siblings (docs/bugs/0499):
+
+- **Fail-closed source reads.** The header-GRN read and the line-cap read bind
+  their errors and refuse (`source_check_failed` / `cap_check_failed`) instead
+  of silently skipping the cap and the cross-company line guard on a blip. A
+  supplied `grnItemId` the read does not answer refuses too
+  (`grn_item_not_found`) — an unknown id is not a free line.
+- **POSTED source only.** The header `grnId` AND the parent GRN behind any
+  caller-supplied line id must be `POSTED` (`grn_not_posted`, 409) — the gate
+  `/from-grn` and `/from-grns` always had. Cancel-first-return-second used to
+  write a second OUT for goods whose reversing OUT had already run. The
+  add-line path (`POST /:id/items`) carries the same gate.
+- **Post-insert over-return verification.** Between the item insert and the
+  movement write, the live non-cancelled `qty_returned` sum per linked GRN line
+  is re-derived; broken → the items and header are deleted, the idempotency
+  claim is released, and the answer is 409 `qty_exceeds_remaining`. Closes the
+  read-then-write race two concurrent creates used to win together.
+- **No-write refusals release the idempotency claim.** Pre-write refusals on
+  the three create handlers call `markIdempotencyNoWrite`, so a corrected
+  resubmit gets a fresh claim instead of `idempotency_key_reused`.
+
 ---
 
 ## 5. The unlinked-line guard — read this before touching create/add-item

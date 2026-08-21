@@ -371,7 +371,11 @@ soAmendments.get('/:id', async (c) => {
         // mig 0280 — new_remark is the free-text instruction the requester typed
         // onto the line. Omitting it here would leave the approver signing off a
         // line whose whole point (a service line's job description) is invisible.
-        'new_variants, new_qty, new_unit_price_sen, new_remark, old_snapshot')
+        /* mig 0317 — new_discount_sen. The write path shipped WITHOUT this read:
+           the card computed every stored line as delta-free and told the
+           approver "No line changes recorded" about a money change it was
+           holding. A channel is not done until every reader returns it. */
+        'new_variants, new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
       .eq('amendment_id', id),
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);

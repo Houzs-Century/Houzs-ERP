@@ -17,7 +17,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   amendmentLineChangedFields,
+  amendmentLineFieldKinds,
   amendmentLineIsChange,
+  amendmentLineSig,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   resolveVariantGroup,
@@ -83,7 +85,7 @@ describe('SO-2607-018/A1 — a colour-only amendment keeps the rest of the spec'
   it('flags the variants as the only changed field', () => {
     const changed = amendmentLineChangedFields(colourOnlyLine());
     expect(changed).toEqual({
-      itemCode: false, qty: false, unitPrice: false, variants: true, remark: false,
+      itemCode: false, qty: false, unitPrice: false, variants: true, remark: false, discount: false,
     });
   });
 
@@ -237,7 +239,7 @@ describe('a remark-only amendment is a request', () => {
 
   it('flags the remark as the only changed field', () => {
     expect(amendmentLineChangedFields(remarkOnly)).toEqual({
-      itemCode: false, qty: false, unitPrice: false, variants: false, remark: true,
+      itemCode: false, qty: false, unitPrice: false, variants: false, remark: true, discount: false,
     });
   });
 
@@ -283,5 +285,72 @@ describe('a remark the request does not touch is never a change', () => {
       { remark: 'Deliver before 5pm' },
     );
     expect(amendmentLineChangedFields(cleared).remark).toBe(true);
+  });
+});
+
+/* ── The discount channel (mig 0317) — the delivery fee's reduction lever ────
+   RM 250 → 125 on a locked SO books as a DISCOUNT against the derived unit
+   (the re-derive rebuilds the unit; the discount is what survives). Until 0317
+   a discount-only edit scored as "unmoved" and was dropped in silence —
+   operator report 2026-08-21, 2990-SO-2608-020. */
+describe('a discount the request does not touch is never a change', () => {
+  it('ignores an absent new_discount_sen (every row raised before mig 0317)', () => {
+    const legacy = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC } },
+      { discountSen: 1500 },
+    );
+    expect(amendmentLineChangedFields(legacy).discount).toBe(false);
+    expect(amendmentLineIsChange(legacy)).toBe(false);
+  });
+
+  it('ignores a resubmitted identical discount', () => {
+    const same = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC }, new_discount_sen: 1500 },
+      { discountSen: 1500 },
+    );
+    expect(amendmentLineChangedFields(same).discount).toBe(false);
+  });
+
+  it('a snapshot with no discount key reads as zero, so requesting one IS a change', () => {
+    const feeCut = colourOnlyLine({ new_variants: { ...BEDFRAME_SPEC }, new_discount_sen: 12500 });
+    expect(amendmentLineChangedFields(feeCut).discount).toBe(true);
+    expect(amendmentLineIsChange(feeCut)).toBe(true);
+  });
+
+  it('treats a zeroed discount as a real request to clear it', () => {
+    const cleared = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC }, new_discount_sen: 0 },
+      { discountSen: 1500 },
+    );
+    expect(amendmentLineChangedFields(cleared).discount).toBe(true);
+  });
+
+  it('a discount change routes as money — PRICE, to the same desk a price change goes to', () => {
+    const feeCut = colourOnlyLine({ new_variants: { ...BEDFRAME_SPEC }, new_discount_sen: 12500 });
+    expect(amendmentLineFieldKinds(feeCut)).toContain('PRICE');
+  });
+});
+
+/* ── amendmentLineSig — the editor's dirtiness test lives HERE now ──────────
+   Moved from SalesOrderDetail so the signature and the channels it may name
+   share a test home. The rule the module header states: a field may join the
+   signature ONLY with the full channel behind it. */
+describe('amendmentLineSig', () => {
+  const draft = {
+    itemCode: 'SVC-DELIVERY', qty: 1, unitPriceSen: 25000,
+    variants: null, remark: '', discountSen: 0,
+  };
+
+  it('a discount-only edit changes the signature — the fee cell edit is no longer invisible', () => {
+    expect(amendmentLineSig({ ...draft, discountSen: 12500 })).not.toBe(amendmentLineSig(draft));
+  });
+
+  it('an absent discount equals zero, so seeding old drafts without one never false-dirties', () => {
+    const { discountSen: _drop, ...noKey } = draft;
+    expect(amendmentLineSig(noKey)).toBe(amendmentLineSig(draft));
+  });
+
+  it('an untouched draft round-trips to the same signature', () => {
+    expect(amendmentLineSig({ ...draft })).toBe(amendmentLineSig(draft));
   });
 });
