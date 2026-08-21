@@ -18,7 +18,6 @@ import { MobileAutoCountSync } from "./MobileAutoCountSync";
 import {
   AC_REASON_COPY,
   acHeadline,
-  acWritebackLine,
   type AcOutboxResponse,
   type AcOutboxRow,
 } from "../lib/autocountOutbox";
@@ -132,10 +131,12 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
     expect(await screen.findByText(acHeadline(busy).text)).toBeTruthy();
   });
 
-  it("shows the same switch sentence, from the same helper", async () => {
+  it("surfaces a switched-off sync in the headline", async () => {
     const off = payload({ writeback: { value: "On ", on: false, scope: "off" } });
     await mount(off);
-    expect(await screen.findByText(new RegExp(acWritebackLine(off).slice(0, 40)))).toBeTruthy();
+    /* The dedicated switch line was removed in the 2026-08-21 declutter; the
+       headline still carries the off status, which is the one that matters. */
+    expect(await screen.findByText(acHeadline(off).text)).toBeTruthy();
   });
 
   it("carries BOTH filter strips, each chip with its count", async () => {
