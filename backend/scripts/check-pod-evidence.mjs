@@ -51,7 +51,7 @@
 // would be invisible to it, and so would a signature stored in either of the
 // two OTHER tables in this database that carry proof-of-delivery columns.
 //
-// Four sections now, and each exists because the previous one's successful
+// Five sections now, and each exists because the previous one's successful
 // result would ALSO be true of something else:
 //
 //   1  closed delivery orders, by company and status   (the original question)
@@ -62,8 +62,11 @@
 //   4  of the closed rows, how many were created ALREADY closed by the
 //      AutoCount import — an imported row never passed a capture screen, so
 //      counting it as "evidence missing" invents a hole nobody dug
+//   5  every closed row listed in closing order, with its company NAME — the
+//      spread of the closing timestamps separates many doorstep deliveries
+//      from one person clearing a backlog from a desk
 //
-// What section 4 CANNOT tell you: which of the five closing screens was used.
+// What NONE of them can tell you: which of the five closing screens was used.
 // The status route writes no audit row, so that fact is not in this database.
 // Do not infer it from these numbers.
 import { readFileSync } from "node:fs";
@@ -291,6 +294,54 @@ try {
       FROM scm.delivery_orders
      WHERE status::text IN ('SIGNED', 'DELIVERED', 'INVOICED')
   `;
+  /* ── SECTION 5 — TWELVE DELIVERIES, OR ONE PERSON CLEARING A BACKLOG ───────
+     Section 4 says the twelve closed rows were NOT created already-closed by an
+     import, which leaves "a person closed them through a screen". That is still
+     two different worlds, and the difference decides whether anything is wrong:
+
+       twelve DRIVER visits with the capture skipped  -> a product/UX problem
+       ONE office sweep over a backlog                -> nothing was skipped,
+         because nobody was standing at a customer's door to sign anything
+
+     The tell is the SPREAD of delivered_at. Twelve real deliveries happen over
+     hours and days. A backlog cleared from a desk happens in minutes. Printing
+     the rows rather than a verdict, because a borderline spread is a judgement
+     the owner should make on the evidence, not one this script should make for
+     him.
+
+     company_id is joined to its NAME here for the same reason: "company 2" is
+     not something the owner can act on, and reading the number as a tenant is
+     exactly the guess this file exists to stop. */
+  const closedRows = await pg`
+    SELECT d.do_number,
+           co.code || ' - ' || co.name              AS company_name,
+           d.created_at,
+           COALESCE(d.delivered_at, d.signed_at)   AS closed_at
+      FROM scm.delivery_orders d
+      LEFT JOIN public.companies co ON co.id = d.company_id
+     WHERE d.status::text IN ('SIGNED', 'DELIVERED', 'INVOICED')
+     ORDER BY COALESCE(d.delivered_at, d.signed_at), d.do_number
+  `;
+  if (closedRows.length > 0) {
+    console.log("\nEVERY CLOSED DELIVERY, IN THE ORDER IT WAS CLOSED");
+    console.log("do number             company              created              closed");
+    for (const r of closedRows) {
+      console.log(
+        `${String(r.do_number ?? "(none)").padEnd(21)} ${String(r.company_name ?? "(unnamed)").padEnd(20)}` +
+          ` ${r.created_at ? new Date(r.created_at).toISOString().slice(0, 16).replace("T", " ") : "—"}` +
+          ` ${r.closed_at ? new Date(r.closed_at).toISOString().slice(0, 16).replace("T", " ") : "—"}`,
+      );
+    }
+    const stamps = closedRows.map((r) => (r.closed_at ? new Date(r.closed_at).getTime() : null)).filter((n) => n !== null);
+    if (stamps.length > 1) {
+      const spreadMin = Math.round((Math.max(...stamps) - Math.min(...stamps)) / 60000);
+      notice(
+        `CLOSING SPREAD: all ${stamps.length} closed deliveries were closed within ${spreadMin} minute(s) of each other. ` +
+          `A short spread means one person clearing a backlog from a desk, not that many separate doorstep deliveries.`,
+      );
+    }
+  }
+
   console.log("\nCOULD A DRIVER EVER HAVE SIGNED THESE?");
   console.log(`  closed delivery orders                       ${closing.closed}`);
   console.log(`  flagged migrated_no_stock (mig 0276 import)  ${closing.flagged_import}`);
