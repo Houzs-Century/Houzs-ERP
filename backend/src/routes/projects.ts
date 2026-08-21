@@ -1051,6 +1051,15 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     const GATING_APPROVE_PERMS = ["projects.approve"];
     // hasPermission handles the `*` wildcard, so admins/owner still match.
     const held = GATING_APPROVE_PERMS.filter((p) => hasPermission(granted, p));
+    // Stock / agreement keys the caller EXPLICITLY holds (explicit-only per
+    // the owner matrix; `*` does not confer these). Since 2026-08-21 they
+    // widen pendingApprove so a submitted Stock In / Stock Out / Agreement
+    // reaches the key holder's lane — before this, a submitted STOCK IN
+    // (stock_in.approve) surfaced in NO approver's My Pending at all and sat
+    // "IN REVIEW" forever. These do NOT affect branch selection below, so
+    // Peter / Kris keep their director staffing lanes.
+    const heldExplicit = ["stock_transfer.approve", "stock_in.approve", "agreement.approve"]
+      .filter((k) => holdsChecklistApproval(granted, k));
     const r = (user.role_name || "").toLowerCase();
     if (r.includes("bd")) {
       // BD (owner 2026-07-29 "why empty my pending"): the BD role now holds
@@ -1060,21 +1069,34 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // things awaiting approval, usually nothing. BD gets BOTH: the BD task
       // lane AND the approver lanes.
       pendingLabel = "BD";
-      if (held.length > 0) pendingApprove = held;
+      if (held.length > 0 || heldExplicit.length > 0) pendingApprove = [...new Set([...held, ...heldExplicit])];
       pendingAgreement = true;
     } else if (held.length > 0) {
       // Super Admin / owner (weisiang): what they must approve, PLUS the
       // Agreement / Quotation once its timeline arrives (owner 2026-07-21).
-      pendingApprove = held;
+      pendingApprove = [...new Set([...held, ...heldExplicit])];
       pendingAgreement = true;
     } else if (r.includes("sales director")) {
       // Peter / Kingsley (owner 2026-07-21, tightened 2026-07-23): exactly
-      // three duties — approve submitted stock-out records, set the Sales
+      // three duties — approve submitted stock docs, set the Sales
       // PIC, set the Sales Attending reps. The staffing lanes wait for the
       // CONTRACT section to clear, so contract-stage projects stay out of
       // their list. (They do NOT hold projects.approve, so they previously
       // fell through to SALES PIC.)
-      pendingDirector = { stock: true, sales_attending: true, sales_pic: true };
+      // Which stock documents = which keys this director explicitly holds
+      // (2026-08-21): stock_transfer.approve -> Stock Out,
+      // stock_in.approve -> Stock In. Historical default (no keys, legacy
+      // config) keeps Stock Out only.
+      const stockTitles = [
+        ...(heldExplicit.includes("stock_transfer.approve") ? ["Stock Out Transfer Record"] : []),
+        ...(heldExplicit.includes("stock_in.approve") ? ["Stock In Transfer Record"] : []),
+      ];
+      pendingDirector = {
+        stock: true,
+        stock_titles: stockTitles.length ? stockTitles : undefined,
+        sales_attending: true,
+        sales_pic: true,
+      };
       // Brand split (owner 2026-08-10: Kris takes AKEMI + ERGOTEX stock-outs,
       // Peter takes ZANOTTI). A director configured with user_brands rows only
       // sees those brands in the APPROVAL lane; one with no rows keeps every
@@ -3553,6 +3575,19 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     if (!has && status !== "na" && status !== "pending") {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
+    if (!has) {
+      // Keyless N/A is the BADGED function's call ONLY (owner 2026-08-21:
+      // "dont allowed purchase (sim and farra) edit or can click any button
+      // on other task") — projects.write does NOT extend it to other
+      // functions' gated rows; projects.manage (BD / managers) still may.
+      const g = user?.permissions_set ?? user?.permissions;
+      if (
+        !roleLabelAdmits(item.role_label, user?.role_name) &&
+        !hasPermission(g, "projects.manage")
+      ) {
+        return c.json({ error: "You can only update tasks assigned to your role" }, 403);
+      }
+    }
     if (has) {
       // Same brand scope as the review route (owner 2026-08-10) — a
       // brand-configured approver can only tick their own brands' gated steps.
@@ -3817,10 +3852,10 @@ app.put(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const item = await c.env.DB.prepare(
-      `SELECT title, required_perm, role_label FROM project_checklist WHERE id = ?`
+      `SELECT title, required_perm, role_label, status, review_status FROM project_checklist WHERE id = ?`
     )
       .bind(itemId)
-      .first<{ title: string | null; required_perm: string | null; role_label: string | null }>();
+      .first<{ title: string | null; required_perm: string | null; role_label: string | null; status: string | null; review_status: string | null }>();
     if (!item) return c.json({ error: "Not found" }, 404);
     // Owner 2026-07-21: required_perm gates the DECISION (approve/reject +
     // status flips), NOT the upload. The document's owner function uploads it
@@ -3880,6 +3915,20 @@ app.put(
     )
       .bind(itemId, fileName, user?.id ?? null)
       .run();
+    // SERVER-side auto-submit (owner 2026-08-21, docs/bugs/0490): uploading to
+    // a gated document IS the submission. Desktop called /review submit after
+    // upload but MOBILE never did, so phone uploads sat with review_status
+    // NULL — excluded from no lane, routed to no approver, and stuck in the
+    // uploader's own My Pending ("stock out transfer sim already uploaded but
+    // still appear on my pending task sim"). Submitting here is
+    // client-independent; a client's own submit right after is a no-op re-set.
+    if (
+      item.required_perm &&
+      (item.status ?? "") === "pending" &&
+      !["pending_review", "amended"].includes(item.review_status ?? "")
+    ) {
+      await submitChecklistForReview(c.env, itemId, user?.id ?? 0);
+    }
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`

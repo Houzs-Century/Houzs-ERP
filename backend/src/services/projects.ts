@@ -1267,7 +1267,7 @@ export interface ListProjectsFilters {
    *  (agreement approvers only), the project's Sales Attending not yet
    *  assigned, and the Sales PIC not yet assigned. The staffing lanes
    *  (attending + pic) only fire once the CONTRACT section is cleared. */
-  pending_director?: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean };
+  pending_director?: { stock?: boolean; stock_titles?: string[]; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean };
   /** Brands this approver is responsible for (owner 2026-08-10: Kris approves
    *  AKEMI + ERGOTEX stock-outs, Peter takes ZANOTTI). When non-empty the
    *  director APPROVAL lanes only surface events of these brands, so each
@@ -1512,11 +1512,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   const APPROVER_BRAND_GATE = approverBrands.length
     ? ` AND p.brand IN (${approverBrands.join(",")})`
     : "";
-  // Stock-out record submitted by the purchaser, now awaiting director approval.
-  const STOCK_OUT_AWAITING_APPROVAL = `(EXISTS (SELECT 1 FROM project_checklist pc
-                WHERE pc.project_id = p.id AND pc.title = 'Stock Out Transfer Record'
-                  AND pc.status = 'pending'
-                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})${APPROVER_BRAND_GATE})`;
+  // (The stock-awaiting-approval lane is built inline in the pending_director
+  //  arm below — title-driven since 2026-08-21 so Stock In routes too.)
   // The Agreement / Quotation is the APPROVER's pending only once it has been
   // SUBMITTED for review (owner 2026-07-23, weisiang report): before BD uploads
   // it, it sits on BD's own lane, not the approver's. Mirror STOCK_OUT above —
@@ -1680,7 +1677,23 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Sales Director staging (owner 2026-07-21): approve the stock-out record once
   // the purchaser submitted it, and assign the Sales Attending reps.
   if (f.pending_director) {
-    if (f.pending_director.stock) { pendingOr.push(STOCK_OUT_AWAITING_APPROVAL); pendingBinds.push(dueToday); }
+    if (f.pending_director.stock) {
+      // Which stock documents this director approves (owner 2026-08-21: a
+      // submitted Stock IN reached no approver lane — only Stock Out was
+      // watched). The caller passes titles per the keys the user explicitly
+      // holds; default keeps the historical Stock-Out-only behaviour.
+      const stockTitles = f.pending_director.stock_titles?.length
+        ? f.pending_director.stock_titles
+        : ["Stock Out Transfer Record"];
+      const ph = stockTitles.map(() => "?").join(",");
+      pendingOr.push(
+        `(EXISTS (SELECT 1 FROM project_checklist pc
+                WHERE pc.project_id = p.id AND pc.title IN (${ph})
+                  AND pc.status = 'pending'
+                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})${APPROVER_BRAND_GATE})`
+      );
+      pendingBinds.push(...stockTitles, dueToday);
+    }
     if (f.pending_director.agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
     if (f.pending_director.sales_attending) { pendingOr.push(SALES_ATTENDING_EMPTY); pendingBinds.push(dueToday); }
     if (f.pending_director.sales_pic) { pendingOr.push(SALES_PIC_EMPTY); pendingBinds.push(dueToday); }
@@ -1835,8 +1848,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // variants — the SELECT list is interpolated, not bound). Segments start
   // with '|' so LTRIM(..., '|') strips the lead and keeps the separators;
   // NULLIF collapses "no duty matched" to NULL so the frontend falls back.
-  const STOCK_DUTY_LIT = `EXISTS (SELECT 1 FROM project_checklist pc2
-              WHERE pc2.project_id = p.id AND pc2.title = 'Stock Out Transfer Record'
+  const stockDutyLit = (title: string) => `EXISTS (SELECT 1 FROM project_checklist pc2
+              WHERE pc2.project_id = p.id AND pc2.title = '${title.replace(/'/g, "''")}'
                 AND pc2.review_status IN ('pending_review', 'amended')
                 AND substr(COALESCE(pc2.due_date, p.start_date), 1, 10) <= '${dueToday}')`;
   const ATTENDING_DUTY_LIT = `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= '${dueToday}'
@@ -1850,8 +1863,15 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND pc4.status = 'pending'
                 AND substr(COALESCE(pc4.due_date, p.start_date), 1, 10) <= '${dueToday}')`;
   const directorDutySegs: string[] = [];
-  if (f.pending_director?.stock)
-    directorDutySegs.push(`CASE WHEN ${STOCK_DUTY_LIT} THEN '|Approve Stock Out Transfer' ELSE '' END`);
+  if (f.pending_director?.stock) {
+    const dutyTitles = f.pending_director.stock_titles?.length
+      ? f.pending_director.stock_titles
+      : ["Stock Out Transfer Record"];
+    for (const t of dutyTitles) {
+      const label = t === "Stock In Transfer Record" ? "Approve Stock In Transfer" : "Approve Stock Out Transfer";
+      directorDutySegs.push(`CASE WHEN ${stockDutyLit(t)} THEN '|${label}' ELSE '' END`);
+    }
+  }
   if (f.pending_director?.sales_pic)
     directorDutySegs.push(`CASE WHEN ${PIC_DUTY_LIT} THEN '|Set Sales PIC' ELSE '' END`);
   if (f.pending_director?.sales_attending)
@@ -1864,6 +1884,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
               COALESCE((SELECT group_concat(c3.title, '|') FROM project_checklist c3
                 WHERE c3.project_id = p.id
                   AND c3.status NOT IN ('done', 'na')
+                  AND COALESCE(c3.review_status, '') NOT IN ('pending_review', 'amended')
                   AND c3.role_label LIKE '%${ptl}%'
                   AND substr(COALESCE(c3.due_date, p.start_date), 1, 10) <= '${dueToday}'), '')
               || ${f.pending_sales_attending ? `CASE WHEN ${ATTENDING_DUTY_LIT} THEN '|Set Sales Attending' ELSE '' END` : `''`},
