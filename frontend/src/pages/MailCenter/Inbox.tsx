@@ -1374,7 +1374,8 @@ export function MailInbox() {
     try {
       await api.post("/api/mail-center/test-inject");
     } catch {
-      /* ignore — reload just shows nothing changed */
+      /* silent-write-ok: the developer-only test-mail injector. The reload
+         below shows nothing changed, which is the whole answer. */
     }
     reloadAll();
   }

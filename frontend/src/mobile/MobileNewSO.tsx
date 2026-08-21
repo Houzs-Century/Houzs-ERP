@@ -2117,7 +2117,8 @@ export function MobileNewSO({
               version: loadedVersionRef.current,
             }),
           });
-        } catch { /* expiry is the recovery backstop */ }
+        } catch { /* silent-write-ok: RECOVERY arm of an outer catch that has
+          already told the operator the save failed; the lease expires anyway. */ }
         activeLineLeaseRef.current = null;
       }
       /* Aggregated save-gate failure (validation_failed) — show EVERY reason at

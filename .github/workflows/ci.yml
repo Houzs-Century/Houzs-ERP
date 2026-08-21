@@ -257,6 +257,16 @@ jobs:
       - run: node scripts/check-company-scope.mjs --strict
       - run: node scripts/check-shared-mirrors.mjs --strict
       - run: node ../frontend/scripts/check-silent-mutations.mjs --strict
+      # Its sibling, for the 943 RAW writes check-silent-mutations cannot see.
+      # That checker's corpus is `useMutation(` (303 sites) and its verdict is
+      # per HOOK, so ONE consumer awaiting mutateAsync clears every other
+      # consumer of the same hook — which is how Post GRN ("Inventory will be
+      # received into the warehouse") shipped with no error path at all while
+      # the gate read 0 SILENT. This one asks the smaller question per SITE: a
+      # write threw; did anything happen? Strict from the day it landed, because
+      # the backlog it found was judged in the same PR (15 waived at the site
+      # with a reason, 8 fixed) rather than left as a number nobody reads.
+      - run: node ../frontend/scripts/check-silent-writes.mjs --strict
       # docs-drift is the fourth: the docs make CHECKABLE claims (file paths,
       # migration numbers, permission keys, npm scripts) and this repo has a
       # documented history of those rotting unnoticed for months. --strict gates
