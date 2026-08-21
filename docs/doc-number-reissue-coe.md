@@ -2,7 +2,7 @@
 
 **Date** 2026-08-20 · **Status** FIXED 2026-08-21 — option B shipped as
 `scm.doc_number_counters` (migration 0316), branch `fix/doc-no-counter-table`,
-bug ledger entry 0489 · **Area** SCM document numbering, AutoCount write-back
+bug ledger entry 0491 · **Area** SCM document numbering, AutoCount write-back
 
 ---
 
@@ -402,7 +402,7 @@ the seed performs the advance. There was no separate step A.
 call sites inherit it, and inside `nextJeNo` for the 4-pad JE series. The live
 scan stays as a FLOOR (`GREATEST(counter, floor + 1)`), which self-seeds any
 series the migration never covered and makes the 1000-row PostgREST truncation
-trap unable to cause a re-issue. Full detail in bug ledger entry 0489.
+trap unable to cause a re-issue. Full detail in bug ledger entry 0491.
 
 **The seed, with a source per value.** Measured read-only on production BEFORE
 it was written (run 32454881949, section G):

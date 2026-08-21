@@ -62,4 +62,4 @@ from `ac-live-proof.json`: nothing else remembers them.
    successful one's.
 
 **Ref.** `fix/doc-no-counter-table`, 2026-08-21. Runs 32455489040 and
-32357340470. Related: entry 0489 and `docs/doc-number-reissue-coe.md`.
+32357340470. Related: entry 0491 and `docs/doc-number-reissue-coe.md`.
