@@ -11632,13 +11632,15 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
     for (const [k, v] of Object.entries(rawHeaderChanges)) {
       if (v !== null && typeof v !== 'string') {
-        return c.json({
-          error: 'header_field_invalid',
-          reason: `The requested value for ${k} is not valid.`,
-        }, 400);
+        return c.json({ error: 'header_field_invalid', reason: `The requested value for ${k} is not valid.` }, 400);
       }
       const val = v === null ? null : v.trim();
       headerChanges[k] = val === '' ? null : val;
+    }
+    /* debtor_name is NOT NULL — refuse a blank requested name at SUBMIT so the
+       requester fixes it, not the approve failing on the constraint. */
+    if ('debtorName' in headerChanges && headerChanges['debtorName'] === null) {
+      return c.json({ error: 'header_field_invalid', reason: 'Customer name cannot be blank — enter the corrected name instead.' }, 400);
     }
   }
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;

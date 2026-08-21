@@ -75,27 +75,34 @@ describe('lockedColumnsChanged — a CONTROLLED field posted directly is rejecte
       .toEqual(['replacement_disposal']);
   });
 
+  it('rejects a customer-info change — owner 2026-08-21 ("需要加上更新客户信息")', () => {
+    /* The partial reversal of the 2026-07-17 contact-details exemption: name /
+       phone / email now ride the DELIVERY-lane amendment on a locked SO. */
+    expect(lockedColumnsChanged(
+      { debtor_name: 'Ali A. Abu', phone: '0177777777', email: 'new@b.com' },
+      BEFORE,
+    ).sort()).toEqual(['debtor_name', 'email', 'phone']);
+  });
+
   it('reports EVERY offending column, not just the first', () => {
     const changed = lockedColumnsChanged(
       { customer_state: 'Johor', postcode: '80000', city: 'JB', phone: '0199999999' },
       BEFORE,
     );
-    expect(changed.sort()).toEqual(['city', 'customer_state', 'postcode']);
+    expect(changed.sort()).toEqual(['city', 'customer_state', 'phone', 'postcode']);
   });
 });
 
 describe('lockedColumnsChanged — FREE fields pass straight through', () => {
   it('lets the owner-ruled free-edit fields through on a locked SO', () => {
-    // Owner: payments + contact details stay free — the amendment gate exists
-    // for what gets DELIVERED or CHARGED, and routing contact details through
-    // approval means nobody updates them. The delivery ADDRESS left this list
-    // 2026-07-27 (two-lane phase 2) — see the CONTROLLED rejection test above.
+    // What REMAINS free after the 2026-08-21 customer-info reversal: note,
+    // emergency contacts, customer type. The delivery ADDRESS left this list
+    // 2026-07-27 (two-lane phase 2), and name / phone / email left it
+    // 2026-08-21 — see the CONTROLLED rejection tests above.
     const patch = {
-      phone: '0177777777',
-      email: 'new@b.com',
-      debtor_name: 'Ali A. Abu',
       note: 'leave with guard',
       emergency_contact_name: 'Fatimah',
+      customer_type: 'B2B',
     };
     expect(lockedColumnsChanged(patch, BEFORE)).toEqual([]);
   });
@@ -104,7 +111,7 @@ describe('lockedColumnsChanged — FREE fields pass straight through', () => {
     // This is what lets a client send the amendment's direct-save half with the
     // frozen columns reverted to their originals rather than splitting requests.
     expect(lockedColumnsChanged(
-      { customer_state: 'Selangor', postcode: '47500', city: 'Subang Jaya', phone: '011' },
+      { customer_state: 'Selangor', postcode: '47500', city: 'Subang Jaya', phone: '0123456789' },
       BEFORE,
     )).toEqual([]);
   });
@@ -173,9 +180,15 @@ describe('so-field-policy — derived constants stay coherent', () => {
   });
 
   it('classifies unknown keys as FREE — the documented default, not a miss', () => {
-    expect(soHeaderFieldClass('phone')).toBe('FREE');
+    expect(soHeaderFieldClass('note')).toBe('FREE');
     expect(soHeaderFieldClass('venueId')).toBe('FREE');
+    expect(soHeaderFieldClass('emergencyContactName')).toBe('FREE');
     expect(soHeaderFieldClass('city')).toBe('CONTROLLED');
+    // Customer info joined CONTROLLED 2026-08-21 — 'phone' stopped being the
+    // canonical FREE example this test used to open with.
+    expect(soHeaderFieldClass('debtorName')).toBe('CONTROLLED');
+    expect(soHeaderFieldClass('phone')).toBe('CONTROLLED');
+    expect(soHeaderFieldClass('email')).toBe('CONTROLLED');
     expect(soHeaderFieldClass('salesLocation')).toBe('DERIVED');
   });
 });
