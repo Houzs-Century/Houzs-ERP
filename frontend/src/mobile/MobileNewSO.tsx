@@ -800,18 +800,11 @@ export function MobileNewSO({
   const [origState, setOrigState] = useState<string>("");
   const [origPostcode, setOrigPostcode] = useState<string>("");
   const [origCity, setOrigCity] = useState<string>("");
-  /* Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — the
-     PERSISTED values pair with addr1/addr2 exactly as origCity pairs with city,
-     so a locked-SO address edit diffs into the amendment request. */
+  // Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — persisted pair for addr1/addr2.
   const [origAddress1, setOrigAddress1] = useState<string>("");
   const [origAddress2, setOrigAddress2] = useState<string>("");
-  /* Customer info joined the frozen set 2026-08-21 — name/phone/email ride the
-     DELIVERY-lane amendment on a locked SO. origPhone is stored E164, matching
-     both the phone state seed and the pristine baseline (soHeaderPatchFrom),
-     so an untouched phone diffs clean on every map. */
-  const [origName, setOrigName] = useState<string>("");
-  const [origPhone, setOrigPhone] = useState<string>("");
-  const [origEmail, setOrigEmail] = useState<string>("");
+  // Customer info joined 2026-08-21 (DELIVERY lane). phone kept E164 = state seed = pristine baseline.
+  const [origContact, setOrigContact] = useState({ debtorName: "", phone: "", email: "" });
   /* PERSISTED SO status — feeds the SHARED procLockActive() so the processing
      lock keeps a DRAFT / CANCELLED SO editable (status guard), matching the
      mobile detail screen + desktop instead of the old status-blind copy. */
@@ -940,9 +933,7 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
-        setOrigName(h.debtor_name ?? "");
-        setOrigPhone(toE164(h.phone));
-        setOrigEmail(h.email ?? "");
+        setOrigContact({ debtorName: h.debtor_name ?? "", phone: toE164(h.phone), email: h.email ?? "" });
         /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
            salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
            直接变成我的名字了，那么奇怪".
@@ -1902,15 +1893,10 @@ export function MobileNewSO({
             customerState:        state,
             postcode:             postcode.trim(),
             city:                 city.trim(),
-            /* Address lines joined the frozen set 2026-07-27 (two-lane phase
-               2) — collected here so a mobile address edit on a locked SO
-               rides the amendment instead of being silently dropped. */
+            // Addresses frozen 2026-07-27, customer contact 2026-08-21 — collected so a locked-SO edit rides the amendment.
             address1:             addr1.trim(),
             address2:             addr2.trim(),
-            /* Customer info joined 2026-08-21 — same rule, same lane. */
-            debtorName:           name,
-            phone:                phone,
-            email:                email,
+            debtorName: name, phone, email,
           },
           {
             processingDate:   origProcDate,
@@ -1920,9 +1906,7 @@ export function MobileNewSO({
             city:                 origCity,
             address1:             origAddress1,
             address2:             origAddress2,
-            debtorName:           origName,
-            phone:                origPhone,
-            email:                origEmail,
+            ...origContact,
           },
         );
         // EVERY key collected must appear here — an omitted one reverts to NULL, not "leave alone", and 409s the lock (so-amendment-header.test.ts).
@@ -1935,9 +1919,7 @@ export function MobileNewSO({
               city:                 origCity,
               address1:             origAddress1,
               address2:             origAddress2,
-              debtorName:           origName,
-              phone:                origPhone,
-              email:                origEmail,
+              ...origContact,
             })
           : patch;
 
