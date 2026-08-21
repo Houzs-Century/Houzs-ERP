@@ -43,7 +43,9 @@ export const SESSION_PASS_TTL_MS = 8 * 60 * 60 * 1000;
  * pass by accident.
  */
 export function sessionSigningSecret(env: unknown): string | null {
-  const s = (env as { SESSION_SIGNING_KEY?: string })?.SESSION_SIGNING_KEY;
+  // The cast admits undefined because callers really do pass it (the tests
+  // assert sessionSigningSecret(undefined) is null) — the `?.` is load-bearing.
+  const s = (env as { SESSION_SIGNING_KEY?: string } | undefined)?.SESSION_SIGNING_KEY;
   return typeof s === 'string' && s.length >= 16 ? s : null;
 }
 

@@ -641,6 +641,12 @@ materialised; there is no board table.
    'customer_pickup'`, `inspection_visit_at` **when `inspection_by = 'own'`** →
    `'inspection'`, `do_date` → `'delivery'`. Row key is `<ASSR-NO>#<job_kind>`
    (`:1031`). ASSR rows always land as `PENDING_DELIVERY` (`:1046-1048`).
+   **COMPANY-SCOPED since 2026-08-21** — see *Service Cases on the board are
+   company-scoped* below. The SQL lives in `assrBoardUnionSql()`
+   (`backend/src/scm/lib/assr-board-scope.ts`) rather than inline in the handler,
+   so the predicate is assertable
+   (`backend/tests/deliveryBoardAssrScope.test.ts`). ASSR rows now also carry
+   `company_code`, from the same `companyCodeMap` the SO rows use.
 3. **DP Orders** (`row_type: 'dp'`, `:1150`) — manual jobs from `scm.dp_orders`
    with **no** source document (`so_doc_no`, `assr_case_id`, `do_id` all null)
    and status not DELIVERED/CANCELLED (`:1132-1136`). DP orders that DO have a
@@ -948,6 +954,47 @@ hard-delete or re-sequence the other company's trip by id — the service-role
 client bypasses RLS, so nothing else stopped it. Every trip / trip_stop write now
 carries `scopeToAllowedCompanies`, matching its own read. Shared queue means a
 WIDER predicate, never no predicate.
+
+### Service Cases on the board are company-scoped (owner ruling 2026-08-21)
+
+The same correction, one union later. The board's ASSR rows read
+`public.assr_cases` through raw `c.env.DB` SQL, and that raw path is exactly why
+they shipped company-BLIND: `scopeToAllowedCompanies` is a supabase-js helper and
+cannot reach a `DB.prepare()` string, so the predicate has to be written by hand
+and nobody did. Meanwhile `/api/assr` scoped the very same table with
+`assrCompanySql`. Two surfaces, one table, different answers for the same person
+— and the board was the one that leaked.
+
+Shown the board listing service cases from a company the caller holds no grant
+for, the owner ruled: 「这个也不可以啊」.
+
+- **The rule has ONE home** — `backend/src/scm/lib/assr-board-scope.ts`.
+  `assrBoardUnionSql()` and `assrOpenCaseGuardSql()` append `assrCompanySql`,
+  imported from `routes/assr.ts`, the same function `/api/assr` uses, never a
+  local copy. `routes/search.ts` kept a copy of this rule once and drifted; that
+  is the precedent being avoided. They are a MODULE rather than two more
+  functions in the router because the router is at its file-size ceiling — and
+  because a statement inside a 3,000-line handler is a statement nothing can
+  assert, which is how the predicate stayed missing.
+- **Widen, not isolate.** Delivery Planning is a cross-company VIEW module, so a
+  dispatcher granted both companies still sees the combined queue. Only a caller
+  granted one company loses the other's rows. Measured on production 2026-08-21
+  (run 32467665635): 72 board-eligible cases — 70 HOUZS, 2 for 2990, none with an
+  unresolvable company — and 61 active users hold exactly one grant, 16 hold both.
+- **The WRITE is scoped too.** `PATCH /delivery-planning/:type/:id/schedule`'s
+  ASSR branch runs its open-case guard with the same predicate and 404s an
+  out-of-scope case, the same answer `/api/assr`'s own `caseInCallerScope` gives.
+  Scoping the read alone would have left the half that consumes a lorry open.
+- **NOT applied: the row-level VISIBILITY rule** (`assrVisibilityPredicateSql` —
+  "which cases may THIS person see within the company"). The ruling was about the
+  company boundary; narrowing a fleet coordinator's board to only the cases they
+  personally handled is a different decision nobody has made, and it would empty
+  the board for dispatchers.
+- **Deliberately left company-blind, and NOT a miss:** the PMS project
+  setup/dismantle union in the same handler. Its own comment says so — the fleet
+  is shared across companies, so a project's window is a real fleet commitment the
+  coordinator must see to avoid double-booking a lorry. Same standing ruling as
+  the drivers / helpers / lorries masters above.
 
 **Assignment happens in two places, and they are not the same mechanism:**
 

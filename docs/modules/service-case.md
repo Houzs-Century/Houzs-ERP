@@ -588,6 +588,20 @@ shown HOUZS cases and NOT shown their own — and neither copy looked wrong,
 because the stale test asserted the stale copy's behaviour and both agreed.
 Both are removed; `search.ts` now imports the one function.
 
+**And it cost a THIRD place, found 2026-08-21 — the Delivery Planning board.**
+Its Service-Case rows read `public.assr_cases` through raw `c.env.DB` SQL
+(supabase-js helpers cannot reach a `DB.prepare()` string, so the predicate has
+to be written by hand) and carried NO company term at all, so a dispatcher
+granted one company saw the other's service cases on the board while
+`/api/assr` hid them. The owner ruled it out: 「这个也不可以啊」. Fixed the same
+way as `search.ts` — `scm/routes/delivery-planning.ts` now imports
+`assrCompanySql` and appends it in `assrBoardUnionSql()` (the read) and
+`assrOpenCaseGuardSql()` (the schedule write, which 404s an out-of-scope case
+exactly as `caseInCallerScope` does). Pinned by
+`backend/tests/deliveryBoardAssrScope.test.ts`. **The pattern to take from three
+occurrences: if a surface reads `assr_cases`, it imports this function — a
+hand-written predicate, however correct today, is the bug.**
+
 The three-state sentinel applies as everywhere else: `undefined` = unresolved
 (pre-migration, D1 test mirror, cold start) → no predicate at all; `[]` = the
 caller is granted no active company → matches nothing. They are NOT

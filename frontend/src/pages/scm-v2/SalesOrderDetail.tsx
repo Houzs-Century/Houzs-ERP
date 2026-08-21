@@ -4121,6 +4121,9 @@ const AmendmentDiffModal = ({
                             {chg.remark && (old.remark ?? '').trim() ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...strikeIf(true) }}>“{old.remark}”</div>
                             ) : null}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={strikeIf(true)}>Discount {fmtRm(old.discountSen ?? 0, currency)}</div>
+                            ) : null}
                           </div>
                         )}
                       </td>
@@ -4143,6 +4146,12 @@ const AmendmentDiffModal = ({
                             {chg.remark ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...emphasiseIf(true) }}>
                                 {(l.new_remark ?? '').trim() ? `“${l.new_remark}”` : 'Remark cleared'}
+                              </div>
+                            ) : null}
+                            {/* mig 0317 — the requested discount: on a fee line it is the request. */}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={emphasiseIf(true)}>
+                                {Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount ${fmtRm(l.new_discount_sen ?? 0, currency)}` : 'Discount cleared'}
                               </div>
                             ) : null}
                           </div>

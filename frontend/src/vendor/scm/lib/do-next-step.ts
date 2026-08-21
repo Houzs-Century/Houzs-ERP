@@ -37,14 +37,14 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //   · The SALES-INVOICE question (siTransferBlockReason) is shared by all four.
 //     That is the one the owner hit, and the one that was silently missing.
 //   · The ADVANCE question (doAdvanceStep) is shared by the three desktop-side
-//     surfaces. The native mobile shell keeps its own finer ladder ON PURPOSE:
-//     it offers DISPATCHED → IN_TRANSIT ("Mark In Transit"), a rung the desktop
-//     skips, and IN_TRANSIT is the departure marker MobileDeliveryPlanning
-//     writes for "On the way" (MobileDeliveryPlanning.tsx:1280). Collapsing the
-//     phone onto the desktop's single jump would have DELETED a step drivers
-//     use. So on DISPATCHED the desktop still says "Mark signed" and the phone
-//     still says "Mark In Transit" — that difference is now a recorded decision
-//     with a reason, rather than two hand-written copies that had drifted.
+//     surfaces, and since 2026-08-21 it offers exactly ONE step: DRAFT → Confirm.
+//     "Mark signed" (LOADED / DISPATCHED / IN_TRANSIT → DELIVERED) was REMOVED by
+//     owner decision — a shipped delivery is closed by the driver's Proof-of-
+//     Delivery screen, which signs it, and the office's next action on a shipped
+//     DO is its Sales Invoice, not a bare status button. The native mobile shell
+//     keeps its own driver rung DISPATCHED → IN_TRANSIT ("Mark In Transit", the
+//     "On the way" departure marker, MobileDeliveryPlanning.tsx) — that is not
+//     "Mark signed" and stays. SIGNED / DELIVERED are the POD screen's job.
 //
 // ── THE VOCABULARY (measured, not assumed) ──────────────────────────────────
 // The eight legal delivery_orders.status values are declared once, server-side,
@@ -93,8 +93,9 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
        anything past DRAFT that is not CANCELLED — may be invoiced, LOADED
        included. That superseded the previous day's four-state list, and it is
        what the server has always permitted: the SI-from-DO create refuses only
-       a CANCELLED source. "Mark signed" survives as an OPTIONAL delivery-
-       tracking action (doAdvanceStep), never a prerequisite.
+       a CANCELLED source. "Mark signed" was never a prerequisite for the
+       invoice, and on 2026-08-21 it was REMOVED entirely (owner) — the driver's
+       Proof-of-Delivery screen is what records delivery now.
 
    It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
    no company term and never did; it fired on one organisation because of DATA.
@@ -162,22 +163,20 @@ export function siTransferBlockReason(status: string | null | undefined): string
  * renders the control disabled needs BOTH the label (so the slot keeps its verb)
  * and the reason.
  *
- * The labels and targets are the ones already shipped on the surfaces this
- * replaces, so no operator's muscle memory changes:
- *   · DRAFT → DISPATCHED, "Confirm"     (mobile MobileModuleDetail's ladder)
- *   · LOADED / DISPATCHED / IN_TRANSIT → DELIVERED, "Mark signed"
- *     (desktop DeliveryOrderDetailV2 + the list drawer)
+ * There is ONE advance step now (owner 2026-08-21, removing "Mark signed"):
+ *   · DRAFT → DISPATCHED, "Confirm"
  *
- * NOTE, recorded rather than silently changed: the "Mark signed" control writes
- * DELIVERED, not SIGNED — DeliveryOrderDetailV2.tsx:777 and
- * MfgDeliveryOrdersListV2.tsx:968 both mutate `status: "DELIVERED"`. Both
- * targets satisfy the Sales-Invoice gate, so the operator's outcome is correct
- * and this change does not touch it. The label/target mismatch is a separate
- * defect and is logged as one.
+ * The "Mark signed" step (LOADED / DISPATCHED / IN_TRANSIT → DELIVERED) was
+ * REMOVED. A shipped delivery does not need marking delivered from these office
+ * surfaces: the Sales Invoice is raised straight from DISPATCHED
+ * (siTransferBlockReason already allows it), and the ONE path that records
+ * DELIVERED is the driver's Proof-of-Delivery screen (MobilePOD), which closes
+ * the delivery WITH a signature. So a shipped DO's next action is its Sales
+ * Invoice, not a bare status button — and doAdvanceBlockReason says exactly that.
  */
 export type DoAdvanceStep = {
   /** Target delivery_orders.status to PATCH. */
-  status: 'DISPATCHED' | 'DELIVERED';
+  status: 'DISPATCHED';
   /** The words on the button. */
   label: string;
 };
@@ -185,58 +184,18 @@ export type DoAdvanceStep = {
 export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep | null {
   const s = norm(status);
   if (s === 'draft') return { status: 'DISPATCHED', label: 'Confirm' };
-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return { status: 'DELIVERED', label: 'Mark signed' };
-  }
   return null;
 }
 
 /**
- * The sentence to show an operator who is about to close a delivery that
- * carries NO proof of delivery — `null` when there is nothing to say.
- *
- * WHY A SENTENCE AND NOT A REFUSAL. Three measured reasons, all pointing the
- * same way:
- *
- *   · The office legitimately closes deliveries it did not attend. Every closed
- *     delivery in production today is one of these: all twelve were flipped
- *     DISPATCHED -> DELIVERED in a single minute on 2026-07-24 by
- *     backend/scripts/backfill-2990-delivered-dos.mjs, because 2990's source
- *     system has no "delivered" step on a DO at all. A hard gate would have
- *     made that whole backlog unclosable.
- *     (This bullet used to add "and the HOUZS AutoCount carry-overs were
- *     inserted as literal 'DELIVERED'". Measured 2026-08-21, run 32457160124:
- *     there are no Houzs delivery orders and no row carries migrated_no_stock,
- *     so that had not happened. The reason to loosen stands on the 2990 half;
- *     the Houzs half was a claim nobody had checked.)
- *   · The SERVER already decided this. `patchDeliveryOrderStatusHandler` DROPS
- *     an out-of-range GPS fix rather than 409-ing it, in as many words: "a bad
- *     sensor reading must never be the reason a driver cannot close a
- *     delivery". A client stricter than its own server is a bug.
- *   · The owner's standing rule for this system is to loosen rather than
- *     restrict, and to prefer a default or a prompt over a wall.
- *
- * What was actually wrong was never the permissiveness — it was the SILENCE.
- * The same delivery closed from a different screen either had a signature or
- * had nothing, and no screen said which you were about to do. That is the same
- * rule this module already applies to the Sales-Invoice transfer: the thing may
- * be unavailable, but it may not be silent.
- *
- * Scope: only the step that CLOSES the delivery is warned about. A
- * DRAFT→DISPATCHED confirm is not a delivery and must not nag.
- */
-export function doCloseWithoutEvidenceWarning(
-  step: DoAdvanceStep | null,
-  pod: { signature_data?: string | null; pod_r2_key?: string | null } | null | undefined,
-): string | null {
-  if (step?.status !== 'DELIVERED') return null;
-  if (pod?.signature_data || pod?.pod_r2_key) return null;
-  return 'This delivery order has no customer signature and no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen in the mobile app.';
-}
-
-/**
  * `null` when {@link doAdvanceStep} has a step to offer. Otherwise the sentence
- * for the disabled control.
+ * that stands in for the (absent) advance control — telling the operator what
+ * this document's next real step is.
+ *
+ * Every shipped state points at the Sales Invoice now that "Mark signed" is
+ * gone: there is no status button to explain, so the sentence names the next
+ * action (raise the invoice) rather than a block. The "two questions are never
+ * both silent" test pins that a non-advanceable status still returns a sentence.
  */
 export function doAdvanceBlockReason(status: string | null | undefined): string | null {
   if (doAdvanceStep(status)) return null;
@@ -246,6 +205,12 @@ export function doAdvanceBlockReason(status: string | null | undefined): string 
        delivery-orders-mfg.ts:5403. This is why no surface should offer a
        "Reopen" here: the write is refused every time. */
     return 'A cancelled delivery order cannot be reactivated — its stock was already returned. Raise a new delivery order to deliver again.';
+  }
+  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
+    /* Shipped, not yet closed. Since 2026-08-21 there is no "Mark signed" step
+       on these surfaces; the delivery is closed by the driver's Proof-of-Delivery
+       screen, and the office's next action is the Sales Invoice. */
+    return 'This delivery order is on its way. The next step is to raise its Sales Invoice.';
   }
   if (s === 'signed' || s === 'delivered') {
     return 'This delivery order is complete. The next step is to raise its Sales Invoice.';

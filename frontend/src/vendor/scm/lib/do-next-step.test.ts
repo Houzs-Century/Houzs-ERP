@@ -114,15 +114,17 @@ describe('doAdvanceStep', () => {
     expect(doAdvanceStep('DRAFT')).toEqual({ status: 'DISPATCHED', label: 'Confirm' });
   });
 
-  it('marks the pre-signature shipped states signed', () => {
-    for (const s of PRE_SIGNATURE) {
-      expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark signed' });
-    }
-  });
-
-  it('offers no step from a terminal or already-complete status', () => {
-    for (const s of DO_STATUSES.filter((x) => !PRE_SIGNATURE.includes(x) && x !== 'DRAFT')) {
+  it('offers no step from any state but DRAFT — "Mark signed" was removed (owner 2026-08-21)', () => {
+    /* LOADED / DISPATCHED / IN_TRANSIT used to advance to DELIVERED as
+       "Mark signed". That step is gone: a shipped delivery is closed by the
+       driver's Proof-of-Delivery screen, and the office's next action is the
+       Sales Invoice — which doAdvanceBlockReason names in its place, so the
+       "two questions never both silent" contract still holds. */
+    for (const s of DO_STATUSES.filter((x) => x !== 'DRAFT')) {
       expect(doAdvanceStep(s), s).toBeNull();
+    }
+    for (const s of PRE_SIGNATURE) {
+      expect(doAdvanceBlockReason(s), s).toMatch(/Sales Invoice/i);
     }
   });
 

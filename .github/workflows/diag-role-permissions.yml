@@ -40,3 +40,12 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; match the deploy jobs.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      # The wider half of the same question (2026-08-21 permission audit): every
+      # cohort rule in this repo keys off an EXACT POSITION NAME held in code, and
+      # position names are owner-editable free text. This prints the LIVE names,
+      # which code cohort each one lands in, and the headcount behind each rule.
+      # Same trigger, same concurrency group, same read-only contract.
+      - run: node scripts/audit-permission-grants.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

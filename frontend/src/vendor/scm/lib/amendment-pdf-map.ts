@@ -51,6 +51,7 @@ export type SoAmendmentDetail = {
     new_variants?: unknown;
     /* mig 0280 — the requested line REMARK. null = not requested. */
     new_remark?: string | null;
+    new_discount_sen?: number | null;
     old_snapshot?: Record<string, unknown> | null;
   }>;
   salesOrder: { doc_no?: string | null; revision?: number | null } | null;
@@ -127,7 +128,8 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
     const chg = amendmentLineChangedFields({
       change_type: change, new_item_code: l.new_item_code, new_qty: l.new_qty,
       new_unit_price_sen: l.new_unit_price_sen, new_variants: l.new_variants,
-      new_remark: l.new_remark, old_snapshot: l.old_snapshot,
+      new_remark: l.new_remark, new_discount_sen: l.new_discount_sen,
+      old_snapshot: l.old_snapshot,
     });
     if (chg.variants) {
       const vs = amendmentVariantSummaries({
@@ -150,6 +152,16 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
         item, field: 'Remark',
         before: str(snap.remark) || '—',
         after: (l.new_remark ?? '').trim() ? str(l.new_remark) : 'Cleared',
+        kind: 'CHANGE',
+      });
+    }
+    /* mig 0317 — on a delivery-fee line the discount IS the request (the unit
+       stays derived), so a printed document without this row omits the money. */
+    if (chg.discount) {
+      rows.push({
+        item, field: 'Discount',
+        before: money((snap.discountSen as number | null | undefined) ?? 0),
+        after: money(l.new_discount_sen ?? 0),
         kind: 'CHANGE',
       });
     }
