@@ -74,9 +74,7 @@ import {
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
-  AC_STATE_PLAIN_MEANING,
   AC_TECHNICAL_LABEL,
-  acAge,
   acDocTypePlural,
   acDocTypeCounts,
   acEarlierSendsHeading,
@@ -93,7 +91,6 @@ import {
   acStateCount,
   acStateLabel,
   acStateTone,
-  acWritebackLine,
   useAcExpandedRows,
   useAcReplacedGroup,
   useAcRequeue,
@@ -534,19 +531,6 @@ export function AutoCountSync() {
       ) : (
         d && (
           <>
-            {/* The switch is not a detail: it decides what an empty queue MEANS.
-                Above the pinned strips, because it is read once on arrival and
-                pinning it would cost list rows on every screen forever. */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-ink-muted">
-              <span className="font-semibold text-ink">{acWritebackLine(d)}</span>
-              <span>Sent every five minutes</span>
-              <span>
-                {d.oldest_pending
-                  ? `Oldest still waiting: ${d.oldest_pending.doc_no}, ${acAge(d.oldest_pending.created_at)}`
-                  : "Nothing waiting"}
-              </span>
-            </div>
-
             {/* PINNED, under the page header, whose own height it reads out of
                 --page-header-offset rather than guessing at a constant (the
                 header publishes it for exactly this). A filter strip you have
@@ -694,30 +678,6 @@ export function AutoCountSync() {
               </div>
             )}
 
-            {/* The five words on the badges, explained once. Taken from the
-                shared layer rather than from meta.state_meaning: the server's
-                sentences were written for a workflow log and talk about crons
-                and attempt caps. */}
-            <details className="rounded-lg border border-border bg-surface p-3 text-[12px]">
-              <summary className="cursor-pointer font-semibold text-ink">
-                What each of these words means
-              </summary>
-              <dl className="mt-2 space-y-1.5">
-                {Object.entries(AC_STATE_PLAIN_MEANING).map(([k, v]) => (
-                  <div key={k} className="flex flex-wrap gap-2">
-                    <dt className="shrink-0">
-                      <StateBadge state={k} />
-                    </dt>
-                    <dd className="min-w-[16rem] flex-1 text-ink-muted">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-3 text-ink-muted">
-                A waiting document is sent every five minutes and gives up after {maxAttempts}{" "}
-                tries, so about half an hour of the AutoCount computer being unreachable turns a
-                waiting document into one that was not accepted.
-              </p>
-            </details>
           </>
         )
       )}
