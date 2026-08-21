@@ -90,7 +90,7 @@ It also reads the IN-BAND failure: `PATCH /grns/:id/post` answers **200** with
 `onSuccess`, the same way `useCancelGrn` has read `cancelErrors` since
 2026-08-13. Pinned by
 `frontend/src/vendor/scm/lib/post-commit-failures.test.tsx`; the trace is in
-`docs/bugs/0490-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
+`docs/bugs/0495-post-grn-and-post-purchase-invoice-had-no-error-path-and-the.md`.
 
 **The stock-side invalidation rule:** every mutation that can move inventory also
 invalidates `['inventory']` — `usePostGrn` (`:146`) and `useCancelGrn` (`:222`).
