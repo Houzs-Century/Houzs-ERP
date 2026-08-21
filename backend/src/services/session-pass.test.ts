@@ -10,6 +10,7 @@ import {
 } from './session-pass';
 import { sidFor, revokeUser } from './session-revocation';
 import type { AuthUser } from './auth';
+import type { Env } from '../types';
 
 const SECRET = 'a-sufficiently-long-signing-secret';
 const NOW = 1_700_000_000_000;
@@ -116,7 +117,8 @@ describe('tryPassAuth — verify + bind-to-token + revocation on the request pat
     const token = 'tok';
     const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
     const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
-    await revokeUser(env as never, USER.id, NOW + 100); // revoke AFTER issue
+    // Same fake-KV-as-Env shape session-revocation.test.ts uses.
+    await revokeUser(env as unknown as Env, USER.id, NOW + 100); // revoke AFTER issue
     expect(await tryPassAuth(env, pass, token, NOW + 200)).toBeNull();
   });
 
