@@ -1,6 +1,6 @@
 ## The 2990 mirror silently skipped a different order wearing an existing doc number [critical]
 
-<!-- area: SCM sync -->
+<!-- area: Cutover + migrated data -->
 
 **Symptom.** Owner searched "larding" in 2990's SCM Sales Orders and found only
 the RM 0.00 lucky-draw order (2990-SO-2607-021). The customer's paid sofa order
