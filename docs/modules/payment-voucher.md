@@ -146,7 +146,7 @@ leans on:
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
-| `lib/doc-no.ts` | `nextPvNo` via `mintMonthlyDocNo` (max+1, self-healing), `nextJeNo`. |
+| `lib/doc-no.ts` | `nextPvNo` via `mintMonthlyDocNo`, and `nextJeNo`. Both claim from `scm.doc_number_counters` (mig 0316) with the live max only as a floor — a deleted document does NOT return its number, and gaps are permanent. |
 
 ### The GL entry (source_type `PV`)
 Dynamic legs, unlike the PI's fixed Dr 1200 / Cr 2000:
