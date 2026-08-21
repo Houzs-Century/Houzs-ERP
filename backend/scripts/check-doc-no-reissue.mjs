@@ -36,6 +36,11 @@
        numbers. The queue is the ERP's only record of what it has exported, and
        it is on golive-wipe-hc.mjs's CLEAR list, so a wipe erases the evidence
        along with the documents.
+   (G) COUNTER SEED PREVIEW — what scm.doc_number_counters holds today (or
+       that it is ABSENT), and what a seed migration WOULD write per series:
+       the live max, the outbox max, and the account book's max, with the
+       highest of the three winning. The series it RAISES past the surviving
+       rows are listed on their own — that set is the entire risk of a seed.
    (F) CREATED-AT INVERSIONS — a lower suffix created LATER than a higher one in
        the same series. Not proof on its own (a backfill or restore reorders
        created_at too), but it is the shape a re-issue leaves when the re-minted
@@ -423,6 +428,24 @@ try {
     log(`  outbox total rows=${obTotal}; rows created before 2026-08-20=${obOldest}`);
   }
 
+  /* ═════ (E2) EVERY OUTBOX ROW ══════════════════════════════════════
+     (E) asks only about the numbers ac-live-proof.json names. This lists the
+     whole queue, because the ERP's export memory is now small enough to print
+     and the interesting rows are the ones NOBODY thought to ask about — a
+     `pending` row carrying a number the book may already hold is a refusal
+     that has not happened yet. */
+  if (obExists.length) {
+    log("");
+    log("=== (E2) EVERY scm.autocount_outbox ROW ===");
+    const all = await pg`
+      SELECT doc_type, doc_no, op, status, attempts, ac_doc_no, created_at, sent_at
+        FROM scm.autocount_outbox ORDER BY created_at`;
+    log(`  ${all.length} row(s).`);
+    for (const r of all) {
+      console.log(`    ${new Date(r.created_at).toISOString()}  ${String(r.doc_type).padEnd(3)} ${String(r.doc_no).padEnd(18)} op=${String(r.op).padEnd(10)} status=${String(r.status).padEnd(8)} attempts=${r.attempts} ac_doc_no=${r.ac_doc_no ?? "-"}`);
+    }
+  }
+
   /* ═════ (F) CREATED-AT INVERSIONS ═════════════════════════════════════════ */
   log("");
   log("=== (F) CREATED-AT INVERSIONS (a lower suffix created later than a higher one) ===");
@@ -444,6 +467,102 @@ try {
   log(inversions === 0
     ? "  NONE — every series' creation order matches its numbering order."
     : `  ${inversions} inversion(s). Not proof on its own — a backfill or a restore reorders created_at too.`);
+
+  /* ═════ (G) COUNTER SEED PREVIEW ══════════════════════════════════
+     What scm.doc_number_counters holds today, and what the seed migration
+     WOULD write — computed here, on production, BEFORE the migration is
+     written, so the seed is measured rather than assumed.
+
+     Three inputs per series, and the seed is the highest of them + 1:
+       liveMax    highest surviving suffix in the minter-owned column. This is
+                  today's whole counter, and it is the one a delete lowers.
+       outboxMax  highest suffix scm.autocount_outbox has ever carried for the
+                  series — numbers the ERP has at least ATTEMPTED to export.
+                  Post-wipe this remembers nothing before 2026-08-20, which is
+                  the point of section E.
+       bookMax    highest suffix the AED_HOUZS book is KNOWN to hold, from
+                  ac-live-proof.json. The ONLY input the ERP cannot re-derive,
+                  and therefore the only one the migration has to hardcode.
+
+     A series whose seed is above liveMax+1 is one where the counter is being
+     RAISED past the account book. Those are listed separately: they are the
+     entire risk surface of the seed. */
+  log("");
+  log("=== (G) COUNTER SEED PREVIEW — scm.doc_number_counters ===");
+  const countersExists = await pg`
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'scm' AND table_name = 'doc_number_counters' LIMIT 1`;
+  if (!countersExists.length) {
+    log("  scm.doc_number_counters: ABSENT — the counter table has not shipped yet.");
+    log("  That is the FINDING, not an error: today the surviving rows ARE the counter.");
+  } else {
+    const cnt = await pg`SELECT series, next_n, seed_source FROM scm.doc_number_counters ORDER BY series`;
+    log(`  scm.doc_number_counters: PRESENT, ${cnt.length} row(s).`);
+    for (const r of cnt) console.log(`    ${String(r.series).padEnd(20)} next_n=${String(r.next_n).padStart(5)}  ${r.seed_source ?? ""}`);
+  }
+
+  // liveMax per series, restricted to the columns a MINTER owns. A reference
+  // column (an SO line naming its parent) must never feed a counter.
+  const seedMap = new Map();
+  const bump = (head, field, n, note) => {
+    if (!seedMap.has(head)) seedMap.set(head, { live: 0, outbox: 0, book: 0, liveCol: "", bookNote: "" });
+    const e = seedMap.get(head);
+    if (n > e[field]) {
+      e[field] = n;
+      if (field === "live") e.liveCol = note;
+      if (field === "book") e.bookNote = note;
+    }
+  };
+  for (const s of seriesRows) {
+    if (!REG.has(s.col)) continue;
+    bump(s.key, "live", s.max, s.col);
+  }
+  if (obExists.length) {
+    const obAll = await pg`SELECT doc_no FROM scm.autocount_outbox WHERE doc_no IS NOT NULL`;
+    for (const r of obAll) {
+      const p = parseDocNo(r.doc_no);
+      if (p) bump(`${p.prefix}${p.type}-${p.yymm}`, "outbox", p.n, "outbox");
+    }
+  }
+  for (const [docNo, bookDate, op] of AC_HELD) {
+    const p = parseDocNo(docNo);
+    if (p) bump(`${p.prefix}${p.type}-${p.yymm}`, "book", p.n, `${op} ${bookDate}`);
+  }
+
+  const seeds = [...seedMap.entries()]
+    .map(([head, e]) => ({
+      head,
+      ...e,
+      max: Math.max(e.live, e.outbox, e.book),
+    }))
+    .sort((a, b) => a.head.localeCompare(b.head));
+  const raised = seeds.filter((s) => s.max > s.live);
+  log("");
+  log(`  ${seeds.length} series would be seeded. ${raised.length} of them sit ABOVE the surviving ERP rows.`);
+  log("");
+  log("  head                 liveMax  outboxMax  bookMax  ->  next_n   source of the ceiling");
+  for (const s of seeds) {
+    const src = s.max === s.book && s.book > 0 && s.book >= s.live && s.book >= s.outbox
+      ? `AutoCount book (${s.bookNote})`
+      : s.max === s.outbox && s.outbox > s.live
+        ? "scm.autocount_outbox"
+        : `live rows (${s.liveCol})`;
+    const line = `    ${s.head.padEnd(20)} ${String(s.live).padStart(7)} ${String(s.outbox).padStart(10)} ${String(s.book).padStart(8)}  ->  ${String(s.max + 1).padStart(6)}   ${src}`;
+    if (s.max > s.live) warn(line.trim()); else console.log(line);
+  }
+  if (raised.length) {
+    log("");
+    log("  RAISED PAST THE SURVIVING ROWS — the whole risk surface of the seed:");
+    for (const s of raised) {
+      log(`    ${s.head}: live max ${s.live} -> next number ${s.max + 1} (book ${s.book}, outbox ${s.outbox})`);
+    }
+  }
+  // Which minter-owned series exist in the DB but have NO book evidence at all.
+  const noBook = seeds.filter((s) => s.book === 0 && s.head.startsWith("HC-"));
+  if (noBook.length) {
+    log("");
+    log(`  HC series with NO book evidence (seeded from ERP rows alone): ${noBook.map((s) => s.head).join(", ")}`);
+  }
 
   /* ═════ VERDICT ═══════════════════════════════════════════════════════════
      The discovery in this script is deliberately WIDE — it matches on column

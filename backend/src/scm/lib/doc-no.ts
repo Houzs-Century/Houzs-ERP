@@ -1,21 +1,34 @@
 import { paginateAll } from './paginate-all';
 import { BASE_COMPANY_CODE, docPrefixForCode } from './companyScope';
+import { isMissingRpc, isUnsupportedTransactionRpc } from './rpc-missing';
 
-/* ─────────────────────────── Monthly doc numbers ───────────────────────────
-   Next `<PREFIX>-YYMM-NNN` from the rows that already exist in the month.
+/* ────────────────────── Monthly doc numbers ──────────────────────
+   `<PREFIX>-YYMM-NNN`. The AUTHORITY is scm.doc_number_counters — see
+   mintMonthlyDocNo below. The two pure functions here read the rows that
+   happen to exist for the month, and that is now a FLOOR the counter is raised
+   to, never the counter itself.
 
-   MUST be max(suffix)+1, NEVER count+1. Deleting a mid-month row (create
-   rollbacks, data cleanups) leaves a gap, so count+1 eventually re-mints a
-   surviving number and the insert hits the primary key — permanently, since
-   a failed insert doesn't change the count. This took down POS order
-   creation on 2026-06-12 after the go-live cleanup deleted SO-2606-002..007:
-   count=7 kept re-minting the surviving SO-2606-008 forever.
+   WHY THAT CHANGED. max(suffix)+1 over surviving rows is a QUERY, not a
+   counter: it answers whatever the data currently says. It steps over a
+   deleted MID-month row — the original reason it must never be count+1, which
+   re-mints a surviving number forever and took down POS order creation on
+   2026-06-12 after a cleanup deleted SO-2606-002..007. It does NOT survive a
+   deletion at the TOP of a series: removing the highest-numbered document
+   lowers the max and hands that number straight back to the next create.
 
-   max+1 self-heals: a concurrent-create race still loses one insert to the
-   pkey, but the next attempt reads the new max and moves past it.
+   On 2026-08-20 golive-wipe-hc.mjs did exactly that, deliberately — its header
+   said "deleting HC's document rows IS the reset" — and the ERP re-issued
+   HC-SO-2608-001/002, HC-PO-2608-001 and HC-PI-2608-001, which the licensed
+   AED_HOUZS account book had held since 2026-08-14/17. AutoCount refused them
+   with `Primary Key Error` and was right: once a number leaves this system the
+   surviving rows here stop being a faithful record of what was issued.
+   docs/doc-number-reissue-coe.md.
 
-   Pure function — callers fetch the month's doc numbers themselves. */
-export function nextMonthlyDocNo(monthPrefix: string, existing: string[]): string {
+   Both stay EXPORTED and pure. `maxMonthlySuffix` is the floor the counter is
+   raised to. `nextMonthlyDocNo` is the exact PRE-counter answer, kept because
+   it is what the tests measure the new behaviour against and because it is the
+   degradation path while the RPC is not there yet (see mintMonthlyDocNo). */
+export function maxMonthlySuffix(monthPrefix: string, existing: string[]): number {
   const head = `${monthPrefix}-`;
   let max = 0;
   for (const docNo of existing) {
@@ -25,7 +38,11 @@ export function nextMonthlyDocNo(monthPrefix: string, existing: string[]): strin
     const n = parseInt(tail, 10);
     if (n > max) max = n;
   }
-  return `${head}${String(max + 1).padStart(3, '0')}`;
+  return max;
+}
+
+export function nextMonthlyDocNo(monthPrefix: string, existing: string[]): string {
+  return `${monthPrefix}-${String(maxMonthlySuffix(monthPrefix, existing) + 1).padStart(3, '0')}`;
 }
 
 /* ────────────────── Reading the month (max+1's only input) ──────────────────
@@ -84,16 +101,133 @@ export async function fetchMonthlyDocNos(
     .filter((v): v is string => typeof v === 'string');
 }
 
-/** Fetch the month uncapped + max+1 — the whole mint for a single-create
-    minter. `monthPrefix` is the doc number WITHOUT the trailing `-NNN`, e.g.
-    `${companyDocPrefix(c)}SI-${yymm}`. */
+/* ─────────────────── THE COUNTER — scm.doc_number_counters ───────────────────
+   ONE row per SERIES, where a series is the doc number without its `-NNN`
+   tail: `HC-SO-2608`, `2990-SI-2608`, `TRIP-2608`, `JE-2608`. That string IS
+   the namespace the number lives in — it is what the old `.like(head || '-%')`
+   scan matched and what the unique index protects — so keying on it needs no
+   parsing, no company id, and no special case for TRIP, which deliberately has
+   no company prefix and is therefore ONE sequence shared by both companies
+   (lib/companyScope.ts: "Do NOT apply to CROSS-COMPANY shared docs (trips /
+   delivery-planning) — those keep one shared sequence"). Two different tables
+   sharing a series would SHARE this counter, which is correct: they would be
+   minting into the same doc-number namespace.
+
+   `scm.next_doc_no_n(p_series, p_floor)` is one statement —
+   INSERT … ON CONFLICT … DO UPDATE … RETURNING — so two concurrent saves
+   cannot read the same value: the second waits on the first's row lock and
+   sees the incremented counter. The unique doc-no indexes and
+   insertWithDocNoRetry below STAY as the safety net; they are cheap and this
+   is a money path.
+
+   THE FLOOR IS A BELT, AND IT IS DELIBERATE. The RPC hands back
+   GREATEST(counter, floor + 1), so the live rows can still push the counter UP
+   but can never pull it DOWN. Three things fall out of that, and they are the
+   reason the read below was not deleted:
+
+     · A series the seed migration never covered (a table added later, a month
+       nobody had rows in) self-seeds from its own live max on first use —
+       exactly today's answer — instead of restarting at 001.
+     · A row inserted out of band (an import, a repair script) cannot be
+       re-issued: the next mint steps over it.
+     · The PostgREST 1000-row truncation trap documented above stops being able
+       to cause a re-issue at all. A truncated read returns a LOW floor, and a
+       low floor is now harmless.
+
+   The one thing the floor cannot know is the numbers that left this system —
+   the AED_HOUZS account book holds those and the ERP has no row for them. That
+   is what the migration's seed is for, and it is the only part of this that
+   had to be hardcoded from evidence. */
+
+/** The RPC name, in one place: the migration, the transaction-client whitelist
+    and this caller must agree, and three string literals do not. */
+export const DOC_NO_COUNTER_RPC = 'next_doc_no_n';
+
+/**
+ * Claim the next suffix for `series`, never below `floor + 1`. Returns the
+ * number to use — the counter has already moved past it when this resolves.
+ *
+ * Returns NULL when the counter is NOT AVAILABLE, which is a narrower thing
+ * than "the call failed": the function is not in the schema yet (between a
+ * merge and pg-migrate — deploy.yml runs migrations BEFORE the Worker, so this
+ * is a staging/local window rather than a production one), or the client is
+ * the atomic-transaction proxy refusing an RPC outside its whitelist. Anything
+ * else THROWS. That distinction is the whole safety of the fallback: a
+ * fallback taken on a real error would silently mint from the live max against
+ * a database that just rejected the atomic path — which is the bug this file
+ * exists to remove. isMissingRpc / isUnsupportedTransactionRpc are the shared
+ * predicates for exactly this (lib/rpc-missing.ts).
+ */
+export async function claimDocNoSuffix(
+  sb: any,
+  series: string,
+  floor: number,
+): Promise<number | null> {
+  const f = Number.isFinite(floor) && floor > 0 ? Math.floor(floor) : 0;
+  /* THE CLIENT HAS NO `.rpc` AT ALL — a THIRD shape of "not available", beside
+     isMissingRpc's PostgREST error and isUnsupportedTransactionRpc's throw. It
+     is a property of the CLIENT, checked before the call, and is therefore not
+     an error being swallowed: nothing has failed yet.
+
+     Unreachable in production. @supabase/supabase-js's SupabaseClient always
+     has rpc(), and so does pgTransactionSupabase (it throws for names outside
+     its whitelist, which is the second shape above). What DOES reach here is a
+     hand-built test stub — 17 suites across payments, journals and the
+     AutoCount queue build `{ from() {…} }` objects with no rpc, and none of
+     them is a test about numbering. Widening them all to answer a counter RPC
+     would have made 66 unrelated tests assert doc numbers they do not care
+     about.
+
+     Pinned by tests/docNoCounterFallback.test.ts, which also proves the shape
+     NEXT to it: an rpc that EXISTS and FAILS must throw, never fall back. */
+  if (typeof sb?.rpc !== 'function') return null;
+  let data: unknown;
+  try {
+    const res = await sb.rpc(DOC_NO_COUNTER_RPC, { p_series: series, p_floor: f });
+    if (res?.error) {
+      if (isMissingRpc(res.error)) return null;
+      throw new Error(
+        `${DOC_NO_COUNTER_RPC}(${series}, ${f}) failed: ${res.error.message ?? JSON.stringify(res.error)}`,
+      );
+    }
+    data = res?.data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isUnsupportedTransactionRpc(msg)) return null;
+    throw e;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  const n = typeof row === 'object' && row !== null ? Number((row as Record<string, unknown>)['n']) : Number(row);
+  /* NOT a silent fallback. The function RETURNS integer and cannot answer NULL
+     for a non-null series (it clamps p_floor itself), so an unusable answer
+     here means the RPC is not what this caller thinks it is — refusing is the
+     only honest response on a money path. */
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error(`${DOC_NO_COUNTER_RPC}(${series}, ${f}) returned no usable number: ${JSON.stringify(data)}`);
+  }
+  return n;
+}
+
+/** The whole mint for a single-create minter. `monthPrefix` is the doc number
+    WITHOUT the trailing `-NNN`, e.g. `${companyDocPrefix(c)}SI-${yymm}`, and it
+    is BOTH the LIKE pattern for the floor read and the counter's series key —
+    so the two cannot drift apart. */
 export async function mintMonthlyDocNo(
   sb: any,
   table: string,
   col: string,
   monthPrefix: string,
 ): Promise<string> {
-  return nextMonthlyDocNo(monthPrefix, await fetchMonthlyDocNos(sb, table, col, monthPrefix));
+  const floor = maxMonthlySuffix(monthPrefix, await fetchMonthlyDocNos(sb, table, col, monthPrefix));
+  const n = await claimDocNoSuffix(sb, monthPrefix, floor);
+  if (n === null) {
+    // Counter unavailable — see claimDocNoSuffix. This is the pre-counter
+    // behaviour, stated out loud rather than reached by accident.
+    // eslint-disable-next-line no-console
+    console.warn(`[doc-no] ${DOC_NO_COUNTER_RPC} unavailable for ${monthPrefix}; minting from the live max (pre-counter behaviour, re-issue exposure is back until the migration applies)`);
+    return `${monthPrefix}-${String(floor + 1).padStart(3, '0')}`;
+  }
+  return `${monthPrefix}-${String(n).padStart(3, '0')}`;
 }
 
 /* ─────────────────────── Mint + insert with collision retry ─────────────────
@@ -213,5 +347,25 @@ export const nextJeNo = async (sb: any, date: Date, coPrefix = ''): Promise<stri
     .limit(1);
   const last = data?.[0]?.je_no ?? null;
   const lastN = last ? parseInt(String(last).split('-').pop() ?? '0', 10) : 0;
-  return `${prefix}-${String(lastN + 1).padStart(4, '0')}`;
+  /* SAME counter, SAME series key, DIFFERENT pad. `prefix` is already the
+     series (`JE-2608` / `2990-JE-2608`), so a JE takes its number from
+     scm.doc_number_counters exactly like every other document type and stops
+     handing a number back when the top JE of a month is deleted. Only the
+     formatting differs: 4-pad, which is why this was never folded into the
+     nextMonthlyDocNo family (see the note there — minting a JE through the
+     3-pad path would break a live sequence's continuity).
+
+     The lexical `.order().limit(1)` read above stays exactly as it was and is
+     now only the FLOOR. Its documented break at 10,000 JEs/month (a lexical
+     sort ranks `JE-2607-9999` above `JE-2607-10000`) can only under-report the
+     floor, and an under-reported floor is harmless the moment the counter
+     row exists — the counter wins. The migration seeds this series from a
+     NUMERIC max for the same reason. */
+  const n = await claimDocNoSuffix(sb, prefix, lastN);
+  if (n === null) {
+    // eslint-disable-next-line no-console
+    console.warn(`[doc-no] ${DOC_NO_COUNTER_RPC} unavailable for ${prefix}; minting from the live max (pre-counter behaviour)`);
+    return `${prefix}-${String(lastN + 1).padStart(4, '0')}`;
+  }
+  return `${prefix}-${String(n).padStart(4, '0')}`;
 };

@@ -170,18 +170,18 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 313 | `0315_ac_outbox_claim.sql` (0315) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 314 | `0316_scm_doc_number_counters.sql` (0316) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1611 files, 608540 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1614 files, 609010 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15019 |
+| `frontend/src/pages/Projects.tsx` | 15018 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11881 |
 | `frontend/src/pages/ServiceCases.tsx` | 8843 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
@@ -191,10 +191,10 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5002 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4563 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4354 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4362 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4199 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4196 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
 | `backend/src/scm/routes/grns.ts` | 3572 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
@@ -397,8 +397,8 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4354 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4362 |
 | `frontend/src/mobile/MobilePOD.tsx` | 551 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
