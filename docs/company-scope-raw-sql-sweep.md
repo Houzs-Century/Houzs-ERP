@@ -1,7 +1,7 @@
 # Raw-SQL company-scope sweep — 2026-08-21
 
-Written after the brand-letterhead defect — the ledger entry *"A 2990 Sales
-Order PDF printed Houzs's Zanotti logo"*, PR #2599, which lands first — when the
+Written after the brand-letterhead defect — `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`
+(PR #2599, merged) — when the
 owner asked 「还有什么类似的 bugs」: the CLASS, not the instance.
 
 **This is a TRIAGE record, not a defect list.** Its main job is the *cleared*
@@ -87,10 +87,11 @@ That model file is stale for this table in three ways — no `company_id`, no
 
 ## 4. What the new check found beyond the instance
 
-`node backend/scripts/check-master-read-scope.mjs` — **77 handler/table pairs**
-across 126 statements, all grandfathered in
-`backend/scripts/master-read-scope-baseline.json`. They are LEADS, not a bug
-count: the biggest clusters are `announcements`, `assr_cases` and the ASSR
+`node backend/scripts/check-master-read-scope.mjs` — **76 handler/table pairs**
+grandfathered in `backend/scripts/master-read-scope-baseline.json`. It was 77
+until #2599 merged; the `project_brands` key is gone and the baseline was
+shrunk to match, which is the ratchet doing its one job. They are LEADS, not a
+bug count: the biggest clusters are `announcements`, `assr_cases` and the ASSR
 lookups, and a good share will be legitimately global or scoped through a parent.
 Clear one by adding the predicate, or by annotating the statement
 `// company-scope: <reason>` — which leaves the decision where the next reader

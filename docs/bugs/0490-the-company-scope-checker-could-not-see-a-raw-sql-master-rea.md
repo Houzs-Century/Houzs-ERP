@@ -61,4 +61,4 @@ it. The fix is `String.raw`.
 **Ref.** `fix/company-scope-class-sweep`, 2026-08-21. Triage table for every
 raw `env.DB` site — including the CLEARED ones and why — is in
 `docs/company-scope-raw-sql-sweep.md`. The instance itself is
-the sibling entry *"A 2990 Sales Order PDF printed Houzs's Zanotti logo"* (PR #2599, which lands first).
+`docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.

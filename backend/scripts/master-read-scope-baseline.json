@@ -81,7 +81,6 @@
     "backend/src/scm/routes/delivery-planning.ts :: PATCH /:type/:id/schedule :: assr_cases",
     "backend/src/scm/routes/dp-orders.ts :: (module scope) :: assr_cases",
     "backend/src/scm/routes/dp-orders.ts :: (module scope) :: projects",
-    "backend/src/scm/routes/mfg-sales-orders.ts :: GET /:docNo :: project_brands",
     "backend/src/scm/routes/reports.ts :: GET /delivery-return-detail-listing :: projects",
     "backend/src/scm/routes/scan-so.ts :: (module scope) :: project_venues",
     "backend/src/scm/routes/venues.ts :: POST / :: project_venues"
