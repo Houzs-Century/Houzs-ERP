@@ -4,7 +4,7 @@
 // Copied VERBATIM from the source flow-queries.ts PI section except for the
 // boundary:
 //   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 //     → /api/scm).
 //   • the dropped `import { supabase }` / `verified-save` machinery — none of the
 //     PI hooks below reference it (they all go through authedFetch).
@@ -143,6 +143,12 @@ export const usePostPurchaseInvoice = () => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', id] });
     },
+    /* The AP commit had no error path until 2026-08-21, while every sibling in
+       this file (cancel, record payment, delete item) had one. Its two call
+       sites pass no per-call `onError`, and the global MutationCache carries
+       only `onSuccess`, so a refused post left the operator believing the
+       liability was booked. */
+    onError: writeFailedAs('Purchase invoice not posted'),
   });
 };
 export const useRecordPiPayment = () => {

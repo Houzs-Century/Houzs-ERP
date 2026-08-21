@@ -114,6 +114,40 @@ runs, not a third to learn.
 
 ---
 
+## 2b. The document number is a SHARED namespace, and the book never forgets
+
+**白话.** 我们送去 AutoCount 的单据号码，账本会永远记住。ERP 这边就算把单据删掉，
+账本还是留着那个号码 —— 所以号码不能重发，一发就被拒绝（`Primary Key Error`）。
+
+Sending a document to AED_HOUZS makes its number exist in a **second namespace
+the ERP cannot see, cannot query, and cannot wipe.** Two consequences that are
+easy to get wrong, and both were got wrong on 2026-08-20:
+
+1. **A number the ERP no longer has may still be taken.** Document numbers used
+   to be minted `max(suffix) + 1` over the rows that still existed for the
+   month, so a wipe that emptied Houzs Century's month reset the series to 001
+   — and the book still held `HC-SO-2608-001/002`, `HC-PO-2608-001`,
+   `HC-PI-2608-001`, `HC-DO-2608-001/002` and `HC-SI-2608-001`. Since migration
+   0316 the counter is `scm.doc_number_counters`, it only goes up, and its HC
+   2608 rows are seeded ABOVE the numbers the book is evidenced to hold. Each
+   row's `seed_source` names its evidence. `docs/doc-number-reissue-coe.md`.
+2. **The outbox is the ERP's only memory of what it sent, so it must survive a
+   wipe.** `scm.autocount_outbox` used to be on `golive-wipe-hc.mjs`'s CLEAR
+   list; wiping it is why the queue could truthfully report "never sent" for
+   numbers the book demonstrably held. It is on KEEP now — a wipe marks HC's
+   `pending` rows `skipped` and deletes none of them. What was sent is a fact
+   about the book, and deleting our copy of it does not make it untrue.
+
+**What is still UNKNOWN, and is not papered over:** our GRN minter writes
+`HC-GRN-…` while the book's goods-receipt number from the 2026-08-17 host
+session is `HC-GR-…` (`ac-live-proof.json` `proof.po_to_gr`). Different strings,
+so as written they cannot collide — but whether the office host maps one onto
+the other has never been established. The counter is seeded past the GRN number
+the ERP is evidenced to have issued, and that row says in words that it is not
+book evidence.
+
+---
+
 ## 3. The table — `scm.autocount_outbox` (migration 0277)
 
 | Column | Meaning |

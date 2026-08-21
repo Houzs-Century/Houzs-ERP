@@ -223,12 +223,28 @@ export const useCreateGrn = () => {
 export const usePostGrn = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/grns/${id}/post`, { method: 'PATCH' }),
-    onSuccess: (_, id) => {
+    mutationFn: (id: string) =>
+      authedFetch<{ grn?: unknown; movementErrors?: string[] }>(`/grns/${id}/post`, { method: 'PATCH' }),
+    onSuccess: (data, id) => {
+      /* IN-BAND FAILURE. `PATCH /grns/:id/post` answers 200 with
+         `{ grn, movementErrors }` (grns.ts:2077): the DOCUMENT posts and the
+         inventory IN is best-effort, so a refused stock write is a success as
+         far as `onError` is concerned. Nothing read this field, and the
+         operator had just confirmed "Inventory will be received into the
+         warehouse". `useCancelGrn` below has read its `cancelErrors` since
+         2026-08-13 for exactly this reason. */
+      reportInBandFailure('GRN posted, but the stock was not received', data);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
+    /* The commit chokepoint for inventory IN had no error path at all until
+       2026-08-21. Three of its four call sites pass no per-call `onError`
+       either, and the global MutationCache carries only `onSuccess` — so a
+       refused post reached nobody. check-silent-mutations could not see it:
+       its verdict is per HOOK, and GrnNew's `await post.mutateAsync(...)`
+       cleared the whole hook on behalf of the call sites that catch nothing. */
+    onError: writeFailedAs('GRN not posted — the stock was NOT received'),
   });
 };
 
