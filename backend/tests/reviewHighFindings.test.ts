@@ -71,7 +71,7 @@ describe("F4 — a P&L bucket and its drill-down must apply the SAME predicate",
     const drill = b.calls.map((x) => predicateOf(x.sql)).find((p) => p.includes("project_finance_lines"));
     expect(drill).toBe(total);
     expect(total).toContain("p.archived_at IS NULL");
-    expect(total).toContain("l.company_id = ?");
+    expect(total).toContain("p.company_id = ?");
   });
 
   test("service cost: drill-down predicate matches the total's, join aside", async () => {
@@ -100,6 +100,33 @@ describe("F4 — a P&L bucket and its drill-down must apply the SAME predicate",
       expect(call.sql).toMatch(/company_id = \?/);
       expect(call.binds).toEqual(["2026-01-01", "2026-02-01", COMPANY]);
     }
+  });
+
+  /* 2026-08-21 report-money audit. The cost arm scoped on
+     `project_finance_lines.company_id` — a DENORMALISED copy of the value the
+     PROJECT owns. Two writers never fill it: `recomputeAutoCostLines`' UPDATE
+     path (it stamps company_id only on INSERT) and the historical FAIR PNL
+     seeds. Measured on production that day: 85 live cost lines carrying NULL,
+     worth RM 1,453,336.94, every one of them on a company-1 project — dropped
+     from this report while `/projects/finance/by-project` and
+     `/projects/analytics/profitability`, which scope on `p.company_id`, counted
+     them. Same money, two reports, RM 1.45M apart.
+     ZERO lines disagreed with their project's company (0 rows), so reading the
+     project is not a widening — it is the same set plus the NULLs it was
+     losing. The join to `projects` is already there for `archived_at`. */
+  test("project cost scopes on the PROJECT's company, not the line's copy of it", async () => {
+    const a = recordingDB();
+    await rawProjectCost({ DB: a.DB } as any, "2026-01-01", "2026-02-01", COMPANY);
+    const total = predicateOf(a.calls[0]!.sql);
+    expect(total).toContain("p.company_id = ?");
+    // A NULL copy on the line must not be able to hide a cost row again.
+    expect(total).not.toContain("l.company_id");
+
+    const b = recordingDB();
+    await bucketDrilldown({ DB: b.DB } as any, "2026-01-01", "2026-02-01", COMPANY);
+    const drill = b.calls.map((x) => predicateOf(x.sql)).find((p) => p.includes("project_finance_lines"));
+    expect(drill).toContain("p.company_id = ?");
+    expect(drill).not.toContain("l.company_id");
   });
 
   test("an unresolved company still omits the filter (single-company degrade)", async () => {
