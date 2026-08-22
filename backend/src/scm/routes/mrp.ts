@@ -88,6 +88,7 @@ import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
+import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
@@ -235,7 +236,8 @@ type PoLineRow = {
 type ProductRow = { code: string; name: string | null; category: string | null };
 type BalanceRow = { item_code: string; warehouse_id: string; variant_key: string | null; qty: number };
 
-type AllocSource = 'stock' | 'po' | 'shortage';
+/* The type is the shared module's — imported above. A local copy is how the
+   three rules that produce it drifted apart in the first place. */
 
 /* Commander 2026-05-29 — bedframe/sofa MRP must follow the variant: two lines
    of the same SKU but a different fabric/colour/divan/leg are DIFFERENT goods
@@ -1109,12 +1111,11 @@ export async function computeMrp(
       }
       qtyNeeded += eff;
 
-      // need>0 → still uncovered (SHORT). need==0 → covered by a pooled PO
-      // (poNumber set) or by stock.
-      const source: AllocSource =
-        need > 0 ? 'shortage'
-        : poNumber != null ? 'po'
-        : 'stock';
+      /* need>0 → still uncovered (SHORT). need==0 → covered by a pooled PO
+         (poNumber set) or by stock. The rule is the shared module, because the
+         frontend synthesises sofa-SET rows itself and its hand-written copy had
+         drifted to two arms — see shared/mrp-alloc-source.ts. */
+      const source: AllocSource = allocSourceOf(need, poNumber);
       const lineDelivery = deliveryOf(r);
       lines.push({
         soItemId: r.id,
@@ -1361,10 +1362,14 @@ export function mrpLineCoverage(result: MrpResult): Map<string, SoLineCoverage> 
   }
   // Sofa SETS aren't in skus[].lines — derive their source from picked vs short.
   for (const s of result.sofaSets) {
-    const source: AllocSource =
-      s.shortageQty > 0 ? (s.poNumber ? 'po' : 'shortage')
-      : s.poNumber ? 'po'
-      : 'stock';
+    /* A NAMED PO WINS HERE, even when the set is still short — and that is not
+       the same rule as the general lines above. This map answers the PURCHASE
+       side's question ("is a PO covering this outstanding SO line", advisory),
+       where a partly-covering PO is the very thing being reported. The two
+       rules used to sit six hundred lines apart in this file with nothing
+       saying they differed on purpose; both now live in
+       shared/mrp-alloc-source.ts with the distinction written down. */
+    const source: AllocSource = allocSourceCoveringPo(s.shortageQty, s.poNumber);
     map.set(s.soItemId, { source, po: s.poNumber, eta: s.poEta });
   }
   return map;

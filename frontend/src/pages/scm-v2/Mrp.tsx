@@ -33,6 +33,7 @@ import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
+import { allocSourceOf } from '../../vendor/shared/mrp-alloc-source';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -304,7 +305,13 @@ function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       customerState: s.customerState,
       soDate: s.soDate, deliveryDate: s.deliveryDate, processingDate: s.processingDate,
       orderByDate: s.orderByDate, qty: s.qty,
-      source: s.shortageQty > 0 ? 'shortage' : 'po', poNumber: s.poNumber, poEta: s.poEta,
+      /* THE SHARED RULE, not a second copy of it. This line used to read
+         `s.shortageQty > 0 ? 'shortage' : 'po'` — two-way where the backend is
+         three-way — so a sofa set with no shortage and no covering PO (i.e.
+         covered by STOCK, already in the warehouse) was labelled `po`, and the
+         chip printed the word "ordered" because it had no number to show.
+         Owner 2026-08-21. See vendor/shared/mrp-alloc-source.ts. */
+      source: allocSourceOf(s.shortageQty, s.poNumber), poNumber: s.poNumber, poEta: s.poEta,
       shortageQty: s.shortageQty,
       /* Commander 2026-05-31 — sofa SETs now carry the covering PO's supplier
          (backend mrp.ts), so a PO-covered sofa line shows it read-only instead
@@ -1460,11 +1467,14 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
       <td className={styles.num}>{ln.qty}</td>
       <td>
         {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
-        {ln.source === 'po' && (
+        {/* `source === 'po'` now GUARANTEES a number — allocSourceOf returns
+            'stock' when there is none — so the old `: 'ordered'` fallback is
+            gone. It was never a state the system computed: it was the word the
+            chip printed when it had been told "po" and could not find a PO, and
+            it is what put "ordered" over sofa sets already in the warehouse. */}
+        {ln.source === 'po' && ln.poNumber && (
           <span className={`${styles.tag} ${styles.tagPo}`}>
-            {ln.poNumber
-              ? `${ln.poNumber}${ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}`
-              : 'ordered'}
+            {ln.poNumber}{ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}
           </span>
         )}
         {short && (
@@ -1546,9 +1556,10 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             <td className={styles.num}>{ln.qty}</td>
             <td>
               {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
-              {ln.source === 'po' && (
+              {/* Same rule as the desktop table above: no number, no chip. */}
+              {ln.source === 'po' && ln.poNumber && (
                 <span className={`${styles.tag} ${styles.tagPo}`}>
-                  {ln.poNumber ? `${ln.poNumber}${ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}` : 'ordered'}
+                  {ln.poNumber}{ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}
                 </span>
               )}
               {short && (
