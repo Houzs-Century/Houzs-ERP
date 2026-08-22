@@ -59,6 +59,33 @@ The two facts that make this module easy to get wrong:
 > /staff/pickable` ALWAYS holds the caller"*. Trace:
 > `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
+### The desktop list has a right-click menu (2026-08-22)
+
+Open · Edit · Print, then **Cancel Delivery Return** alone at the bottom in red.
+Built by `deliveryReturnRowMenu` in `frontend/src/pages/scm-v2/row-menus.ts`, on
+the shared `buildRowMenu`, so its shape is the one every other document list has
+(`document-conversion.md` §8a).
+
+**Cancel was NEW to the list and NOT a new capability.** It sends `CANCELLED`
+through `useUpdateDeliveryReturnStatus` — the same status PATCH this list was
+already using for Inspected, Refunded and Reopen, and the same one the detail
+page's own Cancel calls. Its confirmation repeats the detail page's words
+because the consequence is the same one: creating the return put the goods back
+INTO stock, so cancelling reverses that via a negative ADJUSTMENT (§6).
+
+**There is no Confirm entry, and that is not an omission** — a Delivery Return
+is RECEIVED on create and has no draft step, so there is no "make this real"
+transition for a person to perform.
+
+**Inspected and Refunded stay OFF the menu**, on the row drawer where the
+figures that justify them are on screen. Only Confirm, Hold and Cancel are ever
+offered to a person (`document-status-vocabulary.md` §1b). Hold is not here yet;
+it lands when Hold becomes a flag rather than a status.
+
+**Cancelling is FINAL**, so an already-cancelled row is offered no second
+Cancel — the server refuses to un-cancel (§7), which would otherwise leave the
+cancel's stock drain in place.
+
 There is **no dedicated mobile screen**. The generic `MobileModuleList` /
 `MobileModuleDetail` render it. That is worth knowing before assuming the
 repo-wide "desktop and mobile are one product" rule implies a paired file here —
