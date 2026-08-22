@@ -86,6 +86,10 @@ Three layers as in `docs/modules/sales-order.md` §1. SI specifics:
 
 ---
 
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
+
 ## 2. API surface
 
 `backend/src/scm/routes/sales-invoices.ts`, mounted at `/api/scm/sales-invoices`

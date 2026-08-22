@@ -11,6 +11,9 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { statusFor, type StatusTab } from "./do-list-status";
+import { deliveryOrderRowMenu } from "./row-menus";
+import { doCountsAsInvoiceable } from "../../vendor/shared/do-shipped-states";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -156,8 +159,6 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-// 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
-type StatusTab = "all" | "draft" | "loaded" | "dispatched" | "in_transit" | "delivered" | "invoiced" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -181,37 +182,6 @@ const brandOf = (r: DoRow): string => r.branding || "—";
    arm too. */
 const brandTone = brandingToneForLabel;
 
-// DO lifecycle: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED →
-// INVOICED, plus CANCELLED. ONE BUCKET PER STATUS since 2026-08-21 (页签＝状态);
-// SIGNED folds into `delivered` because the enum keeps the label for ever.
-const STATUS_TONE: Record<
-  string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
-> = {
-  draft:       { tone: "warning", label: "Draft",       bucket: "draft" },
-  loaded:      { tone: "warning", label: "Confirmed",   bucket: "loaded" },
-  // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
-  // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Shipped",     bucket: "dispatched" },
-  in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  // SIGNED: merged into DELIVERED (owner, 2026-08-21). No tab of its own.
-  signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },
-  delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
-  invoiced:    { tone: "success", label: "Invoiced",    bucket: "invoiced" },
-  // Not a do_status member; kept so such a row lands in a tab, not a raw slug.
-  completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
-  cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-  cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-};
-
-const statusFor = (
-  s: string
-): { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab } =>
-  STATUS_TONE[(s || "").toLowerCase()] ?? {
-    tone: "neutral",
-    label: s || "—",
-    bucket: "open",
-  };
 
 // ─── Split-menu dropdown (mirrors SO V2) ───────────────────────────────────
 
@@ -981,6 +951,15 @@ export function MfgDeliveryOrdersListV2() {
     );
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
+  /* The invoiceable predicate is the SHARED one, not a status list typed here:
+     doCountsAsInvoiceable is the system's only definition, and it already
+     carries the owner's 2026-08-20 ruling that a LOADED delivery may be
+     invoiced (「不要拦 —— 人自己知道」). */
+  const doContextMenu = deliveryOrderRowMenu<DoRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToSi: doConvertToSi,
+    canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
+  });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
      never succeed: PATCH /:id/status refuses every transition out of CANCELLED
      with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
@@ -1900,7 +1879,8 @@ export function MfgDeliveryOrdersListV2() {
                     return next;
                   }),
               }}
-              exportName="delivery-orders"
+              contextMenu={doContextMenu}
+            exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

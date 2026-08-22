@@ -4,6 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { grnRowMenu } from "./row-menus";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -697,6 +698,16 @@ export function GoodsReceivedListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedGrns);
 
+  /* POSTED is the only billable state (the billable-GRN read is
+     .eq(status, POSTED)), so a held or cancelled receipt offers no transfer. */
+  const grnContextMenu = grnRowMenu<GrnRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToPi: goConvertToPi, transferToPr: goConvertToPr,
+    post: (r) => doPost(r), cancel: (r) => doCancel(r),
+    canBill: (r) => r.status.toUpperCase() === "POSTED",
+    canPost: (r) => r.status.toUpperCase() === "DRAFT",
+    canCancel: (r) => r.status.toUpperCase() !== "CANCELLED",
+  });
   const doPost = (r: GrnRow) => {
     if (window.confirm(`Post GRN ${r.grn_number}? Inventory will be received into the warehouse.`)) {
       postGrn.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -967,7 +978,8 @@ export function GoodsReceivedListV2() {
                   onToggle: toggleSelect,
                   onToggleAll: toggleSelectAll,
                 }}
-                exportName="grns"
+                contextMenu={grnContextMenu}
+            exportName="grns"
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}

@@ -7,6 +7,7 @@
 // Data: usePurchaseOrders (vendored suppliers-queries slice).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { purchaseOrderRowMenu } from "./row-menus";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -1005,6 +1006,15 @@ export function PurchaseOrdersListV2() {
     }
   };
 
+  /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
+     — SUBMITTED or PARTIALLY_RECEIVED. A held or cancelled PO is excluded by
+     being absent from it, which is why ON_HOLD needed no line here. */
+  const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r),
+    canReceive: (r) => ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
+    canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
+  });
   const doCancel = (r: PoHeaderRow) => {
     if (window.confirm(`Cancel PO ${r.po_number}? This can only be undone if no GRN has been raised.`)) {
       cancelPo.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -1428,7 +1438,8 @@ export function PurchaseOrdersListV2() {
                   onToggle: toggleSelect,
                   onToggleAll: toggleSelectAll,
                 }}
-                exportName="purchase-orders"
+                contextMenu={poContextMenu}
+            exportName="purchase-orders"
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={

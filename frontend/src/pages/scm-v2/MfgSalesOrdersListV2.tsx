@@ -20,6 +20,8 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -172,37 +174,7 @@ type SoRow = {
   deposit_sen?: number;
 };
 
-/* Every status the backend vocabulary carries (mfg-sales-orders.ts
-   SO_STATUSES), in lifecycle order — the strip shows ALL of them with live
-   counts so the buckets always sum to All and no order can look lost inside a
-   hidden status (owner 2026-07-24: "ALL 68 but CONFIRMED 35 — where did they
-   go?"). `other` is the server's catch-all for legacy/unknown spellings and
-   only earns a pill when its count is non-zero. */
-type StatusTab =
-  | "all"
-  | "draft"
-  | "confirmed"
-  | "in_production"
-  | "ready_to_ship"
-  | "shipped"
-  | "delivered"
-  | "invoiced"
-  | "on_hold"
-  | "cancelled"
-  | "other";
 
-const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "draft", label: "Draft" },
-  { value: "confirmed", label: "Confirmed" },
-  { value: "in_production", label: "In Production" },
-  { value: "ready_to_ship", label: "Ready to Ship" },
-  { value: "shipped", label: "Shipped" },
-  { value: "delivered", label: "Delivered" },
-  { value: "invoiced", label: "Invoiced" },
-  { value: "on_hold", label: "On Hold" },
-  { value: "cancelled", label: "Cancelled" },
-];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -227,21 +199,6 @@ const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel
    ../../lib/brandingTone has the whole story. */
 const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
-// Status → tone + label. The upstream `status` string is one of the SO
-// lifecycle values plus a couple of AutoCount-legacy synonyms. Anything not
-// matched falls through as neutral.
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string }> = {
-  draft: { tone: "warning", label: "Draft" },
-  confirmed: { tone: "success", label: "Confirmed" },
-  cancelled: { tone: "error", label: "Cancelled" },
-  cancel: { tone: "error", label: "Cancelled" },
-  invoiced: { tone: "success", label: "Invoiced" },
-  delivered: { tone: "success", label: "Delivered" },
-  completed: { tone: "success", label: "Completed" },
-};
-
-const statusFor = (s: string): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
-  STATUS_TONE[s?.toLowerCase() ?? ""] ?? { tone: "neutral", label: s || "—" };
 
 // ─── Salesperson dropdown / split-menu ──────────────────────────────────────
 
@@ -1200,6 +1157,34 @@ export function MfgSalesOrdersListV2() {
       }
     );
   };
+
+  /* The four statuses the route accepted and no screen ever sent — the owner's
+     own lifecycle, minus the two the machine writes. See row-menus.ts. */
+  const setSoStatus = async (r: SoRow, status: string) => {
+    if (!(await askConfirm({
+      title: `${r.doc_no} → ${status.replace(/_/g, " ").toLowerCase()}?`,
+      body: "This changes the order's status. It does not move stock or create any document.",
+      confirmLabel: "Change status",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status, expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  const doCancelSo = async (r: SoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.doc_no}?`,
+      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
+      confirmLabel: "Cancel Sales Order",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  const soContextMenu = salesOrderRowMenu<SoRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
+    setStatus: setSoStatus, cancel: doCancelSo, canDeliver,
+  });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
@@ -2246,6 +2231,7 @@ export function MfgSalesOrdersListV2() {
               onToggle: toggleSelect,
               onToggleAll: toggleSelectAll,
             }}
+            contextMenu={soContextMenu}
             exportName="sales-orders"
             serverSort
             onSortChange={setSortAndReset}

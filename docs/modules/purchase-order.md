@@ -191,6 +191,10 @@ PO-specific facts:
 
 ---
 
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
+
 ## 2. API surface
 
 All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at

@@ -12,6 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { salesInvoiceRowMenu } from "./row-menus";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
@@ -1027,6 +1028,14 @@ export function SalesInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  /* A cancelled or draft invoice takes no payment — the server refuses both
+     with `not_payable`, and the menu simply does not offer what it would
+     refuse. */
+  const siContextMenu = salesInvoiceRowMenu<SiRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    recordPayment: (r) => goRecordPayment(r),
+    canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
+  });
   const doMarkPaid = (r: SiRow) =>
     updateStatus.mutate(
       { id: r.id, status: "paid" },
@@ -1783,7 +1792,8 @@ export function SalesInvoicesListV2() {
                 onToggle: toggleSelect,
                 onToggleAll: toggleSelectAll,
               }}
-              exportName="sales-invoices"
+              contextMenu={siContextMenu}
+            exportName="sales-invoices"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={
