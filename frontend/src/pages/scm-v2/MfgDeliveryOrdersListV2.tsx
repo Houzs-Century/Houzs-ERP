@@ -11,6 +11,8 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { deliveryOrderRowMenu } from "./row-menus";
+import { doCountsAsInvoiceable } from "../../vendor/shared/do-shipped-states";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -981,6 +983,15 @@ export function MfgDeliveryOrdersListV2() {
     );
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
+  /* The invoiceable predicate is the SHARED one, not a status list typed here:
+     doCountsAsInvoiceable is the system's only definition, and it already
+     carries the owner's 2026-08-20 ruling that a LOADED delivery may be
+     invoiced (「不要拦 —— 人自己知道」). */
+  const doContextMenu = deliveryOrderRowMenu<DoRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToSi: doConvertToSi,
+    canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
+  });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
      never succeed: PATCH /:id/status refuses every transition out of CANCELLED
      with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
@@ -1900,7 +1911,8 @@ export function MfgDeliveryOrdersListV2() {
                     return next;
                   }),
               }}
-              exportName="delivery-orders"
+              contextMenu={doContextMenu}
+            exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

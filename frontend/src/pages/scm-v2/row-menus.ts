@@ -108,10 +108,13 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   edit: (r: R) => void;
   print: (r: R) => void;
   transferToSi: (r: R) => void;
-  cancel: (r: R) => void;
   canInvoice: (r: R) => boolean;
-  canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
+  /* NO CANCEL, and it is a recorded gap rather than a decision. The delivery
+     order list has no cancel handler today — cancelling one lives on the detail
+     page. This menu EXPOSES what the page already does; adding the capability
+     here would put a stock-reversing action behind a right-click without the
+     detail page's confirmation copy. */
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -119,7 +122,6 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
       { label: "Print", onClick: () => h.print(r) },
     ],
     [h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) }],
-    [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
   );
 }
 
@@ -189,10 +191,11 @@ export function salesInvoiceRowMenu<R extends StatusRow>(h: {
   edit: (r: R) => void;
   print: (r: R) => void;
   recordPayment: (r: R) => void;
-  cancel: (r: R) => void;
   canPay: (r: R) => boolean;
-  canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
+  /* NO CANCEL here either, same reason as the delivery order: the list has no
+     cancel handler, and cancelling an issued invoice REVERSES revenue and AR.
+     That belongs on the detail page with its own words around it. */
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -200,6 +203,5 @@ export function salesInvoiceRowMenu<R extends StatusRow>(h: {
       { label: "Print", onClick: () => h.print(r) },
     ],
     [h.canPay(r) && { label: "Record payment", onClick: () => h.recordPayment(r) }],
-    [h.canCancel(r) && dangerItem("Cancel Sales Invoice", () => h.cancel(r))],
   );
 }
