@@ -1,0 +1,58 @@
+name: Hold and shipped rows check (read-only)
+
+# How many documents sit on ON_HOLD, and can the status they held BEFORE the
+# hold be recovered?
+#
+# The owner, 2026-08-22: 「我们的hold是给我们知道一个 order hold这的」 — a hold is
+# a MARKER meaning this document is paused, not a step in its life. Today it is
+# written into the `status` column, so holding an IN_PRODUCTION order overwrites
+# the progress and `Take Off Hold` sends everything back to CONFIRMED
+# (row-menus.ts:92). The fix makes the hold a FLAG beside the status.
+#
+# That fix needs a backfill, and the backfill needs two facts that exist only in
+# production: how many rows are held right now, and whether the audit log still
+# holds the status each one left. If the count is zero the migration moves no
+# row at all, which is the difference between a careful change and a risky one.
+#
+# It also counts Sales Orders on SHIPPED, which the owner asked to merge into
+# DELIVERED the same day.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only — it is a
+# question, not a gate. Own concurrency group so a diagnostic can never queue
+# behind or displace a release. Exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: hold-and-shipped-rows-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Count held documents and check the pre-hold status is recoverable
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/check-hold-and-shipped-rows.mjs

@@ -1124,6 +1124,16 @@
       "check": "D1",
       "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/pages/team/TeamRolesV2.tsx",
       "why": "THE POSITION 4-LEVEL ACCESS VOCABULARY on both sides of the wire. The backend home is POSITION_ACCESS_LEVELS (pageAccess.ts) and every stored value is validated against it; the matrix screen cannot import server code, so its click-cycle order restates the same four levels. The wire contract (PUT /api/position-capabilities/:id/pages rejects anything else) is the referee, pinned by backend/tests/positionPageOverrides.test.ts."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "THE SALES ORDER TAB VOCABULARY VERSUS ITS TRANSITION VOCABULARY, differing by SHIPPED. Two different questions, not one rule with two homes. SO_STATUSES answers 'may a row be moved to this status' and SHIPPED is still legal and still WRITTEN by so-delivery-sync when a delivery order is raised. SO_STATUS_BUCKETS answers 'which tab shows this row', and SHIPPED has no tab of its own because the owner folded it into Delivered on 2026-08-22. A status that is written but has no tab of its own is exactly what folding IS; making the two sets equal would either delete a status the system still writes or re-add a tab he removed."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP",
+      "why": "THE SALES ORDER LABEL MAP VERSUS ITS TAB BUCKETS, differing by CLOSED and SHIPPED. The label map must be able to name EVERY enum label for ever, including retired ones: Postgres cannot DROP VALUE, so a legacy row carrying CLOSED or SHIPPED still has to render a word rather than a raw enum key. The buckets list only what has a tab TODAY. Retiring a status removes its tab, never its label — that asymmetry is deliberate and is what keeps a retired row readable."
     }
   ]
 }
