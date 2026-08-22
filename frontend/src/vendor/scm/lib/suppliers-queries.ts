@@ -126,7 +126,16 @@ export type BindingRow = {
   updated_at: string;
 };
 
-export type PoHeaderRow = {
+/** Migration 0324 — every PO row carries the HOLD MARKER, because the list
+ *  renders it BESIDE the status pill rather than instead of it. */
+export type PoHoldFields = {
+  on_hold?: boolean | null;
+  hold_reason?: string | null;
+  held_at?: string | null;
+  held_by?: string | null;
+};
+
+export type PoHeaderRow = PoHoldFields & {
   id: string;
   po_number: string;
   supplier_id: string;

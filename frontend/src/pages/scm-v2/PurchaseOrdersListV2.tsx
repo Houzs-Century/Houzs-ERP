@@ -71,6 +71,8 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { useHoldAction } from "./use-hold-action";
+import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -334,7 +336,7 @@ function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeader
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.po_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {supplier}
@@ -769,6 +771,7 @@ export function PurchaseOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPo = useCancelPurchaseOrder();
+  const holdAction = useHoldAction("po");
 
   // Server already filtered + sorted this page — render verbatim. The MRP-derived
   // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
@@ -1007,12 +1010,21 @@ export function PurchaseOrdersListV2() {
   };
 
   /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
-     — SUBMITTED or PARTIALLY_RECEIVED. A held or cancelled PO is excluded by
-     being absent from it, which is why ON_HOLD needed no line here. */
+     — SUBMITTED or PARTIALLY_RECEIVED.
+
+     THE HOLD USED TO RIDE ALONG FOR FREE AND NO LONGER DOES. This comment said
+     "a held or cancelled PO is excluded by being absent from it, which is why
+     ON_HOLD needed no line here", and that was true only while a hold OVERWROTE
+     the status. Since mig 0324 a held PO still reads SUBMITTED, so `rowIsHeld`
+     is checked explicitly — on the server too (grns.ts `isReceivablePo`), which
+     is the half that actually protects the stock. */
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
+     The prompt wording and the write live in ./use-hold-action.ts. */
+  const setPoHold = (r: PoHeaderRow, onHold: boolean) => holdAction(r.id, r.po_number, onHold);
   const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
-    transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r),
-    canReceive: (r) => ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
+    transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
+    canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
   });
   const doCancel = (r: PoHeaderRow) => {
@@ -1198,7 +1210,8 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {

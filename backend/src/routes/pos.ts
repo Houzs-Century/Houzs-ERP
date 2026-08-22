@@ -319,7 +319,10 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   // side instead: GET /mfg-sales-orders/mine now returns drafts too, so the
   // board lists the same 28 orders this card counts. Change the two together or
   // they drift apart again.
-  const conds = ["status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
+  /* `NOT on_hold` since mig 0324. The hold is a MARKER beside the status, so
+     the status test alone stopped being able to see one. Raw SQL rather than a
+     PostgREST predicate here because this whole card is one aggregate query. */
+  const conds = ["NOT on_hold", "status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
   const binds: unknown[] = [monthStart];
   if (toYmd) { conds.push("so_date <= ?"); binds.push(toYmd); }
   if (companyId != null) { conds.push("company_id = ?"); binds.push(Number(companyId)); }

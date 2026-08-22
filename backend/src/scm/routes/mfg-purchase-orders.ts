@@ -18,6 +18,9 @@
 
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
+import { mountHoldRoute } from './document-hold-routes';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
@@ -334,45 +337,10 @@ const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'REC
    than replacing them, so the counts across the pills no longer add up to
    `all`; that's the point of a roll-up and why it sits right after All. */
 
-/* ── PO/MRP source-SO gate (mirror of the DO create-gate) ────────────────────
-   Owner ruling: PO and MRP are built ONLY from a CONFIRMED Sales Order. A PO
-   line sourced from an SO is allowed only when that SO's status is NOT in the
-   deny-list below (i.e. CONFIRMED or beyond). New SOs are CONFIRMED on insert
-   (only asDraft lands DRAFT), so the normal flow is unaffected. A purely manual
-   PO line (no SO link) skips this entirely — a PO can be raised with no SO.
-   Deny-list (not allow-list) so any legitimate forward status stays orderable.
-   This is the SAME threshold the DO side uses (SO_UNDELIVERABLE_STATUSES in
-   delivery-orders-mfg.ts) — ON_HOLD is blocked: a paused order should not be
-   ordered until it is taken off hold. */
-const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']);
-async function firstUnorderableSo(
-  sb: any,
-  soDocNos: Array<string | null | undefined>,
-): Promise<{ docNo: string; status: string } | null> {
-  const docNos = [...new Set(soDocNos.filter((d): d is string => !!d))];
-  if (docNos.length === 0) return null;
-  const { data } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', docNos);
-  for (const r of (data ?? []) as Array<{ doc_no: string; status: string | null }>) {
-    const st = (r.status ?? '').toUpperCase();
-    // A row with no readable status falls through (never over-block); an unknown
-    // doc_no simply isn't returned here (FK rejects it downstream anyway).
-    if (SO_UNORDERABLE_STATUSES.has(st)) return { docNo: r.doc_no, status: st };
-  }
-  return null;
-}
-function soNotOrderableResponse(offender: { docNo: string; status: string }) {
-  const label =
-    offender.status === 'DRAFT' ? 'is not confirmed yet'
-    : offender.status === 'CANCELLED' ? 'has been cancelled'
-    : offender.status === 'ON_HOLD' ? 'is on hold'
-    : `is ${offender.status.toLowerCase()}`;
-  return {
-    error: 'so_not_orderable',
-    message: `This sales order (${offender.docNo}) ${label} — a purchase order can only be raised from a confirmed order.`,
-    soDocNo: offender.docNo,
-    soStatus: offender.status,
-  };
-}
+/* THE SO-MUST-BE-ORDERABLE GATE MOVED to lib/source-document-gates.ts on
+   2026-08-22 (mig 0324), beside the SO -> DO and PO -> GRN gates that ask the
+   same question of the same row. All three had to learn to read the hold
+   MARKER. Behaviour unchanged; that module's header has the trace. */
 
 const HEADER_COLS =
   'id, po_number, supplier_id, status, po_date, expected_at, currency, ' +
@@ -387,7 +355,9 @@ const HEADER_COLS =
   /* Migration 0180 — supplier-revised delivery dates (header). The EFFECTIVE
      delivery date readers use = MAX over non-null of [expected_at, _2, _3, _4]
      (effectiveDelivery). expected_at keeps meaning the original earliest date. */
-  'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
+  'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
+  /* Mig 0324 — the HOLD MARKER, rendered BESIDE the status pill. */
+  HOLD_COLUMNS;
 
 const ITEM_COLS =
   'id, purchase_order_id, binding_id, material_kind, item_code, material_name, ' +
@@ -481,8 +451,12 @@ mfgPurchaseOrders.get('/', async (c) => {
     if (sortCol !== 'po_number') q = q.order('po_number', { ascending: sortAsc });
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise a raw DB status (VALID_STATUSES guard). */
+    /* The `on_hold` tab reads the MARKER (mig 0324). A held order appears under
+       BOTH its real status and On Hold — the point of a marker — so the counts
+       do not sum to `all`, exactly as `outstanding` already does not. */
     if (status && status !== 'all') {
-      if (PO_STATUS_BUCKETS[status]) q = q.in('status', PO_STATUS_BUCKETS[status]);
+      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      else if (PO_STATUS_BUCKETS[status]) q = q.in('status', PO_STATUS_BUCKETS[status]);
       else if (VALID_STATUSES.has(status)) q = q.eq('status', status);
     }
     if (supplierId) q = q.eq('supplier_id', supplierId);
@@ -519,7 +493,7 @@ mfgPurchaseOrders.get('/', async (c) => {
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
       countBase().in('status', PO_STATUS_BUCKETS.cancelled),
-      countBase().in('status', PO_STATUS_BUCKETS.on_hold),
+      countBase().or(HELD_OR_TERM),
     ]));
     const res = await q;
     data = res.data;
@@ -611,7 +585,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
       .select(`
       id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_sen,
       variants, line_suffix, cancelled, line_delivery_date,
-      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, processing_date, sales_location )
+      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, on_hold, so_date, customer_delivery_date, processing_date, sales_location )
     `),
     c,
   )
@@ -627,6 +601,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     line_delivery_date: string | null;
     so: {
       doc_no: string; debtor_name: string | null; branding: string | null; status: string;
+      on_hold: boolean | null;
       so_date: string; customer_delivery_date: string | null;
       processing_date: string | null; sales_location: string | null;
     };
@@ -679,7 +654,8 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   }
 
   const outstanding = ((items ?? []) as unknown as Row[])
-    .filter((r) => r.so.status !== 'CANCELLED' && r.so.status !== 'DRAFT' && r.so.status !== 'ON_HOLD')
+    .filter((r) => !isDocumentHeld(r.so)
+      && r.so.status !== 'CANCELLED' && r.so.status !== 'DRAFT' && r.so.status !== 'ON_HOLD')
     .filter((r) => (pooledOk ? (shortageBySoItem.get(r.id) ?? 0) > 0 : r.qty - r.po_qty_picked > 0))
     .map((r) => {
       const remaining = pooledOk ? (shortageBySoItem.get(r.id) ?? 0) : (r.qty - r.po_qty_picked);
@@ -4424,6 +4400,9 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
 };
 mfgPurchaseOrders.patch('/:id/cancel', cancelPurchaseOrderHandler);
+
+/* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
+mountHoldRoute(mfgPurchaseOrders, 'po');
 
 /* Reopen — the inverse of cancel (Commander 2026-06-16: "PO cancel 了,不可以
    uncancel 回来吗?"). Only a CANCELLED PO can be reopened; it returns to

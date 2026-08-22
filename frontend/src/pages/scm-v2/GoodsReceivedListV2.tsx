@@ -62,8 +62,10 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { useHoldAction } from "./use-hold-action";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
-type GrnRow = {
+type GrnRow = HoldFields & {
   id: string;
   grn_number: string;
   status: string;
@@ -211,7 +213,7 @@ function CardsGrid({ rows, onOpen }: { rows: GrnRow[]; onOpen: (r: GrnRow) => vo
           >
             <div className="flex items-center justify-between gap-2">
               <span className="font-docno text-[12.5px] font-semibold text-ink">{r.grn_number}</span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">{supplierNameOf(r)}</div>
             {/* Owner 2026-07-23: supplier code on its own line. */}
@@ -541,6 +543,7 @@ export function GoodsReceivedListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const postGrn = usePostGrn();
   const cancelGrn = useCancelGrn();
+  const holdAction = useHoldAction("grn");
 
   // Server already filtered + sorted this page — render verbatim. The MRP-derived
   // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
@@ -699,12 +702,20 @@ export function GoodsReceivedListV2() {
   const batchPrint = usePrintPreview(deliverSelectedGrns);
 
   /* POSTED is the only billable state (the billable-GRN read is
-     .eq(status, POSTED)), so a held or cancelled receipt offers no transfer. */
+     .eq(status, POSTED)).
+
+     THE HOLD USED TO RIDE ALONG FOR FREE AND NO LONGER DOES. Since mig 0324 a
+     held GRN still reads POSTED, so the marker is checked explicitly — and on
+     the server too (purchase-invoices.ts), which is the half that decides
+     whether a supplier actually gets billed. */
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
+     The prompt wording and the write live in ./use-hold-action.ts. */
+  const setGrnHold = (r: GrnRow, onHold: boolean) => holdAction(r.id, r.grn_number, onHold);
   const grnContextMenu = grnRowMenu<GrnRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToPi: goConvertToPi, transferToPr: goConvertToPr,
-    post: (r) => doPost(r), cancel: (r) => doCancel(r),
-    canBill: (r) => r.status.toUpperCase() === "POSTED",
+    post: (r) => doPost(r), cancel: (r) => doCancel(r), setHold: setGrnHold,
+    canBill: (r) => !rowIsHeld(r) && r.status.toUpperCase() === "POSTED",
     canPost: (r) => r.status.toUpperCase() === "DRAFT",
     canCancel: (r) => r.status.toUpperCase() !== "CANCELLED",
   });
@@ -829,7 +840,8 @@ export function GoodsReceivedListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {

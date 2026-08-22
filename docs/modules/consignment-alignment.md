@@ -173,7 +173,7 @@ Hold 和 Cancel」时用的是「所有的 Transaction Workflow」，所以这�
 | `SIGNED` | 客人签收了 | 收 | **没有**（`signed_at` 栏位在，没人写） | 事实是签收证据（POD）。CN 的列印**刻意不放**那个扫码 QR，怕改到真正的交货单状态（PROVEN：`docs/modules/delivery-order.md` 的 loading QR 段） |
 | `DELIVERED` | 送到了 | 收 | **没有** | DO 那边靠 POD（签收证据）。CN 没有 POD 入口 |
 | `INVOICED` | 开发票了 | 收 | **没有** | **没有这个事实** —— consignment 没有发票 |
-| `ON_HOLD` | 暂停 | **收不收：不确定。`do_status` 这个 enum 里目前没有 `ON_HOLD`** | 没有 | — |
+| `ON_HOLD` | 暂停 | **不收，也不需要收 —— Hold 自 mig `0324` 起是 `on_hold` 这个栏位，不是状态** | 交货单已经有了（mig `0324`），CN 还没有 | 加同样四个栏位即可，不用动 enum |
 | `CANCELLED` | 作废（**会把库存退回来**） | 收 | **有** | — |
 
 **这里有一个 CN 特有、而且是真的业务差异：CN 没有「确认」这一格。**
@@ -182,11 +182,22 @@ CN 是**一开单就 `DISPATCHED`**，程式注解写得很直白：寄卖的货
 所以「CN 要不要补一个 LOADED 的确认步骤」是一个业务问题，不是改个字的问题 ——
 补了就等于改变「什么时候扣库存」。→ §5。
 
-**`ON_HOLD` 在这里是真的要动资料库。** `mfg_so_status` 本来就有 `ON_HOLD`，
-`do_status` 没有 —— 而且**交货单自己也没有**。老板要「每个 Status 都应该有 On Hold」
-的话，DO 和 CN 会一起需要一支新的 migration 去加这个值。（PROVEN：加 `ON_HOLD`
-的三支 migration 是 `0318`（PO）、`0319`（GRN）、`0320`（Purchase Invoice）；
-`do_status` 不在里面。）
+> **这一段已经作废（2026-08-22，mig `0324`）。** 原文是：「`ON_HOLD` 在这里是真的
+> 要动资料库 …… DO 和 CN 会一起需要一支新的 migration 去加这个值。」
+>
+> **不用了，而且反过来才是对的。** Hold 已经从「状态」变成「状态旁边的记号」——
+> 五张单据各加四个栏位（`on_hold` / `hold_reason` / `held_at` / `held_by`），
+> `status` 完全不动。交货单就是这样拿到它的第一个 Hold 的，**`do_status` 一个字
+> 都没有改**。所以 CN 要 Hold 也一样不用碰 enum：加同样四个栏位就好。
+>
+> 这件事顺便回答了这份文件后面反复出现的那个成本问题 —— 「加一个状态要付一次永远
+> 收不回的资料库改动」。**Hold 不用付了。** Cancel 还是要（那是真的状态）。
+> 详见 `docs/modules/document-status-vocabulary.md` 那一节，和
+> `docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`。
+
+**`ON_HOLD` 这个 enum 值在 `do_status` 里确实没有，而且不需要有。**（PROVEN：加
+`ON_HOLD` 的三支 migration 是 `0318`（PO）、`0319`（GRN）、`0320`（Purchase
+Invoice）；`do_status` 不在里面 —— 现在也不会进去。）
 
 ### 2.3 另外四组，简表
 

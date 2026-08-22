@@ -2,6 +2,7 @@
 
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
+import { HELD_OR_TERM, HOLD_COLUMNS } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -63,7 +64,7 @@ purchaseInvoices.use('*', supabaseAuth);
 /* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at';
+  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // HOLD_COLUMNS = mig 0324's marker, BESIDE the status pill
 const ITEM =
   'id, purchase_invoice_id, grn_item_id, material_kind, item_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
@@ -364,7 +365,7 @@ purchaseInvoices.get('/', async (c) => {
      'all'/empty → no filter; otherwise treat it as a raw DB status. */
   const status = c.req.query('status');
   if (status && status !== 'all') {
-    if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
+    if (status === 'on_hold') q = q.or(HELD_OR_TERM); /* the MARKER (mig 0324) */ else if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
     else q = q.eq('status', status);
   }
   q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -394,7 +395,7 @@ purchaseInvoices.get('/', async (c) => {
     countBase().in('status', PI_STATUS_BUCKETS.partial),
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
-    countBase().in('status', PI_STATUS_BUCKETS.on_hold),
+    countBase().or(HELD_OR_TERM),
   ]);
   // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
   const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
@@ -431,7 +432,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
     `),
     c,
   )
-    .eq('status', 'POSTED')
+    .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN now reads POSTED — the block stopped being free
     .order('received_at', { ascending: false })
     .limit(500);
   if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
@@ -1388,6 +1389,7 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
 
+mountHoldRoute(purchaseInvoices, 'pi'); // the mig-0324 MARKER, never `status`
 /* ── POST /from-grn-items ───────────────────────────────────────────────
    Body: { picks: [{ grnItemId, qty }], supplierInvoiceNumber?, invoiceDate?,
            notes? }.
@@ -1438,7 +1440,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
       special_order_price_sen, discount_sen,
-      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock, company_id )
+      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, on_hold, currency, exchange_rate, migrated_no_stock, company_id )
     `)
     .in('id', ids), c);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
@@ -1482,9 +1484,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     if (p.qty > remaining) {
       return c.json({ error: 'qty_exceeds_remaining', grnItemId: p.grnItemId, requested: p.qty, remaining }, 409);
     }
-    if (row.grn.status !== 'POSTED') {
-      return c.json({ error: 'grn_not_posted', grnItemId: p.grnItemId, status: row.grn.status }, 409);
-    }
+    { const nb = grnNotBillableRefusal(row.grn, { grnItemId: p.grnItemId }); if (nb) return c.json(nb, 409); }
   }
 
   /* Group picks by SUPPLIER + currency + FX rate (owner 2026-08-06). One
@@ -1710,12 +1710,12 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      out at `grn_not_found`. THE COST is the message, because naming the other
      company needs an UNSCOPED read this handler otherwise never makes. */
   const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
-    .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock, company_id')
+    .select('id, grn_number, supplier_id, purchase_order_id, status, on_hold, currency, exchange_rate, migrated_no_stock, company_id')
     .eq('id', grnId), c).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
-  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
-  if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
+  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; on_hold?: boolean | null; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
+  { const nb = grnNotBillableRefusal(g); if (nb) return c.json(nb, 409); }
   /* A receipt carried over from AutoCount is invoiced by the migrated-invoice
      converter, never here. Three things go wrong if this path takes it: the
      invoice would be numbered PI-YYMM-NNNN instead of HC-<AutoCount's number>

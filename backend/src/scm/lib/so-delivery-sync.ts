@@ -56,6 +56,20 @@ export function isSoFullyCovered(
 
 // SO statuses we may auto-advance to DELIVERED. Anything already at
 // INVOICED/CLOSED is done; ON_HOLD/CANCELLED must NOT be auto-flipped.
+//
+// NO `on_hold` TERM HERE, AND THAT IS DELIBERATE (mig 0324). Every guard that
+// asks "may somebody ACT on this document" gained one; this is not that kind of
+// site. This is a WRITER that re-derives a status from a fact — the goods were
+// delivered — and the reason ON_HOLD was excluded was that the auto-flip would
+// have OVERWRITTEN a hold a person had set. Since the hold moved into its own
+// column, writing `status` cannot touch it, so a held order whose delivery
+// completes should read DELIVERED and carry its Hold chip: both facts, at once,
+// which is precisely what a status-hold made impossible.
+//
+// `ON_HOLD` stays in neither list and out of DELIVERABLE_FROM for a different
+// reason that still holds: a LEGACY row sitting on that label keeps its hold in
+// the status column and nowhere else, so auto-flipping it would destroy the
+// hold. Same reasoning as recomputePoReceived in routes/grns.ts.
 const DELIVERABLE_FROM = ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED'];
 
 // Bug #4 — the status we RELEASE a DELIVERED SO back to when its DO is cancelled
