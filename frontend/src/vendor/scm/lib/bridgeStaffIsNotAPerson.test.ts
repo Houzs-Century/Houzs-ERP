@@ -27,7 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { stripComments } from "../../../auth/sourceScan.testutil";
@@ -37,7 +37,12 @@ const feSrc = (rel: string) =>
   stripComments(readFileSync(resolve(HERE, "..", "..", "..", rel), "utf8"));
 
 /* Every page that takes `staff` off the bridge. Adding one here is cheap;
-   forgetting to is how the two defects above shipped. */
+   forgetting to is how the two defects above shipped. The list is reproducible:
+
+     git grep -ln "staff: currentStaff } = useAuth()" -- frontend/src
+
+   and it is asserted below, so a new consumer fails this file rather than
+   quietly inheriting the null-shaped staff object unguarded. */
 const BRIDGE_CONSUMERS = [
   "pages/scm-v2/ConsignmentOrderNew.tsx",
   "pages/scm-v2/SalesOrderNew.tsx",
@@ -69,6 +74,27 @@ describe("the bridge names nobody", () => {
 });
 
 describe("no page renders a person out of the bridge", () => {
+  /* The list above must BE the population, not a subset somebody remembered.
+     Scanned from the tree rather than trusted, so a new consumer is a red test
+     and not an unguarded page. */
+  test("BRIDGE_CONSUMERS is every page that takes staff off the bridge", () => {
+    const roots = ["pages/scm-v2", "mobile", "pages", "components", "vendor/scm/components"];
+    const seen = new Set<string>();
+    const walk = (relDir: string) => {
+      let entries: string[];
+      try { entries = readdirSync(resolve(HERE, "..", "..", "..", relDir)); } catch { return; }
+      for (const e of entries) {
+        const rel = `${relDir}/${e}`;
+        const abs = resolve(HERE, "..", "..", "..", rel);
+        if (statSync(abs).isDirectory()) { walk(rel); continue; }
+        if (!/\.tsx?$/.test(e) || /\.test\./.test(e)) continue;
+        if (/staff: currentStaff\s*\}\s*=\s*useAuth\(\)/.test(readFileSync(abs, "utf8"))) seen.add(rel);
+      }
+    };
+    for (const r of roots) walk(r);
+    expect([...seen].sort()).toEqual([...BRIDGE_CONSUMERS].sort());
+  });
+
   /* The exact shape that produced "null (null)": a template literal built from
      the bridge staff's name and code. Asserting on the MATCH, not the file, so
      a failure prints the offending snippet instead of a 2,000-line component. */
