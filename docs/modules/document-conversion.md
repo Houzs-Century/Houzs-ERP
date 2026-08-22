@@ -465,18 +465,26 @@ the other five that day: 「为什么我的 Purchase Invoice 是没有的呢？�
 Cancel，或者在 Draft 那边右键 Confirm 之类的。」 and 「只要有 Cancel /
 On Hold 状态的，全部都可以右键 Cancel 或 On Hold。」
 
-| list | transfer | status | cancel |
-|---|---|---|---|
-| Sales Order | Delivery Order | Confirm · On Hold · Take Off Hold · Reopen | yes |
-| Delivery Order | Sales Invoice · Delivery Return | Confirm (DRAFT only) | yes |
-| Purchase Order | Goods Received | — | yes |
-| GRN | Purchase Invoice · Purchase Return | Confirm (post) | yes |
-| Sales Invoice | — (SO → SI does not exist, §4a) | Record payment | **none** |
-| Purchase Invoice | — (end of the purchase chain) | Confirm (draft only) | yes |
-| Purchase Return | — | Confirm (draft only) | yes |
-| Delivery Return | — | **none** — no draft step to confirm | yes |
-| Stock Transfer | — | **none** — posted on create | yes (posted only) |
-| Stock Take | — | **none** — see below | yes (open only) |
+| list | open / edit / print | transfer | status | cancel |
+|---|---|---|---|---|
+| Sales Order | Open · Edit · Print | Delivery Order | Confirm · On Hold · Take Off Hold · Reopen | yes |
+| Delivery Order | Open · Edit · Print | Sales Invoice · Delivery Return | Confirm (DRAFT only) | yes |
+| Purchase Order | Open · Edit · Print | Goods Received | — | yes |
+| GRN | Open · Edit · Print | Purchase Invoice · Purchase Return | Confirm (post) | yes |
+| Sales Invoice | Open · Edit · Print | — (SO → SI does not exist, §4a) | Record payment | **none** |
+| Purchase Invoice | Open · Edit · Print | — (end of the purchase chain) | Confirm (draft only) | yes |
+| Purchase Return | Open · Edit · Print | — | Confirm (draft only) | yes |
+| Delivery Return | Open · Edit · Print | — | **none** — no draft step to confirm | yes |
+| Stock Transfer | Open · **Print** — no Edit | — | **none** — posted on create | yes (posted only) |
+| Stock Take | Open · **Print** — no Edit | — | **none** — see below | yes (open only) |
+
+**Every document in the system can be printed, since 2026-08-22.** (Two owner
+quotes were cited here and have been removed — neither is in any message he sent
+in the session that produced the change; see `docs/modules/stock-take.md` §7.)
+The Stock Transfer and the Stock Take were the last two that could not — see the paragraph below for what changed. The invariant is held by
+a test rather than by this table: *"every list offers Print, on every status
+that document has"* in
+`frontend/src/pages/scm-v2/row-menus-remaining-lists.test.ts`.
 
 **The bottom five have no transfer row because there is nothing to transfer
 to.** `CONVERT_LINKS` holds six pairs (§4a) and not one of them starts at a
@@ -503,11 +511,40 @@ written no movement, so cancelling one moves no stock. The server draws the same
 line — `/stock-takes/:id/cancel` accepts OPEN only, and undoing a POSTED take is
 `/reverse`, a different route with its own words.
 
-**The Stock Transfer and the Stock Take get Open and Cancel only.** No Edit and
-no Print, because there is nothing to call: `StockTransferDetail.tsx` is
-read-only ("no edits post-0078") and neither document has ever had a print
-handler on either surface. An entry pointing at a route that does not exist is
-worse than a shorter menu.
+**The Stock Transfer and the Stock Take get Open, Print and Cancel — no Edit.**
+
+> **CORRECTED 2026-08-22.** This paragraph read: *"No Edit and no Print, because
+> there is nothing to call: `StockTransferDetail.tsx` is read-only ('no edits
+> post-0078') and neither document has ever had a print handler on either
+> surface."* The Edit half stands. The Print half was TRUE and was the gap, not
+> the reason — these were the only two documents in the system that could not be
+> printed at all, and the owner asked for it the same day.
+
+The two generators are `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` and
+`frontend/src/vendor/scm/lib/stock-take-pdf.ts`, built on the same
+`pdf-common.ts` letterhead / table / footer every other document uses. Both open
+`PrintPreviewModal` — never a straight download, and never `window.print()`,
+which prints a blank sheet because `index.css`'s `@media print` block hides
+`body *`.
+
+**The menu entry navigates; it does not render.** `Print` goes to the detail
+page with `?print=1`, which `useOpenPrintPreviewFromUrl` consumes — the same
+contract the other eight lists' Print entries use. It could not work any other
+way here: a Stock Transfer row carries the warehouse pair and a line COUNT, and
+a Stock Take row a variance TOTAL. Neither carries the lines the sheet is made
+of.
+
+**Neither sheet states a value, and that is enforced.** Neither route carries
+money of any kind — no unit price, no line total, no header total. So the Stock
+Transfer's only total is **TOTAL QTY** and the Stock Take's is **NET VARIANCE**,
+and `frontend/src/vendor/scm/lib/stock-movement-pdf.test.ts` asserts that
+nothing drawn on either document reads as an RM figure.
+
+**A BLIND stock take prints as a count sheet.** While a blind take is OPEN the
+server strips `system_qty` and `variance` from the payload for anyone without
+`scm.stock_take.supervise`, so the generator has nothing to leak: it drops both
+columns and says why, rather than printing a rail of dashes that would read as
+"no variance". No client-side flag decides this — the absent field does.
 
 **Three of the five already HELD the cancel and could not reach it.** The Stock
 Transfer and Stock Take lists each carried a `doCancel` — confirmation copy and
