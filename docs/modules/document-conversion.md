@@ -458,6 +458,12 @@ row that does not qualify never renders a stray separator.
 
 ### What each list offers, and what it deliberately does not
 
+**All ten document lists carry a menu since 2026-08-22.** The owner asked for
+the other five that day: 「为什么我的 Purchase Invoice 是没有的呢？」,
+「By right 每一个 Transaction Record 应该都可以右键（Right click）Move to
+Cancel，或者在 Draft 那边右键 Confirm 之类的。」 and 「只要有 Cancel /
+On Hold 状态的，全部都可以右键 Cancel 或 On Hold。」
+
 | list | transfer | status | cancel |
 |---|---|---|---|
 | Sales Order | Delivery Order | Confirm · In Production · Shipped · Invoiced · On Hold · Reopen | yes |
@@ -465,6 +471,59 @@ row that does not qualify never renders a stray separator.
 | Purchase Order | Goods Received | — | yes |
 | GRN | Purchase Invoice · Purchase Return | Confirm (post) | yes |
 | Sales Invoice | — (SO → SI does not exist, §4a) | Record payment | **none** |
+| Purchase Invoice | — (end of the purchase chain) | Confirm (draft only) | yes |
+| Purchase Return | — | Confirm (draft only) | yes |
+| Delivery Return | — | **none** — no draft step to confirm | yes |
+| Stock Transfer | — | **none** — posted on create | yes (posted only) |
+| Stock Take | — | **none** — see below | yes (open only) |
+
+**The bottom five have no transfer row because there is nothing to transfer
+to.** `CONVERT_LINKS` holds six pairs (§4a) and not one of them starts at a
+Purchase Invoice, a Purchase Return, a Delivery Return, a Stock Transfer or a
+Stock Take — these are the documents at the END of their chains.
+`buildRowMenu` drops the empty group, so no stray separator renders.
+
+**Only Confirm and Cancel are offered to a person on the bottom five.** A status
+the SYSTEM decides is never in a menu, and neither is one that needs a figure
+the row does not carry. So the Delivery Return's Inspected and Refunded, the
+Purchase Return's Complete and the Purchase Invoice's Mark paid all stay on the
+row drawer, beside the numbers that justify them. Same judgement the Sales
+Order's block already records for READY_TO_SHIP and DELIVERED. Read
+`document-status-vocabulary.md` for which stored word each document uses for
+its confirm step — five different ones, all shown as **Confirmed**.
+
+**The Stock Take gets no Confirm, and that one is a judgement rather than an
+absence.** Posting a take writes an ADJUSTMENT movement per non-zero-variance
+line, and `StockTakeDetail.tsx`'s confirmation shows the operator exactly what
+he is about to book — counted, untouched, variance lines, net variance — before
+he agrees. A list row carries none of those numbers, so posting stays on the
+detail page. Cancel IS offered because it does the opposite: an OPEN take has
+written no movement, so cancelling one moves no stock. The server draws the same
+line — `/stock-takes/:id/cancel` accepts OPEN only, and undoing a POSTED take is
+`/reverse`, a different route with its own words.
+
+**The Stock Transfer and the Stock Take get Open and Cancel only.** No Edit and
+no Print, because there is nothing to call: `StockTransferDetail.tsx` is
+read-only ("no edits post-0078") and neither document has ever had a print
+handler on either surface. An entry pointing at a route that does not exist is
+worse than a shorter menu.
+
+**Three of the five already HELD the cancel and could not reach it.** The Stock
+Transfer and Stock Take lists each carried a `doCancel` — confirmation copy and
+all — called from nowhere, and the Purchase Invoice list called
+`useCancelPurchaseInvoice()` and used the result for nothing.
+`frontend/tsconfig.app.json` sets `"noUnusedLocals": false`, so nothing said a
+word. See `docs/bugs/0515-cancel-was-built-into-three-document-lists-and-reachable-fro.md`.
+
+**Two entries are newly WIRED, both to endpoints that already had a caller.**
+The Purchase Invoice's Confirm calls `/purchase-invoices/:id/post`, which its
+own detail page's Post button calls; the Delivery Return's Cancel sends
+`CANCELLED` through the status PATCH the list was already using for Inspected,
+Refunded and Reopen. Nothing else in this change is new capability.
+
+**On Hold is NOT in any of the bottom five yet.** Hold is being converted from a
+status into a flag in separate work, and the hold entries land with it. Each of
+the five factories carries a one-line note saying so.
 
 **The Sales Order's status group closes the gap** recorded in
 `sales-order.md` §0.1a: `IN_PRODUCTION`, `SHIPPED`, `INVOICED` and `ON_HOLD`
