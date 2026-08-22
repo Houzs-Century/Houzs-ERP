@@ -89,7 +89,7 @@ import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
-import { resolveSkuCategories, lineItemGroup } from '../lib/sku-category';
+import { skuCategoryResolver } from '../lib/sku-category';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1238,8 +1238,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
-  // The group is the SKU's — lib/sku-category.ts says why (docs/bugs/0514).
-  const skuCategoryByCode = await resolveSkuCategories(supabase, items, activeCompanyId(c) ?? null);
+  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
@@ -1255,7 +1254,6 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     // PR #97 — line total honours per-line discount when computed up front
     // (matches the AutoCount "Total" column in the new full-page form).
     const lineTotal = Math.max(0, qty * unit - discountSen);
-    const itemGroup = lineItemGroup(skuCategoryByCode, it); // SKU wins; description2 uses the SAME value
     subtotal += lineTotal;
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
@@ -1279,10 +1277,10 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
          them (server-owned, like the SO route). */
-      item_group:   itemGroup,
+      item_group:   groupOf(it),
       variants:     (it.variants as unknown) ?? null,
       description:  (it.description as string | undefined) ?? null,
-      description2: buildVariantSummary(String(itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary(String(groupOf(it) ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Commander 2026-05-29 (BUG 1) — persist the source SO line (migration
          0098) so deleting this PO line can release po_qty_picked back to the
          From-SO picker. NULL for manually-added lines. */

@@ -50,7 +50,7 @@ const PRODUCT_KIND = 'mfg_product';
  * to the value it already had. This helper improves a line; it must never be
  * the reason one cannot be saved.
  */
-export async function resolveSkuCategories(
+export async function skuCategoryMap(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client without generated types; project-wide pattern
   sb: any,
   items: readonly CategoryResolvableLine[],
@@ -92,4 +92,23 @@ export function lineItemGroup(
     ?? (typeof it.itemGroup === 'string' && it.itemGroup.trim() !== ''
       ? it.itemGroup
       : null);
+}
+
+/**
+ * The whole rule as ONE call: `const groupOf = await skuCategoryResolver(...)`,
+ * then `groupOf(line)`.
+ *
+ * Exists so a route adds a single line to adopt this. The call sites that
+ * needed it are in files already over their size ceiling, and a rule that costs
+ * four lines to adopt is a rule the next route will inline by hand instead —
+ * which is exactly how the group came to be lost in the first place.
+ */
+export async function skuCategoryResolver(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see skuCategoryMap
+  sb: any,
+  items: readonly CategoryResolvableLine[],
+  companyId: number | null,
+): Promise<(it: CategoryResolvableLine & { itemGroup?: unknown }) => string | null> {
+  const bySkuCode = await skuCategoryMap(sb, items, companyId);
+  return (it) => lineItemGroup(bySkuCode, it);
 }
