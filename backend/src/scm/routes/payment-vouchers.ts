@@ -48,6 +48,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { pvLines } from '../../acc/rules';
@@ -243,7 +244,14 @@ const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
    refusal rather than a voucher that quietly pays a bill somebody stopped.
 
    FAILS CLOSED on a read error — absence is what refuses here, so folding a
-   blip into "none are held" would authorise the write this exists to stop. */
+   blip into "none are held" would authorise the write this exists to stop.
+
+   IT READS THE MARKER SINCE MIG 0324. The hold is no longer a status, so a held
+   invoice reads POSTED or PARTIALLY_PAID here and the old `status === 'ON_HOLD'`
+   test would have matched nothing, for ever, while still looking like a guard.
+   `isDocumentHeld` checks the flag AND the retired label, so a legacy row is
+   still caught. Selecting `on_hold` is half the fix: an unselected column reads
+   `undefined`, which is not held, which is the permissive answer. */
 async function allocationPisOnHold(
   sb: any,
   c: any,
@@ -252,11 +260,11 @@ async function allocationPisOnHold(
   const ids = [...new Set(piIds.filter(Boolean))];
   if (ids.length === 0) return [];
   const { data, error } = await scopeToCompany(
-    sb.from('purchase_invoices').select('id, status').in('id', ids), c,
+    sb.from('purchase_invoices').select('id, status, on_hold').in('id', ids), c,
   );
   if (error) return ids;
-  return ((data ?? []) as Array<{ id: string; status: string | null }>)
-    .filter((r) => String(r.status ?? '').toUpperCase() === 'ON_HOLD')
+  return ((data ?? []) as Array<{ id: string; status: string | null; on_hold: boolean | null }>)
+    .filter((r) => isDocumentHeld(r))
     .map((r) => r.id);
 }
 

@@ -45,6 +45,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ type PiStatus =
   | "CANCELLED"
   | string;
 
-type PiHeader = {
+type PiHeader = HoldFields & {
   id: string;
   invoice_number: string;
   supplier_invoice_ref?: string | null;
@@ -618,7 +619,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         <div className="px-4 pb-4 pt-3">
           <h1 className="font-display text-[19px] font-bold leading-tight text-white">{supplierNameOf(purchaseInvoice)}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
+            </span>
             {isOverdue && (
               <span className="inline-flex items-center gap-1 rounded-md bg-err/20 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wider text-err">
                 <AlertTriangle size={10} /> {overdueDays}d overdue
@@ -644,7 +649,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {supplierNameOf(purchaseInvoice)}
                 </h1>
-                <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
+                </span>
                 {isOverdue && (
                   <span className="inline-flex items-center gap-1 rounded-md bg-err-soft px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-err">
                     <AlertTriangle size={11} /> {overdueDays}d overdue

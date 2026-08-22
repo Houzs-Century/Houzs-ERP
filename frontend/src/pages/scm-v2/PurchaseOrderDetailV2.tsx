@@ -80,6 +80,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1000,9 +1001,13 @@ function PurchaseOrderDetailV2ReadOnly() {
             {supplierNameOf(purchaseOrder)}
           </h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">
-              {stageLabel}
-            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">
+                {stageLabel}
+              </Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -1024,9 +1029,13 @@ function PurchaseOrderDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {supplierNameOf(purchaseOrder)}
                 </h1>
-                <Badge tone={badgeTone} size="sm">
-                  {stageLabel}
-                </Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">
+                    {stageLabel}
+                  </Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 {/* _R suffix (owner 2026-07-27): a revised PO's number shows its

@@ -20,7 +20,18 @@
    ---------------------------------------------------------------------------- */
 
 // 页签＝状态 (owner, 2026-08-21). SIGNED has no tab — merged into DELIVERED.
-export type StatusTab = "all" | "draft" | "loaded" | "dispatched" | "in_transit" | "delivered" | "invoiced" | "cancelled";
+//
+// `on_hold` IS THE ONE TAB THAT IS NOT A STATUS (mig 0324, owner 2026-08-21:
+// he asked for a Hold on the Delivery Order too, and it was missed while the
+// PO, GRN and PI got theirs the same day). It reads the MARKER COLUMN, so it
+// deliberately OVERLAPS every other tab: a held delivery still sits under its
+// real stage — Confirmed, Shipped, In transit — and carries a Hold chip beside
+// its pill. The numbers therefore do not sum to All, which is the same
+// deliberate overlap the Purchase Order list's `outstanding` pill has had since
+// 2026-07-31. It has no entry in STATUS_TONE below for the same reason: no
+// do_status value maps to it, because scm.do_status has no such member and
+// never will.
+export type StatusTab = "all" | "draft" | "loaded" | "dispatched" | "in_transit" | "delivered" | "invoiced" | "on_hold" | "cancelled";
 
 // DO lifecycle: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED →
 // INVOICED, plus CANCELLED. ONE BUCKET PER STATUS since 2026-08-21 (页签＝状态);
@@ -53,7 +64,13 @@ export const statusFor = (
   STATUS_TONE[(s || "").toLowerCase()] ?? {
     tone: "neutral",
     label: s || "—",
-    bucket: "open",
+    /* "open" is not a member of StatusTab and never was — it survived the
+       2026-08-21 页签＝状态 rewrite that removed the bucket it named. An unknown
+       status therefore claimed a tab that does not exist, and the local recount
+       that keys off this value dropped the row on the floor. `draft` is the
+       honest fallback: it is the tab a document with no recognisable status
+       belongs under, and it is a real tab. */
+    bucket: "draft",
   };
 
 /* May this delivery order still be cancelled, as far as a LIST ROW can tell?

@@ -37,9 +37,56 @@ import { buildRowMenu, dangerItem, type RowMenuItem } from "../../lib/rowMenu";
 import { transferToLabel } from "../../lib/convertScope";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { DO_STOCK_OUT_STATES } from "../../vendor/shared/do-shipped-states";
+import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
-/** What every menu needs from a row: something to identify it and a status. */
-type StatusRow = { status?: string | null };
+/** What every menu needs from a row: something to identify it, a status, and
+ *  the mig-0324 hold marker. `HoldFields` rather than a hand-typed `on_hold`,
+ *  so the four columns are spelled once for the whole app. */
+type StatusRow = { status?: string | null } & HoldFields;
+
+/* ── THE HOLD, ON ALL FIVE DOCUMENTS (owner 2026-08-22) ──────────────────────
+   「我们的hold是给我们知道一个 order hold这的」 — a hold is a MARKER telling
+   people an order is paused. 「take off hold也要看」 — releasing had to be looked
+   at too, and it was where the damage was.
+
+   WHAT THESE TWO ENTRIES USED TO DO, on the Sales Order, and why it was broken:
+
+       Put On Hold     setStatus(r, "ON_HOLD")
+       Take Off Hold   setStatus(r, "CONFIRMED")
+
+   The first OVERWROTE the order's progress. `status` is the only place an
+   order's position in its life is recorded, so holding an IN_PRODUCTION order
+   destroyed the fact that it was in production — permanently, because no
+   `previous_status` column exists anywhere in scm. The second then had nothing
+   to restore from, so it sent EVERY released order to Confirmed regardless of
+   where it had actually been.
+
+   Both now write the mig-0324 MARKER through `setHold`, which touches four
+   columns and never `status`. Releasing therefore restores nothing, because
+   nothing was lost: the order never moved.
+
+   THE ENTRY IS OFFERED ON ALL FIVE DOCUMENTS NOW. The PO, the GRN and the PI
+   were given the WORD "On Hold" on 2026-08-21 (migs 0318/0319/0320) with no
+   control anywhere that could produce it; the Delivery Order was asked for on
+   the same day (「再加到一个 Hold」) and missed entirely.
+
+   IT IS ALSO THE ONE STATUS-SHAPED ENTRY THE DELIVERY ORDER MENU ACCEPTS, and
+   the comment on that menu explains why the others are refused: a DO status
+   move writes an inventory OUT, and a stock-moving action does not belong two
+   pixels from "Open". A hold moves no stock at all — it is a note. */
+function holdEntries<R extends StatusRow>(
+  r: R,
+  setHold: (r: R, onHold: boolean) => void,
+): Array<RowMenuItem | false> {
+  /* `rowIsHeld` reads the FLAG or the retired ON_HOLD status, so a legacy row
+     is still offered "Take Off Hold" rather than a second "Put On Hold" that
+     would do nothing it can see. */
+  const held = rowIsHeld(r);
+  return [
+    !held && { label: "Put On Hold", onClick: () => setHold(r, true) },
+    held && { label: "Take Off Hold", onClick: () => setHold(r, false) },
+  ];
+}
 
 const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
 
@@ -92,6 +139,8 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
   setStatus: (r: R, status: string) => void;
+  /** Put the mig-0324 hold marker on, or take it off. NEVER a status write. */
+  setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   reopen: (r: R) => void;
   canDeliver: boolean;
@@ -100,7 +149,6 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
     const s = norm(r.status);
     const isDraft = s === "DRAFT";
     const isCancelled = s === "CANCELLED";
-    const live = !isDraft && !isCancelled;
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },
@@ -108,13 +156,12 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
         { label: "Print", onClick: () => h.print(r) },
       ],
       [
-        h.canDeliver && soCanRaiseDo(r.status) && !isDraft &&
+        h.canDeliver && soCanRaiseDo(r.status, r.on_hold ?? null) && !isDraft &&
           { label: transferToLabel("do"), onClick: () => h.transferToDo(r) },
       ],
       [
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },
-        live && s !== "ON_HOLD" && { label: "Put On Hold", onClick: () => h.setStatus(r, "ON_HOLD") },
-        s === "ON_HOLD" && { label: "Take Off Hold", onClick: () => h.setStatus(r, "CONFIRMED") },
+        ...holdEntries(r, h.setHold),
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
       [!isCancelled && dangerItem("Cancel Sales Order", () => h.cancel(r))],
@@ -188,8 +235,15 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
 
    There is deliberately no `Mark Invoiced`: nothing in this codebase writes
    `delivery_orders.status = 'INVOICED'`, so the label would mean "somebody
-   clicked it", not "this was billed". */
-export function deliveryOrderRowMenu<R extends StatusRow>(h: {
+   clicked it", not "this was billed".
+
+   HOLD IS A SEPARATE AXIS AGAIN, and neither of the two 2026-08-22 changes
+   weakens the other. A hold is not a status (mig 0324): the DO got four columns
+   and `scm.do_status` was left untouched, so a hold writes no stock movement of
+   any kind and the STOCK objection above never reached it. The three entries
+   above answer "where has this delivery got to"; the marker answers "did
+   somebody stop it". They are ANDed, never folded together — and every entry
+   here that #2661 gated on `!rowIsHeld` stays gated, these three included. */export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (r: R) => void;
@@ -197,15 +251,17 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   transferToDr: (r: R) => void;
   confirm: (r: R) => void;
   setStatus: (r: R, status: string) => void;
+  setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   canInvoice: (r: R) => boolean;
   canReturn: (r: R) => boolean;
   canConfirm: (r: R) => boolean;
   canCancel: (r: R) => boolean;
-  /* The caller's write permission. A read-only user gets no manual status entry
-     at all rather than three that fail at the server — same reason `canDeliver`
-     exists on the Sales Order menu above. */
-  canSetStatus: boolean;
+  /* Write permission AND the hold, per row — the same shape as the three
+     predicates above, so #2661's `!rowIsHeld` gate reaches these entries too. It
+     was a bare boolean until the merge; a held delivery order must not be
+     offered a status move on this menu any more than it is offered a Confirm. */
+  canSetStatus: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   return (r) => {
     const s = norm(r.status);
@@ -217,7 +273,7 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
        unable to move it. DRAFT, CANCELLED and any status this file does not
        recognise fall out by not being members — naming a step for an unknown
        state is the COMPLETED mistake, and offering nothing is the cheap answer. */
-    const canMark = h.canSetStatus && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
+    const canMark = h.canSetStatus(r) && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },
@@ -228,6 +284,9 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
         h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
         h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
       ],
+      /* Confirm, the ladder, Hold, then Cancel — Confirm first and Hold last, so
+         the "same three, same order" shape the other four menus keep is intact
+         with the three manual rungs sitting inside it in ladder order. */
       [
         h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
         /* The status the row already carries is left out: re-writing it is a
@@ -235,6 +294,7 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
         canMark && s !== "DISPATCHED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "DISPATCHED") },
         canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
         canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
+        ...holdEntries(r, h.setHold),
       ],
       [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
     );
@@ -250,6 +310,7 @@ export function purchaseOrderRowMenu<R extends StatusRow>(h: {
   edit: (r: R) => void;
   print: (r: R) => void;
   transferToGrn: (r: R) => void;
+  setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   canReceive: (r: R) => boolean;
   canCancel: (r: R) => boolean;
@@ -261,6 +322,7 @@ export function purchaseOrderRowMenu<R extends StatusRow>(h: {
       { label: "Print", onClick: () => h.print(r) },
     ],
     [h.canReceive(r) && { label: transferToLabel("grn"), onClick: () => h.transferToGrn(r) }],
+    holdEntries(r, h.setHold),
     [h.canCancel(r) && dangerItem("Cancel Purchase Order", () => h.cancel(r))],
   );
 }
@@ -277,6 +339,7 @@ export function grnRowMenu<R extends StatusRow>(h: {
   transferToPi: (r: R) => void;
   transferToPr: (r: R) => void;
   post: (r: R) => void;
+  setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   canBill: (r: R) => boolean;
   canPost: (r: R) => boolean;
@@ -292,7 +355,10 @@ export function grnRowMenu<R extends StatusRow>(h: {
       h.canBill(r) && { label: transferToLabel("pi"), onClick: () => h.transferToPi(r) },
       h.canBill(r) && { label: transferToLabel("pr"), onClick: () => h.transferToPr(r) },
     ],
-    [h.canPost(r) && { label: "Confirm", onClick: () => h.post(r) }],
+    [
+      h.canPost(r) && { label: "Confirm", onClick: () => h.post(r) },
+      ...holdEntries(r, h.setHold),
+    ],
     [h.canCancel(r) && dangerItem("Cancel Goods Received Note", () => h.cancel(r))],
   );
 }

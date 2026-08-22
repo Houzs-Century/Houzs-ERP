@@ -14,7 +14,9 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
-import { soCanRaiseDo } from '../shared/so-deliverable-states';
+import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { mountHoldRoute } from './document-hold-routes';
 import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
@@ -304,7 +306,10 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at';
+  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at, ' +
+  /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
+     needed no enum change. docs/modules/delivery-order.md. */
+  HOLD_COLUMNS;
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the DO list payload) but must
@@ -2661,45 +2666,11 @@ async function soRemainingByItemId(
   return out;
 }
 
-/* ── SO-must-be-deliverable guard (audit gap #4) ──────────────────────────────
-   A Delivery Order may only be raised against a Sales Order that is committed —
-   i.e. CONFIRMED or beyond. A DRAFT (never-confirmed), CANCELLED, or ON_HOLD SO
-   is NOT committed, so shipping goods against it (writing an OUT stock movement)
-   is wrong. Mirrors the purchasing-side rule that a GRN's parent PO must be
-   SUBMITTED / PARTIALLY_RECEIVED (grns.ts /outstanding-po-items).
-
-   THE SET MOVED to shared/so-deliverable-states.ts on 2026-08-21. It was ALSO
-   hand-written, as an allow-list of ONE value, in the Sales Order list's CTA —
-   so the button vanished on READY_TO_SHIP, which the allocator writes by itself
-   when the goods land. Behaviour here is unchanged; that header has the trace. */
-async function firstUndeliverableSo(
-  sb: any,
-  soDocNos: Array<string | null | undefined>,
-): Promise<{ docNo: string; status: string } | null> {
-  const docNos = [...new Set(soDocNos.filter((d): d is string => !!d))];
-  if (docNos.length === 0) return null;
-  const { data } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', docNos);
-  for (const r of (data ?? []) as Array<{ doc_no: string; status: string | null }>) {
-    const st = (r.status ?? '').toUpperCase();
-    // A row with no readable status is left to fall through (never over-block);
-    // an unknown doc_no simply isn't returned here (FK rejects it downstream).
-    if (!soCanRaiseDo(st)) return { docNo: r.doc_no, status: st };
-  }
-  return null;
-}
-function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
-  const label =
-    offender.status === 'DRAFT' ? 'is still a draft'
-    : offender.status === 'CANCELLED' ? 'has been cancelled'
-    : offender.status === 'ON_HOLD' ? 'is on hold'
-    : `is ${offender.status.toLowerCase()}`;
-  return {
-    error: 'so_not_deliverable',
-    message: `Sales Order ${offender.docNo} ${label}, so a Delivery Order cannot be created from it. Confirm the Sales Order first.`,
-    soDocNo: offender.docNo,
-    soStatus: offender.status,
-  };
-}
+/* THE SO-MUST-BE-DELIVERABLE GATE MOVED to lib/source-document-gates.ts on
+   2026-08-22 (mig 0324), beside the two conversions that ask the same question
+   of the same row — SO -> PO and PO -> GRN. All three had to learn to read the
+   hold MARKER, because the hold stopped living in the `status` column they were
+   already reading. Behaviour unchanged; that module's header has the trace. */
 
 /* Filter-pill bucket → the raw delivery_orders.status values it covers. Single source of truth for BOTH the status-count
    queries and the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
@@ -2773,8 +2744,11 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise treat it as a raw DB status. */
     const status = c.req.query('status');
+    /* The `on_hold` tab reads the MARKER (mig 0324) — on this document the only
+       thing it can read, since scm.do_status has no ON_HOLD label. */
     if (status && status !== 'all') {
-      if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
+      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      else if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
       else q = q.eq('status', status);
     }
     /* free-text search over the columns the FE list's client-side search matches
@@ -2811,13 +2785,18 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* One count per BUCKET, derived from the map — a bucket added there cannot
        be left without a count, the shape that renders a tab beside a silent 0. */
     const bucketNames = Object.keys(DO_STATUS_BUCKETS);
-    const [allC, ...bucketC] = await Promise.all([
+    /* `on_hold` is NOT in DO_STATUS_BUCKETS and must not be — that map is an
+       exhaustive partition of scm.do_status (statusBucketsEnumMembership.test.mjs)
+       and this is a column. Counted here as an OVERLAY: a held DO is counted
+       under its real status too, so these do not sum to `all`. */
+    const [allC, heldC, ...bucketC] = await Promise.all([
       countBase(),
+      countBase().or(HELD_OR_TERM),
       ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
     ]);
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts(Object.fromEntries([
-      ['all', allC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
+      ['all', allC], ['on_hold', heldC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
     ]));
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
@@ -5624,3 +5603,6 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   });
 };
 deliveryOrdersMfg.patch('/:id/status', patchDeliveryOrderStatusHandler);
+
+/* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
+mountHoldRoute(deliveryOrdersMfg, 'do');

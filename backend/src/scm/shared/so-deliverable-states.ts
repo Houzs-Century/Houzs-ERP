@@ -48,6 +48,21 @@
    deny-list was written: an order paused mid-flight should not ship until it is
    taken off hold.
 
+   THE HOLD IS NOW A SEPARATE ARGUMENT, not a status (mig 0324, owner 2026-08-22:
+   「我们的hold是给我们知道一个 order hold这的」). A hold is a MARKER beside the
+   status, so a held IN_PRODUCTION order reads status IN_PRODUCTION and
+   on_hold true — and the status half of this deny-list would wave it straight
+   through. `ON_HOLD` STAYS in the list anyway, for ever: Postgres cannot drop an
+   enum label, so a legacy or mirrored row can still arrive carrying it, and
+   dropping it here would make that row shippable for the first time.
+
+   `onHold` IS A REQUIRED PARAMETER AND HAS NO DEFAULT, which is this repo's
+   standing rule for an argument that DECIDES something. An optional one would
+   mean every caller that says nothing keeps the OLD behaviour with no compile
+   error — the exact shape of BUG CLASS optional-param-noop
+   (docs/bugs/0098-bug-class-optional-param-noop-an-optional-argument-that-deci.md),
+   and here "the old behaviour" is "the hold does not block anything".
+
    Pure constants, no imports. frontend/src/vendor/shared/so-deliverable-states.ts
    is a byte-identical vendored copy for the browser, refereed by
    so-deliverable-states.canonical.test.ts on the frontend side.
@@ -59,11 +74,16 @@
  *  SHIPPED, DELIVERED, INVOICED, CLOSED — is deliverable. */
 export const SO_UNDELIVERABLE_STATUSES = ['DRAFT', 'CANCELLED', 'ON_HOLD'] as const;
 
-/** May a Delivery Order be raised from a Sales Order in this status?
+/** May a Delivery Order be raised from a Sales Order in this state?
  *
- *  Case-insensitive and null-safe, because both callers read a nullable text
- *  column and the list payload has been observed handing back "Draft" /
- *  "draft" / "DRAFT" for the same row.
+ *  Case-insensitive and null-safe on the status, because both callers read a
+ *  nullable text column and the list payload has been observed handing back
+ *  "Draft" / "draft" / "DRAFT" for the same row.
+ *
+ *  `onHold` is the mig-0324 marker. `null` means "this caller could not read the
+ *  column" and is treated as NOT held — the same never-over-block choice the
+ *  rest of this file makes. It is spelled `boolean | null` rather than being
+ *  omittable so that a caller who has the value cannot forget to pass it.
  *
  *  A BLANK OR UNREADABLE STATUS RETURNS TRUE, and that is the same
  *  never-over-block choice the server makes (firstUndeliverableSo lets a row
@@ -71,7 +91,11 @@ export const SO_UNDELIVERABLE_STATUSES = ['DRAFT', 'CANCELLED', 'ON_HOLD'] as co
  *  predicate decides whether to OFFER the action, and offering an action the
  *  server then refuses with a plain-language 409 is strictly better than hiding
  *  one it would have accepted. Hiding is what this file exists to stop. */
-export function soCanRaiseDo(status: string | null | undefined): boolean {
+export function soCanRaiseDo(
+  status: string | null | undefined,
+  onHold: boolean | null,
+): boolean {
+  if (onHold === true) return false;
   const s = String(status ?? '').toUpperCase();
   return !(SO_UNDELIVERABLE_STATUSES as readonly string[]).includes(s);
 }

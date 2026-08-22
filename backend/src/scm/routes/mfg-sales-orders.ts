@@ -36,6 +36,8 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { mountHoldRoute } from './document-hold-routes';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
@@ -916,7 +918,12 @@ const HEADER =
   'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_sen, paid_sen, ' +
   /* Delivery fee snapshot (migration 0133) — folded into local_total/revenue/margin. */
   'delivery_fee_sen, ' +
-  'created_at, created_by, updated_at';
+  'created_at, created_by, updated_at, ' +
+  /* Migration 0324 — the HOLD MARKER, rendered BESIDE the status pill. The list
+     reads the payment-totals VIEW, which had to be taught these four columns
+     separately (mig 0325); a base-table column the view does not enumerate is
+     invisible to the list. */
+  HOLD_COLUMNS;
 /* FINANCE-GATED keys — cost / margin / per-category revenue+cost subtotals +
    deposit (header) and unit/line cost+margin (line). The lists moved to
    lib/finance-keys.ts so /reports shares this EXACT vocabulary: it had no copy
@@ -1222,7 +1229,9 @@ mfgSalesOrders.get('/', async (c) => {
     /* A tab may cover more than one status — SHIPPED folds into DELIVERED
        (owner 2026-08-22). Read the bucket so the fold is one fact, not a
        spelling repeated at each of the three query sites below. */
-    if (status) { const vals = soStatusesForTab(status); q = vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals); }
+    /* The ON_HOLD tab reads the mig-0324 MARKER, not the status. */
+    if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
+    else if (status) { const vals = soStatusesForTab(status); q = vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals); }
     const debtor = c.req.query('debtor'); if (debtor) q = q.ilike('debtor_name', `%${debtor}%`);
     const res = await q;
     data = res.data;
@@ -1250,7 +1259,8 @@ mfgSalesOrders.get('/', async (c) => {
        the exact-match it always was. */
     const status = effectiveStatusFilter(c.req.query('status'));
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
-    if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
+    if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
+    else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
     /* free-text search replaces the legacy `debtor` param in this branch.
        One term matches customer NAME (debtor_name), PHONE, or the SO
        REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
@@ -1285,6 +1295,17 @@ mfgSalesOrders.get('/', async (c) => {
        a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
     const scopedCountQ = (q0: any): any =>
       scopeToCompany(scopeIds ? q0.in('salesperson_id', scopeIds) : q0, c);
+    /* The held count is its own head-only read because the marker is a COLUMN,
+       not a status, so the grouped status aggregate above cannot produce it.
+       Same scope + company predicates, no status filter, no search, no paging —
+       the strip's other numbers are computed the same way. */
+    const heldProm = (async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
+      const r = await scopedCountQ(
+        sb.from('mfg_sales_orders').select('*', { count: 'exact', head: true }),
+      ).or(HELD_OR_TERM);
+      if (r.error) return { ok: false, reason: `on-hold count failed: ${r.error.message}` };
+      return { ok: true, n: r.count ?? 0 };
+    })();
     const countsProm = (async (): Promise<StatusTally> => {
       const agg = await scopedCountQ(sb.from('mfg_sales_orders').select('status, cnt:doc_no.count()'));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
@@ -1322,7 +1343,8 @@ mfgSalesOrders.get('/', async (c) => {
       let moneyQ = moneyQ0;
       if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
-      if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
+      if (status === 'ON_HOLD') moneyQ = moneyQ.or(HELD_OR_TERM);
+      else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
         if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
@@ -1338,7 +1360,7 @@ mfgSalesOrders.get('/', async (c) => {
        the same filter params, none reads the page result — yet they were paying
        three sequential DB round-trips. Fire them together; only the per-doc
        enrichment below actually needs the page rows, so it still follows. */
-    const [res, counted, moneyRes] = await Promise.all([q, countsProm, moneyProm]);
+    const [res, counted, moneyRes, heldCount] = await Promise.all([q, countsProm, moneyProm, heldProm]);
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
@@ -1370,6 +1392,20 @@ mfgSalesOrders.get('/', async (c) => {
         statusCounts[tab.toLowerCase()] = cnt; known += cnt;
       }
       statusCounts.other = allCount - known;
+      /* THE On Hold PILL IS AN OVERLAY, NOT A BUCKET (mig 0324), and it is the
+         one number on this strip that does not partition the set. A held order
+         keeps its real status, so it is counted under that status AND here —
+         the same deliberate overlap the Purchase Order list's `outstanding`
+         pill has carried since 2026-07-31.
+
+         `known` is NOT adjusted, and that is what protects the invariant the
+         owner bought in 2026-07-24 ("ALL 68 but CONFIRMED 35 — where did they
+         go?"): every order is still counted exactly once by the status walk
+         above, so `other` stays exact and no order can fall between tabs.
+         Overwriting the value afterwards is deliberate — the walk's ON_HOLD
+         entry counts LEGACY rows only, and this count covers both. */
+      if (heldCount.ok) statusCounts.on_hold = heldCount.n;
+      else countError = heldCount.reason;
     }
 
     if (moneyRes.error || !moneyRes.data) return c.json({ error: 'load_failed', reason: moneyRes.error?.message ?? 'money_kpis_failed' }, 500);
@@ -1893,7 +1929,7 @@ mfgSalesOrders.get('/customers', async (c) => {
   const { data, error } = await paginateAll<CustomerSoRow>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
+      .select('doc_no, status, on_hold, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
       .order('so_date', { ascending: false });
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -1904,7 +1940,9 @@ mfgSalesOrders.get('/customers', async (c) => {
   const map = new Map<string, CustomerEntry>();
   for (const o of (data ?? [])) {
     // CANCELLED + ON_HOLD don't count toward LTV / the directory (2990 parity).
-    if (o.status === 'CANCELLED' || o.status === 'ON_HOLD') continue;
+    /* `on_hold` since mig 0324 — a held order's status is its real status, so
+       the two labels below stopped being able to see a hold on their own. */
+    if (isDocumentHeld(o) || o.status === 'CANCELLED' || o.status === 'ON_HOLD') continue;
     const key = o.phone?.trim() || `name:${(o.debtor_name ?? '').toLowerCase().trim()}`;
     if (!key || key === 'name:') continue;
 
@@ -2058,6 +2096,9 @@ mfgSalesOrders.get('/mine', async (c) => {
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'total_revenue_sen, line_count, deposit_sen',
       )
+      /* `on_hold` since mig 0324 — the status arm below can no longer see a
+         hold, because a held order keeps the status it was on. */
+      .eq('on_hold', false)
       .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
   );
@@ -5985,6 +6026,9 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   return statusResponse;
 };
 mfgSalesOrders.patch('/:docNo/status', patchMfgSalesOrderStatusHandler);
+
+/* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
+mountHoldRoute(mfgSalesOrders, 'so');
 
 // ── DELETE /mfg-sales-orders/:docNo — discard a DRAFT ───────────────────────
 // Owner 2026-07-20 — a DRAFT (especially a junk scan / OCR draft) had NO way out

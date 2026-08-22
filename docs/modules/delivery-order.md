@@ -609,10 +609,30 @@ Refusals the operator sees, in the order they fire:
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
 
+> **THE DELIVERY ORDER HAS A HOLD OF ITS OWN SINCE 2026-08-22 (mig 0324).**
+> The owner asked for one on 2026-08-21 (「再加到一个 Hold」) and it was missed
+> while the PO, GRN and PI got theirs. `scm.delivery_orders` carries `on_hold` /
+> `hold_reason` / `held_at` / `held_by`, written by `PATCH /:id/hold`, and
+> **`scm.do_status` is untouched** — which is the plainest illustration of why a
+> marker beats a status: the other three each cost an irreversible
+> `ALTER TYPE ... ADD VALUE`.
+>
+> A held DO keeps its real stage — LOADED, DISPATCHED, IN_TRANSIT — because that
+> is the fact the warehouse and the driver need, and carries a Hold chip beside
+> it. The list gained an **On Hold** tab that reads the flag and deliberately
+> overlaps the stage tabs. A held DO is not invoiceable (`canInvoice` ANDs
+> `!rowIsHeld(r)` with the shared `doCountsAsInvoiceable`).
+>
+> It is also the ONE status-shaped entry the DO row menu accepts. That menu
+> refuses status moves because a DO status move writes an inventory OUT; a hold
+> writes no movement at all, so the objection does not apply.
+
 > **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
 > The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD}` in
-> `backend/src/scm/shared/so-deliverable-states.ts`, with `soCanRaiseDo(status)`
-> as the predicate; this router imports it instead of declaring its own `Set`,
+> `backend/src/scm/shared/so-deliverable-states.ts`, with
+> `soCanRaiseDo(status, onHold)` as the predicate — the second argument is the
+> mig-0324 marker and is REQUIRED, because a held SO now keeps its real status
+> and the deny-list alone would wave it through; this router imports it instead of declaring its own `Set`,
 > and the frontend runs a byte-identical vendored twin
 > (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
 > `so-deliverable-states.canonical.test.ts`).

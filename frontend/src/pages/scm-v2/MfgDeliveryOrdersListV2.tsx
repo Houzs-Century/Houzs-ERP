@@ -80,13 +80,15 @@ import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { useHoldAction } from "./use-hold-action";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
 // shape). Fields not listed here still exist on the API payload — they just
 // aren't rendered by this V2 chrome.
 
-type DoRow = {
+type DoRow = HoldFields & {
   id: string;
   do_number: string;
   so_doc_no: string | null;
@@ -319,7 +321,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.do_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {r.debtor_name || "—"}
@@ -777,6 +779,7 @@ export function MfgDeliveryOrdersListV2() {
   const queryClient = useQueryClient();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
+  const holdAction = useHoldAction("do");
   const askConfirm = useConfirm();
   const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
@@ -965,26 +968,26 @@ export function MfgDeliveryOrdersListV2() {
     }))) return;
     updateStatus.mutate({ id: r.id, status: "CANCELLED" });
   };
+  // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
+  const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
   /* Every predicate here is a SHARED one, not a status list typed at this call
      site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
      LOADED delivery may be invoiced (「不要拦 —— 人自己知道」);
      doCountsAsDelivered is the same rule the server's returnable-DO picker
      applies (do-line-remaining.ts) — goods still on the lorry never left, so
-     nothing can come back; doAdvanceStep supplies the one DRAFT rung. */
-  /* The three manual status moves (owner 2026-08-22 — Shipped / In transit /
-     Delivered are maintained by hand until their machines exist). Same mutation
-     the drawer's advance uses; row-menus.ts owns which statuses qualify. */
-  const doSetStatus = (r: DoRow, status: string) => {
-    updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) });
-  };
+     nothing can come back; doAdvanceStep supplies the one DRAFT rung.
+     THE HOLD IS A SECOND AXIS (mig 0324), ANDed with them rather than folded in:
+     those answer "where has this delivery got to", the marker answers "did
+     somebody stop it". A held DO's stage is still its real stage. */
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToSi: doConvertToSi, transferToDr: doConvertToDr,
-    confirm: doAdvance, setStatus: doSetStatus, cancel: doCancelDo,
-    canSetStatus: canWriteDo,
-    canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
-    canReturn: (r) => canWriteDo && doCountsAsDelivered(r.status),
-    canConfirm: (r) => canWriteDo && doAdvanceStep(r.status) !== null,
+    confirm: doAdvance, cancel: doCancelDo, setHold: setDoHold,
+    setStatus: (r, status) => updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) }),
+    canInvoice: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsInvoiceable(r.status),
+    canReturn: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsDelivered(r.status),
+    canConfirm: (r) => canWriteDo && !rowIsHeld(r) && doAdvanceStep(r.status) !== null,
+    canSetStatus: (r) => canWriteDo && !rowIsHeld(r),
     canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
   });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
@@ -1271,11 +1274,8 @@ export function MfgDeliveryOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -1661,9 +1661,10 @@ export function MfgDeliveryOrdersListV2() {
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
+    // `on_hold` sits before Cancelled, as on the other four lists. Mig 0324.
     [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
      ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
-     ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
+     ["on_hold", "On Hold"], ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
   ).map(([value, label]) => ({ value, label: `${label} · ${counts[value] ?? 0}` }));
 
   return (
