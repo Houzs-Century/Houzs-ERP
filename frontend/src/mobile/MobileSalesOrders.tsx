@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { brandingToneForCategory, type BrandTone } from "../lib/brandingTone";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -75,14 +76,10 @@ const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
 const brandOf = (r: SoRow): string =>
   (r.branding ?? "").trim() ||
   brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("BEDFRAME")) return "accent";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* This surface carries the line's CATEGORY, so it uses the accurate entry
+   point: colour and label then share one bucket rule and cannot disagree.
+   ../../lib/brandingTone has the whole story. */
+const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
 /* ── Draft-created notifier — localStorage ack set ─────────────────────────
    Owner 2026-07-04: "after a scan creates a draft, next time I open the app tell
@@ -610,7 +607,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                     {/* Struck through when cancelled — same doc-number-only strike as
                         the desktop lists' dt-cancel-strike (owner 2026-08-02). */}
                     <span className="money" style={{ fontWeight: 700, color: "var(--brand-d)", flex: "none", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{r.doc_no}</span>
-                    {brand !== "—" && <BrandPill brand={brand} />}
+                    {brand !== "—" && <BrandPill brand={brand} row={r} />}
                     {r.customer_so_no && <><span style={{ opacity: .4, flex: "none" }}>·</span><span className="money" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customer_so_no}</span></>}
                   </div>
                   {/* Line 2b — warehouse on its own line so it never crowds the ids */}
@@ -801,9 +798,14 @@ function StatusPill({ status }: { status: string | null }) {
    colour is the secondary cue. Sits inline on the doc_no row: flex:none so it
    never shrinks, and a maxWidth+ellipsis so a long brand truncates itself
    instead of crowding the customer ref beside it. */
-function BrandPill({ brand }: { brand: string }) {
-  const tone = brandTone(brand);
-  const cls = tone === "success" ? "b-green" : tone === "neutral" ? "b-grey" : "b-amber";
+function BrandPill({ brand, row }: { brand: string; row: SoRow }) {
+  const tone = brandTone(row);
+  /* Four tones, four classes. This map had only three, so a BEDFRAME chip
+     (accent) fell through to the mattress amber — the desktop and the phone
+     showed the same order in two different colours. `b-brand` is the fourth
+     colour mobile.css already ships; no new class was needed. */
+  const cls = tone === "success" ? "b-green" : tone === "neutral" ? "b-grey"
+    : tone === "accent" ? "b-brand" : "b-amber";
   return (
     <span className={`badge ${cls}`} style={{ flex: "none", maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis" }}>{brand}</span>
   );
