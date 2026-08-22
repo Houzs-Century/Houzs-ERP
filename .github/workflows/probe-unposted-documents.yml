@@ -1,0 +1,54 @@
+name: probe-unposted-documents
+
+# 哪些已过帐的单据没有总帐分录，而 2026-08-18 那个回归解释得了几张？
+#
+# docs/bugs/0522：jePrefixForCompany 读了一张不存在的表，所以从 8/18 起每一笔
+# 过帐都丢例外。修好了，也在 prod 验过。但它不会把漏掉的分录补回去。
+#
+# 老板 2026-08-23，看过补帐选项之后：**先只查清楚，不动帐。**
+# 所以这支只量、不写 —— 整个档案里没有任何一个写入。
+#
+# 为什么不是「数一数少了几张」：AP 自检在一家公司报了 33 张，其中 21 张是七月的
+# 单据，早于这个回归。把 33 张全部当成「这个 bug 的损害」补回去，等于替一批成因
+# 不明的单据凭空记帐。所以**分界**才是这支要交的东西。
+#
+# 公开纪录：只印数量和分类，不印单号、金额、客户或供应商。真正的数字在系统自己的
+# Self-check 画面里，那是私有的。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "要读哪一个资料库"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-unposted-documents
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: 分开「这个 bug 造成的」和「另有原因的」
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # GitHub 的 runner 没有 IPv6 出口；见 deploy-staging.yml。
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail，否则 tee 会把当掉吞掉，一份被截断的答案会读起来像成功
+        run: |
+          set -o pipefail
+          npx tsx scripts/probe-unposted-documents.mjs | tee unposted-documents.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-unposted-documents
+          path: backend/unposted-documents.txt
+          retention-days: 14
