@@ -358,6 +358,33 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
 
 ---
 
+## 3a. `item_group` on a receipt line is the SKU's, not the request's (2026-08-22)
+
+A GRN line's `item_group` is an **input to the stock bucket**, not a label:
+`variant_key = computeVariantKey(item_group, variants)` composes a sofa's
+fabric / seat / leg **only** for a sofa or bedframe group, so a line that reaches
+`postGrnAndRollup` with a blank or `others` group keys its stock with the
+PRODUCT CODE ALONE and the goods land in the unclassified bucket, where no sofa
+order can ever see them (`docs/bugs/0514-…`).
+
+Both hand-entry paths — `POST /grns` (the manual receipt) and
+`POST /grns/:id/items` (a line added afterwards) — used to store
+`it.itemGroup ?? null`, i.e. whatever the browser sent. They now resolve it from
+`mfg_products.category` by item code through `lib/sku-category.ts`,
+company-scoped for the reason `:287` gives (`code` is shared between the two
+organisations). The caller's value survives only as the fallback for a
+raw-material line, which has no product row. `description2` is built from the
+SAME resolved value, so the printed text and the stock key cannot disagree.
+
+The from-PO path (`:1897`) is unchanged and correct: it copies the PO line,
+which is itself resolved from the SKU at PO-create time.
+
+**The receipt also SAYS SO when a group throws attributes away.**
+`keyedVariantWithWarning` logs the receipt number, the group it saw and the
+attributes being dropped whenever a line carries a fabric or seat size that its
+group does not compose. It reports and never repairs — composing regardless of
+group would re-key every historical row in the ledger.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL `backend/scripts/scm-schema/2990s-full-schema.sql:371`

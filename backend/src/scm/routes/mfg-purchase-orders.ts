@@ -92,6 +92,7 @@ import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
+import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1213,6 +1214,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
+  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
@@ -1251,10 +1253,9 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
          them (server-owned, like the SO route). */
-      item_group:   (it.itemGroup as string | undefined) ?? null,
       variants:     (it.variants as unknown) ?? null,
       description:  (it.description as string | undefined) ?? null,
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      ...lineIdentityFields(groupOf, it, buildVariantSummary), // item_group + description2, from ONE group
       /* Commander 2026-05-29 (BUG 1) — persist the source SO line (migration
          0098) so deleting this PO line can release po_qty_picked back to the
          From-SO picker. NULL for manually-added lines. */
@@ -3022,6 +3023,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   const childLock = await poHasDownstream(sb, poId);
   if (childLock) return c.json(childLock, 409);
 
+  const addGroupOf = await skuCategoryResolver(sb, [it], co.companyId ?? null); // SKU wins — lib/sku-category.ts
   /* Non-finite guard — the clamp below cannot catch NaN (Math.max(0, NaN) is
      NaN), so a junk qty/price reached line_total_sen and the PO total. */
   const parsedLine = parseLineNumbers({
@@ -3075,10 +3077,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     line_suffix: (it.lineSuffix as string) ?? null,
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     variants: (it.variants as unknown) ?? null,
-    item_group: (it.itemGroup as string) ?? null,
     description: (it.description as string) ?? null,
-    /* Commander 2026-05-28 — Description 2 auto-generated from variants. */
-    description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+    ...lineIdentityFields(addGroupOf, it, buildVariantSummary), // same rule as create — docs/bugs/0514
     uom: (it.uom as string) ?? 'UNIT',
     discount_sen: discountSen,
     unit_cost_sen: Number(it.unitCostSen ?? 0),

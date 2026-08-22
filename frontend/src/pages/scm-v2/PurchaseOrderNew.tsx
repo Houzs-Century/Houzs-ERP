@@ -356,7 +356,34 @@ export const PurchaseOrderNew = () => {
       qty: p._pickQty ?? (p.remainingQty > 0 ? p.remainingQty : p.qty),
       unitPriceSen: 0,
       variants: (p.variants ?? {}) as Record<string, unknown>,
-      category: categoryForCode(p.itemCode),
+      /* THE PICK'S OWN CATEGORY, not a re-derivation of it. `OutstandingSoItem
+         .itemGroup` is the SO LINE's stored item_group, served by
+         /mfg-purchase-orders/outstanding-so-items — the picker even renders it
+         as the Category chip on the row the operator just ticked.
+
+         This line used to throw that away and ask `categoryForCode`, which
+         searches the LOADED SKU list; a code that list does not hold answers
+         `undefined`, and the whole chain then runs on a category the system
+         already knew:
+
+           PO line item_group = null
+             -> GRN inherits null (grns.ts:1897 copies the PO line)
+               -> computeVariantKey(null, {fabric, seat}) = ''   <- sofa attrs
+                  are only composed for a sofa/bedframe group
+                 -> the receipt's stock lands in the UNCLASSIFIED bucket
+
+         The goods are then in the warehouse, at the right value, and NO sofa
+         order can ever see them: the DO looks for
+         `fabriccode=…|seatheight=…|legheight=…` and finds the empty bucket.
+         Owner 2026-08-22, on a receipt made minutes earlier: "我不是收货了吗？
+         为什么是show PO outstanding？". Reproduced end-to-end on HC-SO-2608-004
+         -> HC-PO-2608-003 -> HC-GRN-2608-003: stock 2, available 0, the
+         Inventory row reading "Standard".
+
+         Every OTHER conversion picker in this repo already carries the group
+         through — the mobile wizard has a test that says so by name. This hop
+         was the only one that guessed. */
+      category: p.itemGroup || categoryForCode(p.itemCode),
       deliveryDate: p.lineDeliveryDate ?? p.deliveryDate ?? undefined,
       // Commander 2026-05-29 (BUG 1) — remember the source SO line so the
       // create call can increment its po_qty_picked (drops it from the picker).

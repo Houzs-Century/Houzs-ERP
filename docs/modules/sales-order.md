@@ -1285,6 +1285,26 @@ now on the same ladder. `bridgeStaffIsNotAPerson.test.ts` pins the bridge's
 contract and holds every consumer to it. Trace:
 `docs/bugs/0510-the-consignment-salesperson-picker-offered-null-null.md`.
 
+### `item_group` is the SKU's — it decides the stock bucket (2026-08-22)
+
+The Sales Order is the ORIGIN of the document chain, and its `item_group` is not
+a label: `computeVariantKey(item_group, variants)` composes a sofa's fabric /
+seat / leg **only** for a sofa or bedframe group. A line stored as `others` keys
+its stock with the product code alone, and every downstream document — PO, GRN,
+the inventory movement, the DO's stock check — copies that value faithfully.
+
+`createSalesOrderCore` used to store `it.itemGroup ?? 'others'`. That fallback is
+worse than `null`: `null` reads as *unknown*, `others` reads as a category
+somebody chose, so nobody questions it.
+
+It now takes the category from `productRowByCode` — the PRICING loader's map,
+already read in the same function and already selecting `category`. That costs
+no extra query and keeps the read company-scoped in LOCK-STEP with pricing,
+which migration 0233 requires by name (both companies keep their own SKU master;
+17 codes collided on 2026-08-01). `description2` is built from the same resolved
+value. Trace:
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
+
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
 Two changes to the header PATCH, both because a resigning rep's orders have to

@@ -248,9 +248,15 @@ export async function transferLoaner(
     }
   }
 
-  /* The transfer is net-zero across all warehouses, but SO allocation sums every
-     warehouse, so re-walk it in case a partial transfer (a failed leg) actually
-     shifted a bucket. Best-effort. */
+  /* Re-walk allocation: a transfer is net-zero in TOTAL but not per BUCKET, and
+     the bucket is what allocation reads.
+
+     This comment used to say "SO allocation sums every warehouse", which has
+     been false since migration 0118 (2026-05-31) — a line draws only its own
+     warehouse's stock (so-stock-allocation.ts:471, :564). The re-walk is not a
+     safety net for a failed leg; it is the POINT. Moving a unit from KL to PJ
+     changes nothing in total and everything to a PJ line that could not see it
+     five seconds ago. Best-effort. */
   try {
     const { recomputeSoStockAllocation } = await import('./so-stock-allocation');
     await recomputeSoStockAllocation(sb);

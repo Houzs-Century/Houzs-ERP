@@ -4282,14 +4282,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: agentToStamp,
-      item_group: it.itemGroup ?? 'others',
+      item_group: (productRowByCode.get(String(it.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase() || String(it.itemGroup ?? '').trim() || 'others', // SKU wins — lib/sku-category.ts, docs/bugs/0514
       item_code: it.itemCode,
       description: correctedSizeDescription(itemCode, it.description as string | null, sizeSkuMap)
         ?? ((it.description as string) ?? null),
       /* Commander 2026-05-28 — "Description 2" is the auto-combined variant
          summary (the long attribute string). Server-generated from the line's
          variants so it stays the single source of truth. */
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary((productRowByCode.get(String(it.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase() || String(it.itemGroup ?? '').trim() || 'others', (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Spec 2026-06-06 — per-line operator remark from the POS product page.
          Same column SoLineCard edits (mfg_sales_order_items.remark). */
       remark: (() => {
