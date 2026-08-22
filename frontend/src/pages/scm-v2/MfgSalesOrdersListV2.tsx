@@ -20,6 +20,7 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -221,14 +222,10 @@ const refOf = (r: SoRow): string =>
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
 // dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
 const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("BEDFRAME")) return "accent";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* This surface carries the line's CATEGORY, so it uses the accurate entry
+   point: colour and label then share one bucket rule and cannot disagree.
+   ../../lib/brandingTone has the whole story. */
+const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
 // Status → tone + label. The upstream `status` string is one of the SO
 // lifecycle values plus a couple of AutoCount-legacy synonyms. Anything not
@@ -402,7 +399,7 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
               {r.debtor_name || "—"}
             </div>
             <div className="mt-1 flex items-center gap-2">
-              <Badge tone={brandTone(brand)} variant="soft" size="xs">
+              <Badge tone={brandTone(r)} variant="soft" size="xs">
                 {brand}
               </Badge>
               <span className="text-[11.5px] text-ink-muted">{fmtDate(r.so_date)}</span>
@@ -550,7 +547,7 @@ function DetailDrawer({
               {/* customer + brand + date */}
               <div className="text-[19px] font-bold text-ink">{row.debtor_name || "—"}</div>
               <div className="mt-1.5 flex items-center gap-2.5">
-                <Badge tone={brandTone(brandOf(row))} variant="soft" size="xs">
+                <Badge tone={brandTone(row)} variant="soft" size="xs">
                   {brandOf(row)}
                 </Badge>
                 <span className="text-[12.5px] text-ink-muted">
@@ -1429,7 +1426,7 @@ export function MfgSalesOrdersListV2() {
       render: (r) => {
         const b = brandOf(r);
         return (
-          <Badge tone={brandTone(b)} variant="soft" size="xs">
+          <Badge tone={brandTone(r)} variant="soft" size="xs">
             {b}
           </Badge>
         );

@@ -74,6 +74,69 @@ it. They are fixed by the separate tabs-equal-statuses change, not here.
 
 ---
 
+## 1a. One COLOUR rule for the Branding chip
+
+**The owner, 2026-08-21:** 「比如 Mattress 和 Sofa 用不一样的颜色，要不然 Happy
+Sleep Mattress 和 Accessories 那些颜色不一样，看起来不是很奇怪吗？」 — he was
+looking at two mattresses in two different colours. Offered one colour for
+everything or a colour per category, he chose **per category**.
+
+### Why it looked random
+
+Five lists each hand-wrote the same function, and every copy matched on the
+LABEL TEXT rather than on what the line is:
+
+```
+if (s.includes("2990") || s.includes("SOFA")) return "success";
+...
+return "warning";                    // everything else
+```
+
+`2990S MATTRESS` matched the digits **"2990"** and came out green. `HAPPI.S
+MATTRESS` matched nothing and fell through to amber. **The colour was decided by
+whose brand name contained a number.**
+
+The five copies had already split into three spellings — the Sales Invoice list
+carried three tones where the others had four, the Delivery Order and Delivery
+Return lists had lost the BEDFRAME arm, and the mobile pill mapped four tones
+onto three CSS classes, so a bedframe chip turned mattress-amber on the phone
+and accent on the desktop for the same order.
+
+### The rule
+
+**The colour says what the line IS; the label says whose brand it is.**
+`frontend/src/lib/brandingTone.ts` is the one home, and its four groups are
+exactly the buckets `brandingCategoryNoun` already resolves:
+
+| group | tone |
+|---|---|
+| Sofa | success |
+| Bedframe | accent |
+| Mattress | warning |
+| Accessory / Service / Dining / Bedlines / Diffuser / Carpet / Other | neutral |
+
+### Two entry points, and the difference is not cosmetic
+
+- **`brandingToneForCategory`** is the truth. The Sales Order list and the mobile
+  Orders card carry the line's category, so colour and label share one bucket
+  rule and cannot disagree.
+- **`brandingToneForLabel`** is a **BRIDGE**. Sales Invoice, Delivery Order and
+  Delivery Return carry only the stored `branding` text and no category at all,
+  so it recovers the bucket from the nouns the label is built out of.
+  Deterministic for every label this system produces, **not** for arbitrary text.
+
+> **OPEN.** The proper fix is to put the first line's category on those three
+> list payloads, the way the Sales Order list already does. Until then the
+> bridge is the honest approximation, and it is named as one rather than left to
+> look like the rule.
+
+`ZANOTTI` names no furniture, so a Zanotti sofa would have read as OTHER and
+turned grey beside a green 2990s sofa — the same product, two colours, one
+tenant apart. Both house sofa brand names are read from the module that owns
+them instead of being re-typed.
+
+---
+
 ## 2. One name for the Delivery Date
 
 **The owner, 2026-08-21:** *"为什么我外面的 listing 写着 customer

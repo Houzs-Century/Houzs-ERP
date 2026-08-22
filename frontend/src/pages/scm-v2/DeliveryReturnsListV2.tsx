@@ -16,6 +16,7 @@
 // about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -138,13 +139,10 @@ const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 
 const brandOf = (r: DrRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home for both. This copy had also lost
+   the BEDFRAME arm — a THIRD spelling across the five lists. */
+const brandTone = brandingToneForLabel;
 
 // DR status flow: PENDING → RECEIVED (goods back, stock IN) → INSPECTED →
 // REFUNDED / CREDIT_NOTED, plus REJECTED / CANCELLED. Compress into 4

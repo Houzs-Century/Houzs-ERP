@@ -11,6 +11,7 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -175,13 +176,10 @@ const refOf = (r: DoRow): string =>
 const soOf = (r: DoRow): string => r.so_doc_no || "—";
 
 const brandOf = (r: DoRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home. This copy had lost the BEDFRAME
+   arm too. */
+const brandTone = brandingToneForLabel;
 
 // DO lifecycle: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → DELIVERED →
 // INVOICED, plus CANCELLED. ONE BUCKET PER STATUS since 2026-08-21 (页签＝状态);
