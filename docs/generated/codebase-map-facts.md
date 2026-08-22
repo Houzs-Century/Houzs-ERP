@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-142 route modules (43 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1059 endpoint registrations.
+142 route modules (43 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1060 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -22,7 +22,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3318 |
+| `backend/src/routes/assr.ts` | 62 | 3323 |
 | `backend/src/routes/assrFormIntake.ts` | 5 | 675 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
@@ -43,7 +43,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 8 | 420 |
-| `backend/src/routes/position-capabilities.ts` | 2 | 98 |
+| `backend/src/routes/position-capabilities.ts` | 3 | 218 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 109 | 5052 |
@@ -170,21 +170,21 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 149 | `150_position_capabilities.sql` (150) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 320 | `0321_pc_inventory_idempotency.sql` (0321) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 150 | `151_position_page_overrides.sql` (151) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 321 | `0323_position_page_overrides.sql` (0323) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1662 files, 619868 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1663 files, 620333 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15017 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11890 |
-| `frontend/src/pages/ServiceCases.tsx` | 8817 |
+| `frontend/src/pages/ServiceCases.tsx` | 8816 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5680 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5626 |
@@ -199,7 +199,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/grns.ts` | 3571 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
-| `backend/src/routes/assr.ts` | 3318 |
+| `backend/src/routes/assr.ts` | 3323 |
 | `backend/src/services/projects.ts` | 3122 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
@@ -376,7 +376,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 153 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1355 |
-| `frontend/src/mobile/MobileApp.tsx` | 1065 |
+| `frontend/src/mobile/MobileApp.tsx` | 1077 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -466,5 +466,5 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/scm/stock-transfers` | Stock Transfers | `frontend/src/pages/scm-v2/StockTransfersListV2` | generic: MobileModuleList[stock-transfers] |
 | `/scm/suppliers` | Suppliers | `frontend/src/pages/scm-v2/SuppliersV2Route` | generic: MobileModuleList[suppliers] |
 | `/scm/warehouses` | Warehouse | `frontend/src/pages/scm-v2/Warehouses` | generic: MobileModuleList[warehouse] |
-| `/team?tab=departments` | Departments | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
-| `/team?tab=members` | Members | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
+| `/team?tab=departments2` | Departments | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
+| `/team?tab=directory` | Directory | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |

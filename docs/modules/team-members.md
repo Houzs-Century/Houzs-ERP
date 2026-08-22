@@ -33,6 +33,19 @@
 >   Enforcement of the four keys (scm.do.load / .dispatch / .revert /
 >   scm.invoice.issue) arrives with the warehouse-line PR; until then the
 >   matrix is declared intent, and the screen's footer note says so.
+>   **Extended same day to 全部 SCM 模块**: the screen's SCM tabs (Sales /
+>   Procurement / Consignment / Transportation / Warehouse / Finance) edit
+>   page-access LEVELS per position. The code policy stays the BASELINE;
+>   an edited cell stores a row in `position_page_overrides` (PG mig 0323,
+>   D1 mirror 151; service `backend/src/services/positionPageOverrides.ts`,
+>   `PUT /api/position-capabilities/:id/pages`). Overrides compose over the
+>   resolved policy at session hydration (`services/auth.ts` — applied after
+>   the sales-JD caps, and any override flips `scm_l2_configured` on so the
+>   SCM area guard enforces the composed map), and they ride the authz
+>   fingerprint (envelope v2) so a matrix edit busts cached sessions on the
+>   next request. Valid targets are the catalogue-derived SCM LEAF keys —
+>   exactly what `scmAreaGuard` reads; god positions are refused (wildcard
+>   bypasses the guard). Pinned by `backend/tests/positionPageOverrides.test.ts`.
 > * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
 >   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
 >   position set before send; company toggle chips).
