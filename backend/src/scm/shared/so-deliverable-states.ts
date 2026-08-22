@@ -48,6 +48,22 @@
    deny-list was written: an order paused mid-flight should not ship until it is
    taken off hold.
 
+   CLOSED IS THE FOURTH MEMBER, added 2026-08-22, and it is the one that shows
+   why a deny-list still has to be maintained. Close means STOP CHASING THE
+   REMAINDER — the customer took 7 of the 10, or the supplier cannot supply the
+   last 3, and what already went out stands (owner, asked whether the case
+   happens here: 「有的」). If the remainder is not coming, there is nothing left
+   to raise a delivery order for. It reads as a forward status, so the standing
+   posture above — let every forward status through — would have let it ship, and
+   that is the ONE way a deny-list can be wrong: not by blocking too much, by
+   never hearing about a status that genuinely cannot ship. Nothing new is
+   BLOCKED that used to work: a delivery order already raised is untouched, and
+   closing is the act of saying the rest is not coming.
+
+   NOT THE SAME AS CANCELLED, and they sit next to each other in this list. A
+   cancelled order is void as if it never happened; a closed one is a real sale
+   that came up short. Same answer to this one question, different documents.
+
    THE HOLD IS NOW A SEPARATE ARGUMENT, not a status (mig 0324, owner 2026-08-22:
    「我们的hold是给我们知道一个 order hold这的」). A hold is a MARKER beside the
    status, so a held IN_PRODUCTION order reads status IN_PRODUCTION and
@@ -69,10 +85,11 @@
    ---------------------------------------------------------------------------- */
 
 /** Sales-Order statuses from which a Delivery Order may NOT be raised: a DRAFT
- *  is not committed, a CANCELLED order is dead, and an ON_HOLD order is paused
- *  on purpose. Everything else — CONFIRMED, IN_PRODUCTION, READY_TO_SHIP,
- *  SHIPPED, DELIVERED, INVOICED, CLOSED — is deliverable. */
-export const SO_UNDELIVERABLE_STATUSES = ['DRAFT', 'CANCELLED', 'ON_HOLD'] as const;
+ *  is not committed, a CANCELLED order is dead, an ON_HOLD order is paused on
+ *  purpose, and a CLOSED order has had its remainder given up on. Everything
+ *  else — CONFIRMED, IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED,
+ *  INVOICED — is deliverable. */
+export const SO_UNDELIVERABLE_STATUSES = ['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED'] as const;
 
 /** May a Delivery Order be raised from a Sales Order in this state?
  *

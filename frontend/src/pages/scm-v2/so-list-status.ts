@@ -6,11 +6,18 @@
    order made for its buckets: a self-contained vocabulary does not need to live
    inside a 2,300-line screen, and the screen cannot grow.
 
-   THE TAB LIST IS ONE PER STATUS (页签＝状态, owner 2026-08-21), and `closed` is
-   absent because CLOSED was retired from SO_STATUSES the same day. If a status
-   is added to the route's vocabulary, its tab belongs here — the counts are
+   THE TAB LIST IS ONE PER STATUS (页签＝状态, owner 2026-08-21). If a status is
+   added to the route's vocabulary, its tab belongs here — the counts are
    generated server-side by walking that same set, so a missing row here is a
    status with a number and nowhere to show it.
+
+   `closed` was absent for one day, because CLOSED was retired from SO_STATUSES
+   on 2026-08-21. It is back on 2026-08-22 carrying a meaning the retired one
+   never had — STOP CHASING THE REMAINDER, the short-shipment case — and it sits
+   after Invoiced and before On Hold: last of the states an order passes
+   through, ahead of the two side states. See
+   backend/src/scm/lib/so-lifecycle-guards.ts for what it means and
+   so-tab-statuses.ts for why it is not folded into Delivered.
 
    STATUS_TONE IS NOT A FULL VOCABULARY and must not be read as one. It carries
    the values that need a NON-DEFAULT colour; `statusFor` answers `neutral` plus
@@ -33,6 +40,7 @@ export type StatusTab =
   | "ready_to_ship"
   | "delivered"
   | "invoiced"
+  | "closed"
   | "on_hold"
   | "cancelled"
   | "other";
@@ -46,6 +54,7 @@ export const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
   { value: "ready_to_ship", label: "Ready to Ship" },
   { value: "delivered", label: "Delivered" },
   { value: "invoiced", label: "Invoiced" },
+  { value: "closed", label: "Closed" },
   { value: "on_hold", label: "On Hold" },
   { value: "cancelled", label: "Cancelled" },
 ];
@@ -62,6 +71,14 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
   invoiced: { tone: "success", label: "Invoiced" },
   delivered: { tone: "success", label: "Delivered" },
   completed: { tone: "success", label: "Completed" },
+  /* NEUTRAL is the fall-through tone, so this row is here for the LABEL. The
+     map doubles as this list's label map, and the fall-through hands back the
+     RAW STORED VALUE — so without a row a closed order's pill reads "CLOSED",
+     the raw enum key, which is what §1's OPEN note in
+     docs/modules/document-status-vocabulary.md is about. Neutral is also the
+     right tone on its own terms: closed is terminal but not a failure, the same
+     reading Invoiced gets in status-pill.ts. */
+  closed: { tone: "neutral", label: "Closed" },
   /* A LEGACY ROW ONLY, and it needs the entry precisely because it is rare.
      Nothing writes ON_HOLD to a status any more (mig 0324 made the hold a
      MARKER column with its own chip), but Postgres cannot drop an enum label,

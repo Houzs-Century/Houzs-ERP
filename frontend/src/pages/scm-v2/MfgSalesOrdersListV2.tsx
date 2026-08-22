@@ -69,6 +69,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/u
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
+import { makeCloseAction } from "./use-close-action";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -1174,6 +1175,9 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
+  /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
+     Cancel and they do opposite things to the money. Both live in ./use-close-action. */
+  const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
   const doCancelSo = async (r: SoRow) => {
     if (!(await askConfirm({
       title: `Cancel ${r.doc_no}?`,
@@ -1194,7 +1198,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────

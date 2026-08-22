@@ -28,10 +28,18 @@
    The Sales Order list is the one that DOES have a catch-all. Its handler
    computes `other = allCount - known` and MfgSalesOrdersListV2 renders an
    "Other" tab whenever that count is non-zero, so a status outside this map is
-   still reachable. That is why CLOSED and RETURNED — both legal labels in
-   scm.mfg_so_status, both retired from the vocabulary — need no entry here, and
-   why registering this map as a partition would force two tabs the owner did
-   not ask for.
+   still reachable. That is why RETURNED — a legal label in scm.mfg_so_status
+   that no column ever stores — needs no entry here, and why registering this map
+   as a partition would force a tab nobody asked for.
+
+   CLOSED HAS A TAB AGAIN, and it is NOT folded into anything (2026-08-22). It
+   was in the paragraph above, alongside RETURNED, for the day it spent retired.
+   It carries a meaning now — stop chasing the remainder, the short-shipment
+   case the owner confirmed with 「有的」 — and an order whose remainder was
+   abandoned is a different fact from one that was delivered in full. Folding it
+   under Delivered would tell the reader the order completed; leaving it to the
+   catch-all would file a deliberate decision under "Other". Neither is true, so
+   it gets its own tab. See so-lifecycle-guards.ts for the definition.
 
    SHIPPED is folded anyway rather than left to `other`, and the reason is the
    READER, not reachability: an order whose goods went out belongs under
@@ -50,6 +58,7 @@ export const SO_TAB_STATUSES: Record<string, string[]> = {
   READY_TO_SHIP: ['READY_TO_SHIP'],
   DELIVERED:     ['SHIPPED', 'DELIVERED'],
   INVOICED:      ['INVOICED'],
+  CLOSED:        ['CLOSED'],
   ON_HOLD:       ['ON_HOLD'],
   CANCELLED:     ['CANCELLED'],
 };

@@ -103,8 +103,17 @@ export async function firstUndeliverableSo(sb: any, soDocNos: Array<string | nul
    PO line (no SO link) skips this entirely — a PO can be raised with no SO.
    Deny-list (not allow-list) so any legitimate forward status stays orderable.
    This is the SAME threshold the DO side uses (SO_UNDELIVERABLE_STATUSES) —
-   a paused order should not be ordered until it is taken off hold. */
-export const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']);
+   a paused order should not be ordered until it is taken off hold.
+
+   CLOSED joined both sets on 2026-08-22, and one reason covers both: closing a
+   sales order means the REMAINDER IS NOT COMING, so nothing more ships against
+   it and nothing more is bought for it. The two sets are held equal by
+   tests/duplicatedDecisionPins.test.ts PIN 2 — a threshold one write path
+   enforces and the other does not is a document type that can be built from an
+   order the other refuses. THE PURCHASE ORDER'S OWN `CLOSED` is a different
+   question and is not built; this set is about the SALES order a PO line is
+   sourced from. */
+export const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED']);
 
 /** The first Sales Order in this set that a Purchase Order may NOT be raised
  *  from, or null. Same never-over-block posture as the deliverable gate. */

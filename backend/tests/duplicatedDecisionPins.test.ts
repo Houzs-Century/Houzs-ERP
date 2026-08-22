@@ -174,9 +174,12 @@ describe("the SO threshold: a PO and a DO refuse the same orders", () => {
      still have to agree, and now one of them has a single home to agree FROM. */
   const undeliverable = oneSet(soDeliverableSrc, "SO_UNDELIVERABLE_STATUSES", "shared/so-deliverable-states.ts");
 
-  test("both are exactly DRAFT, CANCELLED, ON_HOLD", () => {
-    expect(unorderable).toEqual(["CANCELLED", "DRAFT", "ON_HOLD"]);
-    expect(undeliverable).toEqual(["CANCELLED", "DRAFT", "ON_HOLD"]);
+  /* CLOSED joined both on 2026-08-22. Close means the remainder is not coming,
+     so nothing more ships against the order and nothing more is bought for it —
+     one reason, both write paths, which is what this pin is for. */
+  test("both are exactly DRAFT, CANCELLED, ON_HOLD, CLOSED", () => {
+    expect(unorderable).toEqual(["CANCELLED", "CLOSED", "DRAFT", "ON_HOLD"]);
+    expect(undeliverable).toEqual(["CANCELLED", "CLOSED", "DRAFT", "ON_HOLD"]);
   });
 
   test("and they are equal to each other — one threshold, two write paths", () => {

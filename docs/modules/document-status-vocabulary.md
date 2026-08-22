@@ -200,7 +200,7 @@ it. They are fixed by the separate tabs-equal-statuses change, not here.
 
 ---
 
-## 1b. Only THREE status moves are ever offered to a person
+## 1b. Only FOUR status moves are ever offered to a person
 
 **The owner, 2026-08-22:** 「它不应该能转到 Mark in Production、Mark Shipped 和
 Mark Invoiced ... 按理说不应该允许这样手动去转，否则我们的 transaction workflow
@@ -209,13 +209,21 @@ Mark Invoiced ... 按理说不应该允许这样手动去转，否则我们的 t
 
 **The rule, and it decides membership rather than listing it:** a status a
 MACHINE derives from a fact is never offered to a person. What is left is the
-three that no machine can derive, because each is a DECISION:
+four that no machine can derive, because each is a DECISION:
 
 | offered | why it cannot be derived |
 |---|---|
 | **Confirm** | a draft becomes real when a human says so |
 | **Hold** | a person decided to pause this document |
+| **Close remaining** | a person decided the rest is not coming |
 | **Cancel** | a person decided this document should not happen |
+
+**It was three until 2026-08-22 and the rule is what added the fourth**, not a
+change of mind. The rule decides membership: a status a machine derives is never
+offered, and **Close** cannot be derived by anything. Nothing in this system
+knows that a customer took 7 of the 10 he ordered and does not want the last 3,
+or that the supplier cannot supply them — only the person on the phone knows.
+Asked whether that case happens here, the owner: 「有的」.
 
 ### What a machine actually derives on a Sales Order — CORRECTED 2026-08-22
 
@@ -299,6 +307,71 @@ ask for one, and `frontend/src/vendor/scm/lib/do-next-step.ts` already records
 the measurement behind that: nothing in this codebase writes
 `delivery_orders.status = 'INVOICED'`, so the label means "somebody clicked it",
 not "this was billed".
+
+### Close is not Cancel, and the menu must say so
+
+They sit two entries apart in the same right-click menu and they do opposite
+things to the money, so the words carry the whole load:
+
+| | what happens to the document | what happens to what was delivered |
+|---|---|---|
+| **Close remaining** | it STAYS | it STANDS — really sold, really invoiced |
+| **Cancel** | VOIDED, as if it never happened | unwound; any deposit becomes customer credit |
+
+**The label is "Close remaining", never "Close".** On its own the word reads as
+*finish*, and finishing is the opposite of what this does — a remainder is being
+ABANDONED. Cancel is final and reaches AutoCount, which has no un-cancel; Close
+is a decision to stop chasing an outstanding balance on an order that really
+happened.
+
+**No machine may ever write it.** There is no sweep to add later: nothing in the
+system holds the fact that a remainder was given up on. It is manual-only on the
+Sales Order, and a closed order cannot be walked back into an earlier live status
+(`soStatusTransitionError`, 409) — un-deciding it is a new order, not a status
+move. That refusal is load-bearing on its own and not merely the closing half of
+the old ON_HOLD laundry: `CLOSED` is unranked, so without the arm `CLOSED →
+DRAFT` falls through the rank block and is allowed outright. Cancel stays reachable from Closed, because an order that turns out to be
+void entirely is the cancel guards' question, not the transition table's.
+
+**A closed order still earns its commission**, deliberately —
+`COMMISSION_EXCLUDED_STATUSES` in `backend/src/scm/shared/hr-commission.ts` does
+not name it. The part that went out was really sold.
+
+#### Close and the HOLD marker are ORTHOGONAL, and no gate was added either way
+
+Checked deliberately when the two landed on the same day, and stated here
+because "we looked and chose not to block it" is a different answer from "nobody
+thought about it":
+
+| asked | answer | why |
+|---|---|---|
+| may a HELD order be closed? | **yes** | `PATCH /:docNo/status` does not select `on_hold` and never calls `isDocumentHeld`; `soStatusTransitionError` only ever sees the status string. The right-click **Close remaining** is likewise gated on status alone |
+| may a CLOSED order be put on hold? | **yes** | `document-hold-route.ts` states in its own header that it does not gate on status — *"A cancelled document can be marked, and that is intentional"* — and the menu offers the marker on every row |
+
+That is the marker's whole point. A hold is information stuck beside the
+progress, not a step in it, so blocking either direction would re-couple the two
+things migration 0324 separated. A closed order carrying a Hold chip reads
+exactly as it should: *the remainder is not coming, and somebody has flagged
+this one for attention.*
+
+**One thing did change in the transition table.** `CLOSED → ON_HOLD` is now
+refused as `hold_is_not_a_status` (409) rather than by the close guard, because
+`ON_HOLD` is refused as a TARGET for every source since mig 0324. `ON_HOLD →
+CLOSED` is ALLOWED — a legacy row still sitting on the retired label must have a
+way to be closed.
+
+> **This is a RESTORATION, not a reversal.** `CLOSED` was removed from the app
+> vocabulary on 2026-08-21 and that removal was CORRECT: what it removed was a
+> vague lifecycle step sitting after Invoiced that nobody used, proven empty
+> before it went. What came back on 2026-08-22 is a different decision wearing
+> the same enum label. The evidence for the removal is kept in
+> `backend/src/scm/lib/so-lifecycle-guards.ts` beside the new definition rather
+> than deleted.
+
+**The Purchase Order side is NOT built and is an open question for the owner.**
+The supplier who cannot supply the rest is the mirror image of this case, and the
+GRN already has a `CLOSED` of its own — but he was asked about the Sales Order,
+so only the Sales Order was changed.
 
 ### `SHIPPED` folds into Delivered on the Sales Order
 

@@ -35,6 +35,13 @@ export const COMMISSION_ENGINE_VERSION = 'v2';
  * 2990 excluded only CANCELLED + ON_HOLD out of the 10 statuses
  * (mfg-sales-orders.ts SO_STATUSES), which left DRAFT — rank 0, the state every
  * SO is born in — paying full commission.
+ *
+ * CLOSED IS DELIBERATELY NOT HERE (considered 2026-08-22, when the status came
+ * back). Closing means the remainder is not coming — the customer took 7 of the
+ * 10 — but the 7 were really sold, so the salesperson keeps the commission on
+ * them. Excluding a closed order would dock a salesperson's pay because the
+ * customer shortened his own order. It is the opposite of CANCELLED, which
+ * voids the sale.
  */
 export const COMMISSION_EXCLUDED_STATUSES = ['CANCELLED', 'ON_HOLD', 'DRAFT'] as const;
 

@@ -120,6 +120,20 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    version of this comment is the evidence that drawing the line anywhere short
    of "all of them" does not hold.
 
+   CLOSE REMAINING IS THE FOURTH, and it passes the same test (2026-08-22). No
+   machine can derive it: nothing in this system knows that a customer took 7 of
+   the 10 and does not want the rest, or that the supplier cannot supply it —
+   only the person on the phone knows, so there is nowhere else for it to come
+   from. The owner, asked whether that case happens here: 「有的」.
+
+   IT IS LABELLED "Close remaining", NOT "Close". "Close" reads as "finish", and
+   finishing is the opposite of what this does: a remainder is being ABANDONED.
+   It is also not Cancel, which sits two entries below it in red — Cancel voids
+   the whole document as if it never happened, Close keeps it and everything
+   already delivered against it. One word between them in a menu is not enough.
+   Offered only on a LIVE order: a draft has no remainder to give up on, and a
+   cancelled or already-closed one has nothing left to decide.
+
    WHY HOLD AND CANCEL ARE THE EXCEPTIONS. Neither is a step in the document's
    life — no machine derives them from anything, because they are DECISIONS a
    person makes about a document, and there is nowhere else for them to come
@@ -139,6 +153,9 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
   setStatus: (r: R, status: string) => void;
+  /** Stop chasing the remainder. Its own handler, not a setStatus, because the
+   *  confirmation wording is the point — see MfgSalesOrdersListV2. */
+  close: (r: R) => void;
   /** Put the mig-0324 hold marker on, or take it off. NEVER a status write. */
   setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
@@ -149,6 +166,11 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
     const s = norm(r.status);
     const isDraft = s === "DRAFT";
     const isCancelled = s === "CANCELLED";
+    const isClosed = s === "CLOSED";
+    /* Only `Close remaining` reads this. The hold entries deliberately do not:
+       since mig 0324 a hold is a MARKER, so it is offered on every row and says
+       nothing about where the order is. */
+    const live = !isDraft && !isCancelled && !isClosed;
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },
@@ -162,6 +184,7 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
       [
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },
         ...holdEntries(r, h.setHold),
+        live && { label: "Close remaining", onClick: () => h.close(r) },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
       [!isCancelled && dangerItem("Cancel Sales Order", () => h.cancel(r))],
