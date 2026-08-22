@@ -142,7 +142,15 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
     const tab = new URLSearchParams((to.split("?")[1] || "")).get("tab");
     // Positions is owner-managed through backend/tooling only. Keep it out of
     // every mobile route, not merely out of the visible Profile row.
-    const teamKey = tab === "members" ? "members" : tab === "departments" ? "departments" : null;
+    // The redesigned desktop tab values (directory / departments2) land on the
+    // same classic mobile modules; the legacy values stay accepted for old
+    // bookmarks until cutover.
+    const teamKey =
+      tab === "directory" || tab === "members"
+        ? "members"
+        : tab === "departments2" || tab === "departments"
+          ? "departments"
+          : null;
     if (teamKey && MODULE_CONFIGS[teamKey]) return { t: "module", key: teamKey, title: label };
     return { t: "stub", title: label };
   }
@@ -412,8 +420,12 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      to this user). So this row bypasses the desktop nav gate
      (announcements.read = the desktop ADMIN list/composer permission). */
   { to: "/announcements", label: "Announcements", alwaysShow: true },
-  { to: "/team?tab=members", label: "Members" },
-  { to: "/team?tab=departments", label: "Departments" },
+  /* Team destinations follow the desktop redesign's NAV_TABS rows
+     (?tab=directory / ?tab=departments2) so each mobile row keeps its exact
+     query-bearing gate; the screens themselves stay the classic mobile
+     members/departments modules until the handoff's mobile pass (S8). */
+  { to: "/team?tab=directory", label: "Directory" },
+  { to: "/team?tab=departments2", label: "Departments" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated

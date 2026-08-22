@@ -151,7 +151,9 @@ export function TeamInviteModal({
           );
           if (created) await api.patch(`/api/users/${created.id}`, { division: division.trim() });
         } catch {
-          /* division is cosmetic grouping — the invite itself succeeded */
+          toast.error(
+            `Invite sent, but the team "${division.trim()}" wasn't saved — set it on the member's profile.`,
+          );
         }
       }
       setSent({

@@ -2,6 +2,10 @@
 -- Editable per-position operational capabilities (the Roles & Permissions
 -- matrix). Presence of a row = granted. See the PG migration for the full
 -- rationale + the owner's 2026-08-22 seed ruling.
+--
+-- Seeds are one INSERT per capability: the replay harness runs under D1's
+-- compound-SELECT limit, so a 13-arm UNION ALL is refused
+-- ("too many terms in compound SELECT") while these IN-list selects are not.
 
 CREATE TABLE IF NOT EXISTS position_capabilities (
   position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
@@ -12,20 +16,17 @@ CREATE TABLE IF NOT EXISTS position_capabilities (
 );
 
 INSERT OR IGNORE INTO position_capabilities (position_id, capability)
-SELECT p.id, s.capability
-FROM (
-  SELECT 'storekeeper' AS slug, 'scm.do.load' AS capability
-  UNION ALL SELECT 'storekeeper_supervisor', 'scm.do.load'
-  UNION ALL SELECT 'logistic',               'scm.do.load'
-  UNION ALL SELECT 'ops_executive',          'scm.do.load'
-  UNION ALL SELECT 'ops_director',           'scm.do.load'
-  UNION ALL SELECT 'driver',                 'scm.do.dispatch'
-  UNION ALL SELECT 'logistic',               'scm.do.dispatch'
-  UNION ALL SELECT 'ops_executive',          'scm.do.dispatch'
-  UNION ALL SELECT 'ops_director',           'scm.do.dispatch'
-  UNION ALL SELECT 'ops_executive',          'scm.do.revert'
-  UNION ALL SELECT 'ops_director',           'scm.do.revert'
-  UNION ALL SELECT 'finance_manager',        'scm.invoice.issue'
-  UNION ALL SELECT 'logistic',               'scm.invoice.issue'
-) AS s
-JOIN positions p ON p.slug = s.slug;
+SELECT id, 'scm.do.load' FROM positions
+WHERE slug IN ('storekeeper', 'storekeeper_supervisor', 'logistic', 'ops_executive', 'ops_director');
+
+INSERT OR IGNORE INTO position_capabilities (position_id, capability)
+SELECT id, 'scm.do.dispatch' FROM positions
+WHERE slug IN ('driver', 'logistic', 'ops_executive', 'ops_director');
+
+INSERT OR IGNORE INTO position_capabilities (position_id, capability)
+SELECT id, 'scm.do.revert' FROM positions
+WHERE slug IN ('ops_executive', 'ops_director');
+
+INSERT OR IGNORE INTO position_capabilities (position_id, capability)
+SELECT id, 'scm.invoice.issue' FROM positions
+WHERE slug IN ('finance_manager', 'logistic');
