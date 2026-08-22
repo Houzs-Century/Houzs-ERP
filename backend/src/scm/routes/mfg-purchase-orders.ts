@@ -89,6 +89,7 @@ import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
+import { resolveSkuCategories, lineItemGroup } from '../lib/sku-category';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1237,44 +1238,10 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
-  /* THE CATEGORY IS THE SKU'S, NOT THE CLIENT'S OPINION OF IT.
-     Owner 2026-08-22: 「我的 SKU 都选了 sofa 可是出来 others？…正常来说就跟着 PO
-     里面的 SKU 啊，我的 SKU 也绑定跟 category 了啊」. He is right, and it is the
-     stronger fix: item_group is a property of the PRODUCT, so the server can
-     answer it and no client can lose it.
-
-     It used to be `it.itemGroup ?? null` — whatever the browser sent. The
-     desktop From-SO mapper re-derived the group from its LOADED SKU list
-     instead of using the pick's own itemGroup, so a code that list did not hold
-     arrived as undefined and the PO line stored NULL. That is not cosmetic:
-     computeVariantKey composes a sofa's fabric/seat/leg ONLY for a sofa or
-     bedframe group, so the GRN that inherits the null keys its stock into the
-     UNCLASSIFIED bucket and no sofa order can ever see the goods
-     (docs/bugs/0514). Fixing only the browser would leave the next client —
-     mobile, an import, a script — free to lose it again.
-
-     Company-scoped for the reason grns.ts:287 gives: `code` is shared between
-     the two organisations. mfg_product lines only; a raw-material line has no
-     product row, so it keeps whatever the caller sent. */
-  const skuCategoryByCode = new Map<string, string>();
-  {
-    const mfgCodes = [...new Set(
-      items
-        .filter((it) => (it.materialKind as string) === 'mfg_product')
-        .map((it) => String(it.itemCode ?? '').trim())
-        .filter((code) => code !== ''),
-    )];
-    if (mfgCodes.length > 0) {
-      let catQ = supabase.from('mfg_products').select('code, category').in('code', mfgCodes);
-      const coId = activeCompanyId(c);
-      if (coId != null) catQ = catQ.eq('company_id', coId);
-      const { data: prodRows } = await catQ;
-      for (const r of (prodRows ?? []) as Array<{ code: string; category: string | null }>) {
-        const cat = (r.category ?? '').trim().toLowerCase();
-        if (cat) skuCategoryByCode.set(r.code, cat);
-      }
-    }
-  }
+  /* The category is the SKU's, resolved server-side — see lib/sku-category.ts
+     for why a blank group sends the receipt's stock to the unclassified bucket
+     (docs/bugs/0514). */
+  const skuCategoryByCode = await resolveSkuCategories(supabase, items, activeCompanyId(c) ?? null);
 
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
@@ -1314,16 +1281,13 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
          them (server-owned, like the SO route). */
-      /* SKU FIRST — see skuCategoryByCode above. The caller's value is the
-         fallback, for a raw-material line that has no product row. */
-      item_group:   skuCategoryByCode.get(String(it.itemCode ?? '').trim())
-                      ?? (it.itemGroup as string | undefined) ?? null,
+      item_group:   lineItemGroup(skuCategoryByCode, it),
       variants:     (it.variants as unknown) ?? null,
       description:  (it.description as string | undefined) ?? null,
-      /* Built from the RESOLVED group, not the raw payload, so the printed
-         Description 2 and the stock key can never describe different things. */
+      /* From the RESOLVED group, so the printed Description 2 and the stock
+         key can never describe different things. */
       description2: buildVariantSummary(
-        String(skuCategoryByCode.get(String(it.itemCode ?? '').trim()) ?? it.itemGroup ?? ''),
+        String(lineItemGroup(skuCategoryByCode, it) ?? ''),
         (it.variants as Record<string, unknown> | null) ?? null,
       ) || null,
       /* Commander 2026-05-29 (BUG 1) — persist the source SO line (migration
