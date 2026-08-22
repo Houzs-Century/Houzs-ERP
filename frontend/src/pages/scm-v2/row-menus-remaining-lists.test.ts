@@ -53,7 +53,7 @@ describe("purchaseInvoiceRowMenu", () => {
     ]);
   });
 
-  test("a confirmed invoice has nothing left to confirm", () => {
+  test("a confirmed invoice is not offered Confirm a second time", () => {
     expect(labels(piMenu()({ status: "POSTED" }))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Purchase Invoice",
     ]);
