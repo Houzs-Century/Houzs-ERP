@@ -4,7 +4,7 @@
 // ----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { lineItemGroup, attributesTheGroupWillIgnore } from './sku-category';
+import { lineItemGroup, attributesTheGroupWillIgnore, resolveItemGroups } from './sku-category';
 
 const SOFA = { fabricCode: 'PC151-12', seatHeight: '30', legHeight: 'Default' };
 
@@ -65,5 +65,55 @@ describe('attributesTheGroupWillIgnore — the contradiction', () => {
   test('the POS vocabulary counts too', () => {
     expect(attributesTheGroupWillIgnore(null, { depth: '30', sofaLegHeight: '4"' }).sort())
       .toEqual(['depth', 'sofaLegHeight']);
+  });
+});
+
+/* ── resolveItemGroups — the OUTBOUND rewrite (docs/bugs/0523) ────────────────
+   The inbound helpers above hand a route a lookup it calls where it writes. A
+   delivery order reads the group in three places (stock check, commitment
+   planner, stored row) and the stored one is what the OUT movement is keyed
+   from later, so the rewrite is the guarantee that all three say one thing. */
+const fakeSb = (rows: Array<{ code: string; category: string | null }> | null) => ({
+  from: () => ({
+    select: () => ({
+      in: () => ({
+        eq: () => Promise.resolve({ data: rows, error: rows ? null : { message: 'boom' } }),
+        then: (res: (v: unknown) => unknown) =>
+          Promise.resolve({ data: rows, error: rows ? null : { message: 'boom' } }).then(res),
+      }),
+    }),
+  }),
+});
+
+describe('resolveItemGroups — one value, before any reader', () => {
+  const catalogue = [{ code: 'BF-KING-01', category: 'BEDFRAME' }, { code: 'SPARE-LEG', category: null }];
+
+  test('a wrong group and a missing group both become the SKU\'s', async () => {
+    const out = await resolveItemGroups(fakeSb(catalogue), [
+      { itemCode: 'BF-KING-01', itemGroup: 'others', qty: 1 },
+      { itemCode: 'BF-KING-01', qty: 2 },
+    ], 1);
+    expect(out.map((l) => l.itemGroup)).toEqual(['bedframe', 'bedframe']);
+    /* Everything else on the line rides through untouched — the routes pass
+       these same objects on to the row builder. */
+    expect(out[1]!.qty).toBe(2);
+  });
+
+  test('an unclassified code keeps what the caller sent', async () => {
+    const out = await resolveItemGroups(fakeSb(catalogue), [{ itemCode: 'SPARE-LEG', itemGroup: 'accessory' }], 1);
+    expect(out[0]!.itemGroup).toBe('accessory');
+  });
+
+  test('the input array is not mutated', async () => {
+    const input = [{ itemCode: 'BF-KING-01', itemGroup: 'others' }];
+    await resolveItemGroups(fakeSb(catalogue), input, 1);
+    expect(input[0]!.itemGroup).toBe('others');
+  });
+
+  /* FAIL SOFT — a product read that blipped must never be the reason a delivery
+     cannot be saved. Same contract skuCategoryMap states. */
+  test('a failed catalogue read leaves every line exactly as it arrived', async () => {
+    const out = await resolveItemGroups(fakeSb(null), [{ itemCode: 'BF-KING-01', itemGroup: 'others' }], 1);
+    expect(out[0]!.itemGroup).toBe('others');
   });
 });

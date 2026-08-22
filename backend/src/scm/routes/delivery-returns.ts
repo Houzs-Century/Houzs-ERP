@@ -28,6 +28,7 @@ import { computeVariantKey, type VariantAttrs } from '../shared';
 import { doLineRemaining, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import { resolveItemGroups } from '../lib/sku-category';
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
@@ -1027,7 +1028,7 @@ deliveryReturns.post('/', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
-  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (!Array.isArray(items) || items.length === 0) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
@@ -1037,6 +1038,14 @@ deliveryReturns.post('/', async (c) => {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
+
+  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0523.
+     `item_group` is not a label, it is the input to the stock bucket
+     (shared/variant-key.ts): the IN that puts the returned goods back on hand is keyed from the group
+     STORED on the line, so a client that sends a blank or wrong one picks the
+     bucket. Rewritten here, above every reader, so the value written and the
+     value later keyed from cannot differ. #2660 closed the inbound half. */
+  items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
 
   /* CROSS-COMPANY GUARD (see crossCompanyDoSourceBlocked) — the source DO is
      whatever the caller names: the header's deliveryOrderId and the parent of
@@ -1516,6 +1525,10 @@ deliveryReturns.post('/:id/items', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* SKU wins, decided once — docs/bugs/0523. Same rule as the create path: the
+     stored group is what the stock movement is keyed from. */
+  it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
+
   /* P1 SO-SKU spec §4.6 — SERVICE lines are not returnable goods. */
   {
     const svc = await findServiceLineCodes(sb, [{
@@ -1575,6 +1588,22 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     .select('qty_returned, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
     .eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+
+  /* SKU wins on the EDIT half too — docs/bugs/0523. An edit that names a group,
+     or re-points the code, decides which bucket this line's stock resync moves;
+     the group stored is the SKU's. Every reader below takes
+     `it.itemGroup ?? prev.item_group`, so one assignment settles the stored
+     column, description2 and the resync's key together.
+     ONLY when the request touches identity. An edit that changes neither is
+     left exactly as it was: repairing rows this request did not touch is a
+     different, write-shaped job that needs the probe's count first (#2671). */
+  if (it.itemGroup !== undefined || it.itemCode !== undefined) {
+    const [resolved] = await resolveItemGroups(sb, [{
+      itemCode: (it.itemCode ?? prev.item_code) as string | null,
+      itemGroup: (it.itemGroup ?? prev.item_group) as string | null,
+    }], activeCompanyId(c) ?? null);
+    it.itemGroup = resolved?.itemGroup ?? null;
+  }
 
   /* P1 SO-SKU spec §4.6 — block edits that would TURN a return line into a
      SERVICE line (code/group swap). Effective = patch value ?? stored value. */

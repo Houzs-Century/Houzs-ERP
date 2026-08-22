@@ -89,6 +89,8 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import { resolveItemGroups } from '../lib/sku-category';
+import { buildDoItemRow as buildItemRow } from '../lib/do-item-row';
 import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
@@ -3241,7 +3243,14 @@ deliveryOrdersMfg.post('/', async (c) => {
   {
     const linked = await fillMissingSoItemIds(sb, (body.soDocNo as string | null) ?? null, items);
     if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
-    items = linked.items;
+    /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0523.
+       `item_group` is not a label, it is the input to the stock bucket
+       (shared/variant-key.ts), so a client that sends a blank or wrong one
+       chooses which bucket this delivery checks AND deducts from. Rewritten
+       here, above every reader: the stock check, the ship-commitment planner,
+       the service/sofa guards and buildItemRow all read these same objects, so
+       the answer they get cannot differ. #2660 closed the inbound half. */
+    items = await resolveItemGroups(sb, linked.items, activeCompanyId(c) ?? null);
   }
 
   /* Audit gap #4 — the source SO must be committed (CONFIRMED or beyond) before a
@@ -3651,73 +3660,8 @@ deliveryOrdersMfg.post('/', async (c) => {
   }, 201);
 });
 
-/* Build one delivery_order_items insert row from a client line payload.
-   Shared by POST / (bulk create) and POST /:id/items (single add). Computes
-   line_total / line_cost / margin so recomputeTotals can roll them up.
-   `lineNo` (0165) = the DO's listing position; omit/null for un-numbered. */
-/* `commitment` is NEVER read off the request body — it is passed in by the route
-   from planShipCommitments, so a client cannot claim a binding the ledger has
-   not earned (it decides which receipt gets to net this OUT). */
-function buildItemRow(
-  deliveryOrderId: string,
-  it: Record<string, unknown>,
-  lineNo?: number | null,
-  commitment?: { poNumber: string; strictBatch: boolean; variantKey: string } | null,
-) {
-  const qty = Number(it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceSen ?? 0);
-  const discount = Number(it.discountSen ?? 0);
-  const unitCost = Number(it.unitCostSen ?? 0);
-  // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
-  const lineTotal = Math.max(0, (qty * unitPrice) - discount);
-  const lineCost = qty * unitCost;
-  const itemGroup = (it.itemGroup as string) ?? null;
-  const variants = (it.variants as unknown) ?? null;
-  return {
-    delivery_order_id: deliveryOrderId,
-    so_item_id: (it.soItemId as string | undefined) ?? null,
-    item_code: it.itemCode,
-    item_group: itemGroup,
-    description: (it.description as string) ?? null,
-    description2: buildVariantSummary(String(itemGroup ?? ''), (variants as Record<string, unknown> | null) ?? null) || (it.description2 as string) || null,
-    uom: (it.uom as string) ?? 'UNIT',
-    qty,
-    m3_milli: Number(it.m3Milli ?? 0),
-    unit_price_sen: unitPrice,
-    discount_sen: discount,
-    line_total_sen: lineTotal,
-    unit_cost_sen: unitCost,
-    line_cost_sen: lineCost,
-    line_margin_sen: lineTotal - lineCost,
-    variants,
-    /* Migration 0058 — carry the dedicated variant-breakdown columns from the
-       client line payload (manual add already carries variants + line date). */
-    gap_inches: (it.gapInches as number | null) ?? null,
-    divan_height_inches: (it.divanHeightInches as number | null) ?? null,
-    divan_price_sen: Number(it.divanPriceSen ?? 0),
-    leg_height_inches: (it.legHeightInches as number | null) ?? null,
-    leg_price_sen: Number(it.legPriceSen ?? 0),
-    custom_specials: (it.customSpecials as unknown) ?? null,
-    line_suffix: (it.lineSuffix as string | null) ?? null,
-    special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
-    notes: (it.notes as string) ?? null,
-    line_delivery_date: dateOrNull(it.lineDeliveryDate),
-    line_delivery_date_overridden: Boolean(it.lineDeliveryDateOverridden ?? false),
-    /* REC P4 (mig 0118) — the SOURCE rack this line ships from. Null = let the
-       dispatch chokepoint auto-pick the rack holding this product. */
-    rack_id: (it.rackId as string | undefined) || null,
-    /* Mig 0230 — the incoming PO batch this line is shipping AGAINST when it
-       ships before the goods arrive, the bucket it was committed in, and whether
-       that batch is a DYE LOT (sofa). The strict flag is what keeps the
-       batch-agnostic oversell retro-cost off a sofa OUT — and, just as
-       deliberately, keeps it available to a mattress OUT whose PO may yet be
-       cancelled or re-raised. */
-    committed_po_batch_no: commitment?.poNumber ?? null,
-    committed_variant_key: commitment ? commitment.variantKey : null,
-    committed_batch_strict: commitment?.strictBatch === true,
-    ...(typeof lineNo === 'number' ? { line_no: lineNo } : {}),
-  };
-}
+/* buildItemRow moved to lib/do-item-row.ts (size ceiling + a test seam).
+   Its `it.itemGroup` is expected pre-resolved by resolveItemGroups. */
 
 // ── Convert picked SO LINES (partial qty) → ONE DO ────────────────────────
 /* Commander 2026-05-30 — LINE-LEVEL, QUANTITY-BASED convert. Mirrors the PO's
@@ -4585,7 +4529,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-deliveryOrdersMfg.post('/:id/items', async (c) => {
+/* Exported so the outbound-category suite can drive the ADD path directly:
+   supabaseAuth cannot run in the vitest harness. Registration unchanged. */
+export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -4628,7 +4574,10 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     if (!claimed.ok) return c.json({ error: claimed.error, message: claimed.message }, 500);
     const linked = await fillMissingSoItemIds(sb, h.so_doc_no, [it], claimed.ids);
     if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
-    it = linked.items[0] as typeof it;
+    /* SKU wins, decided once — docs/bugs/0523. Same reasoning as the create
+       path: the stock check below, the commitment planner and buildItemRow all
+       read this one object. */
+    it = (await resolveItemGroups(sb, [linked.items[0] as typeof it], activeCompanyId(c) ?? null))[0]!;
   }
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
   /* The added line ships from ITS OWN SO line's warehouse — the same order the
@@ -4808,7 +4757,8 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
 
   await queueAcDoEdit(c, id);
   return c.json({ item: data }, 201);
-});
+};
+deliveryOrdersMfg.post('/:id/items', addDeliveryOrderItemHandler);
 
 deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
@@ -4846,6 +4796,23 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_sen, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+
+  /* SKU wins on the EDIT half too — docs/bugs/0523. An edit that names a group,
+     or re-points the code, decides the bucket resyncInventoryForDo will move
+     this line's stock in and out of; the group stored is the SKU's. Every
+     reader below takes `it.itemGroup ?? prev.item_group`, so one assignment
+     here settles the sofa-set guard, the stock check's variant key, the stored
+     column and description2 together.
+     ONLY when the request touches identity. An edit that changes neither is
+     left exactly as it was: repairing rows this request did not touch is a
+     different, write-shaped job that needs the probe's count first (#2671). */
+  if (it.itemGroup !== undefined || it.itemCode !== undefined) {
+    const [resolved] = await resolveItemGroups(sb, [{
+      itemCode: (it.itemCode ?? prev.item_code) as string | null,
+      itemGroup: (it.itemGroup ?? prev.item_group) as string | null,
+    }], activeCompanyId(c) ?? null);
+    it.itemGroup = resolved?.itemGroup ?? null;
+  }
 
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
   /* Mig 0230 — a qty INCREASE can bind, just like the three create paths. Filled

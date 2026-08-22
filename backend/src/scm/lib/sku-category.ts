@@ -126,6 +126,45 @@ export async function skuCategoryResolver(
 }
 
 /**
+ * Rewrite each REQUEST line's `itemGroup` to the SKU's, once, before anything
+ * reads it. Returns copies; the input is untouched.
+ *
+ * WHY A REWRITE RATHER THAN A LOOKUP AT EACH READER — this is the OUTBOUND
+ * difference, and it is the reason the inbound helpers above were not enough.
+ * An inbound document (PO / GRN / CO) reads the group in ONE place: the row it
+ * writes. A delivery order reads it in at least three — the pre-flight stock
+ * CHECK, the ship-commitment planner, and the row it stores, whose stored value
+ * is what the OUT movement is keyed from later. Three lookups can disagree; one
+ * assignment cannot. A line that passed the check against the sofa bucket and
+ * then deducted from the unclassified one would be WORSE than the bug being
+ * fixed, because the operator's "ship anyway?" answer would have been about a
+ * different bucket than the goods left.
+ *
+ * The rewrite also reaches the readers a per-row helper would have missed:
+ * `isServiceLine`, the sofa dye-lot guard and the whole-set guard all read
+ * `itemGroup` off the same line objects, so a sofa mis-declared as `others` now
+ * meets the guards a sofa is supposed to meet.
+ *
+ * Fail-soft exactly like `skuCategoryMap`: an unreadable product catalogue
+ * yields an empty map and every line keeps the value it arrived with.
+ */
+export async function resolveItemGroups<
+  T extends { itemCode?: unknown; itemGroup?: unknown },
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see skuCategoryMap
+  sb: any,
+  items: readonly T[],
+  companyId: number | null,
+): Promise<T[]> {
+  const bySkuCode = await skuCategoryMap(
+    sb,
+    items.map((it) => ({ materialKind: PRODUCT_KIND, itemCode: it.itemCode })),
+    companyId,
+  );
+  return items.map((it) => ({ ...it, itemGroup: lineItemGroup(bySkuCode, it) }));
+}
+
+/**
  * The two fields a line derives from its group, together — because they must
  * agree. `description2` is what the document PRINTS; `item_group` is what the
  * stock key is composed from. Built apart, they drift: that is precisely how a

@@ -220,6 +220,23 @@ Per-line warehouse and batch come from `resolveDrLineWarehouses` /
 `resolveDrLineBatches`, falling back to the header's `warehouse_id` — a line can
 return to a different warehouse than the header names.
 
+**`variant_key` in that bucket key is composed from the line's STORED
+`item_group`, so the group is the SKU's, not the request's (2026-08-23).**
+`computeVariantKey(item_group, variants)` folds a sofa's / bedframe's attributes
+into the key only for a sofa or bedframe group; for `others` or null it returns
+`''`, so a return line that arrived with a blank or wrong group puts the goods
+BACK into the unclassified bucket, where no order looking for that sofa can see
+them. The three request-sourced paths — `POST /` (bulk create),
+`POST /:id/items` (single add) and the identity half of
+`PATCH /:id/items/:itemId` (only when the patch names `itemGroup` or `itemCode`)
+— now rewrite the group from `mfg_products.category` by item code, company-scoped,
+through `resolveItemGroups` (`lib/sku-category.ts`). The convert-from-DO path is
+unchanged and was already correct: it copies the source DO line's row.
+
+This stops NEW rows only; existing lines are not repaired (that needs the
+read-only probe's count first — PR #2671). Trace:
+`docs/bugs/0523-the-delivery-order-let-the-client-decide-which-stock-bucket.md`.
+
 The resync is called **best-effort** after item writes (`try { … } catch {}`), so
 an inventory hiccup does not fail the line edit. That is deliberate, and it means
 a failed resync is silent: if stock looks wrong after an edit, re-running the
