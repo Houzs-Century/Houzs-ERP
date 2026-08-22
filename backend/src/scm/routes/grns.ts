@@ -66,7 +66,7 @@ import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffField
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
-import { attributesTheGroupWillIgnore } from '../lib/sku-category';
+import { keyedVariantWithWarning } from '../lib/sku-category';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -551,20 +551,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         movement_type: 'IN' as const,
         warehouse_id: warehouseId,
         item_code: it.item_code,
-        /* Bucket received stock by its attribute composition (migration 0095).
-           SAY SO when the line carries attributes this group will not compose —
-           a receipt with a fabric and a seat size, keyed as if it had neither,
-           is the shape that made HC-GRN-2608-003's goods invisible to every
-           sofa order (docs/bugs/0514). Reported, never repaired: composing them
-           regardless of group would re-key every historical row. */
-        variant_key: (() => {
-          const ignored = attributesTheGroupWillIgnore(it.item_group, it.variants ?? null);
-          // eslint-disable-next-line no-console
-          if (ignored.length) console.error(
-            `[grn-variant-key] ${grnNo} ${it.item_code}: item_group=${JSON.stringify(it.item_group)} ignores ${ignored.join(', ')} — stock keyed WITHOUT them`,
-          );
-          return computeVariantKey(it.item_group, it.variants ?? null);
-        })(),
+        variant_key: keyedVariantWithWarning(grnNo, it, computeVariantKey), // mig 0095; warns when the group ignores them
         product_name: it.material_name,
         qty: it.qty_accepted,
         // Landed MYR lot cost = base (rate→MYR) + per-unit allocated freight.

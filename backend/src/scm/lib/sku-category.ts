@@ -180,3 +180,32 @@ export function attributesTheGroupWillIgnore(
     return typeof v === 'string' ? v.trim() !== '' : v != null;
   });
 }
+
+/**
+ * The stock key, plus a loud line when the group is about to throw the line's
+ * own attributes away.
+ *
+ * Wrapped rather than inlined at the call site because the routes that key
+ * stock are all over their size ceiling, and a warning that costs a route eight
+ * lines is a warning the next route will leave out.
+ *
+ * `compute` is passed in for the same reason `summarise` is above: this module
+ * stays out of the variant-rule dependency graph.
+ */
+export function keyedVariantWithWarning(
+  docNo: string,
+  it: { item_code?: unknown; item_group?: unknown; variants?: unknown },
+  compute: (group: string | null, variants: Record<string, unknown> | null) => string,
+): string {
+  const group = (it.item_group as string | null) ?? null;
+  const variants = (it.variants as Record<string, unknown> | null) ?? null;
+  const ignored = attributesTheGroupWillIgnore(group, variants);
+  if (ignored.length) {
+    /* eslint-disable-next-line no-console */
+    console.error(
+      `[variant-key] ${docNo} ${String(it.item_code ?? '')}: item_group=${JSON.stringify(group)} `
+      + `ignores ${ignored.join(', ')} — stock keyed WITHOUT them (docs/bugs/0514)`,
+    );
+  }
+  return compute(group, variants);
+}
