@@ -40,6 +40,9 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { salesOrderPrintChain } from "../../lib/printChain";
+import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
@@ -141,6 +144,13 @@ type SoRow = HoldFields & {
   building_type: string | null;
   customer_country: string | null;
   do_nos?: string[] | null;
+  /** The same delivery orders and the sales invoices raised against this order,
+   *  each with the id the right-click "Print Delivery Order" needs — a PDF is
+   *  fetched by ADDRESS and `do_nos` carries only the number. Optional: a page
+   *  and the Worker deploy independently, so a bundle can talk to a worker that
+   *  does not send them yet, and the menu simply offers fewer entries. */
+  do_refs?: Array<{ id: string; docNo: string }> | null;
+  si_refs?: Array<{ id: string; docNo: string }> | null;
   stock_remark?: string;
   /** System Purchase Order numbers this SO was converted into (empty when
    *  none). Server-derived via the SO-line→PO-item→PO chain. LEGACY raise-link
@@ -1130,7 +1140,7 @@ export function MfgSalesOrdersListV2() {
   const goImport = () => navigate("/scm/sales-orders/maintenance?tab=import");
   const goDuplicate = () => navigate("/scm/sales-orders/maintenance?tab=duplicate");
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
-  const goPrint = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
   const doConfirm = (r: SoRow) =>
     updateStatus.mutate(
@@ -1196,7 +1206,7 @@ export function MfgSalesOrdersListV2() {
     setHold.mutate({ key: r.doc_no, onHold });
   };
   const soContextMenu = salesOrderRowMenu<SoRow>({
-    open: goFullPage, edit: goEdit, print: goPrint,
+    open: goFullPage, edit: goEdit, print: printDocument,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
     setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
   });
@@ -1219,47 +1229,14 @@ export function MfgSalesOrdersListV2() {
   const clearSelection = () => setSelectedIds(new Set());
 
   // One SO's full PDF bundle — detail (header + items + pwpCodes) and the
-  // payments ledger, both via the vendored authedFetch (→ /api/scm). Mirrors
-  // the V1 MfgSalesOrdersList fetchSoBundle.
-  //
-  // 2026-07-19 — payments were "best-effort": `.catch(() => ({ payments: [] }))`
-  // so the PDF "still renders". But this PDF LEAVES THE BUILDING — it is the
-  // document the customer is handed. Rendering it with an empty Payments table
-  // does not degrade gracefully, it states a FALSE FACT: that the customer has
-  // paid nothing and owes the full total. "The read failed" became "nothing was
-  // paid" — reference_houzs_nullish_hides_ignorance, the same shape as #653
-  // (MobilePOD told a driver to re-collect a paid order) and #1158.
-  //
-  // A failed payments read now propagates. printSelectedSos already wraps this
-  // in try/catch → notify(tone:'error'), and authedFetch has already run the
-  // response through humanApiError, so the operator gets a plain sentence and
-  // NO document — which is the correct outcome. Not printing is recoverable;
-  // handing a customer a wrong statement of what they owe is not.
-  const fetchSoBundle = async (
-    docNo: string
-  ): Promise<{
-    header: unknown;
-    items: unknown[];
-    payments: unknown[];
-    pwpCodes: unknown[];
-  }> => {
-    const [detail, paymentsRes] = await Promise.all([
-      authedFetch<{ salesOrder: unknown; items: unknown[]; pwpCodes?: unknown[] }>(
-        `/mfg-sales-orders/${docNo}`
-      ),
-      authedFetch<{ payments?: unknown[] }>(
-        `/mfg-sales-orders/${docNo}/payments`
-      ),
-    ]);
-    return {
-      header: detail.salesOrder,
-      items: detail.items,
-      /* `?? []` is safe HERE and nowhere above it: we are past the await, so the
-         request SUCCEEDED and the server simply omitted the key on an SO with no
-         payments. An empty array is an answer; the absence of a response is not. */
-      payments: paymentsRes.payments ?? [],
-      pwpCodes: detail.pwpCodes ?? [],
-    };
+  // payments ledger. Delegated to lib/printDocumentPdf, the ONE place that
+  // knows a Sales Order is addressed by its NUMBER and that a failed payments
+  // read must PROPAGATE rather than render a PDF claiming nothing was paid —
+  // that reasoning now lives beside the fetch it governs. The row menu's print
+  // calls the same function, so batch and single cannot drift apart.
+  const fetchSoBundle = async (docNo: string) => {
+    const b = await fetchPrintBundle({ doc: "so", docNo, key: docNo });
+    return { ...b, payments: b.payments ?? [], pwpCodes: b.pwpCodes ?? [] };
   };
 
   // Batch "Print all" — one ticked SO downloads straight; several prompt
@@ -2325,7 +2302,7 @@ export function MfgSalesOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
         onConfirm={() => selected && doConfirm(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}

@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 530,
     "@typescript-eslint/no-floating-promises": 784,
-    "@typescript-eslint/no-unnecessary-condition": 1770,
+    "@typescript-eslint/no-unnecessary-condition": 1768,
     "no-restricted-syntax": 133
   },
   "files": {
@@ -552,7 +552,7 @@
     },
     "src/pages/scm-v2/DeliveryReturnsListV2.tsx": {
       "@typescript-eslint/no-floating-promises": 1,
-      "@typescript-eslint/no-unnecessary-condition": 6,
+      "@typescript-eslint/no-unnecessary-condition": 4,
       "no-restricted-syntax": 5
     },
     "src/pages/scm-v2/DeliveryZones.tsx": {

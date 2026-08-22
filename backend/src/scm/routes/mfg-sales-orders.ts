@@ -33,6 +33,7 @@ import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
+import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
@@ -1439,8 +1440,8 @@ mfgSalesOrders.get('/', async (c) => {
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
-      chunkIn(docNos, (batch, from, to) => sb.from('delivery_orders').select('so_doc_no, do_number, do_date, created_at').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
-      chunkIn(docNos, (batch, from, to) => sb.from('sales_invoices').select('so_doc_no').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
+      chunkIn(docNos, (batch, from, to) => sb.from('delivery_orders').select('id, so_doc_no, do_number, do_date, created_at').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
+      chunkIn(docNos, (batch, from, to) => sb.from('sales_invoices').select('id, so_doc_no, invoice_number').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
     ]);
     const deliverableProm = soDeliverableRemaining(sb, docNos);
     const lifecycleProm = Promise.all([
@@ -1653,6 +1654,7 @@ mfgSalesOrders.get('/', async (c) => {
        are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
     const [doRowsRes, siRowsRes] = await downstreamProm;
     const doNosBySo = doNosBySalesOrder(doRowsRes.data as unknown as DeliveryOrderNoRow[]);
+    const downRefsBySo = soDownstreamRefs(doRowsRes.data as unknown as DeliveryOrderNoRow[], siRowsRes.data); // do_refs + si_refs: the row menu prints by ADDRESS, not by number
     const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data, siRowsRes.data);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
@@ -1793,6 +1795,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
+      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS);
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';

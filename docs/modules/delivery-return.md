@@ -357,3 +357,12 @@ DB type is the `scm.delivery_return_status` ENUM; column default is `PENDING`.
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link
   hole"
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A DR row offers
+`Print`, `Print Sales Order <no>` and `Print Delivery Order <no>` in place — the
+row already carries `so_doc_no` and `delivery_order_id` + `do_doc_no`, so no
+payload change was required. The list's batch export now reads its bundle from
+`lib/printDocumentPdf.ts`'s `deliveryReturnPdfBundle`, the one home for the
+DR-record → DR-generator mapping. `document-conversion.md` §8b has the rule.

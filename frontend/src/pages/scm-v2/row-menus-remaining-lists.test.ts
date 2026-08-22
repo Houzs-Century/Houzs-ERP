@@ -28,8 +28,21 @@ import {
   stockTakeRowMenu,
 } from "./row-menus";
 
-type Row = { status?: string | null };
+/* The identity fields are what a print entry is BUILT from: the row's own
+   document is `Print`, and a related one needs an address. Present here with no
+   chain fields at all, which is the case that must offer exactly `Print`. */
+type Row = {
+  status?: string | null;
+  id: string;
+  invoice_number: string;
+  return_number: string;
+};
 const labels = (m: RowMenuItem[]) => m.map((x) => (x.divider ? "—" : x.label));
+/* Fills the identity fields every row really has, so each test still says only
+   what it is about — a status. None of these rows carries a CHAIN field, which
+   is the case that must offer exactly one print entry, `Print`. */
+const R = (o: { status?: string | null } = {}): Row =>
+  ({ id: "row-id", invoice_number: "PI-0001", return_number: "PR-0001", ...o });
 const noop = () => {};
 
 /* ── Purchase Invoice ─────────────────────────────────────────────────────── */
@@ -48,13 +61,13 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
 
 describe("purchaseInvoiceRowMenu", () => {
   test("a DRAFT offers Confirm, and Cancel below it", () => {
-    expect(labels(piMenu()({ status: "DRAFT" }))).toEqual([
+    expect(labels(piMenu()(R({ status: "DRAFT" })))).toEqual([
       "Open", "Edit", "Print", "—", "Confirm", "—", "Cancel Purchase Invoice",
     ]);
   });
 
   test("a confirmed invoice is not offered Confirm a second time", () => {
-    expect(labels(piMenu()({ status: "POSTED" }))).toEqual([
+    expect(labels(piMenu()(R({ status: "POSTED" })))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Purchase Invoice",
     ]);
   });
@@ -62,16 +75,16 @@ describe("purchaseInvoiceRowMenu", () => {
   /* The server refuses a cancel once any money has been paid, so offering it
      would be a menu entry whose only possible outcome is a 409. */
   test("a PAID invoice cannot be cancelled from the menu", () => {
-    expect(labels(piMenu()({ status: "PAID" }))).toEqual(["Open", "Edit", "Print"]);
+    expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Print"]);
   });
 
   test("a cancelled invoice is not offered a second cancel", () => {
-    expect(labels(piMenu()({ status: "CANCELLED" }))).toEqual(["Open", "Edit", "Print"]);
+    expect(labels(piMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print"]);
   });
 
   test("Confirm calls the page's confirm handler with the row it was opened on", () => {
     const confirm = vi.fn();
-    const row = { status: "DRAFT" };
+    const row = R({ status: "DRAFT" });
     const item = piMenu({ confirm })(row).find((i) => i.label === "Confirm");
     item?.onClick();
     expect(confirm).toHaveBeenCalledWith(row);
@@ -93,7 +106,7 @@ const prMenu = () =>
 
 describe("purchaseReturnRowMenu", () => {
   test("a DRAFT offers Confirm and Cancel", () => {
-    expect(labels(prMenu()({ status: "DRAFT" }))).toEqual([
+    expect(labels(prMenu()(R({ status: "DRAFT" })))).toEqual([
       "Open", "Edit", "Print", "—", "Confirm", "—", "Cancel Purchase Return",
     ]);
   });
@@ -102,13 +115,13 @@ describe("purchaseReturnRowMenu", () => {
      Complete and never Cancel — while the server accepts the cancel. The menu
      is a separate group and offers what the server allows. */
   test("a POSTED return can still be cancelled, which the drawer never showed", () => {
-    expect(labels(prMenu()({ status: "POSTED" }))).toEqual([
+    expect(labels(prMenu()(R({ status: "POSTED" })))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Purchase Return",
     ]);
   });
 
   test("a COMPLETED return is terminal", () => {
-    expect(labels(prMenu()({ status: "COMPLETED" }))).toEqual(["Open", "Edit", "Print"]);
+    expect(labels(prMenu()(R({ status: "COMPLETED" })))).toEqual(["Open", "Edit", "Print"]);
   });
 });
 
@@ -127,19 +140,19 @@ describe("deliveryReturnRowMenu", () => {
   /* No Confirm on this document at all: a Delivery Return is RECEIVED on
      create and has no draft step, so there is no transition to offer. */
   test("a live return gets Open / Edit / Print and Cancel, and no Confirm", () => {
-    expect(labels(drMenu()({ status: "RECEIVED" }))).toEqual([
+    expect(labels(drMenu()(R({ status: "RECEIVED" })))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Delivery Return",
     ]);
   });
 
   test("an inspected return is still cancellable", () => {
-    expect(labels(drMenu()({ status: "INSPECTED" }))).toContain("Cancel Delivery Return");
+    expect(labels(drMenu()(R({ status: "INSPECTED" })))).toContain("Cancel Delivery Return");
   });
 
   /* Un-cancelling is refused by the server — the cancel's stock drain would be
      left in place — so a second Cancel is a dead entry, not a no-op. */
   test("a cancelled return is final", () => {
-    expect(labels(drMenu()({ status: "CANCELLED" }))).toEqual(["Open", "Edit", "Print"]);
+    expect(labels(drMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print"]);
   });
 });
 
@@ -158,12 +171,12 @@ describe("stockTransferRowMenu", () => {
      `?edit=1` route to point at. Print landed 2026-08-22 with the generator
      that gave it something to call (`vendor/scm/lib/stock-transfer-pdf.ts`). */
   test("Open, Print and Cancel", () => {
-    expect(labels(stMenu()({ status: "POSTED" })))
+    expect(labels(stMenu()(R({ status: "POSTED" }))))
       .toEqual(["Open", "Print", "—", "Cancel Stock Transfer"]);
   });
 
   test("a cancelled transfer keeps Open and Print and loses Cancel, with no stray divider", () => {
-    expect(labels(stMenu()({ status: "CANCELLED" }))).toEqual(["Open", "Print"]);
+    expect(labels(stMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Print"]);
   });
 });
 
@@ -179,21 +192,21 @@ const stkMenu = () =>
 
 describe("stockTakeRowMenu", () => {
   test("an OPEN take can be cancelled — it has written no movement yet", () => {
-    expect(labels(stkMenu()({ status: "OPEN" })))
+    expect(labels(stkMenu()(R({ status: "OPEN" }))))
       .toEqual(["Open", "Print", "—", "Cancel Stock Take"]);
   });
 
   /* Undoing a POSTED take is a different route (/reverse) with its own words,
      and it stays on the detail page. */
   test("a POSTED take is not offered Cancel", () => {
-    expect(labels(stkMenu()({ status: "POSTED" }))).toEqual(["Open", "Print"]);
+    expect(labels(stkMenu()(R({ status: "POSTED" })))).toEqual(["Open", "Print"]);
   });
 
   /* Print reads; it never writes. There is no state of this document in which
      a person may not have it on paper — including a cancelled one. */
   test("Print is offered on every status, cancelled included", () => {
     for (const status of ["OPEN", "POSTED", "CANCELLED"]) {
-      expect(labels(stkMenu()({ status })), status).toContain("Print");
+      expect(labels(stkMenu()(R({ status }))), status).toContain("Print");
     }
   });
 
@@ -201,7 +214,7 @@ describe("stockTakeRowMenu", () => {
      confirmation shows the variance first. The row carries no such number, so
      Confirm is deliberately not here. */
   test("Confirm is not offered — posting needs the variance summary a row cannot show", () => {
-    expect(labels(stkMenu()({ status: "OPEN" }))).not.toContain("Confirm");
+    expect(labels(stkMenu()(R({ status: "OPEN" })))).not.toContain("Confirm");
   });
 });
 
@@ -219,7 +232,7 @@ describe("every one of the five menus, on every status that document has", () =>
   test("cancel is last, alone in its group, and red", () => {
     for (const { name, menu, statuses } of EVERY_MENU) {
       for (const status of statuses) {
-        const items = menu({ status });
+        const items = menu(R({ status }));
         const cancels = items.filter((i) => i.label.startsWith("Cancel "));
         if (cancels.length === 0) continue;
         expect(cancels.length, `${name} / ${status}`).toBe(1);
@@ -238,7 +251,7 @@ describe("every one of the five menus, on every status that document has", () =>
     const FORBIDDEN = /^(Mark |Set )|Inspected|Refunded|Credit note|Complete|Received|Shipped|Delivered|Ready to Ship/i;
     for (const { name, menu, statuses } of EVERY_MENU) {
       for (const status of statuses) {
-        for (const item of menu({ status })) {
+        for (const item of menu(R({ status }))) {
           if (item.divider) continue;
           expect(item.label, `${name} / ${status}`).not.toMatch(FORBIDDEN);
         }
@@ -249,7 +262,7 @@ describe("every one of the five menus, on every status that document has", () =>
   test("no menu is empty, starts with a divider, or ends with one", () => {
     for (const { name, menu, statuses } of EVERY_MENU) {
       for (const status of statuses) {
-        const items = menu({ status });
+        const items = menu(R({ status }));
         expect(items.length, `${name} / ${status}`).toBeGreaterThan(0);
         expect(items[0]?.divider, `${name} / ${status}`).toBeFalsy();
         expect(items[items.length - 1]?.divider, `${name} / ${status}`).toBeFalsy();
@@ -269,7 +282,7 @@ describe("every one of the five menus, on every status that document has", () =>
   test("every list offers Print, on every status that document has", () => {
     for (const { name, menu, statuses } of EVERY_MENU) {
       for (const status of statuses) {
-        expect(labels(menu({ status })), `${name} / ${status}`).toContain("Print");
+        expect(labels(menu(R({ status }))), `${name} / ${status}`).toContain("Print");
       }
     }
   });
@@ -279,7 +292,7 @@ describe("every one of the five menus, on every status that document has", () =>
   test("an unrecognised or missing status still produces a usable menu", () => {
     for (const { name, menu } of EVERY_MENU) {
       for (const status of [null, undefined, "", "SOMETHING_NEW"]) {
-        const items = menu({ status });
+        const items = menu(R({ status }));
         expect(items.length, `${name} / ${String(status)}`).toBeGreaterThan(0);
         expect(items[0]?.label, `${name} / ${String(status)}`).toBe("Open");
       }

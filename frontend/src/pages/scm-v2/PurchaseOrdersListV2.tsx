@@ -73,6 +73,8 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { purchaseOrderPrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -866,7 +868,7 @@ export function PurchaseOrdersListV2() {
   const goSuppliers = () => navigate("/scm/suppliers");
   const goGrn = () => navigate("/scm/grns");
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
-  const goPrint = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
   // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
@@ -1022,7 +1024,7 @@ export function PurchaseOrdersListV2() {
      The prompt wording and the write live in ./use-hold-action.ts. */
   const setPoHold = (r: PoHeaderRow, onHold: boolean) => holdAction(r.id, r.po_number, onHold);
   const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
-    open: goFullPage, edit: goEdit, print: goPrint,
+    open: goFullPage, edit: goEdit, print: printDocument,
     transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
     canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
@@ -1526,7 +1528,7 @@ export function PurchaseOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(purchaseOrderPrintChain(selected).own)}
         onCancel={() => selected && doCancel(selected)}
         onConvertGrn={() => selected && goGrnFromPo(selected)}
       />

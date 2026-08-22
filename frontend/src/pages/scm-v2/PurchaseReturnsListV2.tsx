@@ -51,6 +51,8 @@ import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { purchaseReturnRowMenu } from "./row-menus";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { purchaseReturnPrintChain } from "../../lib/printChain";
 
 type PrRow = {
   id: string;
@@ -553,7 +555,7 @@ export function PurchaseReturnsListV2() {
   const goGrns = () => navigate("/scm/grns");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goEdit = (r: PrRow) => navigate(`/scm/purchase-returns/${r.id}?edit=1`);
-  const goPrint = (r: PrRow) => navigate(`/scm/purchase-returns/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: PrRow) => navigate(`/scm/purchase-returns/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -659,7 +661,7 @@ export function PurchaseReturnsListV2() {
   const prContextMenu = purchaseReturnRowMenu<PrRow>({
     open: goFullPage,
     edit: goEdit,
-    print: goPrint,
+    print: printDocument,
     confirm: doPost,
     cancel: doCancel,
     canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
@@ -900,7 +902,7 @@ export function PurchaseReturnsListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(purchaseReturnPrintChain(selected).own)}
         onPost={() => selected && doPost(selected)}
         onComplete={() => selected && doComplete(selected)}
         onCancel={() => selected && doCancel(selected)}
