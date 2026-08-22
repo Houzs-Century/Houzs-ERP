@@ -36,19 +36,35 @@ Order 可不可以 On Hold」这个问题，资料库的答案是**早就可以�
 销售单每一个自动状态背后都有一个事实（备货算完了、交货单开了、发票开了）。
 Consignment 这边大部分事实**根本不存在**，硬编一个出来是这件事里最糟的结果。
 
-### 一条现在只写在程式里、没写进规范的规矩
+### 这份提案照的规矩：只有三个动作给人按
 
-系统今天已经在遵守一条规矩：**机器会自己写的状态，就不给人点。**
-Sales Order 的右键选单刻意**不放** `READY_TO_SHIP` 和 `DELIVERED` 这两条，因为它们
-是机器算出来的；理由就写在 `frontend/src/pages/scm-v2/row-menus.ts` 的注解里。
-人只会看到 Confirm、Mark In Production、Mark Shipped、Mark Invoiced、Put On Hold、
-Take Off Hold、Reopen、Cancel。
+老板 2026-08-22 在同一天还讲了另一句话，已经写进
+`docs/modules/document-status-vocabulary.md` §1b：
 
-**这条规矩目前只活在那个档案的注解里，没有写进
-`docs/modules/document-status-vocabulary.md`。** 这份提案通篇都按这条规矩来排，
-并且建议把它正式写进那份状态词汇表 —— 只活在一个档案注解里的规矩，下一个人不会看到。
-（PROVEN：`row-menus.ts` 的选单内容与注解；
-`docs/modules/document-status-vocabulary.md` 全文里没有这一条。）
+> 「它不应该能转到 Mark in Production、Mark Shipped 和 Mark Invoiced ... 按理说不
+> 应该允许这样手动去转，否则我们的 transaction workflow 就全乱了」
+
+规矩是：**机器会从某个事实推出来的状态，永远不给人按。剩下能给人按的只有三个 ——
+Confirm、Hold、Cancel**，因为这三个不是从任何事实推出来的，是人的决定。
+
+**这条规矩直接决定了这份提案长什么样。** 所以下面 §4 的工作清单里，你不会看到
+「帮 Consignment Order 加一个 Mark Shipped 按钮」这种东西 —— 那正好是被禁掉的做法。
+要嘛把那台推算的机器盖起来（贵，第 3 层），要嘛那个状态就先空着。
+
+> **一个必须讲出来、不能顺手抹平的矛盾。** §1b 那张表把 `IN_PRODUCTION` 说成是
+> `so-processing-date.ts` 从 processing date 推出来的、把 `SHIPPED` 说成是
+> `so-delivery-sync.ts` 从交货单推出来的。**照今天树上的程式，这两句都不成立：**
+> `so-processing-date.ts` 里 `IN_PRODUCTION` 只出现在注解，没有任何一行写它；
+> `so-delivery-sync.ts` 里 `SHIPPED` 只出现在一个「可以从哪些状态往前走」的读取清单
+> 里，也没有任何一行写它。实际情形是**人按 IN_PRODUCTION 的时候，同一个动作顺便把
+> processing date 盖上去**（`mfg-sales-orders.ts` 的状态 PATCH），方向跟 §1b 讲的相反；
+> 而 `SHIPPED` 今天**没有任何东西会自动写**（`docs/modules/sales-order.md` §0.1 也是
+> 这样写的）。
+>
+> **规矩本身没有因此变错** —— 不给人手动去动一个跟事实绑在一起的状态，理由完全成立。
+> 错的是那张表把「应该由机器写」讲成了「已经由机器写」。这里只记录，不动手改别人
+> 刚合并的文件；这是 PROVEN 的观察，处理方式请老板决定。
+> （PROVEN：grep `so-processing-date.ts` 与 `so-delivery-sync.ts` 全档。）
 
 ---
 
@@ -111,14 +127,14 @@ Hold 和 Cancel」时用的是「所有的 Transaction Workflow」，所以这�
 
 | SO 的状态 | 白话 | CO 资料库收不收 | CO 今天有没有人写 | 要自动写的话，机器要读哪个事实 |
 |---|---|---|---|---|
-| `DRAFT` | 还没写好 | **收**（enum 有这个值） | **没有**。CO 一开单就是 CONFIRMED，程式里写死的 | 不用推 —— 这是「开单时选存草稿」，属于人的动作，不是机器的 |
+| `DRAFT` | 还没写好 | **收**（enum 有这个值） | **没有**。CO 一开单就是 CONFIRMED，程式里写死的 | 不用推 —— 开单时人自己选存不存草稿 |
 | `CONFIRMED` | 单子是真的 | 收 | **有** —— 开单当下写进去 | — |
-| `IN_PRODUCTION` | 已 proceed | **收** | **没有** | 不用推 —— SO 这一格本来就是人按的 |
+| `IN_PRODUCTION` | 已 proceed | **收** | **没有** | SO 这一格今天是**人按的，而且按下去会顺便盖上 processing date**。照 §1b 的规矩，它不该给人按 —— 所以 CO 这一格的正解是「等有机器从 processing date 推」，不是加一个按钮 |
 | `READY_TO_SHIP` | 货备好了，可以叫客人 | **收** | **没有** | **没有这个事实。** SO 靠 `so-stock-allocation.ts` 算备货，那支程式**完全不认识** consignment 表（PROVEN：全档只有一句注解提到 consignment，没有任何一行读写 `consignment_sales_orders`） |
-| `SHIPPED` | 货出门了 | **收** | **没有** | 不用推 —— SO 这一格也是人按的 |
+| `SHIPPED` | 货出门了 | **收** | **没有** | **SO 这一格今天没有任何东西会写**（PROVEN，见上面那个矛盾框）。而且 SHIPPED 已经不是 SO 的页签了 —— 老板 2026-08-22:「Sales Order 的 Shipped 跟 Delivered 是合起来的」，它折进 Delivered（`backend/src/scm/lib/so-tab-statuses.ts`）。CO 要对齐就跟着折 |
 | `DELIVERED` | 客人收到了 | **收** | **没有** | **事实在，机器不在。** SO 靠 `so-delivery-sync.ts` 从交货单的覆盖量推。对 CO 来说对应的事实是 `consignment_delivery_order_items.consignment_so_item_id`（CN 的行连回 CO 的行）—— **栏位存在**，但 `so-delivery-sync.ts` 里 consignment 出现 **0 次**（PROVEN，grep），所以没有任何东西在算 |
 | `INVOICED` | 开发票了 | **收** | **没有** | **没有这个事实，而且不是没写而是不存在** —— consignment 这条链根本没有发票单据（§1） |
-| `ON_HOLD` | 暂停 | **收** | **没有** | 不用推 —— 人按的 |
+| `ON_HOLD` | 暂停 | **收** | **没有** | 不用推 —— 这是 §1b 三个可以给人按的其中一个 |
 | `CANCELLED` | 作废 | 收 | **有** —— 列表右键「Cancel Order」 | — |
 
 （CO 今天有没有人写：PROVEN，读 `backend/src/scm/routes/consignment-orders.ts` 的
@@ -150,12 +166,12 @@ Hold 和 Cancel」时用的是「所有的 Transaction Workflow」，所以这�
 
 | DO 的状态 | 白话 | CN 资料库收不收 | CN 今天有没有人写 | 要自动写的话，机器要读哪个事实 |
 |---|---|---|---|---|
-| `DRAFT` | 还没确认 | 收 | **没有** | 人的动作 |
-| `LOADED` | 装车了（DO 的「确认」那一格） | 收 | **有，但只有「Reopen」会写**。开单不会经过这一格 | 人的动作 |
+| `DRAFT` | 还没确认 | 收 | **没有** | 人的动作（Confirm 的前一格） |
+| `LOADED` | 装车了（DO 的「确认」那一格） | 收 | **有，但只有「Reopen」会写**。开单不会经过这一格 | 人的动作 —— 这就是 §1b 的 Confirm |
 | `DISPATCHED` | 货出门了（**第一次进这格就扣库存**） | 收 | **有** —— **开单当下就写**。CN 一开出来货就算出门了 | 人的动作 |
-| `IN_TRANSIT` | 在路上 | 收 | **没有** | 人的动作（DO 那边是手机上司机按的） |
+| `IN_TRANSIT` | 在路上 | 收 | **没有** | DO 那边是手机上司机按的 —— 事实是司机的动作，不是推算 |
 | `SIGNED` | 客人签收了 | 收 | **没有**（`signed_at` 栏位在，没人写） | 事实是签收证据（POD）。CN 的列印**刻意不放**那个扫码 QR，怕改到真正的交货单状态（PROVEN：`docs/modules/delivery-order.md` 的 loading QR 段） |
-| `DELIVERED` | 送到了 | 收 | **没有** | 人的动作 |
+| `DELIVERED` | 送到了 | 收 | **没有** | DO 那边靠 POD（签收证据）。CN 没有 POD 入口 |
 | `INVOICED` | 开发票了 | 收 | **没有** | **没有这个事实** —— consignment 没有发票 |
 | `ON_HOLD` | 暂停 | **收不收：不确定。`do_status` 这个 enum 里目前没有 `ON_HOLD`** | 没有 | — |
 | `CANCELLED` | 作废（**会把库存退回来**） | 收 | **有** | — |
@@ -269,7 +285,7 @@ CN 是**一开单就 `DISPATCHED`**，程式注解写得很直白：寄卖的货
 | # | 做什么 | 动到哪里 | 为什么便宜 |
 |---|---|---|---|
 | 1 | CO 的右键选单补上 `Put On Hold` / `Take Off Hold`，照 SO 的选单排 | `ConsignmentOrders.tsx`，参考 `row-menus.ts` | enum 收、API 收、列表早就会画名字 |
-| 2 | CO 列表补状态页签，一个状态一个页签 | 同上，参考 `so-list-status.ts` | 纯前端 |
+| 2 | CO 列表补状态页签 | 同上，参考 `so-list-status.ts` 与 `backend/src/scm/lib/so-tab-statuses.ts` | 纯前端。**要跟着 SO 折 `SHIPPED`** —— SO 2026-08-22 已经把 Shipped 并进 Delivered，CO 若照旧摆两个页签，反而是新的不对齐 |
 | 3 | PCO / PCR 补 On Hold 的按钮 | 两支列表＋内页 | `po_status` / `grn_status` 已经有这个值 |
 | 4 | 修 §2.3 那个 hold 会被盖掉的 bug | `purchase-consignment-receives.ts` 的 `recomputePcoReceived` | 一行排除条件，照 PO 那边的做法 |
 | 5 | 把「没有按钮的页签」补上按钮，或把页签拿掉 | CR 的 `REFUNDED`、PCR 的 `CLOSED`、PCT 的 `COMPLETED` | 二选一，都是小改 |
@@ -317,8 +333,11 @@ CN 是**一开单就 `DISPATCHED`**，程式注解写得很直白：寄卖的货
   migration 只加在采购链，consignment 那一份没有跟上）。
 - **惯例上，「暂停」是文件层的旗标，不是流程状态。** 大型 ERP 多半用一个独立的
   hold flag（可以随时上下、不影响流程排序），而不是把 hold 挤进状态序列。我们两种都
-  不是纯的：SO 的 `ON_HOLD` 是一个不排序的状态，效果接近旗标。这次照 SO 的做法做，
-  是一致性最好的选择，不用另外发明。
+  不是纯的：SO 的 `ON_HOLD` 是一个不排序的状态，效果已经很接近旗标。
+  **我的建议（是建议，不是他的决定）：这次照 SO 现有的 `ON_HOLD` 做法做**，不要
+  另外发明一个 hold 旗标 —— 一致性最好、最便宜，而且 §2 已经证实资料库有一半已经
+  接受这个值了。如果哪天真的要改成旗标，那是整个系统一起改的题目，不该从 consignment
+  这边开头。
 
 ---
 
