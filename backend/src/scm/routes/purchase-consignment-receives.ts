@@ -132,7 +132,7 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
    batch=pc_order_no when linked) against what inventory_movements already record
    for this receive, and writes only the DELTA:
      • first-ever IN for a bucket   → PC_RECEIVE  (carries the "consignment stock
-       IN" label; uq_inv_mov_pc_receive_source (0318) makes the primary posting
+       IN" label; uq_inv_mov_pc_receive_source (0321) makes the primary posting
        once-only at the database, and we keep the first/delta
        split for consistency with the note template)
      • any later increase           → STOCK_TRANSFER IN

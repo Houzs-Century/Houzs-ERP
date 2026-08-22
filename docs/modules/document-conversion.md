@@ -1108,7 +1108,7 @@ three missing after-write rechecks are.
 
    > CORRECTED IN PART, 2026-08-21 (docs/bugs/0502): the purchase-consignment
    > LEDGER writes now carry the same database backstop their siblings had —
-   > `uq_inv_mov_pc_receive_source` / `uq_inv_mov_pc_return_source` (mig 0318,
+   > `uq_inv_mov_pc_receive_source` / `uq_inv_mov_pc_return_source` (mig 0321,
    > the 0279 v2 shape with `COALESCE(correction_seq,0)`), so a concurrent
    > double-post of a PC Receive / PC Return books its stock ONCE whatever the
    > route does, and `purchase-consignment-receives.ts` no longer discards the

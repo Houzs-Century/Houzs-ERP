@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const MIG = readFileSync(
-  resolve(__dirname, '../src/db/migrations-pg/0318_pc_inventory_idempotency.sql'),
+  resolve(__dirname, '../src/db/migrations-pg/0321_pc_inventory_idempotency.sql'),
   'utf8',
 );
 const RCV = readFileSync(
@@ -22,7 +22,7 @@ const RCV = readFileSync(
   'utf8',
 );
 
-describe('mig 0318 — the PC backstop indexes', () => {
+describe('mig 0321 — the PC backstop indexes', () => {
   it('creates both partial unique indexes in the 0279 v2 shape', () => {
     for (const idx of ['uq_inv_mov_pc_receive_source', 'uq_inv_mov_pc_return_source']) {
       const at = MIG.indexOf(`CREATE UNIQUE INDEX IF NOT EXISTS ${idx}`);

@@ -23,7 +23,7 @@ posting per bucket with deltas via STOCK_TRANSFER — exactly the CS_DO template
 `postPcReceiveAndRollup` wrapped it in `try { … } catch { /* best-effort */ }`
 around a function that never throws, so `writeMovements` refusals vanished.
 
-**Fix.** Mig `0318_pc_inventory_idempotency.sql`: numbers any pre-existing
+**Fix.** Mig `0321_pc_inventory_idempotency.sql`: numbers any pre-existing
 duplicate (doc, product, variant) buckets under `correction_seq` 1..N
 (append-only — deleting a movement would rewrite on-hand and orphan its FIFO
 lots, 0279's minefield), then creates `uq_inv_mov_pc_receive_source` /

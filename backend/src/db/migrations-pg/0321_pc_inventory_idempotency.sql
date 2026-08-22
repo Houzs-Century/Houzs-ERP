@@ -1,8 +1,9 @@
 -- ----------------------------------------------------------------------------
--- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0317 when branched.
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0320 when renamed
+-- (was 0321; the number was taken by the on-hold series while this PR queued).
 -- (Money-path / FIFO-costing adjacent: DDL on scm.inventory_movements.)
 --
--- 0318 — the purchase-consignment ledger writes get the idempotency backstop
+-- 0321 — the purchase-consignment ledger writes get the idempotency backstop
 --        every sibling already has (2026-08-21 audit, item A11).
 --
 -- THE DEFECT
@@ -78,7 +79,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_pc_receive_source
   WHERE (source_doc_type = 'PC_RECEIVE'::text);
 
 COMMENT ON INDEX scm.uq_inv_mov_pc_receive_source IS
-  'Per-receive idempotency backstop (0318): one PRIMARY PC_RECEIVE posting per (receive, product, variant) bucket -- correction_seq NULL folds to 0 -- so a concurrent double-post or timed-out retry is rejected by the database, not merely hoped against in the route. Historical duplicates were preserved under seq 1..N at index creation; they are a finding for reconciliation, not corrections.';
+  'Per-receive idempotency backstop (0321): one PRIMARY PC_RECEIVE posting per (receive, product, variant) bucket -- correction_seq NULL folds to 0 -- so a concurrent double-post or timed-out retry is rejected by the database, not merely hoped against in the route. Historical duplicates were preserved under seq 1..N at index creation; they are a finding for reconciliation, not corrections.';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_pc_return_source
   ON scm.inventory_movements
@@ -86,4 +87,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_pc_return_source
   WHERE (source_doc_type = 'PC_RETURN'::text);
 
 COMMENT ON INDEX scm.uq_inv_mov_pc_return_source IS
-  'Per-return idempotency backstop (0318) -- the PC_RETURN twin of uq_inv_mov_pc_receive_source; same key, same historical-duplicate preservation.';
+  'Per-return idempotency backstop (0321) -- the PC_RETURN twin of uq_inv_mov_pc_receive_source; same key, same historical-duplicate preservation.';
