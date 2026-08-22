@@ -24,8 +24,20 @@ unreachable from the office, which is why production held zero rows in it
 
 **Fix.** `LOADED` moved into `DO_SHIPPED_STATES` (so `DO_PRESHIP_STATES` is
 `DRAFT` alone and `DO_NOT_DELIVERED_STATES` derives to `{DRAFT, CANCELLED}`), and
-Confirm now writes `LOADED`. One trigger, unchanged in shape — the point of that
-module is that the write has a single home, and nothing was added beside it.
+every confirm control — the office button, the row menu, the phone's action bar —
+now writes `LOADED`. One trigger, unchanged in shape: the point of that module is
+that the write has a single home, and nothing was added beside it.
+
+**And the CREATE, which is the path that actually matters.** The status PATCH is
+the minority route: every live delivery order was raised by a plain non-draft
+create, which deducts at creation and performs no transition at all. Those creates
+landed `DISPATCHED` — reading "Shipped" — for the same business event a confirmed
+draft now calls "Confirmed". The owner: 「我们是只要出DO就扣了库存了不是吗？」.
+Both create paths now land `LOADED`. **The moment the stock is deducted does not
+change**: the deduction, the SO sync and the customer email are gated on
+`body.asDraft`, never on the status literal, and the test pins that gate on both
+paths. The 30 existing `DISPATCHED` rows are deliberately NOT backfilled — their
+stock is out and the status is still a legal, meaningful one.
 
 Three consequences that had to move with it, each of which would have been a
 silent regression: the customer "on its way" email fired on `toStatus ===

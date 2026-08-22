@@ -141,12 +141,24 @@ export const DO_STATUSES = [
 ] as const;
 
 /** The hop that means "confirmed — this is on its way", and so the one the
- *  customer email fires on. TWO statuses because the two ways a delivery order
- *  becomes real disagree about which it lands in: the office Confirm button
- *  writes LOADED, while a non-draft CREATE is still born DISPATCHED. Naming the
- *  pair here rather than testing a literal in the route is what stops the next
- *  move of the confirm step silently ending the email, which is exactly what
- *  moving it to LOADED on 2026-08-22 would have done. */
+ *  customer email fires on when a delivery order leaves a pre-ship state.
+ *
+ *  LOADED is the live answer: every confirm control in the product — the office
+ *  button, the row menu, the phone's action bar, and the non-draft CREATE, which
+ *  IS a confirm — now lands there.
+ *
+ *  DISPATCHED IS KEPT DELIBERATELY, and not because a caller still writes it.
+ *  It is here because `PATCH /:id/status` accepts any DO_STATUSES member from
+ *  any client, so a DRAFT can still be moved straight to DISPATCHED by an
+ *  integration or an old cached bundle. That IS a confirm — the goods are
+ *  leaving — and the customer should hear about it. Erring wide costs nothing:
+ *  do_email_sent_at is claimed atomically, so at most one email per delivery
+ *  order exists either way.
+ *
+ *  Naming the pair here rather than testing a literal in the route is what stops
+ *  the next move of the confirm step silently ENDING the email instead of moving
+ *  it — which is exactly what putting the stock-out on LOADED would have done on
+ *  2026-08-22. */
 export const CONFIRM_HOP_STATES = ['LOADED', 'DISPATCHED'] as const;
 
 /** Pre-ship: no stock has left our hands yet. DRAFT alone since 2026-08-22 —

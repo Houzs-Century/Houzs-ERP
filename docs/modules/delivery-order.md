@@ -252,8 +252,8 @@ still need `edit` on `scm.sales.delivery`.
 | GET | `/deliverable-so-lines` | `:2347` | SO lines with `remaining > 0` (qty − delivered + returned). |
 | GET | `/so-source/:docNo` | `:2425` | SO header fields for the convert form. |
 | GET | `/:id` | `:2451` | Header + items + `has_children` + `lifecycle_state` + crew. |
-| POST | `/` | `:2591` | Create. `asDraft: true` → DRAFT (no stock); else born DISPATCHED. |
-| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. Same `asDraft` rule as `POST /` — **omitting the field means DISPATCHED**, i.e. stock OUT + SO synced to delivered + customer email. Callers that want a reviewable document must send it explicitly. |
+| POST | `/` | `:2591` | Create. `asDraft: true` → DRAFT (no stock); else born **LOADED** (Confirmed) with the stock deducted. |
+| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. Same `asDraft` rule as `POST /` — **omitting the field means LOADED (Confirmed)**, i.e. stock OUT + SO synced to delivered + customer email. Callers that want a reviewable document must send it explicitly. |
 | PUT | `/:id/crew` | `:3314` | Driver / helper / lorry assignment + snapshot. |
 | PATCH | `/:id` | `:3450` | Header edit (+ SO amend-field mirror). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
@@ -331,8 +331,10 @@ still need `edit` on `scm.sales.delivery`.
   the source-SO gate — every SO referenced by `soDocNo` or by any line's
   `soItemId` must be past `SO_UNDELIVERABLE_STATUSES` (`firstUndeliverableSo`,
   `:2146`). `asDraft === true` → `status: 'DRAFT'`, otherwise the DO is born
-  **DISPATCHED** (`:2785`) and stock is deducted immediately (`:2842-2855`). The
-  create path also fires `syncSoDeliveredFromDo` and the customer DO email.
+  **LOADED** (= Confirmed; `DISPATCHED` until 2026-08-22) and stock is deducted
+  immediately. Both are gated on `asDraft`, not on the status, so the rename
+  moved no deduction. The create path also fires `syncSoDeliveredFromDo` and the
+  customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
 - **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
   live DR/SI no longer freezes the whole header — only the columns that child
@@ -452,7 +454,7 @@ shape the Sales Order list already has: 页签＝状态.
 |---|---|---|
 | Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
 | Confirmed | `LOADED` | **the first entry here writes the inventory OUT**, once. The stock has left, and the customer email goes out here |
-| Shipped | `DISPATCHED` | on the road. Stock already gone — this is a tracking step |
+| Shipped | `DISPATCHED` | on the road. Stock already gone — a tracking step, set by a person. Holds the 30 delivery orders raised before 2026-08-22, when a create landed here; it drains as they age out |
 | In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
 | Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it. A RECORD of arrival, not a stock event |
 | Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
@@ -501,8 +503,8 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | the office **Confirm** button, or the print's loading QR (§ below) | **THE STOCK CHOKEPOINT since 2026-08-22.** Entering it writes the inventory OUT, counts the lines as delivered, and emails the customer. It reads as **Confirmed** on every screen. |
-| `DISPATCHED` | create not-draft, or `PATCH /:id/status` (incl. the row menu's "Mark Shipped") | Shipped state; the stock already left at Confirm. A non-draft CREATE still lands here directly and deducts on the create path — see the follow-up note below. |
+| `LOADED` | **a non-draft create**, the office/phone **Confirm** button, or the print's loading QR (§ below) | **THE STOCK CHOKEPOINT since 2026-08-22.** The create deducts on arrival here; a Confirm from DRAFT deducts on entry. Either way the OUT is written, the lines count as delivered, and the customer is emailed. Reads as **Confirmed** on every screen. |
+| `DISPATCHED` | `PATCH /:id/status` — the row menu's "Mark Shipped", the phone's "Dispatch" rung | Shipped state; the stock already left at Confirm. **No longer a create landing status** (2026-08-22) — a person records that the goods went on the road. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD; the row menu's "Mark In Transit" / "Mark Delivered" | shipped states; stock has already left |
 
 ### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
@@ -779,27 +781,48 @@ spread from `DO_SHIPPED_STATES`). This is deliberately a set, not a single
 status, so a DO that jumps straight to SIGNED or DELIVERED still deducts exactly
 once. There are two entry points to that same deduction:
 
-- **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
-  `deductInventoryForDo` runs right after the item insert.
+- **Non-draft create** — the DO is born LOADED (Confirmed) since 2026-08-22, so
+  `deductInventoryForDo` runs right after the item insert. This is the path every
+  live delivery order took; the status name changed, the timing did not.
 - **Status PATCH** — `if (SHIPPED_STATES.includes(body.status))`.
   A DRAFT confirm is exactly DRAFT→LOADED, so the deduction skipped at
   draft-create fires here.
 
-> **FOLLOW-UP, deliberately not done here: the non-draft CREATE still lands
-> `DISPATCHED`.** Both create paths hard-code `status: (body.asDraft === true) ?
-> 'DRAFT' : 'DISPATCHED'` and call the deduction on the `asDraft` flag, not on
-> the status sets — so this change does not alter them by one line, and they
-> deduct exactly as before. But a document created straight from the "new
-> delivery order" screen now reads **Shipped** while one confirmed from a draft
-> reads **Confirmed**, for the same business event. Aligning them is a
-> one-line change with its own decision attached (it re-labels every future
-> non-draft create), so it is recorded rather than smuggled in.
->
-> Related and equally untouched: `DeliveryOrderNewV2.tsx` posts
-> `status: draft ? "DRAFT" : "LOADED"` in its create body, and the server
-> ignores `body.status` on create entirely. That field has never done anything;
-> it is why production holds zero `LOADED` rows despite the column defaulting to
-> `LOADED`.
+### THE CREATE IS THE PATH THAT MATTERS, and it lands on Confirmed too
+
+The status PATCH is the MINORITY path. **Every live delivery order in production
+was raised by a plain non-draft create** — run 32573972467 — which deducts at
+creation and performs no status transition at all. The owner:
+「我们是只要出DO就扣了库存了不是吗？」 — raising a DO already takes the stock out.
+The code has said so since 2026-05-29: *"a DO means goods are OUT the moment it's
+created"*.
+
+So both create paths land `LOADED` (Confirmed) rather than `DISPATCHED`:
+`status: (body.asDraft === true) ? 'DRAFT' : 'LOADED'`. Raising a delivery order
+IS the confirm, so it belongs on Confirmed, and `DISPATCHED` is left to mean what
+it says — a person or (later) the storekeeper's scan recording that the goods
+went on the road.
+
+> **THE MOMENT THE STOCK IS DEDUCTED DOES NOT CHANGE.** Before and after, a
+> non-draft create deducts right after the items insert. The deduction, the
+> SO-delivered sync and the customer email are all gated on `body.asDraft`, never
+> on the status literal, so renaming what the row lands in cannot reach them.
+> `backend/tests/doStockLeavesOnConfirm.test.ts` pins that gate on both create
+> paths precisely because a create that silently stopped deducting is the worst
+> outcome this change could have.
+
+**The 30 existing `DISPATCHED` rows are NOT backfilled, and they are correct as
+they stand.** Their stock is out, `DISPATCHED` is a legal status that still means
+something, and rewriting settled documents to make a tab look tidy is not worth
+touching history for. An owner reading **Shipped · 30** after this ships is
+looking at deliveries raised under the old naming. The Shipped tab drains
+naturally: every new delivery order lands on **Confirmed**, and a row reaches
+Shipped only when somebody marks it so.
+
+Also corrected with the create: `DeliveryOrderNewV2.tsx` posts
+`status: draft ? "DRAFT" : "LOADED"` in its create body and the server ignores
+`body.status` on create entirely — that field has never done anything, and the
+server now independently agrees with what it was asking for.
 
 **Over-delivery cap at the confirm chokepoint (2026-07-25).** BEFORE that
 first-ship deduction, the Status PATCH now re-derives `soRemainingByItemId` for

@@ -155,6 +155,86 @@ describe('the sets that carry the ruling', () => {
   });
 });
 
+/* ── THE CREATE PATH — where all 30 live delivery orders come from ──────────
+
+   The status PATCH is the MINORITY path. Production run 32573972467 shows every
+   live delivery order was raised by a plain non-draft create, which deducts at
+   creation and performs no transition at all. On 2026-08-22 those creates were
+   moved from DISPATCHED to LOADED so that raising a delivery order lands on
+   Confirmed — the owner's 「我们是只要出DO就扣了库存了不是吗？」, confirming that
+   raising one already takes the stock out.
+
+   THE MOMENT THE STOCK IS DEDUCTED DOES NOT CHANGE. That is the whole risk
+   question, and these assertions are what hold it: the deduction, the SO sync
+   and the customer email on BOTH create paths are gated on `body.asDraft`, never
+   on the status literal. A create that silently stopped deducting is the worst
+   outcome this change could have, so it is pinned rather than reasoned about. */
+describe('creating a delivery order still deducts, and now lands on Confirmed', () => {
+  /* Each create path, sliced from its status literal to the end of its
+     asDraft-gated block, so an assertion cannot be satisfied by the other one. */
+  function createPath(nth: 1 | 2): string {
+    const marks = [...ROUTE.matchAll(/status: \(body\.asDraft === true\) \? 'DRAFT' : '(\w+)',/g)];
+    expect(marks, 'expected exactly two create paths').toHaveLength(2);
+    const at = marks[nth - 1]!.index!;
+    const gate = ROUTE.indexOf('if (body.asDraft !== true) {', at);
+    expect(gate, `create path ${nth}: asDraft-gated block not found`).toBeGreaterThan(at);
+    return ROUTE.slice(at, ROUTE.indexOf('\n  }', gate));
+  }
+
+  it('both create paths land LOADED (Confirmed), not DISPATCHED', () => {
+    const landed = [...ROUTE.matchAll(/status: \(body\.asDraft === true\) \? 'DRAFT' : '(\w+)',/g)]
+      .map((m) => m[1]);
+    expect(landed).toEqual(['LOADED', 'LOADED']);
+  });
+
+  it.each([1, 2] as const)('create path %i still deducts stock at creation', (nth) => {
+    const seg = createPath(nth);
+    expect(seg).toContain('deductInventoryForDo(sb,');
+  });
+
+  it.each([1, 2] as const)(
+    'create path %i gates the deduction on asDraft, NOT on the status it lands in',
+    (nth) => {
+      const seg = createPath(nth);
+      /* The property that makes renaming the landing status safe. If the gate
+         ever reads the status set instead, moving a status silently moves the
+         deduction with it — the failure this whole file exists to prevent. */
+      expect(seg).toContain('if (body.asDraft !== true) {');
+      expect(seg).not.toMatch(/SHIPPED_STATES\.includes/);
+      expect(seg).not.toMatch(/DO_SHIPPED_STATES/);
+    },
+  );
+
+  it.each([1, 2] as const)(
+    'create path %i still syncs the SO and still emails the customer',
+    (nth) => {
+      const seg = createPath(nth);
+      /* A create performs NO transition, so the PATCH handler's copies of these
+         never run for it. They must be here, on the create itself. */
+      expect(seg).toContain('syncSoDeliveredFromDo(sb,');
+      expect(seg).toContain('maybeSendDeliveryOrderEmail(sb, c.env,');
+    },
+  );
+
+  it('the create email does not go through the transition-hop test', () => {
+    /* The create calls maybeSendDeliveryOrderEmail directly, so CONFIRM_HOP_STATES
+       is irrelevant to it and a create emails exactly once regardless of which
+       status it lands in. Asserted because "the email still fires" is the claim,
+       and the mechanism is what makes it true. */
+    for (const nth of [1, 2] as const) {
+      expect(createPath(nth)).not.toContain('CONFIRM_HOP_STATES');
+    }
+  });
+
+  it('LOADED is a shipped state, so the create lands with its stock accounted for', () => {
+    /* Ties the rename to the ledger: a DO created LOADED must read as stock-out
+       everywhere, or the create would deduct into a status the readers call
+       un-shipped — the orphan this change exists to avoid. */
+    expect(DO_STOCK_OUT_STATES as readonly string[]).toContain('LOADED');
+    expect(doCountsAsDelivered('LOADED')).toBe(true);
+  });
+});
+
 describe('the route implements the two rules the simulation models', () => {
   it('the OUT is gated on the SHARED shipped set, not a hand-typed list', () => {
     expect(ROUTE).toMatch(/const SHIPPED_STATES: string\[\] = \[\.\.\.DO_SHIPPED_STATES\]/);

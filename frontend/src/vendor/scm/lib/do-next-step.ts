@@ -64,7 +64,10 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //
 // ── WHAT THE BACKEND ACTUALLY ENFORCES ──────────────────────────────────────
 // From routes/delivery-orders-mfg.ts, PATCH /:id/status:
-//   · A DO is born DISPATCHED, or DRAFT when created with `asDraft` (:3518).
+//   · A DO is born LOADED (= Confirmed), or DRAFT when created with `asDraft`.
+//     It was born DISPATCHED until 2026-08-22; raising a delivery order IS the
+//     confirm, so it lands on Confirmed. The stock is deducted at creation
+//     either way — that gate reads `asDraft`, never the status.
 //   · CANCELLED IS FINAL. prevStatus === 'CANCELLED' is refused outright with
 //     `do_cancelled_final` (:5401) — un-cancelling would leave the cancel's
 //     add-back standing while the re-deduct no-ops, inflating stock by the whole

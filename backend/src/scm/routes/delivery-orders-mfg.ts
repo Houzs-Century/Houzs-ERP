@@ -3512,12 +3512,14 @@ deliveryOrdersMfg.post('/', async (c) => {
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
     currency: (body.currency as string) ?? 'MYR',
     /* Commander 2026-05-29 — a DO means goods are OUT the moment it's created.
-       Skip the LOADED→DISPATCHED→IN_TRANSIT… hand-walk: start at DISPATCHED
-       (= shipped) and deduct stock right after the items insert below.
+       UNCHANGED, and now the reason this lands on LOADED: raising a DO IS the
+       confirm, and Confirmed is where the stock leaves since 2026-08-22. Only
+       the NAME moved (was DISPATCHED) — the deduction still runs right after the
+       items insert, gated on asDraft and not on this value.
        DRAFT flow (2026-06-24) — opt-in asDraft lands the DO as DRAFT instead,
        with NO stock deduction and NO SO-delivered sync; the commit moves to the
-       Confirm transition (PATCH /:id/status → DISPATCHED). Mirror of the SO. */
-    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+       Confirm transition (PATCH /:id/status → LOADED). Mirror of the SO. */
+    status: (body.asDraft === true) ? 'DRAFT' : 'LOADED',
     /* Drop-ship (mig 0057) — flags the UI badge; inventory reconcile is ledger-driven. */
     is_dropship: dropShipped,
     notes: (body.notes as string) ?? null,
@@ -4091,11 +4093,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     emergency_contact_phone: emPhoneRaw ? (normalizePhone(emPhoneRaw) ?? emPhoneRaw) : null,
     emergency_contact_relationship: (head.emergency_contact_relationship as string | null) ?? null,
     currency: (head.currency as string | null) ?? 'MYR',
-    /* A DO means goods are OUT the moment it's created — start at DISPATCHED
-       (= shipped) and deduct stock below. DRAFT flow (2026-06-24) — opt-in
-       asDraft lands the DO as DRAFT (no stock OUT, no SO sync); the commit
-       moves to the Confirm transition. Mirror of the SO. */
-    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+    /* A DO means goods are OUT the moment it's created — so it starts at LOADED
+       (= Confirmed, where the stock leaves since 2026-08-22) and deducts below.
+       Was DISPATCHED; the NAME changed, not the timing. asDraft → DRAFT. */
+    status: (body.asDraft === true) ? 'DRAFT' : 'LOADED',
     /* Drop-ship (mig 0057) — flags the UI badge; inventory reconcile is ledger-driven. */
     is_dropship: dropShipped,
     created_by: user.id,
