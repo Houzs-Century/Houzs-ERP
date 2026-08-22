@@ -1,10 +1,15 @@
-# 0518 — The AP control check could not see the failure it existed to find
+## The AP control check could not see the failure it existed to find [high]
 
-- **Area:** Accounting, GL, journals
-- **Found:** 2026-08-22, on production (Houzs Century), walking the real screens
-- **Status:** Fixed
+<!-- area: Purchase orders + GRN + PI -->
 
-## What was wrong
+**白话.** 会计自检有两半：AR 那半会抓「已确认但没有分录的销售发票」，AP 那半**直接
+跳过**同一种情况。所以 prod 上两张已确认、没有分录的采购发票，自检说 **CLEAN**；而
+同样形状的销售发票，AR 抓得出来。**唯一为了抓这件事而存在的检查，正好看不到它。**
+
+- **发现:** 2026-08-22，在 prod（Houzs Century）走真实画面时抓到
+- **状态:** 已修
+
+### What was wrong
 
 `GET /control-check` compares each control account against the documents that
 are supposed to explain it. The **AR** arm reports a confirmed sales invoice
@@ -28,7 +33,7 @@ selects from `purchase_invoices` alone and never joins `journal_entries`. It
 buckets unpaid invoices by due date. It has no notion of posted, so it cannot
 surface an unposted anything.
 
-## How it showed up
+### How it showed up
 
 Houzs Century on 2026-08-22:
 
@@ -40,7 +45,7 @@ Houzs Century on 2026-08-22:
 The company had **zero** journal entries. The check built to catch exactly that
 reported the payables side clean.
 
-## The fix
+### The fix
 
 The AP arm now mirrors the AR arm, keeping the MYR conversion the PI side needs
 (`toMyrSen`, because `total_sen` is in the invoice's own currency and the
@@ -55,7 +60,7 @@ Three neighbours stay skipped, and the test pins each one:
 | `migrated_no_stock` | AutoCount already booked the payable (mig 0280) |
 | **zero total** | `postPiAccounting` refuses one (`zero_total`) |
 
-## What this does NOT fix
+### What this does NOT fix
 
 **Why the post failed is still unknown.** This entry is about the check being
 blind, not about the underlying failure. What is established: the confirm
@@ -69,7 +74,7 @@ malformed number, not a throw), and every structured-return path in
 all ten role accounts exist on company 1, postable and active. Not reproduced
 again because Houzs Century has no unbilled goods-received lines left to bill.
 
-## Related
+### Related
 
 - `docs/bugs/0233` — company 2's ledger lines booked to codes its chart did not
   have. Same family: the GL's account codes and the check over them drifting
