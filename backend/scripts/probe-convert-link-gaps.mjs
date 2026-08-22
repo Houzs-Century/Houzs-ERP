@@ -167,6 +167,45 @@ async function main() {
     note("");
   }
 
+  /* ── 0. RAW CENSUS, no filters at all ────────────────────────────────────
+     The first clean run of this probe reported 1 goods receipt and zero of
+     everything else, for BOTH companies. That contradicts the codebase's own
+     measurements (grns.ts cites 291 linked GRNs in company 1; convert-lines
+     cites 60,939 sales-order lines), so before any of it is believed the tables
+     get counted with NO predicate whatsoever.
+
+     It separates the only two explanations there are: the tables really are
+     nearly empty, or a WHERE clause below is silently excluding almost
+     everything. A filtered count alone cannot tell those apart, and reporting
+     the wrong one as a finding is worse than reporting nothing. */
+  note("── Raw census: every row, no filters ──");
+  let censusFailed = false;
+  for (const key of ["DO", "GR", "IV", "PI"]) {
+    const { table, itemTable } = DOWNSTREAM[key];
+    try {
+      const [h] = await sql`SELECT COUNT(*) AS n FROM scm.${sql(table)}`;
+      const [i] = await sql`SELECT COUNT(*) AS n FROM scm.${sql(itemTable)}`;
+      note(`   ${pad(key, 4)}${pad(table, 24)}${rpad(h.n, 9)} rows   ${pad(itemTable, 26)}${rpad(i.n, 9)} rows`);
+    } catch (e) {
+      censusFailed = true;
+      note(`   ${pad(key, 4)}NOT MEASURED — ${why(e).slice(0, 120)}`);
+    }
+  }
+  /* The sources too: if purchase_order_items is also near-empty the answer is
+     "this database is not the one the comments describe", which is a different
+     problem from a bad predicate and must not be reported as either. */
+  for (const t of ["purchase_orders", "purchase_order_items", "mfg_sales_orders", "mfg_sales_order_items"]) {
+    try {
+      const [r] = await sql`SELECT COUNT(*) AS n FROM scm.${sql(t)}`;
+      note(`       ${pad(t, 26)}${rpad(r.n, 9)} rows`);
+    } catch (e) {
+      censusFailed = true;
+      note(`       ${pad(t, 26)}NOT MEASURED — ${why(e).slice(0, 100)}`);
+    }
+  }
+  note("");
+  if (censusFailed) note("   (a census read failed — treat every number below as unverified)");
+
   const summary = [];
 
   for (const key of ["DO", "GR", "IV", "PI"]) {
