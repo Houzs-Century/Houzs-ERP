@@ -31,7 +31,6 @@ export type StatusTab =
   | "confirmed"
   | "in_production"
   | "ready_to_ship"
-  | "shipped"
   | "delivered"
   | "invoiced"
   | "on_hold"
@@ -45,7 +44,6 @@ export const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
   { value: "confirmed", label: "Confirmed" },
   { value: "in_production", label: "In Production" },
   { value: "ready_to_ship", label: "Ready to Ship" },
-  { value: "shipped", label: "Shipped" },
   { value: "delivered", label: "Delivered" },
   { value: "invoiced", label: "Invoiced" },
   { value: "on_hold", label: "On Hold" },

@@ -179,9 +179,48 @@ does by itself when the goods land. Owner-reported as a difference between the
 two companies; the predicate carries no company term and never did.
 `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
 
-**Right-click on the list row** offers the same actions plus the four statuses
-that had no caller — see `docs/modules/document-conversion.md` §8a for the shape
-and for what each of the five lists deliberately does NOT offer.
+**Right-click on the list row** offers Open / Edit / Print, the transfer, and
+then exactly THREE status moves — **Confirm** a draft, **Hold**, **Cancel**.
+See `docs/modules/document-conversion.md` §8a for the shape and for what each of
+the five lists deliberately does NOT offer.
+
+> **CORRECTED 2026-08-22.** This sentence used to read "the same actions plus the
+> four statuses that had no caller". Three of those four —
+> `Mark In Production`, `Mark Shipped`, `Mark Invoiced` — were REMOVED the next
+> day on the owner's ruling: 「按理说不应该允许这样手动去转，否则我们的
+> transaction workflow 就全乱了」. Each is DERIVED by a machine from a fact
+> (§0.2 lists the keys), so hand-setting one changed the list and not the fact,
+> and the next sweep overwrote it. The rule that replaced the list: **a status a
+> machine derives is never offered to a person**, which leaves only the three
+> decisions no machine can make. `docs/modules/document-status-vocabulary.md`
+> §1b, `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status.md`.
+
+### `SHIPPED` is a status with no tab of its own (2026-08-22)
+
+Owner: 「Sales Order 的 Shipped 跟 Delivered 是合起来的」. The **Shipped** tab is
+gone and `backend/src/scm/lib/so-tab-statuses.ts` gives the **Delivered** tab
+both `SHIPPED` and `DELIVERED`.
+
+`SHIPPED` is still WRITTEN — `so-delivery-sync.ts` sets it when a delivery order
+is raised (§0.2) — and it is still a legal transition target. Only its tab is
+gone. That asymmetry is the whole design: Postgres cannot `DROP VALUE`, so a row
+carrying `SHIPPED` can always arrive.
+
+**Where an unfolded status would go, stated accurately.** This list is the one
+that HAS a catch-all — the handler computes `other = allCount - known` and
+`MfgSalesOrdersListV2.tsx:2005` renders an **Other** tab when that count is
+non-zero. So an unfolded `SHIPPED` order would still have been reachable, and
+the reason to fold is the READER rather than reachability: goods that went out
+belong under **Delivered**, not under **Other**. The four purchase/delivery
+lists have NO catch-all, which is why `*_STATUS_BUCKETS` there must partition
+the enum exhaustively and `so-tab-statuses.ts` deliberately does not carry that
+name. Production carried SHIPPED · 0 against DELIVERED · 26 on the day of the
+ruling.
+
+**The list's three query sites all read the bucket**, not the raw param: the row
+query, the count query and the money-KPI query in
+`GET /api/scm/mfg-sales-orders`. A tab covering one status still reads through
+it, so "what does this tab select" has one answer and not four.
 
 **The desktop DETAIL page offers no transfer at all** — `SalesOrderDetailV2.tsx`
 has no `transferToLabel('do')` call. The other desktop routes to a delivery

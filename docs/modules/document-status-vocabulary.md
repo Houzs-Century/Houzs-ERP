@@ -86,6 +86,63 @@ it. They are fixed by the separate tabs-equal-statuses change, not here.
 
 ---
 
+## 1b. Only THREE status moves are ever offered to a person
+
+**The owner, 2026-08-22:** 「它不应该能转到 Mark in Production、Mark Shipped 和
+Mark Invoiced ... 按理说不应该允许这样手动去转，否则我们的 transaction workflow
+就全乱了」, and the reason: 「如果它已经有 processing date 了，我又把它换成别的状态
+的话，那不是代表我的状态全部都 wrong 完了、是错完了吗？」
+
+**The rule, and it decides membership rather than listing it:** a status a
+MACHINE derives from a fact is never offered to a person. What is left is the
+three that no machine can derive, because each is a DECISION:
+
+| offered | why it cannot be derived |
+|---|---|
+| **Confirm** | a draft becomes real when a human says so |
+| **Hold** | a person decided to pause this document |
+| **Cancel** | a person decided this document should not happen |
+
+Everything else is written from a fact and would be overwritten by the next
+sweep — `IN_PRODUCTION` from a processing date, `SHIPPED` from a delivery order,
+`READY_TO_SHIP` from stock allocation, `DELIVERED` from delivery coverage,
+`INVOICED` from invoice coverage. Hand-setting one changes the LIST, not the
+fact, so the only lasting effect is a window in which the screen lies.
+
+This is the mainstream ERP shape, not a local preference: SAP derives an order's
+overall status from item processing status and gives a person a block and a
+rejection; NetSuite computes Partially Fulfilled / Pending Billing and gives a
+person Close and Cancel. The human button list is short everywhere, for this
+reason.
+
+See `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status.md`.
+
+### `SHIPPED` folds into Delivered on the Sales Order
+
+**The owner, same day:** 「Sales Order 的 Shipped 跟 Delivered 是合起来的」. On a
+sales order both say "the goods went out"; the difference between LEFT and
+ARRIVED is what the Delivery Order is for.
+
+It **folds**, it is not deleted — `backend/src/scm/lib/so-tab-statuses.ts`.
+Postgres cannot `DROP VALUE`, so `SHIPPED` stays a legal label for ever, and
+`so-delivery-sync.ts` still writes it whenever a delivery order is raised.
+
+**Why fold rather than leave it to the catch-all.** The Sales Order list is the
+one list that HAS a catch-all — an **Other** tab that appears when
+`other = allCount - known` is non-zero — so an unfolded `SHIPPED` order would
+have been reachable. The reason is the reader: goods that went out belong under
+**Delivered**, not under **Other**.
+
+**The four purchase/delivery lists have no catch-all**, and there an unbucketed
+status genuinely is reachable from no tab and subtracted from the count on
+screen. That is the fault `status-counts.ts` exists to make loud — 37 delivery
+orders invisible on 2026-08-17 while the numbers looked settled — and it is why
+`*_STATUS_BUCKETS` maps must partition their enum exhaustively
+(`backend/tests/statusBucketsEnumMembership.test.mjs`) while the Sales Order tab
+map deliberately does not carry that name.
+
+---
+
 ## 1a. One COLOUR rule for the Branding chip
 
 **The owner, 2026-08-21:** 「比如 Mattress 和 Sofa 用不一样的颜色，要不然 Happy
