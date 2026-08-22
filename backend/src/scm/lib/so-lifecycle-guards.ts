@@ -135,30 +135,37 @@ export function soStatusTransitionError(
   if (!from || !SO_STATUSES.has(from)) return null;              // status-blind → allow
   if (from === to) return null;                                  // idempotent no-op
   if (to === 'CANCELLED' || from === 'CANCELLED') return null;   // cancel guards own this
-  /* Close / do not un-close. CLOSED is UNRANKED for the reason at the top of
+  /* CLOSE, AND DO NOT UN-CLOSE. CLOSED is UNRANKED for the reason at the top of
      this file — an order is closed from wherever it had got to — so it is
      enterable from every live status and the rank table has nothing to say.
-     The way OUT is a different question and it gets a different answer: closing
-     is a decision that the remainder is not coming, and the next screen does not
-     un-decide it. Left as an unconditional `return null` on both edges it would
-     be the ON_HOLD laundry again — CLOSED>ON_HOLD>DRAFT is the rank table's
-     refused move in two steps, and DRAFT is what unlocks the cascading DELETE.
-     CANCELLED gets the same asymmetry; its half is enforced one layer up, by the
-     route's cancel-final guard, which is why the line above can short-circuit
-     both edges and this one cannot. Cancel stays reachable from CLOSED (that
-     line runs first): if it turns out nothing stands, the cancel guards own
-     that call, not this table. */
+     The way OUT is a different question and gets a different answer: closing is
+     a decision that the remainder is not coming, and the next screen does not
+     un-decide it.
+
+     THIS ARM IS LOAD-BEARING ON ITS OWN, and re-checked on 2026-08-22 after the
+     hold became a marker. Without it, `from = 'CLOSED'` reaches the rank block,
+     `SO_STATUS_RANK.CLOSED` is `undefined`, and the function RETURNS NULL — so
+     CLOSED>DRAFT would be allowed outright, and DRAFT is what unlocks the
+     cascading DELETE. The two-step it was originally written against
+     (CLOSED>ON_HOLD>DRAFT) is now refused twice over, because `to = 'ON_HOLD'`
+     is refused for everyone below; the DIRECT move it refuses is why it stays.
+
+     CANCELLED gets the same asymmetry, enforced one layer up by the route's
+     cancel-final guard, which is why the line above can short-circuit both edges
+     and this one cannot. Cancel stays reachable from CLOSED (that line runs
+     first): if it turns out nothing stands, the cancel guards own that call.
+
+     A HOLD IS ORTHOGONAL AND STAYS ORTHOGONAL. Since mig 0324 the hold is a
+     MARKER, not a status, and `PATCH /:docNo/hold` never writes this column — so
+     a closed order can still be marked held and a held order can still be
+     closed, and neither passes through here. No gate was added for either; see
+     docs/modules/document-status-vocabulary.md §1b. */
   if (to === 'CLOSED') return null;                              // closable from anywhere live
-  if (from === 'CLOSED') {
-    return {
-      error: 'illegal_status_transition',
-      reason: 'This order was closed — the outstanding balance is no longer being chased. Raise a new sales order for anything still to be supplied, or cancel this one.',
-      code: 409,
-    };
-  }
-  /* Pause / resume. ON_HOLD is deliberately UNRANKED — an order can be paused
-     from anywhere and resumed to wherever the operator needs it, and the rank
-     table has nothing useful to say about that.
+  /* Pause / resume. ON_HOLD was deliberately UNRANKED — an order could be paused
+     from anywhere and resumed to wherever the operator needed it, and the rank
+     table had nothing useful to say about that. Reading the paragraph below is
+     the shortest argument for why the hold should never have been a status at
+     all: an unranked member of a ranked set is a hole in the set.
      But "unranked" was written as an unconditional `return null` on BOTH edges,
      which made ON_HOLD a laundry: DELIVERED>DRAFT is rejected on rank and is
      absent from SO_LEGAL_REGRESSIONS, yet DELIVERED>ON_HOLD passes on `to`,
@@ -171,6 +178,32 @@ export function soStatusTransitionError(
      cancelled and re-raised, which leaves a document behind. Every other resume
      target is still allowed, so the pause/resume the states exist for is
      unchanged. */
+  /* ON_HOLD IS NO LONGER A STATUS ANYONE MAY WRITE (mig 0324, owner 2026-08-22:
+     「我们的hold是给我们知道一个 order hold这的」). A hold is a MARKER beside the
+     status and it has its own endpoint, PATCH /:docNo/hold. Writing it here was
+     the defect: it OVERWROTE the order's progress, so holding an IN_PRODUCTION
+     order destroyed the only record that it was in production, and Take Off
+     Hold then had nowhere to put it back to and sent everything to CONFIRMED.
+
+     The label is refused as a TARGET and still accepted as a SOURCE. Postgres
+     cannot drop an enum value, so a legacy row may still be sitting on ON_HOLD,
+     and it needs a way OUT — refusing `from` as well would strand it on a status
+     nothing can leave. */
+  if (to === 'ON_HOLD') {
+    return {
+      error: 'hold_is_not_a_status',
+      reason: 'Putting an order on hold no longer changes its status — use Put On Hold, '
+        + 'which leaves the order exactly where it is.',
+      code: 409,
+    };
+  }
+  if (from === 'CLOSED') {
+    return {
+      error: 'illegal_status_transition',
+      reason: 'This order was closed — the outstanding balance is no longer being chased. Raise a new sales order for anything still to be supplied, or cancel this one.',
+      code: 409,
+    };
+  }
   if (from === 'ON_HOLD' && to === 'DRAFT') {
     return {
       error: 'illegal_status_transition',
@@ -178,7 +211,7 @@ export function soStatusTransitionError(
       code: 409,
     };
   }
-  if (to === 'ON_HOLD' || from === 'ON_HOLD') return null;       // pause / resume
+  if (from === 'ON_HOLD') return null;                           // a legacy held row leaving
   const fromRank = SO_STATUS_RANK[from];
   const toRank = SO_STATUS_RANK[to];
   if (fromRank === undefined || toRank === undefined) return null;

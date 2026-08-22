@@ -59,6 +59,10 @@ export interface Blocker {
 export interface FulfilmentInput {
   /** mfg_so_status: CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / … / ON_HOLD / DRAFT / CANCELLED. */
   status: string;
+  /** mfg_sales_orders.on_hold — the mig-0324 hold MARKER. REQUIRED, and `null`
+   *  only where the caller genuinely could not read the column: a held order
+   *  keeps its real status, so `status` alone can no longer say. */
+  onHold: boolean | null;
   /** From summariseReadiness: every MAIN product line allocated. */
   isMainReady: boolean;
   /** Every MAIN and accessory line allocated. */
@@ -114,6 +118,21 @@ function statusBlocker(status: string): Blocker | null {
   return null;
 }
 
+/* THE HOLD MARKER (mig 0324) — the same blocker, reached from a column instead
+   of from the status. It is a separate function rather than an extra argument
+   to statusBlocker because the caller composes blockers in a deliberate ORDER
+   and this one belongs exactly where the status stop belongs: first, because it
+   makes the rest moot.
+
+   A held order now keeps its real status, so `statusBlocker` alone stopped
+   being able to see a hold — it would have returned null for every held order
+   and the agent would have reported an order somebody stopped as ready. */
+export function holdBlocker(onHold: boolean | null | undefined): Blocker | null {
+  if (onHold !== true) return null;
+  return { code: 'SO_ON_HOLD', severity: 'BLOCK', owner: 'OFFICE',
+    message: 'the order is on hold', nextAction: 'resolve the hold reason, then resume the order' };
+}
+
 /**
  * Assess one SO's fulfilment readiness from its signals.
  *
@@ -127,7 +146,7 @@ export function assessFulfilment(input: FulfilmentInput): FulfilmentReadiness {
 
   // A cancelled/draft/held order: report that alone. Everything else is noise
   // until the status is resolved.
-  const status = statusBlocker(input.status);
+  const status = holdBlocker(input.onHold) ?? statusBlocker(input.status);
   if (status) {
     return {
       score: 0, ready: false, blockers: [status],

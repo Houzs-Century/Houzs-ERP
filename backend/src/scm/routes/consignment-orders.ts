@@ -441,6 +441,9 @@ consignmentOrders.get('/mine', async (c) => {
         'total_revenue_sen, line_count, deposit_sen',
       )
       .eq('salesperson_id', myStaffId)
+      /* `on_hold` since mig 0324 — the hold is a MARKER beside the status now,
+         so the status arm below can no longer see one on its own. */
+      .eq('on_hold', false)
       .not('status', 'in', '("CANCELLED","ON_HOLD")'),
     c,
   )

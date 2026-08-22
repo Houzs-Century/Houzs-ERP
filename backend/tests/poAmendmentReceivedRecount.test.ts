@@ -5,7 +5,7 @@
 // The amendment apply (applyPoAmendment / reviseBoundPo) rewrites line
 // quantities and historically re-derived nothing — so a fully-received PO
 // amended UPWARD stayed RECEIVED, and since the whole GRN surface gates on
-// isReceivablePoStatus, the added quantity could not be received through any
+// isReceivablePo, the added quantity could not be received through any
 // path (docs/bugs/ ledger, 2026-08-21 audit item B10).
 //
 // Structural: the approve handler needs a live DB, so this pins the SOURCE —

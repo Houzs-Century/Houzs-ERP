@@ -6,15 +6,44 @@ import { SO_LIST_COLUMNS } from "../scripts/scale-pg-real-schema.mjs";
 
 const readRoute = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-const stringExpressionValue = (node) => {
+/* An IDENTIFIER the HEADER concatenates is resolved by READING the module that
+   exports it, never by a copy typed here. `HOLD_COLUMNS` (mig 0324) is shared by
+   all five document routes precisely so the four hold columns have one spelling;
+   hand-copying it into this test would create the sixth. Throwing on an
+   unresolvable name is deliberate — a silently-skipped identifier would drop
+   columns out of the contract and leave this test green while describing a
+   projection production does not issue, which is the exact failure the
+   `proceeded_at` note below records. */
+const resolveExportedString = async (modulePath, name) => {
+  const source = await readFile(new URL(modulePath, import.meta.url), "utf8");
+  const file = ts.createSourceFile("m.ts", source, ts.ScriptTarget.Latest, true);
+  let value;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === name
+        && node.initializer && ts.isStringLiteral(node.initializer)) {
+      value = node.initializer.text;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  assert.ok(value !== undefined, `${name} was not found as a string constant in ${modulePath}`);
+  return value;
+};
+
+const stringExpressionValue = (node, constants) => {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    return stringExpressionValue(node.left) + stringExpressionValue(node.right);
+    return stringExpressionValue(node.left, constants) + stringExpressionValue(node.right, constants);
+  }
+  if (ts.isIdentifier(node)) {
+    const v = constants[node.text];
+    assert.ok(v !== undefined, `HEADER names ${node.text}, which this test cannot resolve — add it to the constants map`);
+    return v;
   }
   throw new Error(`Unsupported HEADER expression node: ${ts.SyntaxKind[node.kind]}`);
 };
 
-const productionSoListColumns = (source) => {
+const productionSoListColumns = (source, constants) => {
   const file = ts.createSourceFile("mfg-sales-orders.ts", source, ts.ScriptTarget.Latest, true);
   let initializer;
   const visit = (node) => {
@@ -31,7 +60,7 @@ const productionSoListColumns = (source) => {
      until 2026-08-18; note that removing it from the route WITHOUT removing it
      here left this test GREEN while describing the wrong world, which is why
      it is spelled out rather than derived. */
-  return `${stringExpressionValue(initializer).replace(/,\s*customer_po_image_b64/, "")}, paid_total_sen, balance_sen_live`
+  return `${stringExpressionValue(initializer, constants).replace(/,\s*customer_po_image_b64/, "")}, paid_total_sen, balance_sen_live`
     .split(", ")
     .map((column) => column.trim());
 };
@@ -56,8 +85,11 @@ test("scale contract remains attached to current production route surfaces", asy
   // The benchmark appends company_id only as an assertion-only probe. Every
   // actual list projection column must remain byte-for-byte aligned with the
   // runtime HEADER/LIST_COLS expression so route/schema drift fails default CI.
+  const constants = {
+    HOLD_COLUMNS: await resolveExportedString("../src/scm/lib/document-hold.ts", "HOLD_COLUMNS"),
+  };
   assert.deepEqual(
     SO_LIST_COLUMNS.split(", ").map((column) => column.trim()),
-    [...productionSoListColumns(soRoute), "company_id"],
+    [...productionSoListColumns(soRoute, constants), "company_id"],
   );
 });

@@ -65,7 +65,121 @@ this drifted.** Sixteen list and detail pages declare their own
 > document type today? Its confirm step reads **Confirmed**, in `status-pill.ts`
 > AND in that page's own map.
 
+### A HOLD IS NOT A STATUS — it is a MARKER beside one (2026-08-22, migs 0324/0325)
+
+**The owner, 2026-08-22:** 「我们的hold是给我们知道一个 order hold这的」 — the hold
+exists so people KNOW an order is paused. And 「take off hold也要看」 — releasing
+had to be looked at too.
+
+**This is the one rule to take away from this section.** A hold answers a
+different question from a status, so it lives in a different column:
+
+| | says | written by | example |
+|---|---|---|---|
+| `status` | where the document has GOT TO | mostly the system, from facts | In Production, Partially Received, Dispatched |
+| `on_hold` | that a PERSON stopped it | only a person | Hold |
+
+Since mig 0324 every one of the five documents — Sales Order, Purchase Order,
+GRN, Purchase Invoice, **Delivery Order** — carries four columns: `on_hold`
+(boolean, default false), `hold_reason`, `held_at`, `held_by`. **`status` is
+never written by a hold, in either direction.** Taking a hold off therefore
+restores nothing, because nothing was lost.
+
+**What it replaced, and why that was a defect rather than a preference.** The
+hold used to be written INTO `status`. Holding an `IN_PRODUCTION` sales order
+overwrote the progress, no `previous_status` column existed anywhere in `scm` to
+recover it from, and `Take Off Hold` consequently sent EVERY released order to
+`CONFIRMED` regardless of where it had been. Full trace:
+`docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`.
+
+**On screen: the status pill AND a Hold chip, never one instead of the other.**
+`frontend/src/vendor/scm/components/HoldChip.tsx` is the one home for that chip.
+A held delivery still says Shipped — the warehouse needs that — and carries Hold
+beside it. The chip's tone is `pending`, not `danger`: a hold is reversible and
+deliberate, and red is what this system uses for cancelled.
+
+**The `on_hold` TAB reads the flag, and it OVERLAPS every other tab.** A held
+document is counted under its real status too, so the pill counts deliberately do
+not sum to All — the same overlap the Purchase Order list's `outstanding` pill
+has carried since 2026-07-31. On the Sales Order list, `other = all − known` is
+still computed from the status walk alone, so the sum-to-All invariant the owner
+bought on 2026-07-24 is untouched.
+
+**The Delivery Order got its first hold ever here**, and it needed no enum change
+at all — `scm.do_status` is untouched. That is the plainest argument for the
+marker: giving the other three a status-hold cost three irreversible
+`ALTER TYPE ... ADD VALUE` statements.
+
+#### `ON_HOLD` the LABEL is retired from writing and kept for ever in reading
+
+Postgres has no `DROP VALUE`, so `ON_HOLD` stays a legal member of
+`scm.po_status`, `scm.grn_status`, `scm.purchase_invoice_status` and
+`scm.mfg_so_status` permanently. The rule is the same one `CLOSED` and `SHIPPED`
+follow:
+
+- **Nothing writes it.** `PATCH /mfg-sales-orders/:docNo/status` refuses it with
+  `hold_is_not_a_status`; it is accepted as a `from` so a legacy row can leave.
+- **Everything still renders it.** Every pill map keeps its `ON_HOLD` entry, and
+  the status buckets keep `on_hold: ['ON_HOLD']` so such a row is still reachable
+  from a tab — the 37-invisible-delivery-orders fault
+  `statusBucketsEnumMembership.test.mjs` exists to prevent.
+- **`isDocumentHeld` reads the flag OR the label**, backend and browser alike, so
+  one such row behaves exactly as it did before.
+
+Measured, not assumed: production carried **zero** rows on `ON_HOLD` across all
+five tables when the flag shipped — read-only probe
+`backend/scripts/check-hold-and-shipped-rows.mjs`, workflow run 32573160010,
+2026-08-22. The legacy arm is dead code today and permanent anyway, because "no
+row has it" is a fact about one moment and the enum label is not.
+
+#### Where the hold's code lives
+
+One row per file, because the reason this guide exists is that the same question
+had answers in sixteen places. These are the homes; nothing else decides a hold.
+
+| file | what it owns |
+|---|---|
+| `backend/src/db/migrations-pg/0324_scm_hold_is_a_marker_not_a_status.sql` | the four columns on all five tables, plus the partial indexes the On Hold tabs read |
+| `backend/src/db/migrations-pg/0325_scm_so_payment_totals_view_carries_hold.sql` | the Sales Order list's view, taught the four columns — `CREATE OR REPLACE`, never DROP, so the GRANTs 0189 lost cannot be lost again |
+| `backend/src/scm/lib/document-hold.ts` | `isDocumentHeld` (flag OR legacy label), `HOLD_COLUMNS`, `HELD_OR_TERM`, and the request/patch shapes. The one place that knows a hold writes four columns and never `status` |
+| `backend/src/scm/lib/document-hold-route.ts` | the single `PATCH .../hold` handler behind all five documents |
+| `backend/src/scm/routes/document-hold-routes.ts` | mounts it, and records what each document's hold means, side by side |
+| `backend/src/scm/lib/source-document-gates.ts` | the four conversion gates that must read the marker: SO → DO, SO → PO, PO → GRN, GRN → PI. Moved here 2026-08-22 because all four had to change for the same reason at the same time |
+| `frontend/src/vendor/scm/components/HoldChip.tsx` | the Hold chip, `rowIsHeld`, and `StatusWithHold` — the status pill and the chip as one element, so a screen cannot render the pill alone |
+| `frontend/src/vendor/scm/lib/document-hold-queries.ts` | the one mutation. It never sends a status; that is the property to check if it is edited |
+| `frontend/src/pages/scm-v2/use-hold-action.ts` | the confirm wording, so all five screens promise the same thing |
+| `frontend/src/pages/scm-v2/row-menus.ts` | where Put On Hold / Take Off Hold is offered, on all five right-click menus |
+| `frontend/src/pages/scm-v2/do-list-status.ts` | the Delivery Order list's `on_hold` tab — the one tab on that screen that is not a status |
+
+#### Every place a hold DECIDES something
+
+A guard that asks *"may somebody ACT on this document"* must read the flag. A
+writer that *re-derives a status from a fact* must not — writing `status` can no
+longer erase a hold, and freezing a held document's counts would be the same
+lossiness the marker removes. The two sites in the second group are
+`recomputePoReceived` (`backend/src/scm/routes/grns.ts`) and `DELIVERABLE_FROM`
+(`backend/src/scm/lib/so-delivery-sync.ts`), and both say so in a comment.
+
+**Two blocks that used to come FREE and now do not.** Migrations 0318 and 0319
+each state in their own header that a held PO could not be received, and a held
+GRN could not be billed, because the reads filter on an ALLOW-list. That was true
+only while the hold overwrote the status. Both now check the marker explicitly:
+`isReceivablePo` in `grns.ts`, and the `.eq('on_hold', false)` on the
+billable-GRN read in `purchase-invoices.ts`. Missing either one writes stock IN,
+or bills a supplier, against a document somebody deliberately stopped.
+
 ### `ON_HOLD` on the purchase side (2026-08-21, migs 0318/0319/0320)
+
+> **SUPERSEDED for the mechanism, kept for the labels.** The three migrations
+> below added `ON_HOLD` as a STATUS. Mig 0324 moved the hold to a flag (see the
+> section above); the labels these three added stay in the enums and in the pill
+> maps for ever, and nothing writes them any more.
+>
+> Worth knowing before adding a hold to a sixth document: **all three of these
+> shipped with no way to reach them.** The word appeared on the tab, the pill and
+> the detail blurb, and nothing in `frontend/src` ever sent that status — this
+> router family exposes no generic status endpoint. Three screens rendered a
+> state the product could not produce, for a day, and no check said so.
 
 The Purchase Order, GRN and Purchase Invoice gained a REVERSIBLE stop — owner:
 「PO 加 hold / GR / PI also hold」. All three read **On Hold** in `status-pill.ts`
@@ -95,7 +209,7 @@ Mark Invoiced ... 按理说不应该允许这样手动去转，否则我们的 t
 
 **The rule, and it decides membership rather than listing it:** a status a
 MACHINE derives from a fact is never offered to a person. What is left is the
-three that no machine can derive, because each is a DECISION:
+four that no machine can derive, because each is a DECISION:
 
 | offered | why it cannot be derived |
 |---|---|
@@ -145,12 +259,37 @@ happened.
 system holds the fact that a remainder was given up on. It is manual-only on the
 Sales Order, and a closed order cannot be walked back into an earlier live status
 (`soStatusTransitionError`, 409) — un-deciding it is a new order, not a status
-move. Cancel stays reachable from Closed, because an order that turns out to be
+move. That refusal is load-bearing on its own and not merely the closing half of
+the old ON_HOLD laundry: `CLOSED` is unranked, so without the arm `CLOSED →
+DRAFT` falls through the rank block and is allowed outright. Cancel stays reachable from Closed, because an order that turns out to be
 void entirely is the cancel guards' question, not the transition table's.
 
 **A closed order still earns its commission**, deliberately —
 `COMMISSION_EXCLUDED_STATUSES` in `backend/src/scm/shared/hr-commission.ts` does
 not name it. The part that went out was really sold.
+
+#### Close and the HOLD marker are ORTHOGONAL, and no gate was added either way
+
+Checked deliberately when the two landed on the same day, and stated here
+because "we looked and chose not to block it" is a different answer from "nobody
+thought about it":
+
+| asked | answer | why |
+|---|---|---|
+| may a HELD order be closed? | **yes** | `PATCH /:docNo/status` does not select `on_hold` and never calls `isDocumentHeld`; `soStatusTransitionError` only ever sees the status string. The right-click **Close remaining** is likewise gated on status alone |
+| may a CLOSED order be put on hold? | **yes** | `document-hold-route.ts` states in its own header that it does not gate on status — *"A cancelled document can be marked, and that is intentional"* — and the menu offers the marker on every row |
+
+That is the marker's whole point. A hold is information stuck beside the
+progress, not a step in it, so blocking either direction would re-couple the two
+things migration 0324 separated. A closed order carrying a Hold chip reads
+exactly as it should: *the remainder is not coming, and somebody has flagged
+this one for attention.*
+
+**One thing did change in the transition table.** `CLOSED → ON_HOLD` is now
+refused as `hold_is_not_a_status` (409) rather than by the close guard, because
+`ON_HOLD` is refused as a TARGET for every source since mig 0324. `ON_HOLD →
+CLOSED` is ALLOWED — a legacy row still sitting on the retired label must have a
+way to be closed.
 
 > **This is a RESTORATION, not a reversal.** `CLOSED` was removed from the app
 > vocabulary on 2026-08-21 and that removal was CORRECT: what it removed was a

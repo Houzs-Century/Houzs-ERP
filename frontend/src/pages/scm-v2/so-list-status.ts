@@ -79,6 +79,14 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
      right tone on its own terms: closed is terminal but not a failure, the same
      reading Invoiced gets in status-pill.ts. */
   closed: { tone: "neutral", label: "Closed" },
+  /* A LEGACY ROW ONLY, and it needs the entry precisely because it is rare.
+     Nothing writes ON_HOLD to a status any more (mig 0324 made the hold a
+     MARKER column with its own chip), but Postgres cannot drop an enum label,
+     so a row can still arrive carrying it. Without a line here `statusFor`
+     falls through to the raw string and the list prints the slug `ON_HOLD` in
+     a grey pill — which is what it did for every held order between
+     2026-08-21 and this change. */
+  on_hold: { tone: "warning", label: "On Hold" },
 };
 
 /* The parameter is NULLABLE, and the guards inside are why. It was typed

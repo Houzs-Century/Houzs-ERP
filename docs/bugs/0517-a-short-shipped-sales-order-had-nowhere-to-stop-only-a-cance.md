@@ -45,10 +45,26 @@ meaning: **stop chasing the remainder.**
   would be the same hole with a different name, so the way out is refused with
   `illegal_status_transition` (409). `CANCELLED` stays reachable — an order that
   turns out to be void entirely is the cancel guards' question.
+
+  > **RE-CHECKED after #2661 (mig 0324) made the hold a MARKER**, which retired
+  > `ON_HOLD` as a writable status and killed that two-step by a second route.
+  > The arm STAYS, and the re-check is what showed it was never really about the
+  > two-step: `CLOSED` is unranked, so without it `from = 'CLOSED'` reaches the
+  > rank block, `SO_STATUS_RANK.CLOSED` is `undefined`, and the function returns
+  > `null` — `CLOSED → DRAFT` allowed **outright**. `CLOSED → ON_HOLD` now
+  > answers `hold_is_not_a_status` (409) instead, which is the more accurate
+  > sentence, and `ON_HOLD → CLOSED` is allowed so a legacy row on the retired
+  > label can still be closed.
+- **The hold marker and Close are ORTHOGONAL, and no gate was added either
+  way** — stated rather than left implied. A held order may be closed (the
+  status route never selects `on_hold`) and a closed order may be marked held
+  (`document-hold-route.ts` deliberately does not gate on status). Blocking
+  either would re-couple the two things mig 0324 separated. Recorded in
+  `docs/modules/document-status-vocabulary.md` §1b.
 - **No new Delivery Order and no new PO line.** `CLOSED` joins
   `SO_UNDELIVERABLE_STATUSES` (`shared/so-deliverable-states.ts`, plus its
   byte-identical vendored twin) and `SO_UNORDERABLE_STATUSES`
-  (`routes/mfg-purchase-orders.ts`). One reason for both: if the rest is not
+  (`lib/source-document-gates.ts`, where #2661 moved it). One reason for both: if the rest is not
   coming, nothing more ships against the order and nothing more is bought for
   it. `duplicatedDecisionPins.test.ts` PIN 2 holds the two sets equal.
 - **Commission is untouched, deliberately.** `COMMISSION_EXCLUDED_STATUSES` does

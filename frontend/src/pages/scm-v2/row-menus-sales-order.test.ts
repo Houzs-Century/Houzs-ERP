@@ -18,14 +18,14 @@ import { describe, expect, test, vi } from "vitest";
 import type { RowMenuItem } from "../../lib/rowMenu";
 import { salesOrderRowMenu } from "./row-menus";
 
-type Row = { status?: string | null };
+type Row = { status?: string | null; on_hold?: boolean | null };
 const labels = (m: RowMenuItem[]) => m.map((x) => (x.divider ? "—" : x.label));
 const noop = () => {};
 
 const soMenu = (over: Partial<Parameters<typeof salesOrderRowMenu<Row>>[0]> = {}) =>
   salesOrderRowMenu<Row>({
     open: noop, edit: noop, print: noop, confirm: noop, transferToDo: noop,
-    setStatus: noop, close: noop, cancel: noop, reopen: noop, canDeliver: true,
+    setStatus: noop, close: noop, setHold: noop, cancel: noop, reopen: noop, canDeliver: true,
     ...over,
   });
 
@@ -67,11 +67,22 @@ describe("a closed order is terminal on this menu", () => {
     expect(labels(soMenu()({ status: "CLOSED" })).join("|")).not.toMatch(/Delivery Order/);
   });
 
-  /* Hold is a PAUSE, and there is nothing left running to pause. */
-  test("offers neither Put On Hold nor Take Off Hold", () => {
-    const l = labels(soMenu()({ status: "CLOSED" }));
-    expect(l).not.toContain("Put On Hold");
-    expect(l).not.toContain("Take Off Hold");
+  /* THE HOLD IS STILL OFFERED, and that is a decision rather than an oversight.
+     Since mig 0324 a hold is a MARKER, not a status — `PATCH /:docNo/hold`
+     never touches `status` and deliberately does not gate on it
+     (document-hold-route.ts says so in its own header). So a closed order can
+     be flagged "on hold" as a note to whoever reads the list, and taking the
+     flag off restores nothing because nothing was overwritten. Blocking it here
+     would re-couple the two things mig 0324 separated. */
+  test("still offers the hold marker, which says nothing about the status", () => {
+    expect(labels(soMenu()({ status: "CLOSED" }))).toContain("Put On Hold");
+  });
+
+  /* And the reverse: a HELD order may be closed. The hold marker is not read by
+     salesOrderRowMenu's `live` predicate, and the status route never selects
+     `on_hold`. Recorded in docs/modules/document-status-vocabulary.md §1b. */
+  test("a held order is still offered Close remaining", () => {
+    expect(labels(soMenu()({ status: "CONFIRMED", on_hold: true }))).toContain("Close remaining");
   });
 
   /* Cancel STAYS. An order that turns out to be void entirely is the cancel

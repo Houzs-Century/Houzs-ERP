@@ -43,7 +43,7 @@
 /* THE RECEIVABLE STATUS SET IS NOT DECLARED HERE, ON PURPOSE.
  *
  * `routes/grns.ts` already owns it — `RECEIVABLE_PO_STATUSES` +
- * `isReceivablePoStatus`, whose comment calls itself "the SINGLE predicate the
+ * `isReceivablePo`, whose comment calls itself "the SINGLE predicate the
  * GRN create paths share". A copy in this module would be a second authority for
  * the same question, which is the duplicated-list bug CLAUDE.md names; worse, it
  * would be the copy that decides what the PICKER shows while the original
@@ -133,7 +133,9 @@ export type ScopedPo = {
   poId: string;
   poDocNo: string | null;
   status: string | null;
-  /** Is this status one the picker will show lines from at all? */
+  /** The mig-0324 hold marker. `null` = the header read could not say. */
+  onHold: boolean | null;
+  /** Is this PO one the picker will show lines from at all? */
   receivable: boolean;
   /** Lines on this PO that the status filter let through. */
   candidateLines: number;
@@ -171,7 +173,7 @@ export type CountableRow = {
   purchase_order_id: string;
   qty: number;
   received_qty: number | null;
-  po: { po_number?: string | null; status?: string | null } | null;
+  po: { po_number?: string | null; status?: string | null; on_hold?: boolean | null } | null;
 };
 
 /** One PO line as the picker needs it, with its parent embedded. */
@@ -216,7 +218,7 @@ const OUTSTANDING_SELECT = `
       id, purchase_order_id, material_kind, item_code, material_name, supplier_sku, item_group,
       description, qty, received_qty, unit_price_sen, warehouse_id, variants, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
+      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, po_date, expected_at,
         supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
         purchase_location_id, supplier:suppliers ( code, name ) )
     `;
@@ -238,7 +240,10 @@ export async function loadOutstandingPoLines(args: {
   sb: any;
   scopeQuery: <Q>(q: Q) => Q;
   requestedPoIds: string[];
-  isReceivable: (status: string | null | undefined) => boolean;
+  /* Takes the PO ROW, not its status. Since mig 0324 a hold is a MARKER beside
+     the status, so a held PO reads SUBMITTED here — a status-only predicate
+     stopped being able to see the hold at all, in the permissive direction. */
+  isReceivable: (po: { status?: string | null; on_hold?: boolean | null } | null) => boolean;
 }): Promise<
   | { error: string }
   | { error: null; rows: OutstandingPoRow[]; scope: OutstandingScope }
@@ -262,7 +267,7 @@ export async function loadOutstandingPoLines(args: {
 
   const candidates = data ?? [];
   const rows = candidates
-    .filter((r) => isReceivable(r.po.status))
+    .filter((r) => isReceivable(r.po))
     .filter((r) => remainingOf(r) > 0);
 
   /* A requested PO that is DRAFT or CANCELLED produced NO candidate rows (the SQL
@@ -270,7 +275,7 @@ export async function loadOutstandingPoLines(args: {
      Without this, "your PO is a draft" is indistinguishable from "your PO does
      not exist" — and both used to render as "every line has been received".
      Scoped requests only; the open picker asks for nothing. */
-  const headerStatuses = new Map<string, { poDocNo: string | null; status: string | null }>();
+  const headerStatuses = new Map<string, { poDocNo: string | null; status: string | null; onHold: boolean | null }>();
   const missing = requestedPoIds.filter((id) => !candidates.some((r) => r.purchase_order_id === id));
   /* BIND THE ERROR. supabase-js does not throw, so `const { data } = await …`
      cannot tell "the query failed" from "there is nothing here" — and here that
@@ -283,13 +288,13 @@ export async function loadOutstandingPoLines(args: {
   let headerReadFailed = false;
   if (missing.length > 0) {
     const { data: hdrs, error: hdrErr } = await scopeQuery(
-      sb.from('purchase_orders').select('id, po_number, status'),
+      sb.from('purchase_orders').select('id, po_number, status, on_hold'),
     ).in('id', missing);
     if (hdrErr) {
       headerReadFailed = true;
     } else {
-      for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
-        headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status });
+      for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null; on_hold: boolean | null }>) {
+        headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status, onHold: h.on_hold ?? null });
       }
     }
   }
@@ -326,14 +331,15 @@ export const remainingOf = (r: { qty: number; received_qty: number | null }): nu
 export function explainOutstanding(
   requestedPoIds: string[],
   rows: CountableRow[],
-  headerStatuses: Map<string, { poDocNo: string | null; status: string | null }>,
+  headerStatuses: Map<string, { poDocNo: string | null; status: string | null; onHold: boolean | null }>,
   truncated: boolean,
-  isReceivable: (status: string | null | undefined) => boolean,
+  isReceivable: (po: { status?: string | null; on_hold?: boolean | null } | null) => boolean,
 ): OutstandingScope {
-  const byPo = new Map<string, { docNo: string | null; status: string | null; candidate: number; outstanding: number }>();
+  const byPo = new Map<string, { docNo: string | null; status: string | null; onHold: boolean | null; candidate: number; outstanding: number }>();
   for (const r of rows) {
     const e = byPo.get(r.purchase_order_id) ?? {
-      docNo: r.po?.po_number ?? null, status: r.po?.status ?? null, candidate: 0, outstanding: 0,
+      docNo: r.po?.po_number ?? null, status: r.po?.status ?? null,
+      onHold: r.po?.on_hold ?? null, candidate: 0, outstanding: 0,
     };
     e.candidate += 1;
     if (remainingOf(r) > 0) e.outstanding += 1;
@@ -347,11 +353,13 @@ export function explainOutstanding(
     const header = headerStatuses.get(id);
     if (!seen && !header) { unknownPoIds.push(id); continue; }
     const status = seen?.status ?? header?.status ?? null;
+    const onHold = seen?.onHold ?? header?.onHold ?? null;
     pos.push({
       poId: id,
       poDocNo: seen?.docNo ?? header?.poDocNo ?? null,
       status,
-      receivable: isReceivable(status),
+      onHold,
+      receivable: isReceivable({ status, on_hold: onHold }),
       candidateLines: seen?.candidate ?? 0,
       outstandingLines: seen?.outstanding ?? 0,
     });

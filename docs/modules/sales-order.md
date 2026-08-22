@@ -91,17 +91,31 @@ are side states and are deliberately UNRANKED.
 > false. It is enterable from every live status and the way OUT is refused
 > (`illegal_status_transition`, 409): a closed order cannot be walked back into
 > DRAFT / CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED / DELIVERED /
-> INVOICED / ON_HOLD. Written as an unconditional pass on both edges it would be
-> the ON_HOLD laundry again — CLOSED → ON_HOLD → DRAFT is the rank table's refused
-> move in two steps, and DRAFT is what unlocks the cascading DELETE. `CANCELLED`
-> stays reachable, because the cancel guards own that call.
+> INVOICED. `CANCELLED` stays reachable, because the cancel guards own that call.
+>
+> **The refusal is load-bearing on its own**, re-checked 2026-08-22 after mig
+> 0324 made the hold a marker. It was written against the two-step
+> `CLOSED → ON_HOLD → DRAFT`, which is now dead by a second route (`ON_HOLD` is
+> refused as a TARGET for every source). What it actually stops is the DIRECT
+> move: `CLOSED` is unranked, so without the arm `from = 'CLOSED'` reaches the
+> rank block, `SO_STATUS_RANK.CLOSED` is `undefined`, and the function returns
+> `null` — `CLOSED → DRAFT` allowed outright, and DRAFT is what unlocks the
+> cascading DELETE. `CLOSED → ON_HOLD` now answers `hold_is_not_a_status` (409)
+> instead, and `ON_HOLD → CLOSED` is ALLOWED so a legacy row on the retired
+> label can still be closed.
+>
+> **The HOLD marker is orthogonal, and no gate was added in either direction.** A
+> held order may be closed and a closed order may be marked held —
+> `PATCH /:docNo/status` never selects `on_hold`, and `PATCH /:docNo/hold` never
+> writes `status` and deliberately does not gate on it. See
+> `docs/modules/document-status-vocabulary.md` §1b.
 >
 > **Nothing automatic writes it, ever**, and no sweep is planned: no machine holds
 > the fact that a remainder was given up on.
 >
 > **It also blocks the two downstream documents.** `SO_UNDELIVERABLE_STATUSES`
 > (`shared/so-deliverable-states.ts`) and `SO_UNORDERABLE_STATUSES`
-> (`routes/mfg-purchase-orders.ts`) both name it: if the rest is not coming,
+> (`lib/source-document-gates.ts`) both name it: if the rest is not coming,
 > nothing more ships against the order and nothing more is bought for it. The two
 > sets are held equal by `backend/tests/duplicatedDecisionPins.test.ts`.
 >
@@ -169,9 +183,45 @@ unwinds the SI first.
 | `SHIPPED` | goods left | `PATCH /:docNo/status` | **nothing** | — |
 | `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
 | `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
-| `CLOSED` | 不追剩下的了 — stop chasing the remainder | `PATCH /:docNo/status` (the list's right-click **Close remaining**) | **nothing, ever** | No new Delivery Order and no new PO line (`SO_UNDELIVERABLE_STATUSES` / `SO_UNORDERABLE_STATUSES`). Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. **One-way** — cannot move to any earlier live status (409); only `CANCELLED` is still reachable. Commission on what was delivered is UNAFFECTED. |
+| `CLOSED` | 不追剩下的了 — stop chasing the remainder | `PATCH /:docNo/status` (the list's right-click **Close remaining**) | **nothing, ever** | No new Delivery Order and no new PO line — `SO_UNDELIVERABLE_STATUSES` (`shared/so-deliverable-states.ts`) and `SO_UNORDERABLE_STATUSES` (`lib/source-document-gates.ts`). Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. **One-way** — cannot move to any earlier live status (409); only `CANCELLED` is still reachable. Commission on what was delivered is UNAFFECTED. |
 | `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
-| `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
+| `ON_HOLD` | **RETIRED as a status, 2026-08-22 (mig 0324)** | **nothing** | — | A hold is a MARKER now, not a step — see §0a below. `PATCH /:docNo/status` refuses this target with `hold_is_not_a_status` (409); it is still accepted as a `from`, so a legacy row can leave. The label stays in `scm.mfg_so_status` for ever (no `DROP VALUE`) and every pill map keeps rendering it. |
+
+### §0a. A HOLD is a MARKER beside the status, not a step in the order's life
+
+**The owner, 2026-08-22:** 「我们的hold是给我们知道一个 order hold这的」 — the hold
+is there so people KNOW an order is paused. 「take off hold也要看」.
+
+`scm.mfg_sales_orders` carries `on_hold` / `hold_reason` / `held_at` / `held_by`
+(mig 0324), and the Sales Order LIST reads them through the payment-totals view,
+which had to be taught the four columns separately (mig 0325 — the view
+enumerates its columns, so a base-table column it does not name is invisible to
+the list).
+
+**`status` is never written by a hold, in either direction.** Put On Hold and
+Take Off Hold both go to `PATCH /:docNo/hold` with `{ onHold, reason }`. So an
+`IN_PRODUCTION` order that is held is still `IN_PRODUCTION`, and taking the hold
+off restores nothing because nothing was lost.
+
+**What it replaced.** `Put On Hold` used to write `status = 'ON_HOLD'`, which
+OVERWROTE the progress — and no `previous_status` column exists anywhere in
+`scm`, so `Take Off Hold` sent every released order to `CONFIRMED` regardless of
+where it had been. Trace:
+`docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`.
+
+**On screen:** the real status pill AND a Hold chip, never one instead of the
+other (`frontend/src/vendor/scm/components/HoldChip.tsx`). The list's **On Hold**
+tab filters on the flag and deliberately OVERLAPS the status tabs; `other =
+all − known` is still computed from the status walk alone, so the sum-to-All
+invariant is untouched.
+
+**What a hold blocks on the SO:** raising a Delivery Order
+(`soCanRaiseDo(status, onHold)`), raising a Purchase Order from its lines
+(`firstUnorderableSo`), commission (`soEarnsCommission(status, onHold)`), the
+`/mine` board, customer LTV, sales analysis, the POS revenue cards and the
+order-fulfilment agent. What it does NOT block is the machine re-deriving the
+status from a fact — `so-delivery-sync` still advances a held order to DELIVERED
+when its delivery completes, because that write can no longer erase the hold.
 
 **The transition rule, exactly.** `soStatusTransitionError` rejects only two
 things: an unknown target (`invalid_status`, 400) and a backward jump that is not
@@ -211,18 +261,20 @@ button at all.
 **The RIGHT-CLICK menu offers four decisions and nothing else**
 (`frontend/src/pages/scm-v2/row-menus.ts`, and the rule that decides membership
 is in `docs/modules/document-status-vocabulary.md` §1b): **Confirm** on a draft,
-**Put On Hold** / **Take Off Hold**, **Close remaining** on any live order, and
-**Cancel Sales Order** alone at the bottom in red. Close and Cancel both sit
-behind a confirmation that says in plain words what each one does to the money.
-**Close remaining is not offered** on a DRAFT (no remainder to give up on), a
-CANCELLED order or an already CLOSED one.
+**Put On Hold** / **Take Off Hold** (the mig-0324 MARKER, never a status write),
+**Close remaining** on any live order, and **Cancel Sales Order** alone at the
+bottom in red. Close and Cancel both sit behind a confirmation that says in plain
+words what each one does to the money. **Close remaining is not offered** on a
+DRAFT (no remainder to give up on), a CANCELLED order or an already CLOSED one —
+but the hold entries ARE still offered on all of those, because a marker says
+nothing about where the order is.
 
 **The list carries a Closed tab**, between Invoiced and On Hold — one tab per
 status (`frontend/src/pages/scm-v2/so-list-status.ts`), counted server-side from
 `SO_TAB_STATUSES`. It is NOT folded into Delivered: an order whose remainder was
 abandoned is a different fact from one that was delivered in full.
 
-**The deliverable arm reads `soCanRaiseDo(row.status)`** from the vendored
+**The deliverable arm reads `soCanRaiseDo(row.status, row.on_hold)`** from the vendored
 `shared/so-deliverable-states.ts` — the same predicate the delivery-order route
 enforces with. It was `s === "confirmed"` until 2026-08-21, an allow-list of one
 against the server's deny-list of three, so the button went ABSENT the moment
@@ -232,7 +284,8 @@ two companies; the predicate carries no company term and never did.
 `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
 
 **Right-click on the list row** offers Open / Edit / Print, the transfer, and
-then exactly THREE status moves — **Confirm** a draft, **Hold**, **Cancel**.
+then exactly FOUR decisions — **Confirm** a draft, **Hold**, **Close remaining**,
+**Cancel**.
 See `docs/modules/document-conversion.md` §8a for the shape and for what each of
 the five lists deliberately does NOT offer.
 
