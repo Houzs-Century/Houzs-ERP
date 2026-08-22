@@ -59,7 +59,7 @@ SET search_path = scm, public;
 WITH ranked AS (
   SELECT id,
          row_number() OVER (
-           PARTITION BY source_doc_type, source_doc_id, product_code, variant_key
+           PARTITION BY source_doc_type, source_doc_id, item_code, variant_key
            ORDER BY created_at, id
          ) - 1 AS seq
   FROM scm.inventory_movements
@@ -75,7 +75,7 @@ WHERE m.id = ranked.id
 -- 2. The backstops. Same key shape as uq_inv_mov_do_source_v2.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_pc_receive_source
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key, COALESCE(correction_seq, 0))
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key, COALESCE(correction_seq, 0))
   WHERE (source_doc_type = 'PC_RECEIVE'::text);
 
 COMMENT ON INDEX scm.uq_inv_mov_pc_receive_source IS
@@ -83,7 +83,7 @@ COMMENT ON INDEX scm.uq_inv_mov_pc_receive_source IS
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_pc_return_source
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key, COALESCE(correction_seq, 0))
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key, COALESCE(correction_seq, 0))
   WHERE (source_doc_type = 'PC_RETURN'::text);
 
 COMMENT ON INDEX scm.uq_inv_mov_pc_return_source IS
