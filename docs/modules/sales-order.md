@@ -198,16 +198,24 @@ the five lists deliberately does NOT offer.
 ### `SHIPPED` is a status with no tab of its own (2026-08-22)
 
 Owner: 「Sales Order 的 Shipped 跟 Delivered 是合起来的」. The **Shipped** tab is
-gone and `backend/src/scm/lib/so-status-buckets.ts` gives the **Delivered** tab
+gone and `backend/src/scm/lib/so-tab-statuses.ts` gives the **Delivered** tab
 both `SHIPPED` and `DELIVERED`.
 
 `SHIPPED` is still WRITTEN — `so-delivery-sync.ts` sets it when a delivery order
 is raised (§0.2) — and it is still a legal transition target. Only its tab is
 gone. That asymmetry is the whole design: Postgres cannot `DROP VALUE`, so a row
-carrying `SHIPPED` can always arrive, and a status removed from the tab
-vocabulary WITHOUT a bucket falls into the list's `other` catch-all — reachable
-from no tab and subtracted from the count on screen. Production carried
-SHIPPED · 0 against DELIVERED · 26 on the day of the ruling.
+carrying `SHIPPED` can always arrive.
+
+**Where an unfolded status would go, stated accurately.** This list is the one
+that HAS a catch-all — the handler computes `other = allCount - known` and
+`MfgSalesOrdersListV2.tsx:2005` renders an **Other** tab when that count is
+non-zero. So an unfolded `SHIPPED` order would still have been reachable, and
+the reason to fold is the READER rather than reachability: goods that went out
+belong under **Delivered**, not under **Other**. The four purchase/delivery
+lists have NO catch-all, which is why `*_STATUS_BUCKETS` there must partition
+the enum exhaustively and `so-tab-statuses.ts` deliberately does not carry that
+name. Production carried SHIPPED · 0 against DELIVERED · 26 on the day of the
+ruling.
 
 **The list's three query sites all read the bucket**, not the raw param: the row
 query, the count query and the money-KPI query in

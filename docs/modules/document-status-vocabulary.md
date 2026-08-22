@@ -123,13 +123,23 @@ See `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status
 sales order both say "the goods went out"; the difference between LEFT and
 ARRIVED is what the Delivery Order is for.
 
-It **folds**, it is not deleted — `backend/src/scm/lib/so-status-buckets.ts`.
-Postgres cannot `DROP VALUE`, so `SHIPPED` stays a legal label for ever and a
-row can still arrive carrying it. A status removed from the vocabulary WITHOUT a
-bucket falls into the list's `other` catch-all: reachable from no tab and
-subtracted from the count on screen. That is the fault `status-counts.ts` exists
-to make loud — 37 delivery orders invisible on 2026-08-17 while the numbers
-looked settled.
+It **folds**, it is not deleted — `backend/src/scm/lib/so-tab-statuses.ts`.
+Postgres cannot `DROP VALUE`, so `SHIPPED` stays a legal label for ever, and
+`so-delivery-sync.ts` still writes it whenever a delivery order is raised.
+
+**Why fold rather than leave it to the catch-all.** The Sales Order list is the
+one list that HAS a catch-all — an **Other** tab that appears when
+`other = allCount - known` is non-zero — so an unfolded `SHIPPED` order would
+have been reachable. The reason is the reader: goods that went out belong under
+**Delivered**, not under **Other**.
+
+**The four purchase/delivery lists have no catch-all**, and there an unbucketed
+status genuinely is reachable from no tab and subtracted from the count on
+screen. That is the fault `status-counts.ts` exists to make loud — 37 delivery
+orders invisible on 2026-08-17 while the numbers looked settled — and it is why
+`*_STATUS_BUCKETS` maps must partition their enum exhaustively
+(`backend/tests/statusBucketsEnumMembership.test.mjs`) while the Sales Order tab
+map deliberately does not carry that name.
 
 ---
 

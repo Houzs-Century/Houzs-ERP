@@ -33,15 +33,26 @@ that decides membership rather than a list to remember. Same shape as SAP
 (computed fulfilment status, a person gets Close and Cancel).
 
 `SHIPPED` also stopped being a Sales Order tab in the same change — owner:
-「Sales Order 的 Shipped 跟 Delivered 是合起来的」 — and it folds into
-`DELIVERED` via the new `backend/src/scm/lib/so-status-buckets.ts` rather than
-being deleted from the vocabulary. Deleting it would have sent any row carrying
-it into the list's `other` catch-all: reachable from no tab and subtracted from
-the count on screen, which is exactly the fault `status-counts.ts` was written
-after (37 delivery orders invisible, 2026-08-17). Postgres cannot `DROP VALUE`,
-so a `SHIPPED` row can always arrive; it now lands under Delivered.
+「Sales Order 的 Shipped 跟 Delivered 是合起来的」 — and it FOLDS into
+`DELIVERED` via the new `backend/src/scm/lib/so-tab-statuses.ts` rather than
+being dropped from the list vocabulary. Postgres cannot `DROP VALUE`, so
+`SHIPPED` stays a legal label for ever and `so-delivery-sync.ts` still writes
+it whenever a delivery order is raised — a row carrying it arrives every day.
 
-Pinned by `backend/src/scm/lib/so-status-buckets.test.ts` — "SHIPPED is
+> **The first draft of this entry overstated the consequence** and the
+> correction is worth keeping. It said a status left unbucketed is "reachable
+> from no tab and subtracted from the count", citing the 2026-08-17 delivery-
+> order incident. That is true of the DO / PO / GRN / PI lists, which have **no
+> catch-all**. It is NOT true of the Sales Order list, which is the one list
+> that does: its handler computes `other = allCount - known` and
+> `MfgSalesOrdersListV2.tsx:2005` renders an **Other** tab whenever that count
+> is non-zero. An unfolded `SHIPPED` order would have been reachable.
+>
+> The real reason to fold is the READER: an order whose goods went out belongs
+> under **Delivered**, not under a tab called **Other**. That is a smaller claim
+> and it is the one the evidence supports.
+
+Pinned by `backend/src/scm/lib/so-tab-statuses.test.ts` — "SHIPPED is
 reachable from a tab and is in exactly one" fails on a tree where the status is
 dropped instead of folded.
 

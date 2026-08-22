@@ -113,7 +113,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
-import { SO_STATUS_BUCKETS, soStatusesForTab } from '../lib/so-status-buckets';
+import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
@@ -1365,7 +1365,7 @@ mfgSalesOrders.get('/', async (c) => {
       statusCounts = { all: allCount };
       /* Counted per TAB, not per status, so a folded status is counted under
          the tab that shows it instead of falling into `other`. */
-      for (const [tab, members] of Object.entries(SO_STATUS_BUCKETS)) {
+      for (const [tab, members] of Object.entries(SO_TAB_STATUSES)) {
         const cnt = members.reduce((n, m) => n + (counted.byStatus[m] ?? 0), 0);
         statusCounts[tab.toLowerCase()] = cnt; known += cnt;
       }

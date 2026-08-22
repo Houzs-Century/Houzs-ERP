@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------------
-   so-status-buckets — which sales-order statuses each list TAB covers.
+   so-tab-statuses — which sales-order statuses each list TAB covers.
 
    SHIPPED FOLDS INTO DELIVERED (owner, 2026-08-22): 「Sales Order 的 Shipped 跟
    Delivered 是合起来的」. On the Sales Order the two say the same thing to the
@@ -18,13 +18,32 @@
    `status-counts.ts` was written after — 37 delivery orders invisible while the
    numbers looked settled.
 
+   IT IS DELIBERATELY *NOT* NAMED `*_STATUS_BUCKETS`, and the difference is real
+   rather than cosmetic. The four maps that carry that name — DO, PO, GRN, PI —
+   are EXHAUSTIVE PARTITIONS of their enum, pinned by
+   backend/tests/statusBucketsEnumMembership.test.mjs: every member in exactly
+   one bucket, because those four lists have no catch-all and a member with no
+   bucket is reachable from no tab at all.
+
+   The Sales Order list is the one that DOES have a catch-all. Its handler
+   computes `other = allCount - known` and MfgSalesOrdersListV2 renders an
+   "Other" tab whenever that count is non-zero, so a status outside this map is
+   still reachable. That is why CLOSED and RETURNED — both legal labels in
+   scm.mfg_so_status, both retired from the vocabulary — need no entry here, and
+   why registering this map as a partition would force two tabs the owner did
+   not ask for.
+
+   SHIPPED is folded anyway rather than left to `other`, and the reason is the
+   READER, not reachability: an order whose goods went out belongs under
+   Delivered, not under a tab called Other.
+
    THE KEYS ARE THE WIRE VALUES. `useMfgSalesOrdersPaged` sends
    `status.toUpperCase()`, so the tab `delivered` arrives as `DELIVERED`. A tab
    whose bucket holds one status still reads through here, so there is one place
    that answers "what does this tab select" and no second spelling of it.
    ---------------------------------------------------------------------------- */
 
-export const SO_STATUS_BUCKETS: Record<string, string[]> = {
+export const SO_TAB_STATUSES: Record<string, string[]> = {
   DRAFT:         ['DRAFT'],
   CONFIRMED:     ['CONFIRMED'],
   IN_PRODUCTION: ['IN_PRODUCTION'],
@@ -39,5 +58,5 @@ export const SO_STATUS_BUCKETS: Record<string, string[]> = {
  *  the buckets have never heard of still filters to something real rather than
  *  silently widening to every row. */
 export function soStatusesForTab(tab: string): string[] {
-  return SO_STATUS_BUCKETS[tab] ?? [tab];
+  return SO_TAB_STATUSES[tab] ?? [tab];
 }
