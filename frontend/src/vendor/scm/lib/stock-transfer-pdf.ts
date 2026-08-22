@@ -209,10 +209,23 @@ export async function renderStockTransferInto(
   doc.text('TOTAL QTY', totalsX, lastY + 2);
   doc.text(String(totalQty), pageW - margin, lastY + 2, { align: 'right' });
 
+  /* Naming the two warehouses on the signature boxes is what makes this a
+     hand-off sheet rather than a form — but drawSignatureBoxes does not wrap,
+     and the two labels sit half a page apart, so an over-long one would run
+     into its neighbour. MEASURED at the font drawSignatureBoxes draws them in,
+     and dropped rather than collided with: a warehouse whose label does not
+     fit falls back to the bare role, which is still true. */
+  const sigMaxW = (pageW - margin * 2) / 2 - 7;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  const sigLabel = (role: string, wh: string): string => {
+    if (wh === '—') return role;
+    const full = `${role} — ${wh}`;
+    return doc.getTextWidth(full) <= sigMaxW ? full : role;
+  };
   const ty = drawSignatureBoxes(
     doc, lastY + 12,
-    `Released By${fromLabel === '—' ? '' : ` — ${fromLabel}`}`,
-    `Received By${toLabel === '—' ? '' : ` — ${toLabel}`}`,
+    sigLabel('Released By', fromLabel),
+    sigLabel('Received By', toLabel),
   );
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);

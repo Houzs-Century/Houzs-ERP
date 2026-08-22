@@ -220,6 +220,29 @@ describe('Stock Transfer PDF', () => {
     expect(text).toContain('bbbbbbbb-0000-0000-0000-000000000002');
   });
 
+  /* The two boxes sit half a page apart and drawSignatureBoxes does not wrap,
+     so a long warehouse label has to be DROPPED rather than allowed to run into
+     its neighbour. The bare role is still true; a collision is not readable. */
+  test('the signature boxes name the two warehouses, and give that up rather than collide', async () => {
+    const { draws } = await renderTransfer(TRANSFER_HEADER, TRANSFER_LINES);
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('Released By — WH-BLK');
+    expect(text).toContain('Received By — WH-KL');
+
+    const long = await renderTransfer(
+      {
+        ...TRANSFER_HEADER,
+        from_warehouse: { code: '', name: 'Balakong Main Warehouse and Overflow Showroom Annexe' },
+        to_warehouse: { code: '', name: 'Kuala Lumpur Flagship Showroom and Consignment Store' },
+      },
+      TRANSFER_LINES,
+    );
+    const longText = long.draws.map((d) => d.text);
+    expect(longText).toContain('Released By');
+    expect(longText).toContain('Received By');
+    expect(longText.some((t) => t.startsWith('Released By —'))).toBe(false);
+  });
+
   test('a transfer with no lines still renders one page and a zero total', async () => {
     const { doc, draws } = await renderTransfer(TRANSFER_HEADER, []);
     expect(doc.getNumberOfPages()).toBe(1);
