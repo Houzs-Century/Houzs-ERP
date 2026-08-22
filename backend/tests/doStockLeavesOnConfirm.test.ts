@@ -227,9 +227,13 @@ describe('creating a delivery order still deducts, and now lands on Confirmed', 
   });
 
   it('LOADED is a shipped state, so the create lands with its stock accounted for', () => {
-    /* Ties the rename to the ledger: a DO created LOADED must read as stock-out
-       everywhere, or the create would deduct into a status the readers call
-       un-shipped — the orphan this change exists to avoid. */
+    /* THE COUPLING PIN — the two halves of this change cannot be split.
+       Landing the create on LOADED is only safe BECAUSE LOADED joined the
+       shipped set in the same commit. Under the old sets, LOADED was in
+       DO_NOT_DELIVERED_STATES, so a delivery order created LOADED would have
+       deducted its stock and then counted as NOT delivered everywhere the SO
+       coverage engines look — stock gone, coverage blind, MRP re-ordering goods
+       already on a lorry. Reverting either half alone reproduces that. */
     expect(DO_STOCK_OUT_STATES as readonly string[]).toContain('LOADED');
     expect(doCountsAsDelivered('LOADED')).toBe(true);
   });
