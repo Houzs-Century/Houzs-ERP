@@ -179,6 +179,10 @@ does by itself when the goods land. Owner-reported as a difference between the
 two companies; the predicate carries no company term and never did.
 `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
 
+**Right-click on the list row** offers the same actions plus the four statuses
+that had no caller — see `docs/modules/document-conversion.md` §8a for the shape
+and for what each of the five lists deliberately does NOT offer.
+
 **The desktop DETAIL page offers no transfer at all** — `SalesOrderDetailV2.tsx`
 has no `transferToLabel('do')` call. The other desktop routes to a delivery
 order are the Delivery Planning board's context menu and

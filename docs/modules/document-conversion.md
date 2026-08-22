@@ -419,6 +419,71 @@ Sizes are relative build cost, not priority.
 
 ---
 
+## 8a. The right-click menu (owner ruling, 2026-08-21)
+
+**His words:** 「我要做成 right click 的功能，就是可以 convert 等等。那一些 button
+要做成 right click 的」 — he had right-clicked a Sales Order and got Chrome's own
+menu.
+
+**Why he got Chrome's.** `DataTable` takes `contextMenu` as an **opt-in** and
+only four pages had opted in — Consignment Notes, Consignment Orders, Payment
+Vouchers and the Delivery Planning board — none of them the five documents he
+works in daily.
+
+**Nothing new happens in a menu.** Every entry calls a handler the page already
+had; `pages/scm-v2/row-menus.ts` decides only WHAT IS OFFERED and IN WHAT ORDER.
+A menu that also invented behaviour would be one nobody could review against the
+buttons it duplicates.
+
+**The destination is guaranteed, not promised.** He asked directly whether a
+right-click convert lands where the button lands. Every transfer entry is built
+on `convertToLink(pair, keys)`, and `convertScope.test.tsx` walks the whole
+source tree and FAILS on any site that hand-writes a query onto a convert path
+(§4a). A menu entry structurally cannot go somewhere the button would not.
+
+### The shape, on every list
+
+```
+open / edit / print     what you do WITH this document
+────────
+transfer to …           what you make FROM it
+────────
+status changes          what you do TO it
+────────
+cancel                  destructive, alone, last, red
+```
+
+Assembled by `lib/rowMenu.ts`'s `buildRowMenu`, which drops empty groups so a
+row that does not qualify never renders a stray separator.
+
+### What each list offers, and what it deliberately does not
+
+| list | transfer | status | cancel |
+|---|---|---|---|
+| Sales Order | Delivery Order | Confirm · In Production · Shipped · Invoiced · On Hold · Reopen | yes |
+| Delivery Order | Sales Invoice | **none** | **none** |
+| Purchase Order | Goods Received | — | yes |
+| GRN | Purchase Invoice · Purchase Return | Confirm (post) | yes |
+| Sales Invoice | — (SO → SI does not exist, §4a) | Record payment | **none** |
+
+**The Sales Order's status group closes the gap** recorded in
+`sales-order.md` §0.1a: `IN_PRODUCTION`, `SHIPPED`, `INVOICED` and `ON_HOLD`
+were accepted by the route and sent by no screen, which is why all four tabs
+read zero. **`READY_TO_SHIP` and `DELIVERED` are deliberately absent** — both are
+written by the machine, and a button whose effect a background sweep silently
+undoes is worse than no button.
+
+**The Delivery Order gets no status entries** because it is the one document
+where a status move has a STOCK consequence: the first entry into a shipped
+state writes the inventory OUT.
+
+**No cancel on the Delivery Order or the Sales Invoice** — a recorded gap, not a
+decision. Neither list has a cancel handler; cancelling lives on their detail
+pages, and both reverse something (stock, revenue) that deserves the
+confirmation copy those pages carry.
+
+---
+
 ## 9. Vocabulary — is it "Convert to/from" or "Transfer to/from"?
 
 > Added 2026-08-17, for the owner's question: *"I want a system-wide audit — are
