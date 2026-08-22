@@ -513,7 +513,7 @@ Transfer and Stock Take lists each carried a `doCancel` — confirmation copy an
 all — called from nowhere, and the Purchase Invoice list called
 `useCancelPurchaseInvoice()` and used the result for nothing.
 `frontend/tsconfig.app.json` sets `"noUnusedLocals": false`, so nothing said a
-word. See `docs/bugs/0515-cancel-was-built-into-three-document-lists-and-reachable-fro.md`.
+word. See `docs/bugs/0516-cancel-was-built-into-three-document-lists-and-reachable-fro.md`.
 
 **Two entries are newly WIRED, both to endpoints that already had a caller.**
 The Purchase Invoice's Confirm calls `/purchase-invoices/:id/post`, which its
