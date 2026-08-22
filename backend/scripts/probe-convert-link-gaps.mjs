@@ -102,10 +102,13 @@ const why = (e) => {
   return (m || e?.name || e?.constructor?.name || "unknown error") + code;
 };
 
-/* Set by every catch below. A run that measured NOTHING must not exit 0: an
-   all-NOT-MEASURED report and a clean all-zero report look alike to a human
-   skimming, and only the exit code separates them for a machine. */
-let measuredSomething = false;
+/* THE CHAINS ARE THE PROBE. The first version tracked "did anything at all get
+   measured", and the first prod run exited GREEN with all four chains failing on
+   an enum cast, because the incidental RECOUNT_FAILED section had answered. A
+   green run whose entire subject is NOT MEASURED is the one wrong answer
+   available, so the count that decides the exit code is the CHAIN count. */
+let chainsMeasured = 0;
+const CHAIN_KEYS = ["DO", "GR", "IV", "PI"];
 
 /* The human document-number COLUMN per chain. `DOWNSTREAM` carries `docNoOf`, a
    FUNCTION, which SQL cannot use — so the name is written here and then PROVED
@@ -175,19 +178,33 @@ async function main() {
     note(`   ${itemTable}.${sourceFk} -> ${sourceItemTable}`);
 
     /* Cancelled and draft documents are excluded: they are not claiming to have
-       moved anything, so an unlinked line on one is not a gap. */
+       moved anything, so an unlinked line on one is not a gap.
+
+       `status::text` BEFORE the COALESCE, not after. These columns are ENUMs,
+       and `COALESCE(enum, '')` coerces the '' literal INTO the enum type at PLAN
+       time — '' is no label, so the whole statement raises 22P02 before a row is
+       read. Migration 0155 fixed exactly this in fn_reconcile_dropship_batch,
+       where it had been silently no-opping in production; the first run of this
+       probe reproduced it on all four chains.
+
+       The labels themselves are NOT defined in this repo (the enum types come
+       from 2990's schema), so the filter list is not something this probe can
+       verify. It therefore PRINTS the statuses it actually saw — a cancelled
+       label under a name not in the list is then visible in the output instead
+       of quietly inflating every count. */
     let rows;
     try {
       rows = await sql`
         SELECT h.${sql(docNo)}                       AS doc_no,
                h.company_id                          AS company_id,
+               UPPER(COALESCE(h.status::text, ''))   AS status,
                COUNT(i.id)                           AS line_count,
                COUNT(i.${sql(sourceFk)})             AS linked_count
           FROM scm.${sql(table)} h
           LEFT JOIN scm.${sql(itemTable)} i ON i.${sql(itemFk)} = h.id
-         WHERE COALESCE(h.status, '') NOT IN ('CANCELLED', 'DRAFT')
+         WHERE UPPER(COALESCE(h.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
            ${CO == null ? sql`` : sql`AND h.company_id = ${CO}`}
-         GROUP BY h.${sql(docNo)}, h.company_id
+         GROUP BY h.${sql(docNo)}, h.company_id, h.status
       `;
     } catch (e) {
       /* A chain this probe cannot read must SAY so. A silent skip reads as
@@ -198,6 +215,7 @@ async function main() {
       continue;
     }
 
+    chainsMeasured++;
     const b = { ALL: 0, MIXED: 0, NONE: 0, EMPTY: 0 };
     for (const r of rows) {
       const lines = Number(r.line_count);
@@ -209,7 +227,12 @@ async function main() {
     }
     const total = rows.length;
 
+    const seen = new Map();
+    for (const r of rows) seen.set(r.status, (seen.get(r.status) ?? 0) + 1);
     note(`   documents                              ${rpad(total, 7)}`);
+    /* The filter list is unverifiable from this repo, so show its input. */
+    note(`   statuses counted: ${[...seen.entries()].map(([k, v]) => `${k || "(blank)"}=${v}`).join("  ") || "(none)"}`);
+    note(`   statuses excluded: CANCELLED, DRAFT`);
     note(`   ALL lines linked                       ${rpad(b.ALL, 7)}  ${pct(b.ALL, total)}`);
     note(`   MIXED — some linked, some not          ${rpad(b.MIXED, 7)}  ${pct(b.MIXED, total)}`);
     note(`   NONE linked (hand-entered)             ${rpad(b.NONE, 7)}  ${pct(b.NONE, total)}`);
@@ -226,11 +249,10 @@ async function main() {
                COALESCE(SUM(i.${sql(itemQtyCol)}) FILTER (WHERE i.${sql(sourceFk)} IS NULL), 0) AS unlinked_qty
           FROM scm.${sql(itemTable)} i
           JOIN scm.${sql(table)} h ON h.id = i.${sql(itemFk)}
-         WHERE COALESCE(h.status, '') NOT IN ('CANCELLED', 'DRAFT')
+         WHERE UPPER(COALESCE(h.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
            ${CO == null ? sql`` : sql`AND h.company_id = ${CO}`}
       `;
       lineCounts = lc;
-      measuredSomething = true;
       note(`   LINES  ${lc.unlinked} of ${lc.lines} carry no link  (${pct(Number(lc.unlinked), Number(lc.lines))}), ${lc.unlinked_qty} unit(s)`);
     } catch (e) {
       note(`   LINES  NOT MEASURED — ${why(e).slice(0, 100)}`);
@@ -255,7 +277,7 @@ async function main() {
           FROM scm.grn_items i
           JOIN scm.grns g ON g.id = i.grn_id
          WHERE i.purchase_order_item_id IS NULL
-           AND COALESCE(g.status, '') NOT IN ('CANCELLED', 'DRAFT')
+           AND UPPER(COALESCE(g.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
            AND COALESCE(i.qty_accepted, 0) > 0
            ${CO == null ? sql`` : sql`AND g.company_id = ${CO}`}
       )
@@ -268,10 +290,9 @@ async function main() {
                                         AND p.supplier_id = u.supplier_id
                                         AND p.company_id  = u.company_id
        WHERE pi.qty - COALESCE(pi.received_qty, 0) > 0
-         AND COALESCE(p.status, '') NOT IN ('CANCELLED', 'DRAFT', 'CLOSED')
+         AND UPPER(COALESCE(p.status::text, '')) NOT IN ('CANCELLED', 'DRAFT', 'CLOSED')
        ORDER BY u.grn_number DESC, u.item_code
     `;
-    measuredSomething = true;
     const gs = new Set(orphans.map((r) => r.grn_number));
     note(`  hand-entered receipt lines whose supplier`);
     note(`  still has an OPEN PO line for that item  ${rpad(orphans.length, 7)}`);
@@ -310,7 +331,6 @@ async function main() {
        ORDER BY a.created_at DESC
        LIMIT 25
     `;
-    measuredSomething = true;
     note(`  RECOUNT_FAILED rows on receipts         ${rpad(rf.length, 7)}${rf.length === 25 ? "  (capped at 25)" : ""}`);
     note("  A FLOOR. For the authoritative answer on route B run");
     note("  diag-po-receipt-drift, which compares received_qty against the ledger.");
@@ -387,10 +407,14 @@ async function main() {
   note("");
   note("=== end (read-only; nothing was written) ===");
 
-  /* EXIT ZERO IS NOT SUCCESS. Zero findings is a legitimate answer; zero
-     MEASUREMENTS is a failed run wearing the same words. */
-  if (!measuredSomething) {
-    console.error("Nothing was measured - every read failed. This is not a clean result.");
+  /* EXIT ZERO IS NOT SUCCESS. Zero findings is a legitimate answer; a chain that
+     could not be READ is not an answer at all, and a partial read is not a
+     clean run just because the sections that happened to work printed a number. */
+  if (chainsMeasured < CHAIN_KEYS.length) {
+    console.error(
+      `Only ${chainsMeasured} of ${CHAIN_KEYS.length} chains could be read. ` +
+      `This is NOT a clean result - see the NOT MEASURED lines above.`,
+    );
     process.exitCode = 1;
   }
 }
