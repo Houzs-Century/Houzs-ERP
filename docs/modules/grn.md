@@ -498,6 +498,23 @@ Return** (`/purchase-returns`), a separate module.
 
 ---
 
+## 5a. `ON_HOLD` — a paperwork pause, never a stock event (mig 0319)
+
+Added 2026-08-21 (owner: 「GR ... also hold」).
+
+**It moves no stock, and that is the point of preferring it to a cancel here.**
+The inventory IN fires at the DRAFT -> POSTED transition and a CANCEL writes the
+reversing OUT; holding a posted GRN changes no movement at all. The goods are in
+the warehouse either way — what stops is the paperwork.
+
+**What it blocks:** a held GRN cannot become a Purchase Invoice, because the
+billable-GRN read is `.eq('status','POSTED')` — an allow-list, so the block
+needs no new code.
+
+`GoodsReceivedDetailV2`'s `effectiveOf` names it explicitly. Its fall-through is
+`draft`, so a held receipt would otherwise have read as an un-posted DRAFT — the
+opposite of the truth, since a held GRN has already posted and its stock is in.
+
 ## 6. What locks and when
 
 | Trigger | What stops | Enforced at |

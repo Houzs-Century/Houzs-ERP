@@ -752,6 +752,28 @@ lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
 
+> **`ON_HOLD` added 2026-08-21 (mig 0318, owner: 「PO 加 hold」).** The purchase
+> side never had a reversible stop — only `CANCELLED`, which is final and which
+> the ERP pushes to AutoCount where it cannot be un-cancelled.
+>
+> **What it blocks, and where the block lives.** A held PO is **not receivable**:
+> `RECEIVABLE_PO_STATUSES` in `grns.ts` is an ALLOW-list of
+> `SUBMITTED / PARTIALLY_RECEIVED`, so ON_HOLD is excluded without a line of new
+> code. Worth knowing when the next status is added: an allow-list gives you the
+> block for free and a deny-list does not.
+>
+> **What had to be written.** `recomputePoReceived` re-derives a PO's status from
+> its lines on every GRN post, so it would have overwritten the hold. ON_HOLD now
+> joins CANCELLED in that exclusion. A status that vanishes by itself is worse
+> than one that was never offered.
+>
+> **Three display maps move with it**, two of them on the detail page:
+> `status-pill.ts`'s PO map, `PurchaseOrderDetailV2`'s `STAGE_LABEL`, and that
+> page's `effectiveOf` — whose fall-through answered **`cancelled`**, so a held
+> order would have told the buyer it was cancelled.
+
+
+
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
 Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw
 status — `draft→DRAFT`, `open→SUBMITTED`, `partial→PARTIALLY_RECEIVED`,

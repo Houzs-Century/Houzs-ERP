@@ -226,6 +226,47 @@ const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
   purchaseInvoiceIds: ids.slice(0, 20),
 });
 
+/* ── A HELD INVOICE IS NOT PAYABLE (owner, 2026-08-21: "PI also hold") ───────
+   ON_HOLD arrived on scm.purchase_invoice_status with migration 0320, for the
+   disputed supplier bill that must not go out while it is being queried.
+
+   THIS ONE HAD TO BE WRITTEN, and the other two holds did not — worth knowing,
+   because it says where to look when a fourth is added. A PO on hold is not
+   receivable because grns.ts filters receivable POs through an ALLOW-list; a
+   GRN on hold cannot be invoiced because the billable-GRN read is
+   `.eq('status','POSTED')`. Both blocks came for free. The settle path reads
+   invoices BY ID and had no status gate at all, so a held invoice would have
+   been paid exactly as before.
+
+   Checked where the id ENTERS, beside the company guard, for the same reason
+   that one gives: nothing has been written yet, so the operator gets a straight
+   refusal rather than a voucher that quietly pays a bill somebody stopped.
+
+   FAILS CLOSED on a read error — absence is what refuses here, so folding a
+   blip into "none are held" would authorise the write this exists to stop. */
+async function allocationPisOnHold(
+  sb: any,
+  c: any,
+  piIds: string[],
+): Promise<string[]> {
+  const ids = [...new Set(piIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(
+    sb.from('purchase_invoices').select('id, status').in('id', ids), c,
+  );
+  if (error) return ids;
+  return ((data ?? []) as Array<{ id: string; status: string | null }>)
+    .filter((r) => String(r.status ?? '').toUpperCase() === 'ON_HOLD')
+    .map((r) => r.id);
+}
+
+const ALLOCATION_ON_HOLD = (ids: string[]) => ({
+  error: 'allocation_on_hold',
+  message: 'One of the invoices this voucher pays is on hold. Take it off hold first.',
+  purchaseInvoiceIds: ids.slice(0, 20),
+});
+
+
 /* ────────────────────────────────────────────────────────────────────────
    List / get
    ──────────────────────────────────────────────────────────────────────── */
@@ -317,6 +358,8 @@ export const createPaymentVoucherHandler = async (c: any) => {
   {
     const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
     if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+    const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
   }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
@@ -499,6 +542,8 @@ paymentVouchers.patch('/:id', async (c) => {
     {
       const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
       if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+      const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
     }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {

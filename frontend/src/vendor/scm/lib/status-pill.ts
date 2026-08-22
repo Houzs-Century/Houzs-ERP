@@ -61,12 +61,14 @@ const PO: Record<string, Entry> = {
   PARTIALLY_RECEIVED: { label: 'Partially Received', tone: 'progress' },
   RECEIVED:           { label: 'Received',           tone: 'success' },
   CANCELLED:          { label: 'Cancelled',          tone: 'danger' },
+  ON_HOLD:            { label: 'On Hold',            tone: 'pending' },
 };
 const GRN: Record<string, Entry> = {
   DRAFT:     { label: 'Draft',     tone: 'pending' },
   POSTED:    { label: 'Confirmed', tone: 'info' },
   CLOSED:    { label: 'Closed',    tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
+  ON_HOLD:   { label: 'On Hold',   tone: 'pending' },
 };
 const PI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
@@ -75,6 +77,7 @@ const PI: Record<string, Entry> = {
   PAID:           { label: 'Paid',           tone: 'success' },
   VOID:           { label: 'Void',           tone: 'danger' },
   CANCELLED:      { label: 'Cancelled',      tone: 'danger' },
+  ON_HOLD:        { label: 'On Hold',        tone: 'pending' },
 };
 const PR: Record<string, Entry> = {
   POSTED:    { label: 'Confirmed', tone: 'info' },

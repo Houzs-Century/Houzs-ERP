@@ -320,6 +320,7 @@ const PI_STATUS_BUCKETS: Record<string, string[]> = {
   partial: ['PARTIALLY_PAID'],
   paid: ['PAID'],
   cancelled: ['CANCELLED'],
+  on_hold: ['ON_HOLD'],
 };
 
 
@@ -393,16 +394,17 @@ purchaseInvoices.get('/', async (c) => {
      paid / cancelled) over the SAME company filter but WITHOUT status / search /
      pagination. */
   const countBase = () => scopeToCompany(sb.from('purchase_invoices').select('*', { count: 'exact', head: true }), c);
-  const [allC, draftC, postedC, partialC, paidC, cancelledC] = await Promise.all([
+  const [allC, draftC, postedC, partialC, paidC, cancelledC, onHoldC] = await Promise.all([
     countBase(),
     countBase().in('status', PI_STATUS_BUCKETS.draft),
     countBase().in('status', PI_STATUS_BUCKETS.posted),
     countBase().in('status', PI_STATUS_BUCKETS.partial),
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
+    countBase().in('status', PI_STATUS_BUCKETS.on_hold),
   ]);
   // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 

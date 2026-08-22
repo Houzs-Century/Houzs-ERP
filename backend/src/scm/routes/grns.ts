@@ -920,8 +920,12 @@ export async function recomputePoReceived(
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
       // Checked for the same reason as the received_qty writes above: unchecked,
       // the PO stays RECEIVED (or SUBMITTED) under a clean-looking recount.
+      /* ON_HOLD joins CANCELLED here (2026-08-21). This recount re-derives a
+         PO's status from its lines, so without the exclusion the next GRN post
+         would silently overwrite a hold somebody had just applied — a status
+         that vanishes by itself is worse than one that was never offered. */
       const { error: poErr } = await sb.from('purchase_orders')
-        .update(patch).eq('id', poId).neq('status', 'CANCELLED');
+        .update(patch).eq('id', poId).not('status', 'in', '("CANCELLED","ON_HOLD")');
       if (poErr) {
         return { ok: false, reason: `PO status write failed for ${poId}: ${poErr.message ?? 'unknown'}` };
       }
@@ -1027,6 +1031,7 @@ const GRN_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
   posted: ['POSTED', 'CLOSED'],
   cancelled: ['CANCELLED'],
+  on_hold: ['ON_HOLD'],
 };
 
 grns.get('/', async (c) => {
@@ -1110,14 +1115,15 @@ grns.get('/', async (c) => {
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
+      countBase().in('status', GRN_STATUS_BUCKETS.on_hold),
     ]));
     const res = await q;
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
-    const [allC, draftC, postedC, cancelledC] = (await countsProm)();
+    const [allC, draftC, postedC, cancelledC, onHoldC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-    const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC });
+    const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC, on_hold: onHoldC });
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

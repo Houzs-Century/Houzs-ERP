@@ -84,7 +84,8 @@ type StatusTab =
   | "open"
   | "partial"
   | "received"
-  | "cancelled";
+  | "cancelled"
+  | "on_hold";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,10 @@ const STATUS_TONE: Record<
   PARTIALLY_RECEIVED: { tone: "warning", label: "Partially received", bucket: "partial" },
   RECEIVED:           { tone: "success", label: "Received",           bucket: "received" },
   CANCELLED:          { tone: "error",   label: "Cancelled",          bucket: "cancelled" },
+  /* ON_HOLD (mig 0318, owner 2026-08-21) — the REVERSIBLE stop the purchase
+     side never had. A held PO is not receivable: grns.ts filters receivable
+     POs through an allow-list, so the block needs no code here. */
+  ON_HOLD:            { tone: "warning", label: "On Hold",            bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -779,6 +784,7 @@ export function PurchaseOrdersListV2() {
     partial: 0,
     received: 0,
     cancelled: 0,
+    on_hold: 0,
   };
 
   /* The rows the TABLE is actually showing — the page rows minus whatever the
@@ -1214,6 +1220,7 @@ export function PurchaseOrdersListV2() {
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "received", label: `Received · ${counts.received}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (

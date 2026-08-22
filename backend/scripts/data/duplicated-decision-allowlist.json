@@ -77,11 +77,6 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-status.ts frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: VALID_STATUSES, STAGE_LABEL, PO_STATUS_LABEL, PO. Cost of divergence is a blank chip, not a wrong number."
-    },
-    {
-      "check": "D1",
       "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/PoAmendmentDetailV2.tsx",
       "why": "THE AMENDABLE PO HEADER FIELDS — which header columns a PO amendment may carry. One home decides, three render labels for it (AMENDABLE_HEADER, HEADER_LABEL). The deciding copy is po-revision.ts; the others cannot widen it."
     },
@@ -432,11 +427,6 @@
     },
     {
       "check": "D1",
-      "key": "COLOURHEX,COLOURID,COLOURLABEL,FABRICCODE,FABRICID,FABRICLABEL|frontend/src/mobile/MobileNewSO.tsx frontend/src/pages/scm-v2/SalesOrderNew.tsx",
-      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: FABRIC_SYNC_KEYS. Divergence shows as one surface missing an option."
-    },
-    {
-      "check": "D1",
       "key": "COMPLETED_AT,STATUS,UPDATED_AT|backend/src/scm/routes/purchase-consignment-returns.ts backend/src/scm/routes/purchase-returns.ts",
       "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
     },
@@ -752,11 +742,6 @@
     },
     {
       "check": "D2",
-      "key": "CANCELLED,DRAFT,PAID,PARTIALLY_PAID,POSTED ~ CANCELLED,DRAFT,PAID,PARTIALLY_PAID,POSTED,VOID",
-      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by VOID. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
-    },
-    {
-      "check": "D2",
       "key": "CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DOC_NO,LOCAL_TOTAL_SEN,SO_DATE,STATUS ~ DEBTOR_NAME,DOC_NO,LOCAL_TOTAL_SEN,SO_DATE,STATUS",
       "why": "TWO SORT-COLUMN WHITELISTS differing by CUSTOMER_DELIVERY_DATE — a consignment order has no customer delivery date. Meant to differ."
     },
@@ -977,11 +962,6 @@
     },
     {
       "check": "D2",
-      "key": "CANCELLED,CLOSED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
-      "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by CLOSED. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
-    },
-    {
-      "check": "D2",
       "key": "CANCELLED,COMPLETED,DRAFT,POSTED ~ CANCELLED,COMPLETED,POSTED",
       "why": "TWO RENDERINGS OF ONE DOCUMENT LIFECYCLE that differ by DRAFT. A status list on a detail screen, a filter-chip row and a pill map legitimately carry different subsets — a chip row offers what you can filter by, a pill map covers every status a row can arrive in. Recorded as a rendering difference, not a rule disagreement; the deciding copy is the backend transition table."
     },
@@ -1124,6 +1104,16 @@
       "check": "D2",
       "key": "CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
       "why": "TWO ARMS OF ONE DECLARATION, eight lines apart in so-lifecycle-guards.ts, and they are meant to differ: SO_STATUS_RANK is the FORWARD SPINE and CANCELLED / ON_HOLD are deliberately UNRANKED side states — the file says so directly above them. Ranking them would make ON_HOLD comparable to DELIVERED and turn a legal pause into an illegal backward jump."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED ~ CANCELLED,DRAFT,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED",
+      "why": "The same vocabulary against the PO DETAIL page's own STAGE_LABEL. It is a display map and it is entitled to lag nothing: ON_HOLD was added to it in the same change, and the near-miss the gate reports is the moment BEFORE that. Worth keeping recorded rather than collapsed, because the detail page also carries effectiveOf, whose fall-through used to answer CANCELLED — so a HELD purchase order told the buyer it was cancelled. Fixed in the same change; this entry is where the next reader learns that this page has two maps to update, not one."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too."
     }
   ]
 }
