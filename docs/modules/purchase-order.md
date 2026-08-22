@@ -386,9 +386,19 @@ works and is multi-select at line level — but only for a line that is
   A drop-ship DO ships against the PO's *expected* batch before receipt; cancelling
   the PO would strand that OUT with no incoming batch. Best-effort: a read error
   or a missing `batch_no` column returns `null` (no block).
-- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD}` (`:312`) — a PO line
-  sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
+- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD, CLOSED}` (`:312`) — a PO
+  line sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
   A purely manual line with no SO link skips the check entirely.
+  **This is a threshold on the SALES order, not on this document's own status.**
+  It must stay EQUAL to the delivery side's `SO_UNDELIVERABLE_STATUSES`
+  (`backend/src/scm/shared/so-deliverable-states.ts`), and
+  `backend/tests/duplicatedDecisionPins.test.ts` PIN 2 fails if the two drift:
+  a threshold one write path enforces and the other does not means a document
+  type can be built from an order the other refuses. `CLOSED` joined both on
+  2026-08-22 — on a Sales Order it means **stop chasing the remainder**, so
+  nothing more ships against the order and nothing more is bought for it. The
+  PURCHASE ORDER'S OWN `CLOSED` is a separate question and is not built; see
+  `docs/modules/document-status-vocabulary.md` §1b.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 

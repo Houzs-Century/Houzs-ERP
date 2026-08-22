@@ -537,12 +537,23 @@ Refusals the operator sees, in the order they fire:
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
 
 > **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
-> The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD}` in
+> The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD, CLOSED}` in
 > `backend/src/scm/shared/so-deliverable-states.ts`, with `soCanRaiseDo(status)`
 > as the predicate; this router imports it instead of declaring its own `Set`,
 > and the frontend runs a byte-identical vendored twin
 > (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
 > `so-deliverable-states.canonical.test.ts`).
+>
+> **`CLOSED` joined the set on 2026-08-22**, when the status came back on the
+> Sales Order meaning **stop chasing the remainder** — the customer took 7 of the
+> 10, or the supplier cannot supply the last 3, and the delivered part stands
+> (owner, asked whether that case happens here: 「有的」). If the remainder is not
+> coming there is nothing left to deliver, so no NEW delivery order may be
+> raised; a DO already raised is untouched. It is the one shape a deny-list can
+> get wrong — a status that READS as forward and would otherwise sail through —
+> which is why it is stated here and not left to be noticed. `CLOSED` is not
+> `CANCELLED`: a cancelled order is void, a closed one is a real sale that came
+> up short. Definition: `backend/src/scm/lib/so-lifecycle-guards.ts`.
 >
 > **It is a DENY-list and it must stay one.** Every forward status — CONFIRMED,
 > IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED, INVOICED — is deliverable,
