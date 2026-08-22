@@ -113,6 +113,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
+import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
@@ -1217,7 +1218,11 @@ mfgSalesOrders.get('/', async (c) => {
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS).order('so_date', { ascending: false }).limit(500);
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    const status = effectiveStatusFilter(c.req.query('status')); if (status) q = q.eq('status', status);
+    const status = effectiveStatusFilter(c.req.query('status'));
+    /* A tab may cover more than one status — SHIPPED folds into DELIVERED
+       (owner 2026-08-22). Read the bucket so the fold is one fact, not a
+       spelling repeated at each of the three query sites below. */
+    if (status) { const vals = soStatusesForTab(status); q = vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals); }
     const debtor = c.req.query('debtor'); if (debtor) q = q.ilike('debtor_name', `%${debtor}%`);
     const res = await q;
     data = res.data;
@@ -1245,7 +1250,7 @@ mfgSalesOrders.get('/', async (c) => {
        the exact-match it always was. */
     const status = effectiveStatusFilter(c.req.query('status'));
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
-    if (status) q = status === 'OTHER' ? q.or(otherStatusOr) : q.eq('status', status);
+    if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
     /* free-text search replaces the legacy `debtor` param in this branch.
        One term matches customer NAME (debtor_name), PHONE, or the SO
        REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
@@ -1317,7 +1322,7 @@ mfgSalesOrders.get('/', async (c) => {
       let moneyQ = moneyQ0;
       if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
-      if (status) moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : moneyQ.eq('status', status);
+      if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
         if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
@@ -1358,7 +1363,12 @@ mfgSalesOrders.get('/', async (c) => {
       const allCount = Object.values(counted.byStatus).reduce((s, n) => s + n, 0);
       let known = 0;
       statusCounts = { all: allCount };
-      for (const s of SO_STATUSES) { const cnt = counted.byStatus[s] ?? 0; statusCounts[s.toLowerCase()] = cnt; known += cnt; }
+      /* Counted per TAB, not per status, so a folded status is counted under
+         the tab that shows it instead of falling into `other`. */
+      for (const [tab, members] of Object.entries(SO_TAB_STATUSES)) {
+        const cnt = members.reduce((n, m) => n + (counted.byStatus[m] ?? 0), 0);
+        statusCounts[tab.toLowerCase()] = cnt; known += cnt;
+      }
       statusCounts.other = allCount - known;
     }
 

@@ -43,20 +43,47 @@ type StatusRow = { status?: string | null };
 const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
 
 /* ── Sales Order ────────────────────────────────────────────────────────────
-   The four statuses under "status changes" are the ones the owner asked to be
-   reachable on 2026-08-21: 「照你的流程做，只删 Closed」 — his lifecycle is
-   Draft, Confirm, In Production, Ready to Ship, Shipped, Delivered, Invoice,
-   On Hold, Cancel, and IN_PRODUCTION / SHIPPED / INVOICED / ON_HOLD had no
-   caller anywhere in the app. The route accepted them; no screen sent them.
+   NOBODY HAND-WRITES A LIFECYCLE STATUS. Only three moves are offered anywhere
+   in this file — CONFIRM a draft, HOLD, CANCEL — and every other status is
+   written by the system that knows the fact behind it.
 
-   READY_TO_SHIP AND DELIVERED ARE DELIBERATELY ABSENT, and that is the whole
-   judgement in this block. Both are written by the MACHINE —
-   recomputeSoStockAllocation advances to READY_TO_SHIP when the stock lands,
-   so-delivery-sync advances to DELIVERED when every line is covered — and
-   offering a human the same two would let someone claim an order is ready when
-   no stock is allocated, or delivered when no delivery order exists. The
-   system would then correct him, silently, on the next sweep. A button whose
-   effect is undone by a background job is worse than no button. */
+   THE OWNER'S RULING (2026-08-22), which is why the three "Mark ..." entries
+   that shipped the day before are gone:
+
+     「它不应该能转到 Mark in Production、Mark Shipped 和 Mark Invoiced ...
+       按理说不应该允许这样手动去转，否则我们的 transaction workflow 就全乱了」
+
+   and the reason, in his words:
+
+     「如果它已经有 processing date 了，我又把它换成别的状态的话，那不是代表我的
+       状态全部都 wrong 完了、是错完了吗？」
+
+   He is describing a REAL failure, not a preference. Each of the three had a
+   machine already writing it from a fact:
+
+     IN_PRODUCTION  a processing date exists — so-processing-date.ts
+     SHIPPED        a delivery order was raised — so-delivery-sync.ts
+     INVOICED       a sales invoice covers the lines
+
+   A hand-set status does not change the fact, so the next sweep overwrites it
+   and the ONLY lasting effect is a window in which the list lies. That was
+   already the argument for leaving READY_TO_SHIP and DELIVERED out on
+   2026-08-21; the ruling above simply extends it to the rest, and the earlier
+   version of this comment is the evidence that drawing the line anywhere short
+   of "all of them" does not hold.
+
+   WHY HOLD AND CANCEL ARE THE EXCEPTIONS. Neither is a step in the document's
+   life — no machine derives them from anything, because they are DECISIONS a
+   person makes about a document, and there is nowhere else for them to come
+   from. The owner drew the same line: 「除了 On Hold 和 Cancel 这两个状态，基本上
+   我们都应该可以直接右键移过去」. CONFIRM joins them for the same reason: a draft
+   becomes real when a human says so.
+
+   This is also the mainstream ERP shape. SAP derives an order's overall status
+   from its item processing status and offers a person a BLOCK and a rejection;
+   NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
+   Cancel. The list of buttons a human gets is short everywhere, and it is short
+   for this reason. */
 export function salesOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -85,9 +112,6 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
       ],
       [
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },
-        live && s !== "IN_PRODUCTION" && { label: "Mark In Production", onClick: () => h.setStatus(r, "IN_PRODUCTION") },
-        live && s !== "SHIPPED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "SHIPPED") },
-        live && s !== "INVOICED" && { label: "Mark Invoiced", onClick: () => h.setStatus(r, "INVOICED") },
         live && s !== "ON_HOLD" && { label: "Put On Hold", onClick: () => h.setStatus(r, "ON_HOLD") },
         s === "ON_HOLD" && { label: "Take Off Hold", onClick: () => h.setStatus(r, "CONFIRMED") },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
