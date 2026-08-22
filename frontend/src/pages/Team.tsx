@@ -35,6 +35,10 @@ import { inviteExpiry, inviteLink } from "../lib/invitations";
 import { formatPhone } from "../vendor/shared/phone";
 import type { TeamMember, Invitation, Role, Department, Position } from "../types";
 import { MemberOrgPerformance } from "./team/MemberOrgPerformance";
+import { TeamDirectory } from "./team/TeamDirectory";
+import { TeamOrgChartV2 } from "./team/TeamOrgChartV2";
+import { TeamDepartmentsV2 } from "./team/TeamDepartmentsV2";
+import { TeamMailboxesV2 } from "./team/TeamMailboxesV2";
 import { Forbidden } from "./Forbidden";
 import { RolesTab } from "./Roles";
 import { PositionsTab } from "./Positions";
@@ -45,6 +49,13 @@ import { fmtDate } from "../vendor/shared/format";
 
 type TeamTabValue =
   | "hub"
+  /* Redesigned Team screens (design handoff "ERP Team模块重整", 2026-08).
+     These four are the strip; the classic tabs below stay URL-reachable
+     during the transition so nothing is lost while the redesign is reviewed. */
+  | "directory"
+  | "orgchart2"
+  | "departments2"
+  | "mail2"
   | "members"
   | "positions"
   | "roles"
@@ -56,6 +67,10 @@ const TEAM_KEYS = ["tab"] as const;
 
 // Icons for the Team Hub landing cards (keyed by tab value).
 const TEAM_HUB_ICON: Partial<Record<TeamTabValue, LucideIcon>> = {
+  directory: Users,
+  orgchart2: Network,
+  departments2: Building2,
+  mail2: Mail,
   members: Users,
   positions: ShieldCheck,
   orgchart: Network,
@@ -260,10 +275,13 @@ export function Team() {
   const [creatingDept, setCreatingDept] = useState(false);
 
   const tabs: TabOption<TeamTabValue>[] = [
-    { value: "members", label: "Members", show: canSeeMembers },
-    { value: "orgchart", label: "Org Chart", show: canSeeMembers },
-    { value: "departments", label: "Departments", show: canSeeMembers },
-    { value: "mail", label: "Mailboxes", show: canManageMail },
+    { value: "directory", label: "Directory", show: canSeeMembers },
+    { value: "orgchart2", label: "Org Chart", show: canSeeMembers },
+    { value: "departments2", label: "Departments", show: canSeeMembers },
+    { value: "mail2", label: "Mailboxes", show: canManageMail },
+    // Classic tabs (members / orgchart / departments / mail) are out of the
+    // strip but still URL-reachable while the redesign is reviewed — see
+    // canViewTab below. Cutover removes them.
     // Positions tab removed from the strip (owner: "那個team的矩陣拆掉") — the
     // same treatment the Roles tab got, which is why neither is in the strip.
     // A positioned user's page access is resolved from position defaults
@@ -289,6 +307,10 @@ export function Team() {
   // roles.read. `hub` has something to list only if some tab is visible.
   const canViewTab: Record<TeamTabValue, boolean> = {
     hub: firstVisible !== null,
+    directory: canSeeMembers,
+    orgchart2: canSeeMembers,
+    departments2: canSeeMembers,
+    mail2: canManageMail,
     members: canSeeMembers,
     // Positions is turned off entirely (owner: "整個關掉先") — #740 only pulled
     // it from the nav but left it URL-reachable at /team?tab=positions for a
@@ -335,6 +357,30 @@ export function Team() {
       title: "Team",
       description: "Members, positions, org chart, departments and mailboxes — pick a section to manage.",
     },
+    directory: {
+      eyebrow: "Workspace · Team",
+      title: "Directory",
+      description:
+        "Find people fast — department tree on the left, roster on the right, bulk actions on selection.",
+    },
+    orgchart2: {
+      eyebrow: "Workspace · Hierarchy",
+      title: "Org Chart",
+      description:
+        "Companies as lanes, departments as pills — expand a department to see its teams, drag cards to reassign.",
+    },
+    departments2: {
+      eyebrow: "Workspace · Team",
+      title: "Departments",
+      description:
+        "Company-wide headcount at a glance. A department without a lead surfaces in red.",
+    },
+    mail2: {
+      eyebrow: "Workspace · Mail Center",
+      title: "Mailboxes",
+      description:
+        "Personal and department mailboxes — orphaned mailboxes (member disabled, mail still arriving) surface for resolution.",
+    },
     members: {
       eyebrow: "Workspace · Members",
       title: "Members",
@@ -373,7 +419,7 @@ export function Team() {
   };
 
   const actions =
-    active === "members" ? (
+    active === "members" || active === "directory" ? (
       canInvite ? (
         <Button
           variant="brass"
@@ -383,7 +429,7 @@ export function Team() {
           Invite Member
         </Button>
       ) : null
-    ) : active === "departments" ? (
+    ) : active === "departments" || active === "departments2" ? (
       canManageUsers ? (
         <Button
           variant="brass"
@@ -447,6 +493,21 @@ export function Team() {
         </div>
       )}
 
+      {active === "directory" && canSeeMembers && (
+        <TeamDirectory
+          inviteOpen={inviteOpen}
+          onCloseInvite={() => setInviteOpen(false)}
+          salesDirScoped={salesDirScoped}
+        />
+      )}
+      {active === "orgchart2" && canSeeMembers && <TeamOrgChartV2 />}
+      {active === "departments2" && canSeeMembers && (
+        <TeamDepartmentsV2
+          creating={creatingDept}
+          onCloseCreate={() => setCreatingDept(false)}
+        />
+      )}
+      {active === "mail2" && canManageMail && <TeamMailboxesV2 />}
       {active === "members" && canSeeMembers && (
         <MembersTab
           inviteOpen={inviteOpen}
