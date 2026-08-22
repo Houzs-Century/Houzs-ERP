@@ -39,6 +39,7 @@ import { TeamDirectory } from "./team/TeamDirectory";
 import { TeamOrgChartV2 } from "./team/TeamOrgChartV2";
 import { TeamDepartmentsV2 } from "./team/TeamDepartmentsV2";
 import { TeamMailboxesV2 } from "./team/TeamMailboxesV2";
+import { TeamRolesV2 } from "./team/TeamRolesV2";
 import { Forbidden } from "./Forbidden";
 import { RolesTab } from "./Roles";
 import { PositionsTab } from "./Positions";
@@ -56,6 +57,7 @@ type TeamTabValue =
   | "orgchart2"
   | "departments2"
   | "mail2"
+  | "permissions"
   | "members"
   | "positions"
   | "roles"
@@ -71,6 +73,7 @@ const TEAM_HUB_ICON: Partial<Record<TeamTabValue, LucideIcon>> = {
   orgchart2: Network,
   departments2: Building2,
   mail2: Mail,
+  permissions: ShieldCheck,
   members: Users,
   positions: ShieldCheck,
   orgchart: Network,
@@ -279,6 +282,7 @@ export function Team() {
     { value: "orgchart2", label: "Org Chart", show: canSeeMembers },
     { value: "departments2", label: "Departments", show: canSeeMembers },
     { value: "mail2", label: "Mailboxes", show: canManageMail },
+    { value: "permissions", label: "Roles & Permissions", show: canRoles },
     // Classic tabs (members / orgchart / departments / mail) are out of the
     // strip but still URL-reachable while the redesign is reviewed — see
     // canViewTab below. Cutover removes them.
@@ -311,6 +315,7 @@ export function Team() {
     orgchart2: canSeeMembers,
     departments2: canSeeMembers,
     mail2: canManageMail,
+    permissions: canRoles,
     members: canSeeMembers,
     // Positions is turned off entirely (owner: "整個關掉先") — #740 only pulled
     // it from the nav but left it URL-reachable at /team?tab=positions for a
@@ -380,6 +385,12 @@ export function Team() {
       title: "Mailboxes",
       description:
         "Personal and department mailboxes — orphaned mailboxes (member disabled, mail still arriving) surface for resolution.",
+    },
+    permissions: {
+      eyebrow: "Workspace · Access Control",
+      title: "Roles & Permissions",
+      description:
+        "What each position may do — load, dispatch, revert, invoice. Toggle a cell to change the grant; menus follow the position policy.",
     },
     members: {
       eyebrow: "Workspace · Members",
@@ -508,6 +519,7 @@ export function Team() {
         />
       )}
       {active === "mail2" && canManageMail && <TeamMailboxesV2 />}
+      {active === "permissions" && canRoles && <TeamRolesV2 />}
       {active === "members" && canSeeMembers && (
         <MembersTab
           inviteOpen={inviteOpen}
