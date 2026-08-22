@@ -75,6 +75,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import type { Env, Variables } from '../env';
+import { skuCategoryResolver } from '../lib/sku-category';
 
 export const consignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentOrders.use('*', supabaseAuth);
@@ -592,6 +593,8 @@ consignmentOrders.post('/', async (c) => {
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const sb = c.get('supabase'); const user = c.get('user');
+  // The group is the SKU's — lib/sku-category.ts says why (docs/bugs/0514).
+  const coGroupOf = await skuCategoryResolver(sb, items.map((it) => ({ materialKind: 'mfg_product', itemCode: it.itemCode })), activeCompanyId(c) ?? null);
 
   // itemCode catalog guard.
   if (items.length > 0) {
@@ -784,10 +787,10 @@ consignmentOrders.post('/', async (c) => {
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: (body.agent as string) ?? null,
-      item_group: it.itemGroup ?? 'others',
+      item_group: coGroupOf(it) ?? 'others',
       item_code: it.itemCode,
       description: (it.description as string) ?? null,
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary(String(coGroupOf(it) ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       uom: (it.uom as string) ?? 'UNIT',
       qty,
       unit_price_sen: unit,
@@ -1486,6 +1489,11 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
+  /* The group is the SKU's — lib/sku-category.ts (docs/bugs/0514). Same rule as
+     the create path above, so a line added by hand cannot re-open it. */
+  const addGroup = (await skuCategoryResolver(
+    sb, [{ materialKind: 'mfg_product', itemCode: it.itemCode }], activeCompanyId(c) ?? null,
+  ))(it) ?? 'others';
 
   /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
   const childLock = await coHasDownstream(sb, docNo);
@@ -1586,10 +1594,10 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
-    item_group: it.itemGroup ?? 'others',
+    item_group: addGroup,
     item_code: it.itemCode,
     description: (it.description as string) ?? null,
-    description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+    description2: buildVariantSummary(addGroup, (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
     qty,
     unit_price_sen: unit,

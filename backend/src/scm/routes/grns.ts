@@ -67,6 +67,7 @@ import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audi
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning } from '../lib/sku-category';
+import { skuCategoryResolver } from '../lib/sku-category';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -1475,6 +1476,8 @@ grns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return refuseWithoutWriting(c, { error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+  // The group is the SKU's — lib/sku-category.ts says why (docs/bugs/0514).
+  const grnGroupOf = await skuCategoryResolver(sb, items.map((it) => ({ materialKind: 'mfg_product', itemCode: it.itemCode })), activeCompanyId(c) ?? null);
 
   /* Over-receipt guard — PO-linked lines can't accept more than the PO line's
      remaining (qty - received_qty). Mirrors the same 409 the From-PO flows
@@ -1659,10 +1662,10 @@ grns.post('/', async (c) => {
          MANUAL bedframe/sofa lines (which now have the per-category variant editor
          on the New GRN form, like the PO) keep their picks. The inventory-IN
          movement's variant_key in postGrnAndRollup reads item_group + variants. */
-      item_group: (it.itemGroup as string | undefined) ?? null,
+      item_group: grnGroupOf(it),
       variants: it.variants ?? null,
       description: (it.description as string | undefined) ?? null,
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary(String(grnGroupOf(it) ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Migration 0151 — physical rack this received line is placed onto. */
       rack_id: (it.rackId as string | undefined) || null,
       /* migration 0280 — the zero-cost gate's escape hatch. It is in the
@@ -2849,6 +2852,11 @@ grns.post('/:id/items', async (c) => {
   if (!it.materialName) return refuseWithoutWriting(c, { error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
+  /* The group is the SKU's — lib/sku-category.ts (docs/bugs/0514). Same rule as
+     POST /grns, so a line added by hand cannot re-open it. */
+  const addLineGroup = (await skuCategoryResolver(
+    sb, [{ materialKind: 'mfg_product', itemCode: it.itemCode }], activeCompanyId(c) ?? null,
+  ))(it);
   const user = c.get('user');
   /* company-scope: PROVE THE PARENT GRN FIRST — the gate PATCH /:id opens with.
      A STAMP IS NOT A PREDICATE: the insert below stamps activeCompanyId(c),
@@ -2959,9 +2967,9 @@ grns.post('/:id/items', async (c) => {
     line_suffix: (it.lineSuffix as string) ?? null,
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     variants: (it.variants as unknown) ?? null,
-    item_group: (it.itemGroup as string) ?? null,
+    item_group: addLineGroup,
     description: (it.description as string) ?? null,
-    description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+    description2: buildVariantSummary(String(addLineGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
     delivery_date: dateOrNull(it.deliveryDate),
     /* migration 0280 — see the create path: this insert is a whitelist too. */
