@@ -3102,10 +3102,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     variants: (it.variants as unknown) ?? null,
     description: (it.description as string) ?? null,
-    /* item_group + Description 2, from the SKU's group — the same rule the
-       create path uses. Adding a line by hand used to trust the payload here
-       too, so a line added after conversion could re-open docs/bugs/0514. */
-    ...lineIdentityFields(addGroupOf, it, buildVariantSummary),
+    ...lineIdentityFields(addGroupOf, it, buildVariantSummary), // same rule as create — docs/bugs/0514
     uom: (it.uom as string) ?? 'UNIT',
     discount_sen: discountSen,
     unit_cost_sen: Number(it.unitCostSen ?? 0),
