@@ -112,3 +112,28 @@ export async function skuCategoryResolver(
   const bySkuCode = await skuCategoryMap(sb, items, companyId);
   return (it) => lineItemGroup(bySkuCode, it);
 }
+
+/**
+ * The two fields a line derives from its group, together — because they must
+ * agree. `description2` is what the document PRINTS; `item_group` is what the
+ * stock key is composed from. Built apart, they drift: that is precisely how a
+ * purchase order came to print "PC151-12 / SEAT 30" while its receipt keyed the
+ * goods into the unclassified bucket (docs/bugs/0514).
+ *
+ * `summarise` is passed in rather than imported so this module stays free of
+ * the variant-rule dependency graph; every caller hands it `buildVariantSummary`.
+ */
+export function lineIdentityFields(
+  groupOf: (it: CategoryResolvableLine & { itemGroup?: unknown }) => string | null,
+  it: CategoryResolvableLine & { itemGroup?: unknown; variants?: unknown },
+  summarise: (group: string, variants: Record<string, unknown> | null) => string,
+): { item_group: string | null; description2: string | null } {
+  const item_group = groupOf(it);
+  return {
+    item_group,
+    description2: summarise(
+      String(item_group ?? ''),
+      (it.variants as Record<string, unknown> | null) ?? null,
+    ) || null,
+  };
+}

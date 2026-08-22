@@ -89,7 +89,7 @@ import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
-import { skuCategoryResolver } from '../lib/sku-category';
+import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1277,10 +1277,9 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
          them (server-owned, like the SO route). */
-      item_group:   groupOf(it),
       variants:     (it.variants as unknown) ?? null,
       description:  (it.description as string | undefined) ?? null,
-      description2: buildVariantSummary(String(groupOf(it) ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      ...lineIdentityFields(groupOf, it, buildVariantSummary), // item_group + description2, from ONE group
       /* Commander 2026-05-29 (BUG 1) — persist the source SO line (migration
          0098) so deleting this PO line can release po_qty_picked back to the
          From-SO picker. NULL for manually-added lines. */
