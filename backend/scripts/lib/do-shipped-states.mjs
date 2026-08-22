@@ -17,19 +17,24 @@
    cost was silent: these sets go into SQL, and a label the enum does not have
    makes the statement THROW rather than match nothing. */
 
-/** Statuses whose FIRST entry writes the inventory OUT. */
-export const DO_SHIPPED_STATES = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED"];
+/** Statuses whose FIRST entry writes the inventory OUT. LOADED (= Confirmed on
+ *  every screen) joined this set on 2026-08-22 by the owner's ruling — the stock
+ *  leaves at the confirm step, not at dispatch. An audit reading the old
+ *  five-state list would now skip every Confirmed delivery, which is exactly the
+ *  failure the pin below exists to stop. */
+export const DO_SHIPPED_STATES = ["LOADED", "DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED"];
 
 /** Statuses in which the OUT has already been written. Equal to
  *  DO_SHIPPED_STATES since COMPLETED was removed; still its own question. */
 export const DO_STOCK_OUT_STATES = [...DO_SHIPPED_STATES];
 
-/** Pre-ship: no stock has left our hands yet. */
-export const DO_PRESHIP_STATES = ["DRAFT", "LOADED"];
+/** Pre-ship: no stock has left our hands yet. DRAFT alone since 2026-08-22. */
+export const DO_PRESHIP_STATES = ["DRAFT"];
 
 /** A delivery order in one of these has NOT put stock in the customer's hands.
- *  Read the ORIGINAL's "HAS THIS DELIVERY COUNTED?" block for why LOADED
- *  belongs here and what it cost while it did not. */
+ *  Read the ORIGINAL's "HAS THIS DELIVERY COUNTED?" block: LOADED belonged here
+ *  until 2026-08-22, and the record of what it cost while it did NOT is worth
+ *  keeping even though the premise has since moved. */
 export const DO_NOT_DELIVERED_STATES = [...DO_PRESHIP_STATES, "CANCELLED"];
 
 /** The same set as a SQL `NOT IN (...)` literal, built from the array. */

@@ -38,6 +38,9 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //     That is the one the owner hit, and the one that was silently missing.
 //   · The ADVANCE question (doAdvanceStep) is shared by the three desktop-side
 //     surfaces, and since 2026-08-21 it offers exactly ONE step: DRAFT → Confirm.
+//     WHAT CONFIRM WRITES CHANGED ON 2026-08-22 — it lands LOADED now, not
+//     DISPATCHED. See doAdvanceStep for the ruling and why the target was the
+//     wrong half of that control all along.
 //     "Mark signed" (LOADED / DISPATCHED / IN_TRANSIT → DELIVERED) was REMOVED by
 //     owner decision — a shipped delivery is closed by the driver's Proof-of-
 //     Delivery screen, which signs it, and the office's next action on a shipped
@@ -164,7 +167,20 @@ export function siTransferBlockReason(status: string | null | undefined): string
  * and the reason.
  *
  * There is ONE advance step now (owner 2026-08-21, removing "Mark signed"):
- *   · DRAFT → DISPATCHED, "Confirm"
+ *   · DRAFT → LOADED, "Confirm"
+ *
+ * THE TARGET WAS WRONG UNTIL 2026-08-22, and the label was right. This button
+ * said "Confirm" while writing DISPATCHED — which every screen renders as
+ * "Shipped" — so pressing Confirm skipped the Confirmed state entirely and
+ * landed the document two rungs along. The owner settled where the stock leaves:
+ *
+ *   「once confirmed就代表出货了 就是直接扣库存」
+ *   「draft 没出货，Confirmed就代表出货了 然后delivered只是记录而已，记录送到了」
+ *
+ * So Confirm writes LOADED, LOADED is where the inventory OUT fires
+ * (shared/do-shipped-states.ts), and Shipped / In transit / Delivered are the
+ * operator's record of where the goods have got to. Nothing about the ladder was
+ * removed — 「保留全部状态 我可以convert」.
  *
  * The "Mark signed" step (LOADED / DISPATCHED / IN_TRANSIT → DELIVERED) was
  * REMOVED. A shipped delivery does not need marking delivered from these office
@@ -176,14 +192,14 @@ export function siTransferBlockReason(status: string | null | undefined): string
  */
 export type DoAdvanceStep = {
   /** Target delivery_orders.status to PATCH. */
-  status: 'DISPATCHED';
+  status: 'LOADED';
   /** The words on the button. */
   label: string;
 };
 
 export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep | null {
   const s = norm(status);
-  if (s === 'draft') return { status: 'DISPATCHED', label: 'Confirm' };
+  if (s === 'draft') return { status: 'LOADED', label: 'Confirm' };
   return null;
 }
 

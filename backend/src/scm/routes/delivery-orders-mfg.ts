@@ -19,7 +19,7 @@ import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
-  DO_STATUSES as SHARED_DO_STATUSES,
+  DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
 } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
@@ -5402,12 +5402,12 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   }
 
   /* Audit gap #4 — legal-transition guard. Once a DO has shipped (an inventory
-     OUT was written), it must NOT fall back to a pre-ship status (DRAFT / LOADED):
-     a plain status write does NOT reverse the OUT movement, so the DO would read
-     un-shipped while its stock stays deducted (e.g. DELIVERED→DRAFT left stock
-     out of balance). Cancel it (which DOES reverse) and raise a new DO instead.
-     Forward + lateral moves among shipped states, the DRAFT/LOADED→shipped
-     confirm, and the CANCELLED transition (handled below) are all unaffected. */
+     OUT was written), it must NOT fall back to a pre-ship status: a plain status
+     write does NOT reverse the OUT, so the DO reads un-shipped while its stock
+     stays deducted. Cancel it (which DOES reverse) and raise a new DO instead.
+     Forward + lateral moves, the confirm and CANCELLED are unaffected. STRICTER
+     since 2026-08-22 — pre-ship is DRAFT alone, so LOADED→DRAFT is now refused,
+     while DISPATCHED→LOADED is legal (both sides have their stock out). */
   {
     const prevUpper = (prevStatus ?? '').toUpperCase();
     if (DO_STOCK_OUT_STATUSES.has(prevUpper) && DO_PRESHIP_STATUSES.has(toStatus)) {
@@ -5469,7 +5469,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   /* Over-delivery guard on FIRST ship (pre-ship -> shipped). A DRAFT DO skips
      the create-path cap (asDraft-gated) and can land its full qty, so the same
      cap is re-checked HERE — the single point a draft's stock leaves — before
-     the flip. 409 if a line ships past the SO's live remaining. Read-only. */
+     the flip, DRAFT→LOADED since 2026-08-22. 409 past the live remaining. */
   if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
     const { data: shipLines } = await sb.from('delivery_order_items')
       .select('so_item_id, item_code, qty').eq('delivery_order_id', id);
@@ -5543,9 +5543,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   }
 
-  /* Inventory OUT — fire on the first transition into ANY shipped state.
-     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a jump to
-     SIGNED/DELIVERED deducts once. DRAFT CONFIRM (2026-06-24) = DRAFT→DISPATCHED. */
+  /* Inventory OUT — first transition into ANY shipped state; the first rung is
+     LOADED (= Confirm) since 2026-08-22. Idempotent twice over (existence check
+     + prod's uq_inv_mov_do_source_v2); ruling + evidence in the shared set. */
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
@@ -5559,12 +5559,11 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
 
     /* Customer DO email (owner trigger "A", 2026-07-17). Owner ruled "send on
-       CONFIRMED, NOT on delivered": the deduction fires on any shipped state, but
-       the email ("your order is on its way") is false once arrived, so it fires
-       only on entering DISPATCHED from a pre-ship status — a DRAFT→DELIVERED POD
-       deducts here but does NOT email. Once-per-DO (the :3708 shipped→pre-ship
-       guard bars repeats). Gated OFF and fail-closed inside; best-effort. */
-    if (toStatus === 'DISPATCHED' && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+       CONFIRMED, NOT on delivered": every shipped state deducts, but "on its way"
+       is false once arrived, so this fires only on the CONFIRM hop out of a
+       pre-ship status. Once-per-DO (do_email_sent_at, claimed atomically inside);
+       gated OFF and fail-closed. CONFIRM_HOP_STATES gained LOADED 2026-08-22. */
+    if ((CONFIRM_HOP_STATES as readonly string[]).includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
       emailNotice = await maybeSendDeliveryOrderEmail(sb, c.env, id);
     }
   }

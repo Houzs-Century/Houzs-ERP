@@ -110,10 +110,12 @@ confirm. One POD confirm anywhere in those five weeks would have left a non-null
 value. There are none.
 
 **Why nobody opens it, stated plainly and not as a complaint about drivers.**
-`DISPATCHED` is already a member of `DO_SHIPPED_STATES` *and* of
+`DISPATCHED` is a member of `DO_SHIPPED_STATES` *and* of
 `SI_TRANSFERABLE_DO_STATES` (`backend/src/scm/shared/do-shipped-states.ts`), so
-the moment a DO is dispatched the stock is out, the SO counts the lines as
-delivered, and the Sales Invoice can be raised. Every rung above it —
+by the time a DO is dispatched the stock is out, the SO counts the lines as
+delivered, and the Sales Invoice can be raised. (Since 2026-08-22 all three are
+true one rung EARLIER, at `LOADED` / Confirmed — which sharpens this point
+rather than changing it.) Every rung above it —
 `IN_TRANSIT`, `SIGNED`, `DELIVERED`, and therefore the whole POD capture — is
 optional, and the desktop's one-click control for it is *labelled* "Mark
 signed". Capturing proof buys the office nothing the system asks for. That is a
@@ -401,10 +403,10 @@ shape the Sales Order list already has: 页签＝状态.
 | tab | status | what it means |
 |---|---|---|
 | Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
-| Confirmed | `LOADED` | the document is real, goods packed. **Stock still untouched** |
-| Shipped | `DISPATCHED` | **the first entry here writes the inventory OUT**, once. The only status that emails the customer |
+| Confirmed | `LOADED` | **the first entry here writes the inventory OUT**, once. The stock has left, and the customer email goes out here |
+| Shipped | `DISPATCHED` | on the road. Stock already gone — this is a tracking step |
 | In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
-| Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it |
+| Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it. A RECORD of arrival, not a stock event |
 | Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
 | Cancelled | `CANCELLED` | final; stock returned |
 
@@ -451,9 +453,9 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded"), **or the print's loading QR** (§ below) | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
-| `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
-| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
+| `LOADED` | the office **Confirm** button, or the print's loading QR (§ below) | **THE STOCK CHOKEPOINT since 2026-08-22.** Entering it writes the inventory OUT, counts the lines as delivered, and emails the customer. It reads as **Confirmed** on every screen. |
+| `DISPATCHED` | create not-draft, or `PATCH /:id/status` (incl. the row menu's "Mark Shipped") | Shipped state; the stock already left at Confirm. A non-draft CREATE still lands here directly and deducts on the create path — see the follow-up note below. |
+| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD; the row menu's "Mark In Transit" / "Mark Delivered" | shipped states; stock has already left |
 
 ### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
 
@@ -464,8 +466,76 @@ routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action —
 **Confirm loading** — which is the ordinary status PATCH to `LOADED`
 (audited; the illegal-transition guard owns legality, so a shipped DO can
 never be pulled back by a stray scan). A re-scan reads as confirmation, not an
-error. **Loading moves no stock** — the OUT still fires on `DISPATCHED`, which
-stays the dispatcher's action, along with the customer email.
+error.
+
+**SINCE 2026-08-22 THIS SCAN MOVES STOCK.** It did not before, and this
+paragraph said so. `LOADED` is now a member of `DO_SHIPPED_STATES`, so pressing
+**Confirm loading** writes the inventory OUT for the whole delivery order. A
+repeat scan still writes nothing — the page short-circuits on `LOADED`, and the
+deduction's existence check plus `uq_inv_mov_do_source_v2` make a second one
+impossible regardless. The page copy was corrected in the same change, because
+the person reading it is standing at the dock deciding whether to press it.
+
+> **KNOWN WORDING GAP — fix before the QR goes into use.** The PRINT still says
+> **"SCAN · MARK LOADED"**, and scanning it now takes the goods out of stock.
+> The owner's position is that the QR feature stays, Confirmed is the stock-out
+> point, and the QR is not in use yet: 「QR 跑 可是confirmed就出货 QR之后才用」.
+> So this is a wording change to make before anyone scans a printed DO in
+> anger — deliberately NOT made here, because changing print text is a separate
+> decision from moving the deduction.
+
+### The three manual status moves on the row menu (2026-08-22)
+
+`Mark Shipped`, `Mark In Transit` and `Mark Delivered` are offered on the
+delivery-order list's right-click menu (`frontend/src/pages/scm-v2/row-menus.ts`,
+`deliveryOrderRowMenu`). The owner maintains those three by hand until their
+machines exist: 「保留全部状态 我可以convert，可是库存当我开了DO 就是confirmed的时候
+就直接扣。然后我的shipped in transit delivered 我手动维护，之后我才弄自动」, and
+「是的 因为现在完全没有这些功能 提前铺路而已」.
+
+This is a **named, dated exception** to the rule that a machine-derived status is
+never offered to a person, and the reasoning, the end state each entry is
+temporary against, and what retires each one live in
+`docs/modules/document-status-vocabulary.md` §1b. Read that before changing this
+menu.
+
+**They cannot move stock.** The entries are gated on `DO_STOCK_OUT_STATES`, so
+they appear only where the OUT has already been written — never on a `DRAFT`
+(where they WOULD be the deducting hop, which belongs behind the Confirm control
+with its own words) and never on a `CANCELLED` delivery order (which the server
+refuses every transition out of). The status a row already holds is omitted, and
+a read-only user gets no status entries at all.
+
+**`Mark Invoiced` is deliberately absent** and is not to be added: nothing in
+this codebase writes `delivery_orders.status = 'INVOICED'`, so the label means
+"somebody clicked it", not "this was billed".
+
+### FOLLOW-UP — the consignment note has the same shape and was NOT changed
+
+`backend/src/scm/routes/consignment-notes.ts` spreads the same
+`DO_SHIPPED_STATES` into its own `SHIPPED_STATES` — on purpose, and its comment
+says why — so promoting `LOADED` widens that module's shipped set too. No
+consignment file was edited here; that inheritance is the whole of the effect,
+and it is traced rather than assumed:
+
+- A consignment note is CREATED at `DISPATCHED` (`:797`) and deducts on the
+  create path, so no note is ever born into the promoted state.
+- The status PATCH runs `resyncNoteInventory` on entry to a shipped state. That
+  function is a SELF-HEALING resync — it drives the net OUT per bucket to match
+  the note's current lines — so on a note whose stock already went out at create
+  it computes a zero delta and writes nothing. Where it does change behaviour it
+  changes it in the safe direction: a note sitting at `LOADED` used to have the
+  resync bail out at `:323`, so line edits made there never reached the ledger.
+  Now they do.
+- **UNKNOWN:** how many consignment notes are in each status in production. The
+  census script that measured the delivery orders
+  (`backend/scripts/check-hold-and-shipped-rows.mjs`) covers five documents and
+  `consignment_delivery_orders` is not one of them, so no run backs a number
+  here and none is claimed.
+
+Whether a consignment note's stock should ALSO leave at Confirm — the same
+question the owner answered for delivery orders — has not been asked, and it
+belongs to the consignment owner rather than to this change.
 
 The QR is armed by an **explicit `loadScanId`** on the PDF header (never a
 generic id): the Consignment Note print reuses this renderer
@@ -620,6 +690,41 @@ no `trip_stop` at all, so it can never read `TIME_ARRANGED`.
 
 **A Delivery Order moves inventory OUT.**
 
+### THE STOCK LEAVES AT CONFIRM (owner ruling, 2026-08-22)
+
+> 「once confirmed就代表出货了 就是直接扣库存」
+> 「draft 没出货，Confirmed就代表出货了 然后delivered只是记录而已，记录送到了」
+
+In plain terms: a draft has not shipped; **confirming a delivery order is what
+takes the goods out of stock**; and Shipped / In transit / Delivered are the
+office's record of where those goods have got to. The whole ladder is kept —
+「保留全部状态 我可以convert」 — and the three tracking rungs are moved by hand
+until their machines exist.
+
+`LOADED` (rendered **Confirmed**) therefore joined `DO_SHIPPED_STATES`, and
+`DO_PRESHIP_STATES` is now `DRAFT` alone. The office **Confirm** button also
+changed target: it wrote `DISPATCHED` — which every screen renders as
+"Shipped" — while calling itself Confirm, so pressing it skipped the Confirmed
+state entirely. It writes `LOADED` now (`do-next-step.ts`).
+
+**Why this could not re-deduct anything that had already shipped**, measured
+rather than argued:
+
+- **Nothing was in the promoted state.** Production census, run `32573972467`
+  (2026-08-22): 44 delivery orders — 30 `DISPATCHED`, 12 `DELIVERED`, 2
+  `CANCELLED`, and **zero** in `DRAFT` / `LOADED` / `IN_TRANSIT` / `SIGNED` /
+  `INVOICED`. The 30 dispatched rows are not touched: the OUT fires on a
+  TRANSITION, and none of them transitions.
+- **The deduction is idempotent, at two levels.** In the application,
+  `deductInventoryForDo` opens with an existence check — any
+  `source_doc_type='DO'`, `movement_type='OUT'` row for this DO and it returns
+  without writing. In the database, run `32574476216` (2026-08-22, read from
+  `pg_indexes`) confirms `uq_inv_mov_do_source_v2` is live: UNIQUE over
+  `(source_doc_type, source_doc_id, item_code, variant_key,
+  COALESCE(correction_seq,0)) WHERE source_doc_type='DO'`. `movement_type` is
+  not in the key, so a second primary posting is refused by Postgres. That run
+  also reports **zero** multi-row DO buckets in production.
+
 **When:** the FIRST transition into ANY status in `SHIPPED_STATES` (`:402`,
 spread from `DO_SHIPPED_STATES`). This is deliberately a set, not a single
 status, so a DO that jumps straight to SIGNED or DELIVERED still deducts exactly
@@ -628,8 +733,24 @@ once. There are two entry points to that same deduction:
 - **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
   `deductInventoryForDo` runs right after the item insert.
 - **Status PATCH** — `if (SHIPPED_STATES.includes(body.status))`.
-  A DRAFT confirm is exactly DRAFT→DISPATCHED, so the deduction skipped at
+  A DRAFT confirm is exactly DRAFT→LOADED, so the deduction skipped at
   draft-create fires here.
+
+> **FOLLOW-UP, deliberately not done here: the non-draft CREATE still lands
+> `DISPATCHED`.** Both create paths hard-code `status: (body.asDraft === true) ?
+> 'DRAFT' : 'DISPATCHED'` and call the deduction on the `asDraft` flag, not on
+> the status sets — so this change does not alter them by one line, and they
+> deduct exactly as before. But a document created straight from the "new
+> delivery order" screen now reads **Shipped** while one confirmed from a draft
+> reads **Confirmed**, for the same business event. Aligning them is a
+> one-line change with its own decision attached (it re-labels every future
+> non-draft create), so it is recorded rather than smuggled in.
+>
+> Related and equally untouched: `DeliveryOrderNewV2.tsx` posts
+> `status: draft ? "DRAFT" : "LOADED"` in its create body, and the server
+> ignores `body.status` on create entirely. That field has never done anything;
+> it is why production holds zero `LOADED` rows despite the column defaulting to
+> `LOADED`.
 
 **Over-delivery cap at the confirm chokepoint (2026-07-25).** BEFORE that
 first-ship deduction, the Status PATCH now re-derives `soRemainingByItemId` for

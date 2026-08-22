@@ -955,9 +955,20 @@ export function MfgDeliveryOrdersListV2() {
      doCountsAsInvoiceable is the system's only definition, and it already
      carries the owner's 2026-08-20 ruling that a LOADED delivery may be
      invoiced (「不要拦 —— 人自己知道」). */
+  /* The three manual status moves (owner 2026-08-22 — Shipped / In transit /
+     Delivered are maintained by hand until their machines exist). This is the
+     SAME mutation the drawer's advance control uses, so the audit trail and the
+     server's transition guard are identical; row-menus.ts decides which of them
+     a row qualifies for, and none of them can reach a status whose entry would
+     deduct stock. Withheld entirely from a read-only user. */
+  const doSetStatus = (r: DoRow, status: string) => {
+    updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) });
+  };
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToSi: doConvertToSi,
+    setStatus: doSetStatus,
+    canSetStatus: canWriteDo,
     canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
   });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could

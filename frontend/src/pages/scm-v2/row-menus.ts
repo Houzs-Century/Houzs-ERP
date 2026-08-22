@@ -36,6 +36,7 @@
 import { buildRowMenu, dangerItem, type RowMenuItem } from "../../lib/rowMenu";
 import { transferToLabel } from "../../lib/convertScope";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
+import { DO_STOCK_OUT_STATES } from "../../vendor/shared/do-shipped-states";
 
 /** What every menu needs from a row: something to identify it and a status. */
 type StatusRow = { status?: string | null };
@@ -122,31 +123,87 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
 }
 
 /* ── Delivery Order ─────────────────────────────────────────────────────────
-   No status entries: every DO status move is already a first-class control on
-   the row drawer and the detail page, and the DO is the one document where a
-   status move has a STOCK consequence — the first entry into a shipped state
-   writes the inventory OUT. Putting that behind a right-click, two pixels from
-   "Open", is not a convenience. */
+   THREE MANUAL STATUS MOVES LIVE HERE, AND THEY ARE A NAMED EXCEPTION to the
+   rule the Sales Order menu above states — a status a MACHINE derives is never
+   offered to a person (docs/modules/document-status-vocabulary.md §1b). Read
+   that section before touching this block: the exception is dated and recorded
+   there too, with what retires each entry.
+
+   WHY IT IS CONSISTENT WITH THE RULE RATHER THAN A HOLE IN IT. §1b decides
+   membership by asking whether a MACHINE derives the status from a fact. For
+   these three, TODAY, none does:
+
+     Shipped     (DISPATCHED)  the storekeeper QR scan that will write it does
+                               not exist. The DO print's existing QR lands on
+                               DoLoadScan, which writes LOADED (Confirmed).
+     In transit  (IN_TRANSIT)  the driver trip flow (MobileDeliveryPlanning) is
+                               its only writer and has never written a row — zero
+                               delivery orders have ever held this status.
+     Delivered   (DELIVERED)   the driver's Proof-of-Delivery screen (MobilePOD)
+                               DOES write it — the one machine of the three — but
+                               asked directly whether drivers use that app, the
+                               owner answered 「没有」. So the manual entry is the
+                               stopgap for a machine that exists and is unused.
+
+   A status no machine writes is a decision a person makes, which is the same
+   test that keeps Hold and Cancel on the Sales Order menu. Each entry retires
+   itself the day its machine goes into use.
+
+   AND THEY CANNOT MOVE STOCK, which is what makes a right-click acceptable on
+   the one document where a status move normally can. The inventory OUT fires on
+   the FIRST entry into a shipped state, and since 2026-08-22 that is Confirm
+   (LOADED). Every status these entries can reach is already past Confirm, so
+   deductInventoryForDo finds this DO's own OUT rows and returns without writing.
+
+   That is also why they are withheld from a DRAFT: on a draft they WOULD be the
+   hop that deducts, and that belongs behind the Confirm control with its own
+   words, not two pixels from "Open". They are withheld from a CANCELLED delivery
+   order because the server refuses every transition out of it
+   (`do_cancelled_final`), so the entry could only ever produce a 409. */
 export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (r: R) => void;
   transferToSi: (r: R) => void;
+  setStatus: (r: R, status: string) => void;
   canInvoice: (r: R) => boolean;
+  /* The caller's write permission. A read-only user gets no status entries at
+     all rather than three that fail at the server — same reason `canDeliver`
+     exists on the Sales Order menu above. */
+  canSetStatus: boolean;
 }): (r: R) => RowMenuItem[] {
   /* NO CANCEL, and it is a recorded gap rather than a decision. The delivery
      order list has no cancel handler today — cancelling one lives on the detail
      page. This menu EXPOSES what the page already does; adding the capability
      here would put a stock-reversing action behind a right-click without the
      detail page's confirmation copy. */
-  return (r) => buildRowMenu(
-    [
-      { label: "Open", onClick: () => h.open(r) },
-      { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
-    ],
-    [h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) }],
-  );
+  return (r) => {
+    const s = norm(r.status);
+    /* Confirmed or later, from the SHARED set rather than a list typed here — a
+       fourth hand-written copy of the delivery ladder is the exact shape
+       check-duplicated-decisions hunts, and it caught this one. DO_STOCK_OUT_STATES
+       is also the RIGHT question: these entries are offered precisely where the
+       stock has already gone out, which is what makes them unable to move it.
+       DRAFT and CANCELLED are excluded by not being members, and so is any status
+       this file does not recognise — naming a step for an unknown state is the
+       COMPLETED mistake, and offering nothing is the cheap answer. */
+    const canMark = h.canSetStatus && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
+    return buildRowMenu(
+      [
+        { label: "Open", onClick: () => h.open(r) },
+        { label: "Edit", onClick: () => h.edit(r) },
+        { label: "Print", onClick: () => h.print(r) },
+      ],
+      [h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) }],
+      [
+        /* The status the row already carries is left out: re-writing it is a
+           no-op the operator would read as a real choice. */
+        canMark && s !== "DISPATCHED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "DISPATCHED") },
+        canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
+        canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
+      ],
+    );
+  };
 }
 
 /* ── Purchase Order ─────────────────────────────────────────────────────────

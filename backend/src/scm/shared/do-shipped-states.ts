@@ -70,10 +70,52 @@
    tests/doShippedStatesMirror.test.ts pins the two together.
    ---------------------------------------------------------------------------- */
 
+/* ── LOADED JOINED THIS SET ON 2026-08-22 — the owner's ruling ───────────────
+
+   「once confirmed就代表出货了 就是直接扣库存」
+   「draft 没出货，Confirmed就代表出货了 然后delivered只是记录而已，记录送到了」
+
+   LOADED is what the screens call **Confirmed** (vendor/scm/lib/status-pill.ts).
+   Until this date it was a PRE-SHIP state: the document was real, the goods were
+   packed, and the inventory OUT waited for DISPATCHED. He moved the deduction to
+   the confirm step, so Confirmed now means the stock has left and DELIVERED is a
+   record that it arrived rather than the thing that moves anything.
+
+   THIS IS A WRITE TRIGGER MOVING, so the safety question is whether it can
+   re-deduct a delivery that already shipped. It cannot, twice over:
+
+     · NOTHING IS IN LOADED. PROVEN 2026-08-22, run 32573972467 against
+       production: 44 delivery orders — 30 DISPATCHED, 12 DELIVERED, 2 CANCELLED,
+       and ZERO in DRAFT / LOADED / IN_TRANSIT / SIGNED / INVOICED. Promoting a
+       state nothing occupies cannot retroactively deduct anything, and the 30
+       DISPATCHED rows are not touched by this change at all — the OUT fires on a
+       TRANSITION, and none of them transitions.
+     · THE DEDUCTION IS IDEMPOTENT, and both halves were verified rather than
+       assumed. In the application, deductInventoryForDo opens with an existence
+       check — count of inventory_movements where source_doc_type='DO' AND
+       source_doc_id=<this DO> AND movement_type='OUT'; any row at all and it
+       returns without writing. In the database, PROVEN 2026-08-22 (run
+       32574476216, check-duplicate-movements.mjs section 0, read from
+       pg_indexes): uq_inv_mov_do_source_v2 is live on scm.inventory_movements,
+       UNIQUE over (source_doc_type, source_doc_id, item_code, variant_key,
+       COALESCE(correction_seq,0)) WHERE source_doc_type='DO'. movement_type is
+       NOT in the key, so a second PRIMARY posting of a bucket is refused by
+       Postgres even if the existence check were bypassed. The same run reports
+       ZERO multi-row DO buckets in production today.
+
+   WHAT ELSE MOVED WITH IT, because a set this file exports is read by others:
+   DO_PRESHIP_STATES loses LOADED and is now DRAFT alone, which makes
+   DO_NOT_DELIVERED_STATES {DRAFT, CANCELLED} — a Confirmed delivery now COUNTS
+   as delivered everywhere the SO coverage engines look, which is the same
+   sentence as "its stock is out" and therefore correct rather than incidental.
+   The shipped→pre-ship regression guard in PATCH /:id/status follows: LOADED can
+   no longer fall back to DRAFT, because doing so would orphan the OUT. */
+
 /** Statuses whose FIRST entry writes the inventory OUT. Not a "has shipped"
- *  test — use DO_STOCK_OUT_STATES for that. */
+ *  test — use DO_STOCK_OUT_STATES for that. LOADED leads the list because it is
+ *  the first rung: Confirm is where the stock leaves (owner, 2026-08-22). */
 export const DO_SHIPPED_STATES = [
-  'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED',
+  'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED',
 ] as const;
 
 /** Statuses in which the OUT has already been written — the "has this stock
@@ -95,11 +137,25 @@ export const DO_STOCK_OUT_STATES = [...DO_SHIPPED_STATES] as const;
  *  having "lost COMPLETED"; on the evidence in the header it was the only copy
  *  that had it right. */
 export const DO_STATUSES = [
-  'DRAFT', 'LOADED', ...DO_SHIPPED_STATES, 'CANCELLED',
+  'DRAFT', ...DO_SHIPPED_STATES, 'CANCELLED',
 ] as const;
 
-/** Pre-ship: no stock has left our hands yet. */
-export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
+/** The hop that means "confirmed — this is on its way", and so the one the
+ *  customer email fires on. TWO statuses because the two ways a delivery order
+ *  becomes real disagree about which it lands in: the office Confirm button
+ *  writes LOADED, while a non-draft CREATE is still born DISPATCHED. Naming the
+ *  pair here rather than testing a literal in the route is what stops the next
+ *  move of the confirm step silently ending the email, which is exactly what
+ *  moving it to LOADED on 2026-08-22 would have done. */
+export const CONFIRM_HOP_STATES = ['LOADED', 'DISPATCHED'] as const;
+
+/** Pre-ship: no stock has left our hands yet. DRAFT alone since 2026-08-22 —
+ *  LOADED (= Confirmed) moved into DO_SHIPPED_STATES, see the block above. This
+ *  is the set the PATCH /:id/status guard uses to refuse a shipped DO falling
+ *  BACK to un-shipped, so shrinking it TIGHTENS that guard rather than loosening
+ *  it: LOADED→DRAFT is now refused, which is what stops a Confirmed delivery
+ *  orphaning its inventory OUT. */
+export const DO_PRESHIP_STATES = ['DRAFT'] as const;
 
 /* ── "HAS THIS DELIVERY COUNTED?" — one home, added 2026-08-20 ───────────────
 
@@ -128,7 +184,25 @@ export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
    zero would be refused. Nothing is stuck right now. That is not proof the
    state is unreachable — `delivery_orders.status` is DEFAULT 'LOADED' NOT NULL
    and `PATCH /:id/status` accepts every DO_STATUSES member — so this is a blind
-   spot closed before it costs a dispatch, not after. */
+   spot closed before it costs a dispatch, not after.
+
+   ── AND ON 2026-08-22 THE PREMISE CHANGED, WHICH IS WHY THIS BLOCK STAYS ─────
+
+   Every paragraph above argues from "LOADED is a PRE-SHIP state, its OUT has not
+   fired". That is no longer true: the owner moved the deduction to the confirm
+   step, so LOADED is in DO_SHIPPED_STATES and this set is now {DRAFT, CANCELLED}
+   by derivation. The history is kept rather than deleted because the FIX it
+   describes is what makes today's answer safe. The nine hand-written copies are
+   gone; the rule is derived from DO_PRESHIP_STATES; so the premise moving
+   re-computed every consumer in one edit instead of leaving eight of them behind.
+   A LOADED delivery now counts as delivered BECAUSE its stock has left, which is
+   the same sentence read twice — not a second, independent decision.
+
+   The over-delivery self-refusal that block describes cannot come back either,
+   and for a structural reason rather than a lucky one: the confirm gate runs on
+   the pre-ship→shipped hop, and after this change that hop is DRAFT→LOADED. A
+   DRAFT is excluded from the delivered sum, so the document is still not inside
+   the total it is measured against. */
 
 /** A delivery order in one of these has NOT put stock in the customer's hands:
  *  the pre-ship states plus CANCELLED. The complement of DO_STOCK_OUT_STATES
@@ -165,24 +239,32 @@ export const DO_NOT_DELIVERED_IN_LIST =
    the system does not second-guess them. That is his standing posture for this
    system: loosen as far as possible, a hard wall is the last resort.
 
-   READ THIS BEFORE "TIDYING" THE TWO SETS TOGETHER. They agree on six of the
-   eight statuses and differ only on LOADED, which makes them look like one rule
-   written twice — the exact shape check-duplicated-decisions hunts. They are not.
-   Merging them re-breaks one of the two rulings, and this is the SECOND reversal
-   on this one:
+   READ THIS BEFORE "TIDYING" THE TWO SETS TOGETHER — AND SINCE 2026-08-22 THEY
+   HAVE THE SAME MEMBERS, so the temptation is now maximal and the answer has not
+   changed. LOADED was the one status they disagreed on; the stock deduction
+   moving to the confirm step made a Confirmed delivery both DELIVERED and
+   INVOICEABLE, and the two sets converged on {DRAFT, CANCELLED}. That is a
+   COINCIDENCE OF MEMBERSHIP, not a merger of questions. Fold them into one
+   constant and the next ruling on either — the owner has already reversed this
+   one twice — silently moves the other, which is precisely the bug both sets
+   were split to prevent. Equal today, separate on purpose:
      · #2485 (owner, 2026-08-19) opened the invoice to every confirmed delivery,
        LOADED included, by deleting a guard that named it.
      · #2557 (2026-08-20) closed it again as a side effect of the stock fix.
      · This (owner, 2026-08-20) re-opens it, deliberately and on his word.
 
-   The 2026-08-19 argument for it does NOT cover LOADED, and saying so is the
-   point: #2485 justified itself with "stock was already deducted at dispatch",
-   which is true of DISPATCHED and IN_TRANSIT and FALSE of LOADED. The rule holds
-   because the owner chose it, not because that reasoning reached it.
+   The 2026-08-19 argument for it did NOT cover LOADED, and saying so is still
+   the point: #2485 justified itself with "stock was already deducted at
+   dispatch", which was true of DISPATCHED and IN_TRANSIT and false of LOADED.
+   The rule held because the owner chose it, not because that reasoning reached
+   it. As of 2026-08-22 that reasoning DOES reach it — the deduction happens at
+   Confirm now — and the rule is unchanged either way, which is what a rule
+   grounded in a decision rather than in an argument looks like.
 
    NOTHING IN PRODUCTION TURNS ON THIS TODAY: check-do-integrity.mjs R4 (run
    32368212535, 2026-08-20) found ZERO delivery orders in LOADED in either
-   company. This is a rule being settled, not an incident being cleaned up. */
+   company, and the 2026-08-22 census (run 32573972467) found the same. This is a
+   rule being settled, not an incident being cleaned up. */
 
 /** The states whose lines may NOT be invoiced: a DRAFT is not confirmed yet, and
  *  a CANCELLED delivered nothing. LOADED is deliberately absent — see above. */
