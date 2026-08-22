@@ -776,6 +776,17 @@ call sites (a signature change cannot slip past), and `audit:ac-coverage`
 regenerates `docs/generated/autocount-coverage.md` from where the calls actually
 live.
 
+**How those four GRN cases are anchored, and the trap next to them.** Each one
+slices the source from `grns.patch('/:id',` (or the sibling route line) to that
+handler's own tail. That works while the route is registered with its body
+INLINE — which all four GRN handlers still are. The DO case in the same file was
+not: its add-line handler became a named export on 2026-08-23, which moved the
+`deliveryOrdersMfg.post(...)` registration to a one-line call BELOW the body, so
+the start anchor matched and the end anchor no longer followed it. The pin failed
+on a handler whose `queueAcGrnEdit`-equivalent had not moved. If a GRN handler is
+ever exported for a test to drive, repoint its anchor to the `export const` line
+at the same time. Full note: `docs/modules/autocount-writeback.md`.
+
 Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
 
 ## 7c. Two GRN routes run in a TRANSACTION - line DELETE and CANCEL
