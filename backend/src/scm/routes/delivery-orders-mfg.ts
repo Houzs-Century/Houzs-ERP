@@ -106,6 +106,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { refsByParent, type DocRef } from '../lib/downstream-doc-refs';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -2816,11 +2817,12 @@ deliveryOrdersMfg.get('/', async (c) => {
      (which stays computeDoLifecycle below). */
   const invoicedSiByDo = new Map<string, Set<string>>();
   const returnedDrByDo = new Map<string, Set<string>>();
-  /* The same two children, address beside number, for the row menu's print.
-     Kept SEPARATE from the number sets above rather than replacing them: those
-     feed display columns that must still show a child carrying no id. */
-  const siRefsByDo = new Map<string, Array<{ id: string; docNo: string }>>();
-  const drRefsByDo = new Map<string, Array<{ id: string; docNo: string }>>();
+  /* The same two children, address beside number, for the row menu's print —
+     KEPT SEPARATE from the number sets above rather than replacing them: those
+     feed display columns that must still show a child carrying no id. Built by
+     lib/downstream-doc-refs, the one home for that decision. */
+  let siRefsByDo = new Map<string, DocRef[]>();
+  let drRefsByDo = new Map<string, DocRef[]>();
   let lifecycleByDo = new Map<string, DoLifecycle>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
@@ -2836,20 +2838,11 @@ deliveryOrdersMfg.get('/', async (c) => {
       computeDoLifecycle(sb, ids),
     ]);
     lifecycleByDo = lc;
-    const addRef = (
-      m: Map<string, Array<{ id: string; docNo: string }>>,
-      doId: string, id: string | null | undefined, docNo: string | null | undefined,
-    ) => {
-      if (!id || !docNo) return;
-      const list = m.get(doId) ?? [];
-      if (list.some((x) => x.id === id)) return;
-      list.push({ id, docNo });
-      m.set(doId, list);
-    };
+    siRefsByDo = refsByParent(siRes.data as Array<Record<string, unknown>>, 'delivery_order_id', 'invoice_number');
+    drRefsByDo = refsByParent(drRes.data as Array<Record<string, unknown>>, 'delivery_order_id', 'return_number');
     for (const d of ((drRes.data ?? []) as Array<{ id: string | null; delivery_order_id: string | null; return_number: string | null }>)) {
       if (!d.delivery_order_id) continue;
       childIds.add(d.delivery_order_id);
-      addRef(drRefsByDo, d.delivery_order_id, d.id, d.return_number);
       if (d.return_number) {
         const set = returnedDrByDo.get(d.delivery_order_id) ?? new Set<string>();
         set.add(d.return_number);
@@ -2859,18 +2852,12 @@ deliveryOrdersMfg.get('/', async (c) => {
     for (const s of ((siRes.data ?? []) as Array<{ id: string | null; delivery_order_id: string | null; invoice_number: string | null }>)) {
       if (!s.delivery_order_id) continue;
       childIds.add(s.delivery_order_id);
-      addRef(siRefsByDo, s.delivery_order_id, s.id, s.invoice_number);
       if (s.invoice_number) {
         const set = invoicedSiByDo.get(s.delivery_order_id) ?? new Set<string>();
         set.add(s.invoice_number);
         invoicedSiByDo.set(s.delivery_order_id, set);
       }
     }
-    /* Ordered by number so the menu does not reshuffle between reloads — the
-       same stability rule the DO No. column keeps. */
-    const byDocNo = (a: { docNo: string }, b: { docNo: string }) => b.docNo.localeCompare(a.docNo, undefined, { numeric: true });
-    for (const list of siRefsByDo.values()) list.sort(byDocNo);
-    for (const list of drRefsByDo.values()) list.sort(byDocNo);
   }
   const sortedNos = (set: Set<string> | undefined): string[] =>
     set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
@@ -2925,7 +2912,6 @@ deliveryOrdersMfg.get('/', async (c) => {
       // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
       return_nos: sortedNos(returnedDrByDo.get(r.id)),
-      // The same children with the id the row menu needs to PRINT one.
       si_refs: siRefsByDo.get(r.id) ?? [],
       dr_refs: drRefsByDo.get(r.id) ?? [],
     };

@@ -141,9 +141,8 @@ type DoRow = HoldFields & {
    *  was invoiced into, and the DR number(s) returned against it. */
   invoiced_si_nos?: string[] | null;
   return_nos?: string[] | null;
-  /** The same two children with the id the right-click print needs — a PDF is
-   *  fetched by ADDRESS and the `*_nos` above carry only numbers. Optional so a
-   *  bundle talking to an older worker offers fewer entries rather than 404ing. */
+  /** The same two children WITH the id the right-click print needs (a PDF is
+   *  fetched by address). Optional: an older worker just yields fewer entries. */
   si_refs?: Array<{ id: string; docNo: string }> | null;
   dr_refs?: Array<{ id: string; docNo: string }> | null;
   is_dropship?: boolean;

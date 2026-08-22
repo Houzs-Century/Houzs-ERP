@@ -32,7 +32,8 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
-import { doNosBySalesOrder, doRefsBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
+import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
+import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
@@ -1439,13 +1440,6 @@ mfgSalesOrders.get('/', async (c) => {
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
-      /* `id` and `invoice_number` ride these two reads for the row menu's
-         "Print Delivery Order" / "Print Sales Invoice" (owner 2026-08-22,
-         「我要在这边 right click，可以点 print SalesOrder、print DO」). A PDF is
-         fetched by ADDRESS — `/delivery-orders-mfg/:id` is `.eq('id', id)` — so
-         the numbers these already carried can name a document and cannot fetch
-         one. Both selects were ALREADY in flight for has_children and the DO No.
-         column, so this is one more column each and no extra round trip. */
       chunkIn(docNos, (batch, from, to) => sb.from('delivery_orders').select('id, so_doc_no, do_number, do_date, created_at').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
       chunkIn(docNos, (batch, from, to) => sb.from('sales_invoices').select('id, so_doc_no, invoice_number').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
     ]);
@@ -1659,21 +1653,8 @@ mfgSalesOrders.get('/', async (c) => {
        on the row. The list grid uses this to hide Edit / Cancel from SOs that
        are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
     const [doRowsRes, siRowsRes] = await downstreamProm;
-    const doListRows = doRowsRes.data as unknown as DeliveryOrderNoRow[];
-    const doNosBySo = doNosBySalesOrder(doListRows);
-    const doRefsBySo = doRefsBySalesOrder(doListRows);
-    /* SI(s) raised against each order, address beside number. Deduped on id —
-       one invoice cannot be listed twice — and ordered by number so the menu
-       does not reshuffle between reloads. */
-    const siRefsBySo = new Map<string, Array<{ id: string; docNo: string }>>();
-    for (const siRow of ((siRowsRes.data ?? []) as Array<{ id?: string | null; so_doc_no?: string | null; invoice_number?: string | null }>)) {
-      if (!siRow.id || !siRow.so_doc_no || !siRow.invoice_number) continue;
-      const list = siRefsBySo.get(siRow.so_doc_no) ?? [];
-      if (list.some((x) => x.id === siRow.id)) continue;
-      list.push({ id: siRow.id, docNo: siRow.invoice_number });
-      siRefsBySo.set(siRow.so_doc_no, list);
-    }
-    for (const list of siRefsBySo.values()) list.sort((a, b) => b.docNo.localeCompare(a.docNo, undefined, { numeric: true }));
+    const doNosBySo = doNosBySalesOrder(doRowsRes.data as unknown as DeliveryOrderNoRow[]);
+    const downRefsBySo = soDownstreamRefs(doRowsRes.data as unknown as DeliveryOrderNoRow[], siRowsRes.data); // do_refs + si_refs: the row menu prints by ADDRESS, not by number
     const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data, siRowsRes.data);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
@@ -1814,11 +1795,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
-      /* The same delivery orders and sales invoices, with the id the row menu
-         needs to PRINT one. `do_nos` stays exactly as it was — it feeds a
-         display column that must keep a DO with no address. */
-      (r as Record<string, unknown>).do_refs = doRefsBySo.get(docNo) ?? [];
-      (r as Record<string, unknown>).si_refs = siRefsBySo.get(docNo) ?? [];
+      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS);
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';
