@@ -68,6 +68,7 @@ const FACTS = [
   { q: "CN with a dispatched timestamp",           table: "consignment_delivery_orders",  where: "dispatched_at IS NOT NULL" },
   { q: "CN with a signed timestamp",               table: "consignment_delivery_orders",  where: "signed_at IS NOT NULL" },
   { q: "CN with a delivered timestamp",            table: "consignment_delivery_orders",  where: "delivered_at IS NOT NULL" },
+  { q: "CN LINE linked to a CO line",              table: "consignment_delivery_order_items", where: "consignment_so_item_id IS NOT NULL" },
   { q: "CR linked to a CN",                        table: "consignment_delivery_returns", where: "consignment_do_id IS NOT NULL" },
   { q: "PCO with something received against it",   table: "purchase_consignment_orders",  where: "received_at IS NOT NULL" },
 ];
