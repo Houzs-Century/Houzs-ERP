@@ -1114,6 +1114,11 @@
       "check": "D1",
       "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
       "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too."
+    },
+    {
+      "check": "D2",
+      "key": "BEDFRAME,MATTRESS,OTHER,SOFA ~ BEDFRAME,MATTRESS,SOFA",
+      "why": "TWO DIFFERENT QUESTIONS that share three words. MAIN_CATS asks which categories are MAIN PRODUCTS — a business rule about what blocks a sale from shipping, and accessories are deliberately not in it. TONE_BY_BUCKET asks which COLOUR each display group gets, and it needs a fourth member for exactly the reason the first one does not have it: everything that is NOT a main product still has to be drawn, so OTHER is the catch-all. Merging them would make a colour table decide what blocks a shipment. The extra member is the difference between a rule and a palette, and it is the whole point of both. See frontend/src/lib/brandingTone.ts and docs/modules/document-status-vocabulary.md."
     }
   ]
 }

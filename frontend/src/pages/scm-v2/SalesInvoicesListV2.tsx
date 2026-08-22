@@ -12,6 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -167,13 +168,9 @@ const soOf = (r: SiRow): string => r.so_doc_no || "—";
 const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Was a THREE-tone copy while the other four lists had four — the drift this
+   module exists to end. ../../lib/brandingTone is the one home. */
+const brandTone = brandingToneForLabel;
 
 // SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
 // PAID → CANCELLED. Buckets: sent (Draft + Sent + Overdue) / partial / paid /
