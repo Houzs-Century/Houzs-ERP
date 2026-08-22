@@ -142,6 +142,8 @@ Baseline tables from the 2990 dump; grown by:
 - `frontend/src/pages/scm-v2/stock-take-grouping.test.ts` — the model fold
   (order, blind-null totals, counted math).
 - `backend/tests/companyScopeHardening.test.ts` — the cross-company post
+  (its hand-rolled supabase stub models `.schema()`: the JE-number prefix reads
+  `public.companies` from a `scm`-pinned client — `docs/bugs/0522`)
   refusals (pre-date this phase; still green).
 
 ## 6. See also

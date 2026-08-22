@@ -321,7 +321,26 @@ export const jePrefixForCompany = async (
   companyId: number | null | undefined,
 ): Promise<string> => {
   if (companyId == null) return '';
+  /* `.schema('public')` IS THE FIX, and it is not decoration.
+   *
+   * The SCM client is pinned to the `scm` schema (db/supabase.ts:77) so that the
+   * ported route code's `sb.from('x')` resolves to `scm.x` unchanged. The
+   * companies MASTER is `public.companies` — there is no `scm.companies`, in any
+   * migration. So the bare `.from('companies')` this line used to carry resolved
+   * to a table that does not exist, the read errored, and the fail-closed throw
+   * below fired on EVERY call, for every company.
+   *
+   * It is the only `from('companies')` in the backend; everything else reads the
+   * master through raw SQL (middleware/companyContext.ts:120). That is why the
+   * mistake was invisible: there was no sibling call to disagree with.
+   *
+   * Measured cost, on production 2026-08-23: the newest journal entry in EITHER
+   * company was dated 15/08. This landed on 18/08. Five days in which no sales
+   * invoice, purchase invoice, payment voucher or reversal wrote a single line
+   * to the general ledger — each one throwing here, uncaught, so the operator
+   * got "Something went wrong" over a document that had already posted. */
   const { data, error } = await sb
+    .schema('public')
     .from('companies')
     .select('code')
     .eq('id', companyId)

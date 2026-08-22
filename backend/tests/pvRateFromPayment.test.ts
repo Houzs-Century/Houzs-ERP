@@ -92,6 +92,12 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
          the REAL clamp rule (computePiSettlement — the pure function the SQL is a
          transcription of), so the applied figure the adoption keys off is the one
          production would produce. */
+      /* `.schema('public')` — the real client returns one scoped to that schema.
+         These stubs model ONE table namespace, so it returns the stub itself.
+         Needed because jePrefixForCompany reads `public.companies` while the SCM
+         client is pinned to `scm`; without it the stub throws
+         `sb.schema is not a function` and the handler 500s. See docs/bugs/0522. */
+      schema(_s: string) { return this; },
       rpc: async (fn: string, args: Row) => {
         if (fn === 'entity_audit_writable') return { data: true, error: null };
         if (fn === 'settle_pi_paid_sen') {
