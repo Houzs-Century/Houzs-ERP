@@ -85,6 +85,18 @@ Confirm、Hold、Cancel**，因为这三个不是从任何事实推出来的，�
 的意思：同一个概念，同一条规则，六张单一致。追溯：
 `docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`。
 
+**寄售单（Consignment Note）和寄售退货（Consignment Return）2026-08-23 补上（出货那半边）。**
+上面那段修的是寄售**订单**。真正搬库存的是这两张：寄售单写 OUT（货送去展厅），
+寄售退货写 IN（货回来），而两张的 `variant_key` 都是从行上**存下来的**
+`item_group` 组出来的 —— 所以客户端送错类别，货就搬错格子。建立、加行、以及行的
+PATCH（只在这次请求有带 `itemGroup` 或 `itemCode` 时）三条路径现在都先用
+`resolveItemGroups`（`lib/sku-category.ts`）把类别改成 SKU 的。从来源单转过来的
+路径不动 —— 它抄的是资料库的行，本来就是对的。
+
+**只挡新的行，不修旧的。** 已经存在、类别跟 SKU 不一致的行不在这个 PR 里处理，
+要先等只读普查（PR #2671）数出来有多少张。追溯：
+`docs/bugs/0524-the-delivery-order-let-the-client-decide-which-stock-bucket.md`。
+
 ## 1. 这六张单到底是什么，各自对到销售链的哪一张
 
 老板讲的 CO 和 CN 是其中两张。系统里其实有**六**张 consignment 单据，分成

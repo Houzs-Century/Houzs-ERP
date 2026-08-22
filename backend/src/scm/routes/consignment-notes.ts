@@ -35,6 +35,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import { resolveItemGroups } from '../lib/sku-category';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -715,7 +716,7 @@ consignmentNotes.post('/', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
-  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -724,6 +725,14 @@ consignmentNotes.post('/', async (c) => {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
+
+  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0524.
+     `item_group` is not a label, it is the input to the stock bucket
+     (shared/variant-key.ts): the OUT that sends the goods to the showroom floor is keyed from the group
+     STORED on the line, so a client that sends a blank or wrong one picks the
+     bucket. Rewritten here, above every reader, so the value written and the
+     value later keyed from cannot differ. #2660 closed the inbound half. */
+  items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
 
   /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the GRN/DR/DO trio always
      guarded this and the consignment clone never did. Two caller-supplied
@@ -906,6 +915,10 @@ consignmentNotes.post('/:id/items', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* SKU wins, decided once — docs/bugs/0524. Same rule as the create path: the
+     stored group is what the stock movement is keyed from. */
+  it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
+
   /* Downstream-lock — line-add is blocked once a Consignment Return exists. */
   const childLock = await noteHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
@@ -962,6 +975,22 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
     .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, consignment_so_item_id')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+
+  /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
+     or re-points the code, decides which bucket this line's stock resync moves;
+     the group stored is the SKU's. Every reader below takes
+     `it.itemGroup ?? prev.item_group`, so one assignment settles the stored
+     column, description2 and the resync's key together.
+     ONLY when the request touches identity. An edit that changes neither is
+     left exactly as it was: repairing rows this request did not touch is a
+     different, write-shaped job that needs the probe's count first (#2671). */
+  if (it.itemGroup !== undefined || it.itemCode !== undefined) {
+    const [resolved] = await resolveItemGroups(sb, [{
+      itemCode: (it.itemCode ?? prev.item_code) as string | null,
+      itemGroup: (it.itemGroup ?? prev.item_group) as string | null,
+    }], activeCompanyId(c) ?? null);
+    it.itemGroup = resolved?.itemGroup ?? null;
+  }
 
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
   const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);

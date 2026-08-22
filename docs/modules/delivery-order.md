@@ -802,6 +802,77 @@ no `trip_stop` at all, so it can never read `TIME_ARRANGED`.
 
 **A Delivery Order moves inventory OUT.**
 
+### The bucket it ships from is the SKU's, not the request's (2026-08-23)
+
+**白话.** 出货单以前是「客户端说这行是什么类别，就当它是什么类别」。类别不是标签
+——它决定这行货算在哪一格库存里。客户端讲错或漏讲，系统就会去**空的那一格**看有没有
+货，回答「没货，还要出吗？」，然后又从**空的那一格**扣。货明明在仓库里。
+
+从这个 PR 起，出货单自己去产品档案查 SKU 的类别，不再相信送进来的那一个字。
+
+**The mechanism.** `item_group` is an input to the stock bucket:
+`computeVariantKey(item_group, variants)` composes a sofa's fabric / seat / leg
+(a bedframe's fabric / gap / divan / leg) into the key **only** for a sofa or
+bedframe group — for `others`, `accessory`, `service`, `mattress` or null it
+returns `''` by design (`shared/variant-key.ts`). PR #2660 closed this on the
+INBOUND documents (SO / PO / GRN / CO). The outbound side still read
+`it.itemGroup` straight off the request body, so a delivery order **chose which
+bucket to check and to deduct from using a category the client supplied** — the
+identical shape #2660 removed from the purchase side.
+
+**The rule now.** Every request-sourced delivery line has its `itemGroup`
+rewritten to `mfg_products.category` for its item code — company-scoped, because
+`code` is shared between the two organisations (the reason `grns.ts:287` gives)
+— **once, above every reader**, by `resolveItemGroups` (`lib/sku-category.ts`).
+The caller's value survives only where the catalogue has no row or no category
+for that code. Owner 2026-08-22: 「正常来说就跟着 PO 里面的 SKU 啊，我的 SKU 也绑定
+跟 category 了啊」.
+
+**Why a rewrite and not a lookup at each reader — this is the outbound
+difference.** An inbound document reads the group in ONE place: the row it
+writes. A delivery order reads it in three — the pre-flight stock CHECK, the
+ship-commitment planner (mig 0230), and the row it stores, whose stored value is
+what `deductInventoryForDo` / `resyncInventoryForDo` key the OUT from later.
+Three lookups can disagree; one assignment cannot. A line that passed the check
+against the bedframe bucket and then deducted from the unclassified one would be
+worse than the bug being fixed: the operator's "ship anyway?" answer would have
+been about a bucket the goods never left.
+
+The rewrite also reaches the readers a per-row helper would have missed —
+`isServiceLine`, the sofa dye-lot guard and the whole-set guard read `itemGroup`
+off the same line objects. **Consequence worth knowing:** a sofa that used to
+arrive mis-declared as `others` bypassed the dye-lot guards; it now meets them,
+so such a line can be refused at ship time where it previously was not. That is
+the guard working, not a new refusal.
+
+**Where it is applied, and where it deliberately is NOT.**
+
+| path | source of the group | changed |
+|---|---|---|
+| `POST /` (bulk create) | request body | YES — resolved after `fillMissingSoItemIds` |
+| `POST /:id/items` (single add) | request body | YES |
+| `PATCH /:id/items/:itemId` | request body | YES, **only** when the patch names `itemGroup` or `itemCode` |
+| `POST /from-sos` (convert) | `soDeliverableRemaining` reads `mfg_sales_order_items` | NO — it inherits a group the server already resolved |
+| `deductInventoryForDo` / `resyncInventoryForDo` / `restampDoActualCost` | the STORED `delivery_order_items.item_group` | NO — reading the stored value is what makes it agree with the check |
+
+The same rewrite landed on the three sibling outbound documents, which key their
+movement from the stored group the same way: Delivery Return, Consignment Note,
+Consignment Return (create, single-add and the identity half of the line PATCH
+on each). Their convert-from-source paths copy DB rows and were left alone.
+
+**This stops NEW rows only.** Document lines already carrying a category that
+disagrees with their SKU are not repaired here — that is a write-shaped job that
+needs the read-only probe's count first (PR #2671). Trace:
+`docs/bugs/0524-the-delivery-order-let-the-client-decide-which-stock-bucket.md`,
+and the inbound half at
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
+
+**Guard.** `backend/tests/doLineCategoryFromSku.test.ts` drives the real
+add-line handler and pins both readings in one request: the short-stock 409 the
+operator is shown names the SKU's bucket, and the row stored carries the SKU's
+group. Proved RED on the unfixed tree — 3 of its 4 cases fail, reporting
+`variantKey ''` and `item_group 'others'`.
+
 ### THE STOCK LEAVES AT CONFIRM (owner ruling, 2026-08-22)
 
 > 「once confirmed就代表出货了 就是直接扣库存」
