@@ -42,14 +42,40 @@ export type BlockedSo = { docNo: string; status: string; onHold: boolean };
 type SoStateRow = { doc_no: string; status: string | null; on_hold: boolean | null };
 
 /** The one read all three SO gates make. `on_hold` is in the projection here so
- *  neither caller can forget it. */
+ *  neither caller can forget it.
+ *
+ *  THE ERROR IS BOUND, and both gates FAIL CLOSED on it. supabase-js does not
+ *  throw, so `const { data } = await …` cannot tell "the query failed" from
+ *  "there are no such orders" — and here the two answers are opposite: an
+ *  unreadable read would return no rows, every gate would find no offender, and
+ *  a five-second database blip would authorise a delivery, a purchase order or
+ *  a receipt against an order nobody could check. That is the exact shape
+ *  check-swallowed-reads.mjs exists for, and it caught this one when the gates
+ *  moved here (the discarded error came with them from the route files).
+ *
+ *  Note the asymmetry, because it is deliberate: an unreadable STATUS on a row
+ *  we DID read falls through and is allowed — never over-block on a legacy
+ *  row — but a read that did not happen at all authorises nothing. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around
-async function readSoStates(sb: any, soDocNos: Array<string | null | undefined>): Promise<SoStateRow[]> {
+async function readSoStates(
+  sb: any,
+  soDocNos: Array<string | null | undefined>,
+): Promise<{ rows: SoStateRow[]; error: string | null }> {
   const docNos = [...new Set(soDocNos.filter((d): d is string => !!d))];
-  if (docNos.length === 0) return [];
-  const { data } = await sb.from('mfg_sales_orders').select('doc_no, status, on_hold').in('doc_no', docNos);
-  return (data ?? []) as SoStateRow[];
+  if (docNos.length === 0) return { rows: [], error: null };
+  const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, status, on_hold').in('doc_no', docNos);
+  if (error) return { rows: [], error: error.message ?? 'unknown' };
+  return { rows: (data ?? []) as SoStateRow[], error: null };
 }
+
+/** The offender a gate reports when it could not read at all. `UNREADABLE` is
+ *  not a status any enum has, so the refusal messages name it as itself rather
+ *  than dressing a database failure up as a document state. */
+const unreadable = (docNos: Array<string | null | undefined>, why: string): BlockedSo => ({
+  docNo: docNos.find((d): d is string => !!d) ?? '(unknown)',
+  status: `UNREADABLE (${why})`,
+  onHold: false,
+});
 
 /**
  * The first Sales Order in this set that a Delivery Order may NOT be raised
@@ -61,7 +87,9 @@ async function readSoStates(sb: any, soDocNos: Array<string | null | undefined>)
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see readSoStates
 export async function firstUndeliverableSo(sb: any, soDocNos: Array<string | null | undefined>): Promise<BlockedSo | null> {
-  for (const r of await readSoStates(sb, soDocNos)) {
+  const read = await readSoStates(sb, soDocNos);
+  if (read.error) return unreadable(soDocNos, read.error);
+  for (const r of read.rows) {
     const st = (r.status ?? '').toUpperCase();
     if (!soCanRaiseDo(st, r.on_hold ?? null)) return { docNo: r.doc_no, status: st, onHold: isDocumentHeld(r) };
   }
@@ -82,7 +110,9 @@ export const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']
  *  from, or null. Same never-over-block posture as the deliverable gate. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see readSoStates
 export async function firstUnorderableSo(sb: any, soDocNos: Array<string | null | undefined>): Promise<BlockedSo | null> {
-  for (const r of await readSoStates(sb, soDocNos)) {
+  const read = await readSoStates(sb, soDocNos);
+  if (read.error) return unreadable(soDocNos, read.error);
+  for (const r of read.rows) {
     const st = (r.status ?? '').toUpperCase();
     const held = isDocumentHeld(r);
     if (held || SO_UNORDERABLE_STATUSES.has(st)) return { docNo: r.doc_no, status: st, onHold: held };
@@ -94,7 +124,8 @@ export async function firstUnorderableSo(sb: any, soDocNos: Array<string | null 
    LIVE one — Confirmed, In Production — so any later arm would explain the
    refusal with the one fact that is not the reason for it. */
 const refusalLabel = (o: BlockedSo, draftWords: string): string =>
-  o.onHold ? 'is on hold'
+  o.status.startsWith('UNREADABLE') ? 'could not be read just now, so this was refused rather than guessed'
+  : o.onHold ? 'is on hold'
   : o.status === 'DRAFT' ? draftWords
   : o.status === 'CANCELLED' ? 'has been cancelled'
   : o.status === 'ON_HOLD' ? 'is on hold'

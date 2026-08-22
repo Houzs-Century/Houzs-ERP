@@ -88,13 +88,19 @@ export function useSetDocumentHold(docType: HoldDocType) {
         body: JSON.stringify({ onHold, reason: reason ?? null }),
       }),
     onSuccess: (_data, vars) => {
-      for (const k of spec.invalidate) qc.invalidateQueries({ queryKey: [k] });
-      qc.invalidateQueries({ queryKey: [spec.invalidate[0], vars.key] });
+      /* `void` because react-query's invalidateQueries returns a promise nobody
+         waits on — a refetch that fails re-renders stale data, which the next
+         poll corrects, and awaiting it here would hold the mutation open for
+         every list this document appears on. Same posture as the sibling
+         mutations; the linter wants the intent spelled out rather than the
+         promise dropped silently. */
+      for (const k of spec.invalidate) void qc.invalidateQueries({ queryKey: [k] });
+      void qc.invalidateQueries({ queryKey: [spec.invalidate[0], vars.key] });
     },
     onError: (err, vars) => {
       /* A refusal that reaches nobody is worse than a crash — the owner's
          "the button does nothing" (CLAUDE.md, mutation-error.ts). */
-      serviceNotify({
+      void serviceNotify({
         title: vars.onHold ? 'Could not put it on hold' : 'Could not take it off hold',
         body: err instanceof Error ? err.message : `Something went wrong with this ${spec.label}.`,
         tone: 'error',
