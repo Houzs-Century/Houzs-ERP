@@ -155,7 +155,15 @@ Two **sub-statuses** (小类) live inside two stages only — `ASSR_SUB_STATUSES
 `pending_supplier_return`. They are directly switchable by ops (desktop select
 at `ServiceCases.tsx:5241-5252`), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts:156-161`) hides one that merely restates
-its stage label.
+its stage label — with one exception (Nico 2026-08-22): under the combined
+"Supplier Pickup / Return" stage the list's stage cell shows the sub line on
+BOTH legs, because naming the leg is how ops splits its supplier chase list.
+The same split reaches the other two read surfaces: the stage column's
+`getValue` appends the sub label ("Supplier Pickup / Return — Pending Supplier
+Return"), so the column filter menu and the CSV export isolate one leg; and the
+`/api/assr/summary` `stage_funnel` rows carry a `sub_return` count so the
+Supplier funnel card's caption reads "X await pickup · Y await return" instead
+of the static description.
 
 > `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
