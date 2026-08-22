@@ -20,9 +20,22 @@
 //   1. Pull every non-cancelled, non-completed SO line (PENDING + READY)
 //      with deliverable_remaining > 0. ORDER BY sales-order created_at ASC
 //      so older orders claim stock first (FIFO allocation).
-//   2. Pull live inventory_balances summed across ALL warehouses per
-//      (item_code, variant_key) bucket. B2C: operator chooses warehouse
-//      at DO time; we just need to know "is it somewhere".
+//   2. Pull live inventory_balances PER WAREHOUSE, keyed
+//      (warehouse_id, item_code, variant_key) — the same bucket the lines are
+//      built with at :471. A KL line draws only KL stock, a PJ line only PJ. A
+//      line with NO warehouse bound gets its own 'NOWH' bucket and therefore
+//      sees no stock at all, so it stays PENDING until one is assigned.
+//
+//      THIS PARAGRAPH USED TO SAY THE OPPOSITE — "summed across ALL warehouses
+//      per (item_code, variant_key) … we just need to know 'is it somewhere'".
+//      That was the ORIGINAL design; migration 0118 (Commander 2026-05-31)
+//      replaced it with the per-warehouse bucket the code below has used ever
+//      since, and this header was never updated. It is auto-loaded context for
+//      anyone reading this file, so it did not merely go stale — it actively
+//      told readers the wrong rule, and on 2026-08-22 it did exactly that: a
+//      written explanation of the allocator went to the owner saying stock is
+//      pooled across warehouses, sourced from these three lines rather than
+//      from :471 and :564 forty lines below.
 //   3. Walk lines in FIFO order. For each line, deduct its deliverable
 //      remaining from the bucket's remaining qty:
 //        if bucket has enough → mark line READY, decrement bucket
