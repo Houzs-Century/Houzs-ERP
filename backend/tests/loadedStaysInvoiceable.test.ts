@@ -58,23 +58,38 @@ describe('LOADED is invoiceable — the owner ruled, 2026-08-20', () => {
     expect(siTransferRefusal('CANCELLED')?.error).toBe('do_cancelled');
   });
 
-  /* THE OTHER RULING, which must NOT be collapsed into this one. #2557 fixed a
-     real defect: a LOADED DO counted as delivered, so a full delivery was
-     refused its own dispatch for over-delivering against itself. That half is
-     untouched and this asserts it, because the tempting "cleanup" is to merge
-     the two sets that agree on six of eight statuses. */
-  test('the DELIVERED question still excludes LOADED — #2557 is not undone', () => {
-    expect(DO_NOT_DELIVERED_STATES as readonly string[]).toContain('LOADED');
-    expect(doCountsAsDelivered('LOADED')).toBe(false);
+  /* THE OTHER RULING, WHICH NOW AGREES ON MEMBERSHIP AND IS STILL NOT THE SAME
+     RULE. Until 2026-08-22 the two sets differed by exactly LOADED, and this
+     block asserted that difference: #2557 had fixed a real defect where a LOADED
+     DO counted as delivered while its stock was still in the warehouse, so a
+     full delivery was refused its own dispatch for over-delivering against
+     itself.
+
+     The owner then moved the deduction to the confirm step — 「once confirmed就
+     代表出货了 就是直接扣库存」 — so a LOADED delivery's stock IS out, it MUST
+     count as delivered, and the two sets converged on {DRAFT, CANCELLED}. The
+     assertions below are INVERTED rather than deleted, because the thing worth
+     pinning is unchanged and is now harder to see: these are TWO QUESTIONS that
+     happen to have the same answer today. Folding them into one constant would
+     make the next ruling on either silently move the other, and this rule has
+     already been reversed three times. */
+  test('the DELIVERED question now INCLUDES LOADED — its stock has left', () => {
+    expect(DO_NOT_DELIVERED_STATES as readonly string[]).not.toContain('LOADED');
+    expect(doCountsAsDelivered('LOADED')).toBe(true);
     expect(doCountsAsDelivered('DISPATCHED')).toBe(true);
   });
 
-  test('the two sets differ, and differ by exactly LOADED', () => {
+  test('the two sets agree today, and are still two separate declarations', () => {
     const inv = new Set<string>(DO_NOT_INVOICEABLE_STATES);
     const del = new Set<string>(DO_NOT_DELIVERED_STATES);
-    const only = [...del].filter((s) => !inv.has(s));
-    expect(only).toEqual(['LOADED']);
+    expect([...del].filter((s) => !inv.has(s))).toEqual([]);
     expect([...inv].filter((s) => !del.has(s))).toEqual([]);
+    /* The pin that matters now that the values match: neither constant may be
+       written as an alias of the other. If this line ever needs deleting, the
+       merge it permits is the bug. */
+    const src = read('backend/src/scm/shared/do-shipped-states.ts');
+    expect(src).toContain("export const DO_NOT_INVOICEABLE_STATES = ['DRAFT', 'CANCELLED'] as const;");
+    expect(src).toContain('export const DO_NOT_DELIVERED_STATES = [...DO_PRESHIP_STATES, \'CANCELLED\'] as const;');
   });
 
   /* The wiring, read from source: a caller that asks the engine for the

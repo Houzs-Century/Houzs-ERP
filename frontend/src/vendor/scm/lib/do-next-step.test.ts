@@ -15,13 +15,21 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
    three remaining labels of the scm.do_status enum are its complement. Written
    this way so that a status ADDED to the shipped set arrives here on its own and
    this suite fails until the module has a sentence for it — a hand-copied list
-   would simply not notice, which is the whole reason the lint rule forbids one. */
-const DO_STATUSES: string[] = [...(DO_SHIPPED_STATES as string[]), 'DRAFT', 'LOADED', 'CANCELLED'];
+   would simply not notice, which is the whole reason the lint rule forbids one.
+
+   THE DERIVATION EARNED ITS KEEP ON 2026-08-22 and then showed its one flaw.
+   LOADED moved INTO the shipped set (the owner put the stock-out on the confirm
+   step), the complement below still added it by hand, and the vocabulary came
+   out with LOADED twice — caught here, which is the point. De-duplicated so the
+   complement is a complement whichever side a label sits on. */
+const DO_STATUSES: string[] = [
+  ...new Set([...(DO_SHIPPED_STATES as string[]), 'DRAFT', 'LOADED', 'CANCELLED']),
+];
 
 /** The shipped states from which the document is not yet signed off. */
-const PRE_SIGNATURE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).filter(
+const PRE_SIGNATURE: string[] = [...new Set(['LOADED', ...(DO_SHIPPED_STATES as string[]).filter(
   (s) => s !== 'SIGNED' && s !== 'DELIVERED' && s !== 'INVOICED',
-)];
+)])];
 
 /* These tests pin the two properties that decide whether this module still does
    its job in six months:
@@ -110,8 +118,13 @@ describe('siTransferBlockReason', () => {
 });
 
 describe('doAdvanceStep', () => {
-  it('confirms a draft to DISPATCHED, matching the mobile shell', () => {
-    expect(doAdvanceStep('DRAFT')).toEqual({ status: 'DISPATCHED', label: 'Confirm' });
+  it('confirms a draft to LOADED — the status the stock leaves on', () => {
+    /* The target changed on 2026-08-22 and the LABEL did not, which is the whole
+       correction: this control said "Confirm" while writing DISPATCHED, a status
+       every screen renders as "Shipped". The owner settled where the stock
+       leaves — 「once confirmed就代表出货了 就是直接扣库存」 — so Confirm writes
+       LOADED, and LOADED is where the inventory OUT fires. */
+    expect(doAdvanceStep('DRAFT')).toEqual({ status: 'LOADED', label: 'Confirm' });
   });
 
   it('offers no step from any state but DRAFT — "Mark signed" was removed (owner 2026-08-21)', () => {

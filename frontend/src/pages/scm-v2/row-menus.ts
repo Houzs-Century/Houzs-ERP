@@ -36,6 +36,7 @@
 import { buildRowMenu, dangerItem, type RowMenuItem } from "../../lib/rowMenu";
 import { transferToLabel } from "../../lib/convertScope";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
+import { DO_STOCK_OUT_STATES } from "../../vendor/shared/do-shipped-states";
 import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 /** What every menu needs from a row: something to identify it, a status, and
@@ -193,17 +194,56 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
    the entry being absent — a refusal somebody reads, rather than a capability
    that silently is not there.
 
-   NO OTHER STATUS ENTRIES. `Confirm` is the DRAFT rung and only that: it is
-   `doAdvanceStep`'s single step, the same one the detail page and the drawer
-   already offer. The rest of the ladder stays off this menu because the DO is
-   the one document where a status move has a STOCK consequence — the first
-   entry into a shipped state writes the inventory OUT — and DELIVERED belongs
-   to the driver's Proof-of-Delivery screen, which closes it WITH a signature.
+   `Confirm` is the DRAFT rung and only that: it is `doAdvanceStep`'s single
+   step, the same one the detail page and the drawer already offer.
 
-   HOLD IS NOT AN EXCEPTION TO THAT, because it is not a status (mig 0324,
-   2026-08-22). The rule above refuses status moves for their STOCK consequence;
-   a hold writes no movement of any kind — the DO got four columns and
-   scm.do_status was left untouched — so the objection does not reach it. */
+   AND THREE MANUAL STATUS MOVES — Mark Shipped / In Transit / Delivered — which
+   are a NAMED, DATED EXCEPTION to the rule the Sales Order menu above states: a
+   status a MACHINE derives is never offered to a person
+   (docs/modules/document-status-vocabulary.md §1b). Read that section before
+   touching this block; the exception is recorded there too, with what retires
+   each entry.
+
+   THE SENTENCE THIS REPLACES SAID THE REST OF THE LADDER STAYS OFF THIS MENU,
+   "because the DO is the one document where a status move has a STOCK
+   consequence". That was true and has stopped being true. Since 2026-08-22 the
+   inventory OUT fires on the FIRST entry into a shipped state, and that state is
+   Confirm (LOADED) — the owner moved it there. Every status these three entries
+   can reach is already past Confirm, so `deductInventoryForDo` finds this
+   delivery order's own OUT rows and returns without writing. The objection was
+   to a stock-MOVING action behind a right-click; these cannot move stock.
+
+   WHY THEY SATISFY §1b RATHER THAN WAIVING IT. That section decides membership
+   by asking whether a MACHINE derives the status from a fact. For these three,
+   TODAY, none does:
+
+     Shipped     (DISPATCHED)  the storekeeper QR scan that will write it does
+                               not exist. The DO print's existing QR lands on
+                               DoLoadScan, which writes LOADED (Confirmed).
+     In transit  (IN_TRANSIT)  the driver trip flow (MobileDeliveryPlanning) is
+                               its only writer and has never written a row — no
+                               delivery order has ever held this status.
+     Delivered   (DELIVERED)   the driver's Proof-of-Delivery screen (MobilePOD)
+                               DOES write it, the one machine of the three — but
+                               asked directly whether drivers use that app, the
+                               owner answered 「没有」. The manual entry is the
+                               stopgap for a machine that exists and is unused.
+
+   A status no machine writes is a decision a person makes, which is the same
+   test that keeps Hold and Cancel on the Sales Order menu. Each entry retires
+   itself the day its machine goes into use.
+
+   There is deliberately no `Mark Invoiced`: nothing in this codebase writes
+   `delivery_orders.status = 'INVOICED'`, so the label would mean "somebody
+   clicked it", not "this was billed".
+
+   HOLD IS A SEPARATE AXIS AGAIN, and neither of the two 2026-08-22 changes
+   weakens the other. A hold is not a status (mig 0324): the DO got four columns
+   and `scm.do_status` was left untouched, so a hold writes no stock movement of
+   any kind and the STOCK objection above never reached it. The three entries
+   above answer "where has this delivery got to"; the marker answers "did
+   somebody stop it". They are ANDed, never folded together — and every entry
+   here that #2661 gated on `!rowIsHeld` stays gated, these three included. */
 export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -211,33 +251,55 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   transferToSi: (r: R) => void;
   transferToDr: (r: R) => void;
   confirm: (r: R) => void;
+  setStatus: (r: R, status: string) => void;
   setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   canInvoice: (r: R) => boolean;
   canReturn: (r: R) => boolean;
   canConfirm: (r: R) => boolean;
   canCancel: (r: R) => boolean;
+  /* Write permission AND the hold, per row — the same shape as the three
+     predicates above, so #2661's `!rowIsHeld` gate reaches these entries too. It
+     was a bare boolean until the merge; a held delivery order must not be
+     offered a status move on this menu any more than it is offered a Confirm. */
+  canSetStatus: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  return (r) => buildRowMenu(
-    [
-      { label: "Open", onClick: () => h.open(r) },
-      { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
-    ],
-    [
-      h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
-      h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
-    ],
-    /* Confirm, Hold, Cancel — the same three, in the same order, as the other
-       four menus. The hold joins the DRAFT rung rather than sitting apart
-       because it is a DECISION a person makes, which is exactly what the note
-       above says the three exceptions have in common. */
-    [
-      h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
-      ...holdEntries(r, h.setHold),
-    ],
-    [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
-  );
+  return (r) => {
+    const s = norm(r.status);
+    /* Confirmed or later, from the SHARED set rather than a list typed here — a
+       fourth hand-written copy of the delivery ladder is the exact shape
+       check-duplicated-decisions hunts, and it caught this one when it was one.
+       DO_STOCK_OUT_STATES is also the RIGHT question: these entries are offered
+       precisely where the stock has already gone out, which is what makes them
+       unable to move it. DRAFT, CANCELLED and any status this file does not
+       recognise fall out by not being members — naming a step for an unknown
+       state is the COMPLETED mistake, and offering nothing is the cheap answer. */
+    const canMark = h.canSetStatus(r) && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
+    return buildRowMenu(
+      [
+        { label: "Open", onClick: () => h.open(r) },
+        { label: "Edit", onClick: () => h.edit(r) },
+        { label: "Print", onClick: () => h.print(r) },
+      ],
+      [
+        h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
+        h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
+      ],
+      /* Confirm, the ladder, Hold, then Cancel — Confirm first and Hold last, so
+         the "same three, same order" shape the other four menus keep is intact
+         with the three manual rungs sitting inside it in ladder order. */
+      [
+        h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
+        /* The status the row already carries is left out: re-writing it is a
+           no-op the operator would read as a real choice. */
+        canMark && s !== "DISPATCHED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "DISPATCHED") },
+        canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
+        canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
+        ...holdEntries(r, h.setHold),
+      ],
+      [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
+    );
+  };
 }
 
 /* ── Purchase Order ─────────────────────────────────────────────────────────

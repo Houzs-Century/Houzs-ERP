@@ -437,8 +437,8 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
-      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0. LOADED joined the set on 2026-08-22 (owner: confirming a delivery order is what takes the stock out), so this entry's KEY changed with the values; the vendored-twin reason it records did not."
     },
     {
       "check": "D1",
@@ -1134,6 +1134,26 @@
       "check": "D2",
       "key": "CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP",
       "why": "THE SALES ORDER LABEL MAP VERSUS ITS TAB BUCKETS, differing by CLOSED and SHIPPED. The label map must be able to name EVERY enum label for ever, including retired ones: Postgres cannot DROP VALUE, so a legacy row carrying CLOSED or SHIPPED still has to render a word rather than a raw enum key. The buckets list only what has a tab TODAY. Retiring a status removes its tab, never its label — that asymmetry is deliberate and is what keeps a retired row readable."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "THE DO SHIPPED STATES against the CONSIGNMENT NOTE's rendered status flow, differing by CANCELLED. One is the stock-out write trigger, the other is the ladder a detail screen draws; a cancelled note is a rung you can see and never a state whose entry deducts stock. Consignment is owned separately and is deliberately NOT changed here — see the delivery-order module guide's follow-up note. Pair appeared 2026-08-22 when LOADED joined the shipped set and the two lists came within one member of each other."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO QUESTIONS ABOUT ONE LADDER, both declared in do-shipped-states.ts and differing by exactly INVOICED: DO_SHIPPED_STATES asks whether the stock has left, SI_TRANSFERABLE_DO_STATES asks whether a Sales Invoice may be raised. That file's own header states at length why folding them would be the expensive kind of tidy — dropping INVOICED from the shipped set would tell the ledger an INVOICED delivery's stock never left. Pair appeared 2026-08-22 when LOADED joined the shipped set."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "THE WHOLE VOCABULARY against the STOCK-MOVING SUBSET of it, differing by DRAFT and CANCELLED. DO_STATUSES is every legal scm.do_status label and is BUILT from DO_SHIPPED_STATES in the same file, so these cannot drift: one is literally derived from the other. Pair appeared 2026-08-22 when LOADED joined the shipped set."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "A RENDERED STATUS MAP against the stock-out write trigger, differing by CANCELLED and RETURNED. A pill map covers every status a row can arrive in, including two the deduction never fires on; it is how a status is displayed, not a second answer to which ones move stock. Same reasoning as the sibling rendering entries above. Pair appeared 2026-08-22 when LOADED joined the shipped set."
     }
   ]
 }

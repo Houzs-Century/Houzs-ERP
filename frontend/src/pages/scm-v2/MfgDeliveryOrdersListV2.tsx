@@ -983,9 +983,11 @@ export function MfgDeliveryOrdersListV2() {
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToSi: doConvertToSi, transferToDr: doConvertToDr,
     confirm: doAdvance, cancel: doCancelDo, setHold: setDoHold,
+    setStatus: (r, status) => updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) }),
     canInvoice: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsInvoiceable(r.status),
     canReturn: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsDelivered(r.status),
     canConfirm: (r) => canWriteDo && !rowIsHeld(r) && doAdvanceStep(r.status) !== null,
+    canSetStatus: (r) => canWriteDo && !rowIsHeld(r),
     canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
   });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could

@@ -28,9 +28,12 @@
  *
  * WHAT DELIBERATELY KEEPS ITS OWN WORD, because it is a DIFFERENT event and not
  * a second name for this one:
- *   DO  DISPATCHED = "Shipped"  — the stock has left the building. LOADED is the
- *       delivery order's confirm step (document real, nothing moved yet); the
- *       first entry into DISPATCHED is what writes the inventory OUT.
+ *   DO  DISPATCHED = "Shipped"  — the goods are on the road. LOADED is the
+ *       delivery order's confirm step and reads "Confirmed"; since 2026-08-22 it
+ *       is ALSO where the inventory OUT fires (owner: confirming a delivery
+ *       order is what takes the stock out). So the two words no longer split
+ *       "booked" from "moved" — they split CONFIRMED from ON ITS WAY, and
+ *       DISPATCHED keeps its own word because that is still a different event.
  *   SI  PAID / PARTIALLY_PAID   — money, not commitment.
  *   PO  PARTIALLY_RECEIVED / RECEIVED — progress, not commitment.
  *

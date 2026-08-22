@@ -217,11 +217,43 @@ three that no machine can derive, because each is a DECISION:
 | **Hold** | a person decided to pause this document |
 | **Cancel** | a person decided this document should not happen |
 
-Everything else is written from a fact and would be overwritten by the next
-sweep — `IN_PRODUCTION` from a processing date, `SHIPPED` from a delivery order,
-`READY_TO_SHIP` from stock allocation, `DELIVERED` from delivery coverage,
-`INVOICED` from invoice coverage. Hand-setting one changes the LIST, not the
-fact, so the only lasting effect is a window in which the screen lies.
+### What a machine actually derives on a Sales Order — CORRECTED 2026-08-22
+
+> **This table replaces one that was wrong.** The version merged with #2655 named
+> five machine-derived statuses. Re-checked against `origin/main` on 2026-08-22,
+> two of the five have no writer at all and a third never had one. The old table
+> described what the system was MEANT to do and stated it as fact — the same
+> failure this repo keeps paying for, and the correction is the useful part, so
+> it is recorded rather than quietly overwritten.
+
+| status | what writes it today | derived? |
+|---|---|---|
+| `READY_TO_SHIP` | `lib/so-stock-allocation.ts` — advances a CONFIRMED / IN_PRODUCTION order when every main line is ship-ready, and regresses it when one is not | **yes** |
+| `DELIVERED` | `lib/so-delivery-sync.ts` — advances when delivery orders fully cover the lines, releases back to READY_TO_SHIP when they stop covering | **yes** |
+| `IN_PRODUCTION` | nothing. A person sets it through `PATCH /:docNo/status` (`routes/mfg-sales-orders.ts`). `lib/so-processing-date.ts` names it only in comments, and the `autoProceed` / `proceeded_at` stamp was removed on 2026-08-18 | **no** |
+| `SHIPPED` | nothing, anywhere. Every occurrence in `backend/src` is a read predicate, a bucket or a rank — `so-delivery-sync.ts` only READS it. Its tab folded into Delivered in #2655, so on a Sales Order it is a dead label | **no** |
+| `INVOICED` | nothing. No path writes a Sales Order to this status | **no** |
+
+**The rule is unaffected and the three buttons stay removed** — but the honest
+reason is now two reasons rather than one:
+
+- `READY_TO_SHIP` and `DELIVERED` are genuinely machine-written, so the original
+  argument holds exactly: hand-setting one changes the LIST, not the fact, and
+  the next sweep overwrites it. The only lasting effect is a window in which the
+  screen lies.
+- `IN_PRODUCTION`, `SHIPPED` and `INVOICED` are not written by anything, so the
+  argument for THEM is different: offering a button for a status the system
+  makes no use of would put a value on screen that nothing downstream reads.
+
+**The Processing Date is the real gate, and it is independent of the status.**
+This is the most useful thing the re-check turned up and it was written down
+nowhere. In `routes/mfg-sales-orders.ts` a Processing Date is what RELEASES an
+order to purchasing, and the 422 completeness gate beside it is what refuses.
+`IN_PRODUCTION` as a STATUS currently decides nothing — the date does. That is
+why wiring the date to the status would give the status a meaning it does not
+have today, and it is why the owner wants it: 「应该是只要有processingdate 就会进
+in production 不是吗」. **PLANNED, NOT BUILT** — he also said 「这个事之后才用的」,
+so nothing here builds it.
 
 This is the mainstream ERP shape, not a local preference: SAP derives an order's
 overall status from item processing status and gives a person a block and a
@@ -230,6 +262,43 @@ person Close and Cancel. The human button list is short everywhere, for this
 reason.
 
 See `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status.md`.
+
+### EXCEPTION — the Delivery Order's three manual moves (2026-08-22, temporary)
+
+`Mark Shipped`, `Mark In Transit` and `Mark Delivered` ARE offered on the
+Delivery Order right-click menu (`frontend/src/pages/scm-v2/row-menus.ts`,
+`deliveryOrderRowMenu`). This is a deliberate, dated exception, and it satisfies
+the rule's own criterion rather than waiving it: **a status a machine derives is
+never offered to a person, and today no machine writes any of these three.**
+
+The owner asked for them as groundwork: 「保留全部状态 我可以convert，可是库存当我
+开了DO 就是confirmed的时候就直接扣。然后我的shipped in transit delivered 我手动维
+护，之后我才弄自动」, and confirmed that is what they are — 「是的 因为现在完全没有
+这些功能 提前铺路而已」.
+
+**They cannot move stock, which is what makes a right-click acceptable on the one
+document where a status move normally could.** Since 2026-08-22 the inventory OUT
+fires on the first entry into a shipped state, and that state is `LOADED`
+(Confirmed). Every status these three entries can reach is already past Confirm,
+so the deduction finds the delivery order's own OUT rows and returns without
+writing. They are withheld from a `DRAFT` — where they WOULD be the deducting hop
+— and from a `CANCELLED` delivery order, which the server refuses every
+transition out of.
+
+#### The end state each entry is temporary against
+
+| status | what will write it, once built | what retires the manual entry |
+|---|---|---|
+| **Shipped** (`DISPATCHED`) | the storekeeper scanning a QR on the delivery order print | that scan flow existing. The print's existing QR is a different one — it lands on `DoLoadScan` and writes `LOADED` |
+| **In transit** (`IN_TRANSIT`) | the driver trip flow, `frontend/src/mobile/MobileDeliveryPlanning.tsx` | that flow being put into use. It has never written a row |
+| **Delivered** (`DELIVERED`) | the driver's Proof-of-Delivery signature, `frontend/src/mobile/MobilePOD.tsx` — the ONE writer that exists today | already has a machine. The manual entry is the stopgap for sites not using the driver app, and asked directly whether drivers use it the owner answered 「没有」 |
+| **Invoiced** (`INVOICED`) | **PLANNED — NOT BUILT.** Reaching Delivered would raise the Sales Invoice automatically: 「然后delivered了之后Invoice 就可以自动开了 这个之后再弄」 | that automation existing |
+
+**There is no `Mark Invoiced` entry and none is to be added.** The owner did not
+ask for one, and `frontend/src/vendor/scm/lib/do-next-step.ts` already records
+the measurement behind that: nothing in this codebase writes
+`delivery_orders.status = 'INVOICED'`, so the label means "somebody clicked it",
+not "this was billed".
 
 ### `SHIPPED` folds into Delivered on the Sales Order
 

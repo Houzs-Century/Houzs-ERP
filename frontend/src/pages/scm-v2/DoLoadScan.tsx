@@ -13,13 +13,20 @@
 //   LOADED      → "already loaded" (a re-scan is the EXPECTED case on a busy
 //                 dock — two people, one pallet — so it reads as confirmation,
 //                 never as an error).
-//   shipped+    → "already dispatched" — nothing to do here; stock left when
-//                 the DO was dispatched, not when it was loaded.
+//   shipped+    → "already dispatched" — nothing to do here.
 //   CANCELLED   → says so.
 //
-// Deliberately NOT here: any stock movement. Loading is physical staging;
-// the inventory OUT fires on DISPATCHED (shared/do-shipped-states.ts), and
-// this page must never grow a reason to change that.
+// THIS SCREEN MOVES STOCK, SINCE 2026-08-22. It did not before, and the copy on
+// it said so in as many words. The owner moved the deduction to the confirm step
+// — LOADED is now a member of DO_SHIPPED_STATES — so pressing [Confirm loading]
+// writes the inventory OUT for the whole delivery order. The wording below was
+// corrected with the behaviour rather than left to age, because the person
+// reading it is standing at the dock deciding whether to press it.
+//
+// A repeat scan still writes nothing: LOADED short-circuits to the confirmation
+// card above the button, and deductInventoryForDo's existence check plus the
+// uq_inv_mov_do_source_v2 unique index make a second deduction impossible even
+// if it did not.
 // ----------------------------------------------------------------------------
 import { useMemo } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
@@ -51,8 +58,8 @@ export const DoLoadScan = () => {
     if (!id) return { tone: 'warn' as const, title: 'No delivery order in this link', body: 'The QR did not carry a delivery order. Re-print the DO and scan the code on the new copy.' };
     if (detailQ.isLoading) return null;
     if (detailQ.isError || !doRow) return { tone: 'warn' as const, title: 'Delivery order not found', body: 'This link does not match a delivery order in the company you are signed into. Check the company switcher, or re-print the DO.' };
-    if (justLoaded || status === 'LOADED') return { tone: 'ok' as const, title: `${doRow.do_number} is loaded`, body: justLoaded ? 'Loading confirmed — the dispatcher can send the truck.' : 'Loading was already confirmed on this delivery order — a repeat scan writes nothing new.' };
-    if (SHIPPED.has(status)) return { tone: 'info' as const, title: `${doRow.do_number} has already been dispatched`, body: 'The goods left the warehouse when this order was dispatched — there is no loading step left to confirm.' };
+    if (justLoaded || status === 'LOADED') return { tone: 'ok' as const, title: `${doRow.do_number} is loaded`, body: justLoaded ? 'Loading confirmed and the goods are out of warehouse stock — the dispatcher can send the truck.' : 'Loading was already confirmed on this delivery order — a repeat scan writes nothing new.' };
+    if (SHIPPED.has(status)) return { tone: 'info' as const, title: `${doRow.do_number} has already been dispatched`, body: 'This delivery order was confirmed earlier and its goods are already out of warehouse stock — there is no loading step left to confirm.' };
     if (status === 'CANCELLED') return { tone: 'warn' as const, title: `${doRow.do_number} is cancelled`, body: 'A cancelled delivery order is not loaded. Check with the dispatcher before putting anything on the truck.' };
     return null; // DRAFT → show the action
   }, [id, detailQ.isLoading, detailQ.isError, doRow, status, justLoaded]);
@@ -101,8 +108,8 @@ export const DoLoadScan = () => {
             <PackageCheck size={18} /> {updateStatus.isPending ? 'Confirming…' : 'Confirm loading'}
           </Button>
           <p className="text-xs text-ink-secondary">
-            This records that the goods are on the truck. Stock leaves the warehouse when the
-            dispatcher sends the truck (Dispatch), not now.
+            This confirms the delivery order and takes the goods out of warehouse stock. The
+            dispatcher marks it Shipped when the truck leaves.
           </p>
           {updateStatus.isError && (
             <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">

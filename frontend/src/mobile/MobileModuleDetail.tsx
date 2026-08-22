@@ -1018,8 +1018,8 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
   });
 
   switch (moduleKey) {
-    // DO — PATCH /:id/status. A fresh DO is DRAFT (confirm = DRAFT→DISPATCHED) or
-    // DISPATCHED; the driver may mark it IN_TRANSIT ("On the way"). SIGNED and
+    // DO — PATCH /:id/status. A fresh DO is DRAFT (confirm = DRAFT→LOADED) or
+    // LOADED; the driver may mark it IN_TRANSIT ("On the way"). SIGNED and
     // DELIVERED are the Proof-of-Delivery screen's job (it closes the delivery
     // WITH a signature), so they are never offered here. The "Mark Signed" rung
     // was REMOVED 2026-08-21 (owner) — a bare status button is not how a delivery
@@ -1027,9 +1027,17 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     case "delivery-orders-mfg": {
       if (st === "CANCELLED" || st === "DELIVERED" || st === "INVOICED") return out;
       const path = `/delivery-orders-mfg/${enc}/status`;
+      /* CONFIRM LANDS ON LOADED, not DISPATCHED — corrected 2026-08-22 with the
+         desktop's identical fault. This rung said `DRAFT: ["DISPATCHED",
+         "Confirm"]`: labelled Confirm, writing the status every screen renders
+         as "Shipped", so the phone's Confirm skipped Confirmed exactly the way
+         the office button did. LOADED is where the stock leaves now (owner:
+         「once confirmed就代表出货了 就是直接扣库存」), so this is the same
+         event under its right name. The LOADED→DISPATCHED rung stays: that is a
+         real, separate step — the goods actually going on the road. */
       const next: Record<string, [string, string]> = {
         "": ["DISPATCHED", "Dispatch"],
-        DRAFT: ["DISPATCHED", "Confirm"],
+        DRAFT: ["LOADED", "Confirm"],
         LOADED: ["DISPATCHED", "Dispatch"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
       };
