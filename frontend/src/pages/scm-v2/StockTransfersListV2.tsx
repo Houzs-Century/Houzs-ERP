@@ -195,6 +195,12 @@ export function StockTransfersListV2() {
   const goNew = () => navigate("/scm/stock-transfers/new");
   const goWarehouses = () => navigate("/scm/warehouses");
   const goDetail = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}`);
+  /* Print opens the detail page's preview via ?print=1 — the same contract the
+     other eight documents' row menus use, and the reason it works is that the
+     detail page now consumes the param (useOpenPrintPreviewFromUrl). Rendering
+     the PDF from a LIST row is not possible here anyway: the row carries the
+     warehouse pair and a line COUNT, never the lines. */
+  const goPrint = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?print=1`);
   const doCancel = (r: StockTransferRow) => {
     if (window.confirm(`Cancel transfer ${r.transfer_no}? Stock movements will be reversed.`)) {
       cancelTransfer.mutate(r.id);
@@ -208,6 +214,7 @@ export function StockTransfersListV2() {
      that can only fail. */
   const transferContextMenu = stockTransferRowMenu<StockTransferRow>({
     open: goDetail,
+    print: goPrint,
     cancel: doCancel,
     canCancel: (r) => r.status.toUpperCase() === "POSTED",
   });

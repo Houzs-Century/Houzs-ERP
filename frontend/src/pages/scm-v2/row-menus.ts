@@ -526,10 +526,23 @@ export function deliveryReturnRowMenu<R extends StatusRow>(h: {
 }
 
 /* ── Stock Transfer ─────────────────────────────────────────────────────────
-   OPEN ONLY, then Cancel. There is no Edit and no Print because there is
-   nothing to call: `StockTransferDetail.tsx` is read-only ("no edits post-0078")
-   and neither the list nor the detail page has ever had a print handler. An
-   entry pointing at a route that does not exist is worse than a shorter menu.
+   OPEN and PRINT, then Cancel. Still no Edit: `StockTransferDetail.tsx` is
+   read-only ("no edits post-0078"), so there is no `?edit=1` route to point at.
+
+   PRINT ARRIVED 2026-08-22. PROVENANCE, corrected 2026-08-23. This used to cite two owner quotes
+   (「right click全部也要有可以print SI DO 之类的」 and 「不是就是print PDF 啊
+   print documentation」). NEITHER appears in any message the owner sent in the
+   session that produced this change — they came from the agent's brief, not
+   from him, and this repo is PUBLIC, so a fabricated ruling is a false record
+   of what he decided. The CHANGE stands on its own and is unchanged: the Stock
+   Transfer and the Stock Take were the last two documents in the system with no
+   print handler on any surface. The CITATION did not, so it is gone.
+
+   This
+   paragraph used to say Print was absent because "neither the list nor the
+   detail page has ever had a print handler", which was true and was the gap,
+   not the reason. `vendor/scm/lib/stock-transfer-pdf.ts` is the handler now,
+   and it goes through `PrintPreviewModal` like every other document.
 
    NO CONFIRM: a transfer is POSTED at the moment it is created — atomic, as the
    list's own header comment says — so the confirm step it would name has
@@ -539,20 +552,32 @@ export function deliveryReturnRowMenu<R extends StatusRow>(h: {
    written, complete with its confirmation, and called from nowhere. */
 export function stockTransferRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
+  print: (r: R) => void;
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
-    [{ label: "Open", onClick: () => h.open(r) }],
+    [
+      { label: "Open", onClick: () => h.open(r) },
+      { label: "Print", onClick: () => h.print(r) },
+    ],
     [h.canCancel(r) && dangerItem("Cancel Stock Transfer", () => h.cancel(r))],
   );
 }
 
 /* ── Stock Take ─────────────────────────────────────────────────────────────
-   Open and Cancel, for the same reasons as the Stock Transfer: no edit route,
-   no print handler, and a `doCancel` that existed and was reachable from
-   nothing.
+   Open, Print and Cancel. No Edit, for the same reason as the Stock Transfer:
+   counting happens in place on the detail sheet and there is no `?edit=1`
+   route. Cancel was a `doCancel` that existed and was reachable from nothing.
+
+   PRINT ARRIVED 2026-08-22 with the Stock Transfer's, on the same owner ask.
+   `vendor/scm/lib/stock-take-pdf.ts` prints an OPEN take as the count sheet and
+   a POSTED one as the variance record; a BLIND take prints as a count sheet
+   with no system column, because the SERVER has already stripped those fields
+   from the payload for anyone without `scm.stock_take.supervise`. The entry is
+   offered on every row: printing reads, it does not write, and there is no
+   state in which a person may not have this document on paper.
 
    NO CONFIRM, and this one IS a judgement rather than an absence. Posting a
    stock take books an ADJUSTMENT movement per non-zero-variance line, and the
@@ -568,12 +593,16 @@ export function stockTransferRowMenu<R extends StatusRow>(h: {
    words. `canCancel` therefore means OPEN, not "not already cancelled". */
 export function stockTakeRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
+  print: (r: R) => void;
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
-    [{ label: "Open", onClick: () => h.open(r) }],
+    [
+      { label: "Open", onClick: () => h.open(r) },
+      { label: "Print", onClick: () => h.print(r) },
+    ],
     [h.canCancel(r) && dangerItem("Cancel Stock Take", () => h.cancel(r))],
   );
 }
