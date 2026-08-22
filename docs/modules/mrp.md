@@ -306,6 +306,37 @@ supplier on a parent row would have shown one module's binding against all three
 
 ## 4. Buckets and allocation
 
+### What is covering a line — ONE rule, two questions (2026-08-21)
+
+A line's `source` is `stock`, `po` or `shortage`, and both rules live in
+`scm/shared/mrp-alloc-source.ts`, mirrored byte-identically into
+`frontend/src/vendor/shared/`:
+
+| function | the question | who wins |
+| --- | --- | --- |
+| `allocSourceOf` | is this demand COVERED, and by what? | a shortage |
+| `allocSourceCoveringPo` | is a purchase order INVOLVED? | a named PO, even when short |
+
+The second is what the PURCHASE side asks (`SoLineCoverage` /
+`PoCoverageAssignment` — advisory), where a partly-covering PO is the very thing
+being reported. The two therefore disagree on one input — short AND covered —
+and that is deliberate; it used to be an undocumented disagreement between two
+copies six hundred lines apart in `routes/mrp.ts`.
+
+**Both arms test the NUMBER, not "was a PO involved."** A PO that cannot name
+itself is missing data, not an order. There were THREE hand-written copies of
+this rule, and the third — `Mrp.tsx:307`, which synthesises the sofa-SET rows
+because the backend returns sets in a different shape — had only two arms. It
+was missing `stock`, so a sofa set with no shortage and no covering PO (received,
+in the warehouse) was labelled `po`, and the chip printed the word **"ordered"**
+because it had no number to show.
+
+`'ordered'` was never a computed state: it was the fallback for
+`source === 'po'` with no PO. It is deleted from both the desktop table and the
+mobile card, because `source === 'po'` now guarantees a number. Trace:
+`docs/bugs/0513-a-sofa-set-already-in-the-warehouse-said-ordered.md`.
+
+
 - Bucket key = `(warehouse | item_code | variant_key)` (`composite()`;
   `WH_NONE` for unresolved warehouse). Variant key via `computeVariantKey` —
   byte-identical to `inventory_balances.variant_key`.

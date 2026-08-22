@@ -1,0 +1,67 @@
+name: Backfill SO processing date (DRY-RUN gated)
+
+# The owner's rule, restated 2026-08-21: 有 delivery date 就必须有 processing
+# date. 28 imported 2990 orders break it — all created 2026-06-11..2026-07-12,
+# none in the last 30 days (probe-so-date-xor, run 32487477175). They came in
+# through the SO mirror, which is deliberately exempt from the pair gate so one
+# legacy order cannot wedge 2990's outbox queue behind it.
+#
+# What each row gets, his words: "就用 PO 的前一天放" for an order that raised a
+# purchase order, "那就用开单的日期" for one that did not. A row whose dates
+# would end up out of order (processing after delivery) is REFUSED and listed
+# rather than given an invented value.
+#
+# DEFAULT IS DRY-RUN, and the dry run performs the real UPDATE inside a
+# transaction it then rolls back — so what you read is what would happen, not a
+# description of it. Applying additionally requires the CONFIRM phrase.
+#
+# See backend/scripts/backfill-so-processing-date-from-po.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (rolls back) or apply (writes)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: 'apply only: type  I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (2 = 2990, 1 = Houzs Century)"
+        required: false
+        default: "2"
+        type: string
+
+concurrency:
+  group: backfill-so-processing-date
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Plan (and, on apply, write) the processing dates
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/backfill-so-processing-date-from-po.mjs

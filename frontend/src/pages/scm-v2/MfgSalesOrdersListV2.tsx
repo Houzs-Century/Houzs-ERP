@@ -20,6 +20,9 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { salesOrderRowMenu } from "./row-menus";
+import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -61,8 +64,13 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
+import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
+import { holdPrompt } from "./use-hold-action";
+import { makeCloseAction } from "./use-close-action";
+import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -87,7 +95,7 @@ import { formatPhone } from "@2990s/shared/phone";
 // .tsx) has 60+ fields; we pluck what the redesign shows. Everything is
 // typed loosely as any-safe (nullable) because the backend legacy fields.
 
-type SoRow = {
+type SoRow = HoldFields & {
   doc_no: string;
   so_date: string;
   debtor_name: string;
@@ -170,39 +178,7 @@ type SoRow = {
   deposit_sen?: number;
 };
 
-/* Every status the backend vocabulary carries (mfg-sales-orders.ts
-   SO_STATUSES), in lifecycle order — the strip shows ALL of them with live
-   counts so the buckets always sum to All and no order can look lost inside a
-   hidden status (owner 2026-07-24: "ALL 68 but CONFIRMED 35 — where did they
-   go?"). `other` is the server's catch-all for legacy/unknown spellings and
-   only earns a pill when its count is non-zero. */
-type StatusTab =
-  | "all"
-  | "draft"
-  | "confirmed"
-  | "in_production"
-  | "ready_to_ship"
-  | "shipped"
-  | "delivered"
-  | "invoiced"
-  | "closed"
-  | "on_hold"
-  | "cancelled"
-  | "other";
 
-const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "draft", label: "Draft" },
-  { value: "confirmed", label: "Confirmed" },
-  { value: "in_production", label: "In Production" },
-  { value: "ready_to_ship", label: "Ready to Ship" },
-  { value: "shipped", label: "Shipped" },
-  { value: "delivered", label: "Delivered" },
-  { value: "invoiced", label: "Invoiced" },
-  { value: "closed", label: "Closed" },
-  { value: "on_hold", label: "On Hold" },
-  { value: "cancelled", label: "Cancelled" },
-];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -222,30 +198,11 @@ const refOf = (r: SoRow): string =>
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
 // dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
 const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("BEDFRAME")) return "accent";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* This surface carries the line's CATEGORY, so it uses the accurate entry
+   point: colour and label then share one bucket rule and cannot disagree.
+   ../../lib/brandingTone has the whole story. */
+const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
-// Status → tone + label. The upstream `status` string is one of the SO
-// lifecycle values plus a couple of AutoCount-legacy synonyms. Anything not
-// matched falls through as neutral.
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string }> = {
-  draft: { tone: "warning", label: "Draft" },
-  confirmed: { tone: "success", label: "Confirmed" },
-  cancelled: { tone: "error", label: "Cancelled" },
-  cancel: { tone: "error", label: "Cancelled" },
-  invoiced: { tone: "success", label: "Invoiced" },
-  delivered: { tone: "success", label: "Delivered" },
-  completed: { tone: "success", label: "Completed" },
-};
-
-const statusFor = (s: string): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
-  STATUS_TONE[s?.toLowerCase() ?? ""] ?? { tone: "neutral", label: s || "—" };
 
 // ─── Salesperson dropdown / split-menu ──────────────────────────────────────
 
@@ -397,13 +354,13 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.doc_no}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {r.debtor_name || "—"}
             </div>
             <div className="mt-1 flex items-center gap-2">
-              <Badge tone={brandTone(brand)} variant="soft" size="xs">
+              <Badge tone={brandTone(r)} variant="soft" size="xs">
                 {brand}
               </Badge>
               <span className="text-[11.5px] text-ink-muted">{fmtDate(r.so_date)}</span>
@@ -551,7 +508,7 @@ function DetailDrawer({
               {/* customer + brand + date */}
               <div className="text-[19px] font-bold text-ink">{row.debtor_name || "—"}</div>
               <div className="mt-1.5 flex items-center gap-2.5">
-                <Badge tone={brandTone(brandOf(row))} variant="soft" size="xs">
+                <Badge tone={brandTone(row)} variant="soft" size="xs">
                   {brandOf(row)}
                 </Badge>
                 <span className="text-[12.5px] text-ink-muted">
@@ -708,12 +665,11 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (s === "confirmed") {
+                if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
-                  /* Was "Deliver" until 2026-08-17: the SO already reports a
-                     "Delivered" STATUS, so an action of the same name blurred
-                     the two. Statuses report; buttons act. */
+                  /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
+                     "Delivered" STATUS, and statuses report while buttons act. */
                   return (
                     <Button
                       variant="primary"
@@ -1080,6 +1036,7 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
@@ -1205,6 +1162,44 @@ export function MfgSalesOrdersListV2() {
       }
     );
   };
+
+  /* The four statuses the route accepted and no screen ever sent — the owner's
+     own lifecycle, minus the two the machine writes. See row-menus.ts. */
+  const setSoStatus = async (r: SoRow, status: string) => {
+    if (!(await askConfirm({
+      title: `${r.doc_no} → ${status.replace(/_/g, " ").toLowerCase()}?`,
+      body: "This changes the order's status. It does not move stock or create any document.",
+      confirmLabel: "Change status",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status, expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
+     Cancel and they do opposite things to the money. Both live in ./use-close-action. */
+  const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
+  const doCancelSo = async (r: SoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.doc_no}?`,
+      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
+      confirmLabel: "Cancel Sales Order",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
+     wording lives in ./use-hold-action; this screen runs it through askConfirm
+     because every other action here does. */
+  const setSoHold = async (r: SoRow, onHold: boolean) => {
+    if (!(await askConfirm(holdPrompt(r.doc_no, onHold)))) return;
+    setHold.mutate({ key: r.doc_no, onHold });
+  };
+  const soContextMenu = salesOrderRowMenu<SoRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+  });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
@@ -1431,7 +1426,7 @@ export function MfgSalesOrdersListV2() {
       render: (r) => {
         const b = brandOf(r);
         return (
-          <Badge tone={brandTone(b)} variant="soft" size="xs">
+          <Badge tone={brandTone(r)} variant="soft" size="xs">
             {b}
           </Badge>
         );
@@ -1447,11 +1442,8 @@ export function MfgSalesOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -1701,7 +1693,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "customer_delivery_date",
       group: "Logistics",
-      label: "Customer Delivery Date",
+      label: "Delivery Date",
       width: "160px",
       defaultHidden: true,
       disableSort: true,
@@ -2251,6 +2243,7 @@ export function MfgSalesOrdersListV2() {
               onToggle: toggleSelect,
               onToggleAll: toggleSelectAll,
             }}
+            contextMenu={soContextMenu}
             exportName="sales-orders"
             serverSort
             onSortChange={setSortAndReset}

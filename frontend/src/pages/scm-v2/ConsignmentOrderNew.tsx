@@ -32,6 +32,7 @@ import {
 } from '../../vendor/scm/lib/consignment-order-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
@@ -55,6 +56,11 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import {
+  cascadeMasterVariants,
+  seedableMasterVariants,
+  type MasterVariantSnapshot,
+} from '../../vendor/scm/lib/so-variant-cascade';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
@@ -97,7 +103,7 @@ export const ConsignmentOrderNew = () => {
   // Houzs-flavoured: gate on the flat permission key `scm.so.attribute_other`
   // (the 2990 bridge always reports either super_admin or sales). Owner + IT
   // Admin pass via `*`; grant to other positions via Team > Positions.
-  const { can } = useHouzsAuth();
+  const { user: currentUser, can } = useHouzsAuth();
   const canChangeSalesperson = can('scm.so.attribute_other');
 
   const customerTypeOptsQ  = useSoDropdownOptions('customer_type');
@@ -247,39 +253,36 @@ export const ConsignmentOrderNew = () => {
   }, [deliveryDate]);
 
   /* Master-follower cascade for line variants — LINE 1 of each category drives
-     variant changes on subsequent lines unless a follower overrode a key. */
-  useEffect(() => {
-    const masterByCategory: Record<string, Record<string, unknown>> = {};
-    const masterIdx: Record<string, number> = {};
-    lines.forEach((l, idx) => {
-      if (!l.itemGroup) return;
-      if (masterIdx[l.itemGroup] !== undefined) return;
-      masterIdx[l.itemGroup] = idx;
-      if (l.variants) masterByCategory[l.itemGroup] = l.variants;
-    });
+     the rest. The rule itself is the shared layer (vendor/scm/lib/
+     so-variant-cascade); this is only the wiring, exactly as SalesOrderNew and
+     MobileNewSO wire it. This page carried a FOURTH hand-written copy until
+     2026-08-21; it had drifted three ways from the rule the SO pages follow:
 
+       - `overriddenKeys` vetoed the cascade, so a follower line touched once
+         was sticky FOREVER and line 1 could never correct it again. Owner
+         2026-08-21: "第一个沙发再改就拉回去" — the master's latest change wins.
+       - `buildKey` was inherited like any other key, forging a sofa
+         compartment on an unrelated line (free-gift trigger + PDF grouping).
+       - `remark` was inherited category-wide, which it must never be.
+
+     Consignment orders never mint a buildKey (only the SO create path does),
+     so the fabric-identity scoping in the shared rule is inert here rather
+     than load-bearing — but the module is the one place that rule lives, and
+     a fifth copy is how the three drifts above happened in the first place. */
+  const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
+  useEffect(() => {
+    const { variants, masters } = cascadeMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      masterSnapshotRef.current,
+      /* Same answer as the desktop SO page: every category cascades. */
+      null,
+    );
+    masterSnapshotRef.current = masters;
     let didUpdate = false;
     const next = lines.map((l, idx) => {
-      if (!l.itemGroup) return l;
-      if (masterIdx[l.itemGroup] === idx) return l;
-      const masterVariants = masterByCategory[l.itemGroup];
-      if (!masterVariants) return l;
-      const cur = (l.variants ?? {}) as Record<string, unknown>;
-      const overridden = new Set(l.overriddenKeys ?? []);
-      const patch: Record<string, unknown> = {};
-      let hasChange = false;
-      for (const k of Object.keys(masterVariants)) {
-        if (overridden.has(k)) continue;
-        const masterVal = masterVariants[k];
-        if (masterVal === undefined || masterVal === null || masterVal === '') continue;
-        if (cur[k] !== masterVal) {
-          patch[k] = masterVal;
-          hasChange = true;
-        }
-      }
-      if (!hasChange) return l;
+      if (variants[idx] === l.variants) return l;
       didUpdate = true;
-      return { ...l, variants: { ...cur, ...patch } };
+      return { ...l, variants: variants[idx]! };
     });
     if (didUpdate) setLines(next);
   }, [lines]);
@@ -292,17 +295,17 @@ export const ConsignmentOrderNew = () => {
     [lines],
   );
 
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) {
-        out[cat] = l.variants;
-      }
-    }
-    return out;
-  }, [lines]);
+  /* The PICK-TIME seed for a brand-new line, and deliberately NOT the same
+     question the cascade's master asks: this one skips a category's first line
+     while it is still empty, so a new line does not flash an empty
+     configurator. SoLineCard strips the never-inherited keys on the way in
+     (seedFollowerVariants), so this hands over the master's variants raw. */
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+    ),
+    [lines],
+  );
 
   // ── Locality cascades ──────────────────────────────────────────────
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
@@ -338,19 +341,42 @@ export const ConsignmentOrderNew = () => {
     [staffQ.data],
   );
 
+  /* WHO IS OPENING THIS DOCUMENT, resolved to a REAL staff row.
+     The vendored 2990 bridge (`vendor/scm/lib/auth.ts:60`) returns
+     `{ id: null, name: null, staffCode: null, venueId: null }` for EVERY Houzs
+     user — it exists to answer isAdminLevel(role) for the MRP page and nothing
+     else. So the seed this replaces (`if (!currentStaff?.id) return`) could
+     never fire, and the Salesperson on a consignment order was never filled in.
+     The ladder is the shared `resolveSelfStaff`, the one SalesOrderNew and
+     MobileNewSO use: user_id first, then the bridge staff id, then email, then
+     name. `GET /staff/pickable` always carries the caller's own row whatever
+     narrowing it applied (staff.ts, the always-holds rule), so this resolves on
+     every account. */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      staffId: currentStaff?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
+
+  /* Seed once the roster resolves, and never stomp a choice already made. */
   useEffect(() => {
-    if (!currentStaff?.id) return;
-    // HOUZS VENDOR: the bridge's staff.id is `string | null`; coalesce to '' so
-    // the `string`-typed salespersonId state stays string (verbatim seed).
-    setSalespersonId((prev) => prev || currentStaff.id || '');
-  }, [currentStaff?.id]);
+    if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
+  }, [selfStaffMatch]);
 
   const selectedStaff = useMemo(
     () => staffList.find((s) => s.id === salespersonId) ?? null,
     [staffList, salespersonId],
   );
-  const resolvedVenueId: string | null =
-    selectedStaff?.venueId ?? currentStaff?.venueId ?? null;
+  /* `?? currentStaff?.venueId` used to sit in the middle here. The bridge's
+     venueId is null for every Houzs user, so it could never contribute; it is
+     dropped rather than left as a term that reads like a fallback and is not.
+     salespersonId is seeded above, so selectedStaff is the creator by default. */
+  const resolvedVenueId: string | null = selectedStaff?.venueId ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (!resolvedVenueId) return '';
     const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
@@ -680,15 +706,21 @@ export const ConsignmentOrderNew = () => {
                   disabled={!canChangeSalesperson}
                   /* A self-scoped author sees ONE option — themselves — exactly
                      as the native select pinned them before. */
+                  /* A self-scoped author sees ONE option — themselves — and it
+                     must be a REAL person. This used to fall back to the 2990
+                     bridge, whose name and staffCode are null for every Houzs
+                     user, so the single option rendered as the literal text
+                     "null (null)" with an empty value. selfStaffMatch carries a
+                     real id, name and code on every account. */
                   options={canChangeSalesperson
                     ? sortByText(staffList).map((s) => ({
                         value: s.id,
                         label: `${s.name} (${s.staffCode})`,
                       }))
-                    : currentStaff
+                    : selfStaffMatch
                       ? [{
-                          value: currentStaff.id ?? '',
-                          label: `${currentStaff.name} (${currentStaff.staffCode})`,
+                          value: selfStaffMatch.id,
+                          label: `${selfStaffMatch.name} (${selfStaffMatch.staffCode})`,
                         }]
                       : []}
                 />

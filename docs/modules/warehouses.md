@@ -4,7 +4,7 @@
 > 2. SalesOrderMaintenance.tsx:38-41 dropped useCreateWarehouse/useUpdateWarehouse — that view only READS.
 > 3. The type enum shipped in 0177_scm_warehouse_type_and_unify.sql, not “mig 0171” (0171 is idempotency; the file's internal header was never renumbered).
 > 4. The OR-include at inventory.ts:357-359 reads is_consignment, not is_showroom.
-> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap).
+> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap). — *warehouse-label CLOSED 2026-08-21: see §1, "The display rule has a FRONTEND home now". The other three remain open.*
 
 # Module: Warehouses (SCM master)
 
@@ -48,6 +48,41 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 `useWarehouses()` is the single read hook every consumer (PO, DO, GRN, SO,
 Inventory board, Racks) reaches through. Do not open a per-page fetch — the
 5-min staleness is intentional and shared.
+
+### The display rule has a FRONTEND home now (2026-08-21)
+
+`warehouseLabel` — **code first, then name**, trimmed, `null` when neither is
+set — used to exist only at `backend/src/scm/lib/warehouse-label.ts`, and the
+frontend cannot import from `backend/src`. So every frontend surface that showed
+a warehouse hand-wrote its own order and they drifted in both directions: the
+Purchase Orders list printed the NAME and the grid truncated it to
+`BALAKONG WAREHO…`, while the same page's PDF export printed the code.
+
+| | |
+|---|---|
+| the rule | `backend/src/scm/lib/warehouse-label.ts` |
+| the frontend MIRROR | `frontend/src/vendor/scm/lib/warehouse-label.ts` — **byte-identical**, and it must stay at the top level of `vendor/scm/lib` |
+| the referee | `frontend/src/vendor/scm/lib/warehouse-label.canonical.test.ts` (byte-identity + the order + a corpus pin) and `node backend/scripts/check-shared-mirrors.mjs --strict`, which already enumerates that exact directory pair |
+
+**Import it; do not spell it.** The corpus pin in that test fails by NAMING any
+file under `frontend/src` that re-grows a private `?.name || ?.code` warehouse
+fallback, so a new screen cannot quietly add the fifteenth copy. Where a row
+carries the warehouse as FLAT snapshot columns instead of a nested object
+(`warehouse_code` / `warehouse_name`, `warehouseLocationCode` /
+`warehouseLocationName`), wrap the two into the rule with a one-line local
+adapter — `GrnFromPo.tsx` is the worked example — rather than writing a second
+rule.
+
+Two sites are deliberately still private copies. Both are already code-first, so
+both render correctly:
+
+- `pages/scm-v2/SalesOrderDetail.tsx` resolves a venue's warehouse by hand. It is
+  the corpus test's shrink-only `PENDING` entry — converting it makes the test
+  fail until the entry is deleted.
+- `pages/scm-v2/Inventory.tsx`, three cells over the flat columns. Converting it
+  needs an adapter, and that file is AT its file-size ceiling, which
+  `npm run check:file-size` will not let a change grow. Do it when that file is
+  next split.
 
 ---
 

@@ -85,12 +85,13 @@ import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
 
-type DoHeader = {
+type DoHeader = HoldFields & {
   id: string;
   do_number: string;
   so_doc_no: string | null;
@@ -243,7 +244,7 @@ const EFFECTIVE_TONE: Record<
 // even when the effective bucket collapses to "shipped".
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
-  LOADED: "Loaded",
+  LOADED: "Confirmed",
   DISPATCHED: "Dispatched",
   IN_TRANSIT: "In transit",
   SIGNED: "Signed",
@@ -816,7 +817,12 @@ export function DeliveryOrderDetailV2() {
   const doDeliverPdf = (action: PdfAction) => {
     return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(deliveryOrder as never, items as never, { action })
+        generateDeliveryOrderPdf(
+          // loadScanId arms the print's "scan to mark loaded" QR.
+          { ...(deliveryOrder as Record<string, unknown>), loadScanId: (deliveryOrder as { id?: string }).id } as never,
+          items as never,
+          { action },
+        )
       )
       .then(() => {
         // Downloads and prints are terminal — close behind them. A new-tab
@@ -1016,9 +1022,15 @@ export function DeliveryOrderDetailV2() {
             {deliveryOrder.debtor_name || "—"}
           </h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">
-              {stageLabel}
-            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">
+                {stageLabel}
+              </Badge>
+              {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
+                  the stage rather than instead of it: the warehouse still
+                  needs to know where the goods are. */}
+              <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -1040,9 +1052,15 @@ export function DeliveryOrderDetailV2() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {deliveryOrder.debtor_name || "—"}
                 </h1>
-                <Badge tone={badgeTone} size="sm">
-                  {stageLabel}
-                </Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">
+                    {stageLabel}
+                  </Badge>
+                  {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
+                      the stage rather than instead of it: the warehouse still
+                      needs to know where the goods are. */}
+                  <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-accent-ink">

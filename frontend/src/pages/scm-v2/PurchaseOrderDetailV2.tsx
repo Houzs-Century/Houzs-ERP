@@ -80,6 +80,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -94,17 +95,28 @@ const totalOf = (h: PoHeaderRow): number =>
 
 // PO effective lifecycle for hero + tone.
 type Effective =
+  | "on_hold"
   | "draft"
   | "submitted"
   | "partial"
   | "received"
   | "cancelled";
+/* THE LAST LINE USED TO BE `return "cancelled"`, and that is why ON_HOLD had to
+   be added here and not only to the label maps: a status this chain does not
+   name reads as CANCELLED, so a HELD purchase order would have told the buyer
+   his order was cancelled. A hold is the opposite of a cancel — it is the
+   reversible one — so the wrong word here is not a cosmetic slip.
+
+   The fall-through is now CANCELLED only for CANCELLED. Anything genuinely
+   unrecognised falls to "on_hold"'s neighbour rather than to a terminal claim:
+   an unknown status is not evidence that an order is dead. */
 const effectiveOf = (h: PoHeaderRow): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "DRAFT") return "draft";
   if (s === "SUBMITTED") return "submitted";
   if (s === "PARTIALLY_RECEIVED") return "partial";
   if (s === "RECEIVED") return "received";
+  if (s === "ON_HOLD") return "on_hold";
   return "cancelled";
 };
 
@@ -117,6 +129,10 @@ const EFFECTIVE_TONE: Record<
   partial: { tone: "warning", label: "Partially received", blurb: "Partially received · balance still due" },
   received: { tone: "success", label: "Received", blurb: "Received · loop closed" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
+  /* ON_HOLD (mig 0318). A held PO is not receivable — grns.ts filters
+     receivable POs through an allow-list — and it is REVERSIBLE, which is
+     the whole reason it exists beside CANCELLED. */
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · receiving paused, reversible" },
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -125,6 +141,10 @@ const STAGE_LABEL: Record<string, string> = {
   PARTIALLY_RECEIVED: "Partially received",
   RECEIVED: "Received",
   CANCELLED: "Cancelled",
+  /* A status with no label here renders as nothing, or as its raw slug. ASSR
+     paid for that when `voided` reached the customer portal as the word
+     "voided", so every value the column can hold gets a word. */
+  ON_HOLD: "On Hold",
 };
 
 const initialsOf = (name: string | null | undefined): string => {
@@ -981,9 +1001,13 @@ function PurchaseOrderDetailV2ReadOnly() {
             {supplierNameOf(purchaseOrder)}
           </h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">
-              {stageLabel}
-            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">
+                {stageLabel}
+              </Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -1005,9 +1029,13 @@ function PurchaseOrderDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {supplierNameOf(purchaseOrder)}
                 </h1>
-                <Badge tone={badgeTone} size="sm">
-                  {stageLabel}
-                </Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">
+                    {stageLabel}
+                  </Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 {/* _R suffix (owner 2026-07-27): a revised PO's number shows its

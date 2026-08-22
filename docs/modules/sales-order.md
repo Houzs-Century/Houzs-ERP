@@ -74,8 +74,74 @@ Vocabulary and guard: `backend/src/scm/lib/so-lifecycle-guards.ts`
 `soStatusTransitionError`).
 
 Ranked spine: `DRAFT(0) → CONFIRMED(1) → IN_PRODUCTION(2) → READY_TO_SHIP(3) →
-SHIPPED(4) → DELIVERED(5) → INVOICED(6) → CLOSED(7)`. `CANCELLED` and `ON_HOLD`
+SHIPPED(4) → DELIVERED(5) → INVOICED(6)`. `CANCELLED`, `ON_HOLD` and `CLOSED`
 are side states and are deliberately UNRANKED.
+
+> **`CLOSED` = STOP CHASING THE REMAINDER (2026-08-22).** The customer ordered 10
+> and took 7, or the supplier cannot supply the last 3. **The document STAYS and
+> what was already delivered and invoiced STANDS** — only the outstanding part is
+> given up on. Asked whether that case happens here, the owner: 「有的」.
+>
+> **It is NOT Cancel.** Cancel voids the whole document as if it never happened
+> and cannot be reactivated; Close keeps a real sale that came up short. See
+> `docs/modules/document-status-vocabulary.md` §1b for the two side by side.
+>
+> **UNRANKED on purpose.** Closing is reachable from wherever the order had got
+> to and most closed orders never reach INVOICED, so a rank would state something
+> false. It is enterable from every live status and the way OUT is refused
+> (`illegal_status_transition`, 409): a closed order cannot be walked back into
+> DRAFT / CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED / DELIVERED /
+> INVOICED. `CANCELLED` stays reachable, because the cancel guards own that call.
+>
+> **The refusal is load-bearing on its own**, re-checked 2026-08-22 after mig
+> 0324 made the hold a marker. It was written against the two-step
+> `CLOSED → ON_HOLD → DRAFT`, which is now dead by a second route (`ON_HOLD` is
+> refused as a TARGET for every source). What it actually stops is the DIRECT
+> move: `CLOSED` is unranked, so without the arm `from = 'CLOSED'` reaches the
+> rank block, `SO_STATUS_RANK.CLOSED` is `undefined`, and the function returns
+> `null` — `CLOSED → DRAFT` allowed outright, and DRAFT is what unlocks the
+> cascading DELETE. `CLOSED → ON_HOLD` now answers `hold_is_not_a_status` (409)
+> instead, and `ON_HOLD → CLOSED` is ALLOWED so a legacy row on the retired
+> label can still be closed.
+>
+> **The HOLD marker is orthogonal, and no gate was added in either direction.** A
+> held order may be closed and a closed order may be marked held —
+> `PATCH /:docNo/status` never selects `on_hold`, and `PATCH /:docNo/hold` never
+> writes `status` and deliberately does not gate on it. See
+> `docs/modules/document-status-vocabulary.md` §1b.
+>
+> **Nothing automatic writes it, ever**, and no sweep is planned: no machine holds
+> the fact that a remainder was given up on.
+>
+> **It also blocks the two downstream documents.** `SO_UNDELIVERABLE_STATUSES`
+> (`shared/so-deliverable-states.ts`) and `SO_UNORDERABLE_STATUSES`
+> (`lib/source-document-gates.ts`) both name it: if the rest is not coming,
+> nothing more ships against the order and nothing more is bought for it. The two
+> sets are held equal by `backend/tests/duplicatedDecisionPins.test.ts`.
+>
+> **A closed order still earns commission** — `COMMISSION_EXCLUDED_STATUSES` does
+> not name it, deliberately. The part that went out was really sold.
+
+> **THIS IS A RESTORATION, NOT A REVERSAL OF 2026-08-21.** `CLOSED` was removed
+> from the app vocabulary that day and the removal was CORRECT. He wrote the
+> lifecycle he actually runs — Draft, Confirm, In Production, Ready to Ship,
+> Shipped, Delivered, Invoice, On Hold, Cancel — and narrowed the removal to this
+> one status: 「照你的流程做，只删 Closed」. What went was a vague lifecycle STEP
+> after Invoiced that nobody used, PROVEN empty first: company 1 holds 0 sales
+> orders (probe run 32487749630) and company 2's own tab counts summed to its
+> total with CLOSED at 0. What is back is a different decision under the same
+> enum label.
+> 
+> **No migration was needed in either direction.** Postgres cannot `DROP VALUE`,
+> so `CLOSED` never left `scm.mfg_so_status` — it is in the type's creating DDL
+> (`backend/scripts/scm-schema/2990s-full-schema.sql`) and mig 0305 casts to it.
+> Removing it from the app was always a change to `SO_STATUSES`, and so is
+> putting it back.
+>
+> **It never left two places, and that is why the restoration is small.**
+> `SO_TERMINAL_STATES` — a CLOSED row must be terminal, or it becomes live demand
+> for MRP again — and the status-pill LABEL map, so such a row always rendered a
+> word rather than a raw enum key.
 
 **There are TWO write paths to this column, and only one passes the guard.**
 The guard's own header says so: the AUTO state machine writes the column
@@ -97,7 +163,8 @@ guard's comment and it IS a trigger, but it writes no status itself — it calls
 does not reference `mfg_sales_orders` at all.
 
 **Nothing in this tree automatically writes `SHIPPED`, `INVOICED` or `CLOSED` on
-a Sales Order.** All three are manual-only. That is worth holding next to §0.6:
+a Sales Order.** All three are manual-only, and for `CLOSED` that is permanent
+rather than a gap: no machine can know a remainder has been given up on. That is worth holding next to §0.6:
 the pill an operator reads says "Invoiced" off `lifecycle_state`, while the
 column behind it has not moved and will not move on its own.
 
@@ -116,9 +183,45 @@ unwinds the SI first.
 | `SHIPPED` | goods left | `PATCH /:docNo/status` | **nothing** | — |
 | `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
 | `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
-| `CLOSED` | done | `PATCH /:docNo/status` | **nothing** | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
+| `CLOSED` | 不追剩下的了 — stop chasing the remainder | `PATCH /:docNo/status` (the list's right-click **Close remaining**) | **nothing, ever** | No new Delivery Order and no new PO line — `SO_UNDELIVERABLE_STATUSES` (`shared/so-deliverable-states.ts`) and `SO_UNORDERABLE_STATUSES` (`lib/source-document-gates.ts`). Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. **One-way** — cannot move to any earlier live status (409); only `CANCELLED` is still reachable. Commission on what was delivered is UNAFFECTED. |
 | `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
-| `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
+| `ON_HOLD` | **RETIRED as a status, 2026-08-22 (mig 0324)** | **nothing** | — | A hold is a MARKER now, not a step — see §0a below. `PATCH /:docNo/status` refuses this target with `hold_is_not_a_status` (409); it is still accepted as a `from`, so a legacy row can leave. The label stays in `scm.mfg_so_status` for ever (no `DROP VALUE`) and every pill map keeps rendering it. |
+
+### §0a. A HOLD is a MARKER beside the status, not a step in the order's life
+
+**The owner, 2026-08-22:** 「我们的hold是给我们知道一个 order hold这的」 — the hold
+is there so people KNOW an order is paused. 「take off hold也要看」.
+
+`scm.mfg_sales_orders` carries `on_hold` / `hold_reason` / `held_at` / `held_by`
+(mig 0324), and the Sales Order LIST reads them through the payment-totals view,
+which had to be taught the four columns separately (mig 0325 — the view
+enumerates its columns, so a base-table column it does not name is invisible to
+the list).
+
+**`status` is never written by a hold, in either direction.** Put On Hold and
+Take Off Hold both go to `PATCH /:docNo/hold` with `{ onHold, reason }`. So an
+`IN_PRODUCTION` order that is held is still `IN_PRODUCTION`, and taking the hold
+off restores nothing because nothing was lost.
+
+**What it replaced.** `Put On Hold` used to write `status = 'ON_HOLD'`, which
+OVERWROTE the progress — and no `previous_status` column exists anywhere in
+`scm`, so `Take Off Hold` sent every released order to `CONFIRMED` regardless of
+where it had been. Trace:
+`docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`.
+
+**On screen:** the real status pill AND a Hold chip, never one instead of the
+other (`frontend/src/vendor/scm/components/HoldChip.tsx`). The list's **On Hold**
+tab filters on the flag and deliberately OVERLAPS the status tabs; `other =
+all − known` is still computed from the status walk alone, so the sum-to-All
+invariant is untouched.
+
+**What a hold blocks on the SO:** raising a Delivery Order
+(`soCanRaiseDo(status, onHold)`), raising a Purchase Order from its lines
+(`firstUnorderableSo`), commission (`soEarnsCommission(status, onHold)`), the
+`/mine` board, customer LTV, sales analysis, the POS revenue cards and the
+order-fulfilment agent. What it does NOT block is the machine re-deriving the
+status from a fact — `so-delivery-sync` still advances a held order to DELIVERED
+when its delivery completes, because that write can no longer erase the hold.
 
 **The transition rule, exactly.** `soStatusTransitionError` rejects only two
 things: an unknown target (`invalid_status`, 400) and a backward jump that is not
@@ -140,6 +243,94 @@ active edit lease held by another human (409), and — for `CANCELLED` only — 
 downstream lock (§0.7). `DRAFT → CONFIRMED` additionally runs the confirm gate
 (salesperson + venue + every line a real catalog SKU with its required variant
 axes) and returns an aggregated `422 validation_failed`.
+
+### 0.1a What the LIST offers on each status (2026-08-21)
+
+The Sales Order list's row-drawer CTA is a switch on the STORED status, and its
+last branch returns nothing — so a status it does not name gets no primary
+button at all.
+
+| stored status | primary button |
+|---|---|
+| `DRAFT` | **Confirm** |
+| every deliverable status — `CONFIRMED`, `IN_PRODUCTION`, `READY_TO_SHIP`, `SHIPPED`, `DELIVERED`, `INVOICED` | **Transfer to Delivery Order**, when the caller may operate a DO (absent, never disabled, when they may not) |
+| `CANCELLED` | **Reopen** |
+| `ON_HOLD` | none |
+| `CLOSED` | none — the remainder is not coming, so there is nothing to transfer |
+
+**The RIGHT-CLICK menu offers four decisions and nothing else**
+(`frontend/src/pages/scm-v2/row-menus.ts`, and the rule that decides membership
+is in `docs/modules/document-status-vocabulary.md` §1b): **Confirm** on a draft,
+**Put On Hold** / **Take Off Hold** (the mig-0324 MARKER, never a status write),
+**Close remaining** on any live order, and **Cancel Sales Order** alone at the
+bottom in red. Close and Cancel both sit behind a confirmation that says in plain
+words what each one does to the money. **Close remaining is not offered** on a
+DRAFT (no remainder to give up on), a CANCELLED order or an already CLOSED one —
+but the hold entries ARE still offered on all of those, because a marker says
+nothing about where the order is.
+
+**The list carries a Closed tab**, between Invoiced and On Hold — one tab per
+status (`frontend/src/pages/scm-v2/so-list-status.ts`), counted server-side from
+`SO_TAB_STATUSES`. It is NOT folded into Delivered: an order whose remainder was
+abandoned is a different fact from one that was delivered in full.
+
+**The deliverable arm reads `soCanRaiseDo(row.status, row.on_hold)`** from the vendored
+`shared/so-deliverable-states.ts` — the same predicate the delivery-order route
+enforces with. It was `s === "confirmed"` until 2026-08-21, an allow-list of one
+against the server's deny-list of three, so the button went ABSENT the moment
+`recomputeSoStockAllocation` promoted an order to `READY_TO_SHIP` — which it
+does by itself when the goods land. Owner-reported as a difference between the
+two companies; the predicate carries no company term and never did.
+`docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
+
+**Right-click on the list row** offers Open / Edit / Print, the transfer, and
+then exactly FOUR decisions — **Confirm** a draft, **Hold**, **Close remaining**,
+**Cancel**.
+See `docs/modules/document-conversion.md` §8a for the shape and for what each of
+the five lists deliberately does NOT offer.
+
+> **CORRECTED 2026-08-22.** This sentence used to read "the same actions plus the
+> four statuses that had no caller". Three of those four —
+> `Mark In Production`, `Mark Shipped`, `Mark Invoiced` — were REMOVED the next
+> day on the owner's ruling: 「按理说不应该允许这样手动去转，否则我们的
+> transaction workflow 就全乱了」. Each is DERIVED by a machine from a fact
+> (§0.2 lists the keys), so hand-setting one changed the list and not the fact,
+> and the next sweep overwrote it. The rule that replaced the list: **a status a
+> machine derives is never offered to a person**, which leaves only the three
+> decisions no machine can make. `docs/modules/document-status-vocabulary.md`
+> §1b, `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status.md`.
+
+### `SHIPPED` is a status with no tab of its own (2026-08-22)
+
+Owner: 「Sales Order 的 Shipped 跟 Delivered 是合起来的」. The **Shipped** tab is
+gone and `backend/src/scm/lib/so-tab-statuses.ts` gives the **Delivered** tab
+both `SHIPPED` and `DELIVERED`.
+
+`SHIPPED` is still WRITTEN — `so-delivery-sync.ts` sets it when a delivery order
+is raised (§0.2) — and it is still a legal transition target. Only its tab is
+gone. That asymmetry is the whole design: Postgres cannot `DROP VALUE`, so a row
+carrying `SHIPPED` can always arrive.
+
+**Where an unfolded status would go, stated accurately.** This list is the one
+that HAS a catch-all — the handler computes `other = allCount - known` and
+`MfgSalesOrdersListV2.tsx:2005` renders an **Other** tab when that count is
+non-zero. So an unfolded `SHIPPED` order would still have been reachable, and
+the reason to fold is the READER rather than reachability: goods that went out
+belong under **Delivered**, not under **Other**. The four purchase/delivery
+lists have NO catch-all, which is why `*_STATUS_BUCKETS` there must partition
+the enum exhaustively and `so-tab-statuses.ts` deliberately does not carry that
+name. Production carried SHIPPED · 0 against DELIVERED · 26 on the day of the
+ruling.
+
+**The list's three query sites all read the bucket**, not the raw param: the row
+query, the count query and the money-KPI query in
+`GET /api/scm/mfg-sales-orders`. A tab covering one status still reads through
+it, so "what does this tab select" has one answer and not four.
+
+**The desktop DETAIL page offers no transfer at all** — `SalesOrderDetailV2.tsx`
+has no `transferToLabel('do')` call. The other desktop routes to a delivery
+order are the Delivery Planning board's context menu and
+`/scm/delivery-orders/from-so`.
 
 ### 0.2 What the automatic advance/regress actually keys on
 
@@ -551,8 +742,10 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 - **Fabrics** ← `useFabricColoursActive()` + `fabric_library` series via
   `useFabricLibrary()`. The Fabric picker is a SEARCHABLE modal (700+ colours),
   not a native `<select>`.
-- **Sofa** — Seat height ← `maintenanceConfig.sofaSizes`; Leg height ←
-  `maintenanceConfig.sofaLegHeights`.
+- **Sofa** — Seat Size ← `maintenanceConfig.sofaSizes`; Leg height ←
+  `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
+  surface (`so-variant-rule` declares it, and the SO line card renders it since
+  2026-08-21 — it was the last screen saying "Seat Heights").
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -566,15 +759,73 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   there is no per-screen copy, and the canonical test fails by name if one
   reappears.
 
+**Every floating picker on the line card is placed by ONE shared module**,
+`frontend/src/lib/anchoredPanel.ts`. The SKU dropdown and the fabric-colour
+combobox are portalled to `<body>` (so a card's `overflow:hidden` cannot slice
+them) and their geometry — which SIDE of the field to open on, and how tall they
+may be — is measured from the field's live rect: the side with more room wins,
+and the height is clamped to that room so the last rows and any footer bar stay
+inside the window. Both pass 460px as their PREFERRED cap. Do not re-hand-roll
+`top: rect.bottom + 4` for a new menu; that is what put the SKU picker's green
+"Add N" bar off the bottom of the screen
+(`docs/bugs/0504-every-portalled-dropdown-opened-downward-and-ran-off-the-bot.md`).
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
-**Sofa follower-line inherit** mirrors desktop `SoLineCard`'s
-`inheritVariantsByCategory` + `overriddenKeys`: follower sofa / bedframe lines
-inherit the FIRST same-category line's variants, BUT a manually-changed follower
-value WINS.
+**Sofa follower-line cascade — ONE module, and the master's LATEST change
+wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
+by `SalesOrderNew.tsx`, `mobile/MobileNewSO.tsx`, `SoLineCard.tsx` and — since
+2026-08-21 — `pages/scm-v2/ConsignmentOrderNew.tsx`. The FIRST
+line of a category is the MASTER; every later line of that category follows it.
+Three outcomes per variant key, in this order:
+
+1. the master MOVED that key since the previous run -> **force** it onto the
+   follower, overwriting a value the operator typed by hand;
+2. else the follower's own value is blank -> **fill** it (the pick-time
+   inherit);
+3. else **leave** it — an edit made after the master's last change stands until
+   the master moves again.
+
+Rule 1 is the owner's ruling of 2026-08-21, in his words 「第一个沙发再改就拉回去」:
+it REPLACES the old `overriddenKeys` veto, under which a follower touched once
+was sticky forever and line 1 could never correct it again
+(`docs/bugs/0506-a-follower-sofa-line-touched-once-could-never-be-corrected-f.md`).
+He gave it AFTER that fix shipped — the first version of the rule was written
+into the implementing agent's brief and then reported in code as a ruling he
+had already made
+(`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`).
+"Since the previous run" is a snapshot each form holds in a ref and hands back
+to the module; it is what keeps rules 1 and 3 from cancelling each other out.
+
+`overriddenKeys` is still on the draft and still used — by the per-sofa fabric
+COLOUR sync in `updateLine` / the mobile FabricPicker, which is scoped to one
+physical sofa (`variants.buildKey`), not to a category. It no longer gates the
+master cascade.
+
+**Never inherited:** `remark` (per line) and `buildKey` (the build IDENTITY of
+one physical sofa — copying it forges a compartment, which reaches the free-gift
+trigger and the PDF module grouping;
+`docs/bugs/0507-the-variant-cascade-copied-the-master-sofa-buildkey-onto-an.md`).
+Fabric identity is additionally held back when master and follower are two
+DIFFERENT split sofas.
+
+**Which pages are on it, and which are not.** `SalesOrderNew`, `MobileNewSO`
+and `ConsignmentOrderNew` run the live cascade. `DeliveryOrderNewV2` SEEDS from
+the same module (`seedableMasterVariants` + `seedFollowerVariants`, so a picked
+line never inherits `buildKey` or `remark`) but runs **no cascade** — a follower
+line on a delivery order does not follow line 1 afterwards. That is an open
+owner decision, not an oversight, and it is named in the module header rather
+than left to inference. `soVariantCascadeSingleCopy.test.ts` holds this shape:
+it fails if a page re-implements the rule, keeps an `overriddenKeys` veto, or
+seeds from a hand-written memo.
+
+**The one deliberate surface difference is a REQUIRED argument, not a default:**
+desktop passes `null` (every category cascades), mobile passes
+`{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
+passes `null` too, matching the desktop SO page it is a clone of.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
@@ -979,6 +1230,80 @@ is invisible to it; its natural-key pass understands `doc_no` but walks
 `backend/scripts/probe-natural-key-reads.mjs` reports the surface that falls
 between the two passes — and its header explains why that count is an upper
 bound on exposure rather than a defect list.
+
+### There is no "(me)" — the Salesperson is always a real employee (owner 2026-08-21)
+
+His ruling, on `HC-SO-2608-003`, an order he had raised himself minutes earlier
+and which named him **"(former staff)"**: *「『我』不应该存在，永远要是一个真人。」*
+
+`SalesOrderNew` / `MobileNewSO` used to carry a `SELF_SALESPERSON = '__self__'`
+sentinel, rendered as `<name> (me)` whenever `resolveSelfStaff` could not find
+the creator on the roster, and stripped again at submit
+(`salespersonId !== SELF_SALESPERSON ? … : undefined`). **Both are deleted.**
+The creator was missing for exactly one reason — `GET /staff/pickable?onlySales=1`
+narrows to Sales positions and the owner is not one — so the sentinel was
+covering for a roster that had been asked the wrong question. The roster now
+always contains the caller (`team-members.md`, *"`GET /staff/pickable` ALWAYS
+holds the caller"*), so `selfStaffMatch` resolves to a real `scm.staff` uuid on
+every account and three things follow with no further code:
+
+- the Salesperson field seeds to that id and SUBMITS it, instead of omitting it
+  and leaving the backend to re-derive the caller;
+- `defaultCollectedBy={selfStaffMatch?.id}` is a real id, so the Payments row's
+  "Collected By" defaults to the person operating the screen instead of `—`
+  (it stays changeable — `PaymentsTable`'s `collectedByAllowedIds` filter has
+  always kept `s.id === defaultStaffId`);
+- the pickers that must name a STORED `salesperson_id` pass it through
+  `usePickableStaff({ onlySales: true, include: [<that id>] })` —
+  `SalesOrderDetail`, `SalesInvoiceNew`, `DeliveryReturnNew`,
+  `ConsignmentNote/Order/Return New+Detail` and `MobileNewSO`'s edit mode — so
+  **`(former staff)` is now reachable only for a row that really is gone**, never
+  for a person the filter merely hid.
+
+The 2026-07-22 narrowing is untouched: an ordinary sales user's pick list is
+exactly what it was. Trace:
+`docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
+**The consignment order was NOT on that ladder, and it showed (2026-08-21).**
+`ConsignmentOrderNew` read `useAuth().staff` from the vendored 2990 bridge
+(`vendor/scm/lib/auth.ts:60`) and used it ON ITS OWN. That bridge exists so the
+MRP page can ask `isAdminLevel(staff?.role)`; `role` is the ONLY field it
+computes, and it returns a hard-coded `null` for `id`, `name`, `staffCode` and
+`venueId` on every Houzs user. `useAuth().staff` itself is never null — only its
+fields are — so a truthiness check on the object passes and every optional chain
+silently yields null. The page therefore:
+
+- gated its salesperson seed on `if (!currentStaff?.id) return`, which could
+  never pass, so **Salesperson was never filled in on a consignment order**;
+- built the non-admin branch of its picker from the same object, offering **one
+  option labelled with the literal text `null (null)`** and an empty value.
+
+`SalesOrderNew` and `SalesOrderDetail` pass those same fields into
+`resolveSelfStaff` as ONE RUNG of the ladder above, so the nulls miss and the
+ladder falls through — which is why only the consignment page showed it. It is
+now on the same ladder. `bridgeStaffIsNotAPerson.test.ts` pins the bridge's
+contract and holds every consumer to it. Trace:
+`docs/bugs/0510-the-consignment-salesperson-picker-offered-null-null.md`.
+
+### `item_group` is the SKU's — it decides the stock bucket (2026-08-22)
+
+The Sales Order is the ORIGIN of the document chain, and its `item_group` is not
+a label: `computeVariantKey(item_group, variants)` composes a sofa's fabric /
+seat / leg **only** for a sofa or bedframe group. A line stored as `others` keys
+its stock with the product code alone, and every downstream document — PO, GRN,
+the inventory movement, the DO's stock check — copies that value faithfully.
+
+`createSalesOrderCore` used to store `it.itemGroup ?? 'others'`. That fallback is
+worse than `null`: `null` reads as *unknown*, `others` reads as a category
+somebody chose, so nobody questions it.
+
+It now takes the category from `productRowByCode` — the PRICING loader's map,
+already read in the same function and already selecting `category`. That costs
+no extra query and keeps the read company-scoped in LOCK-STEP with pricing,
+which migration 0233 requires by name (both companies keep their own SKU master;
+17 codes collided on 2026-08-01). `description2` is built from the same resolved
+value. Trace:
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
 
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 

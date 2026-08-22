@@ -42,6 +42,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 
 export const consignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -567,10 +568,15 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
   const itemIds = itemList.map((it) => it.id as string);
 
   // Already-returned per note line — only count non-cancelled returns.
-  const { data: relRows } = await sb
+  // Paged + company-scoped + error bound (2026-08-21, audit A6): un-paged, the
+  // picker re-offered fully-returned lines once live returns passed 1000.
+  const { data: relRows, error: relErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_returns')
     .select('id, status')
-    .neq('status', 'CANCELLED');
+    .neq('status', 'CANCELLED'), c)
+    .order('id', { ascending: true })
+    .range(from, to));
+  if (relErr) return c.json({ error: 'load_failed', reason: relErr.message }, 500);
   const liveReturnIds = new Set(((relRows ?? []) as Array<{ id: string }>).map((r) => r.id));
   const { data: retItems } = await chunkIn<{ consignment_delivery_return_id: string; consignment_do_item_id: string | null; qty_returned: number }>(itemIds, (batch, from, to) => sb
     .from('consignment_delivery_return_items')
@@ -730,6 +736,11 @@ const OVER_REMAINING_UNPROVEN = {
 
 async function checkCrOverRemaining(
   sb: any,
+  /* The Hono context, for scopeToCompany — added 2026-08-21 (audit A6): the
+     live-returns read below used to be company-blind, so the OTHER tenant's
+     returns consumed the 1000-row response budget and pushed this company's
+     rows past the truncation point. */
+  c: any,
   items: Array<Record<string, unknown>>,
   excludeReturnItemId?: string,
 ): Promise<{ error: string; message: string; lines: Array<{ noteItemId: string; requested: number; remaining: number }> } | null> {
@@ -760,17 +771,29 @@ async function checkCrOverRemaining(
      Returning null does not avoid that; it permits the same double-return, just
      without an error. Same call as returnLineLock in this file: a read failure is
      transient and the operator retries, a duplicated stock-in is not. */
-  const { data: liveRows, error: liveErr } = await sb
+  /* paginateAll + scopeToCompany (2026-08-21, audit A6): this read was a bare
+     .neq() — one un-paged response, capped at 1000 rows by PostgREST, with the
+     other company's returns spending the same budget. A return whose id fell
+     past the cap was treated as CANCELLED, its quantity dropped out of
+     returnedById, and the guard passed a SECOND full return of the same note
+     line. A truncated page is error-free, so the fail-closed arm below never
+     saw it — paging is the only fix. */
+  const { data: liveRows, error: liveErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_returns')
     .select('id, status')
-    .neq('status', 'CANCELLED');
+    .neq('status', 'CANCELLED'), c)
+    .order('id', { ascending: true })
+    .range(from, to));
   if (liveErr) return OVER_REMAINING_UNPROVEN;
   const liveIds = new Set(((liveRows ?? []) as Array<{ id: string }>).map((r) => r.id));
 
-  const { data: retRows, error: retErr } = await sb
+  const { data: retRows, error: retErr } = await chunkIn<{
+    id: string; consignment_delivery_return_id: string; consignment_do_item_id: string | null; qty_returned: number;
+  }>(ids, (batch, from, to) => sb
     .from('consignment_delivery_return_items')
     .select('id, consignment_delivery_return_id, consignment_do_item_id, qty_returned')
-    .in('consignment_do_item_id', ids);
+    .in('consignment_do_item_id', batch)
+    .range(from, to));
   if (retErr) return OVER_REMAINING_UNPROVEN;
   const returnedById = new Map<string, number>();
   for (const r of ((retRows ?? []) as Array<{
@@ -820,12 +843,22 @@ consignmentReturns.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the note-line ids are
+     caller-supplied and resolve the stored cost (and feed the over-return
+     bound); a foreign id booked the other tenant's line onto this company's
+     return unchecked. Same guard the GRN/DR/DO trio always had. */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
+      items.map((it) => (it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined));
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   /* The "no DO, no Return" hard requirement is still DROPPED vs DR — a
      consignment return may be free-entry. The over-return guard is NOT: it now
      bounds every NOTE-LINKED line (owner 2026-08-13). Free-entry lines carry no
      source to bound them against and pass through, exactly as before. */
   {
-    const over = await checkCrOverRemaining(sb, items);
+    const over = await checkCrOverRemaining(sb, c, items);
     if (over) return c.json(over, 409);
   }
 
@@ -840,7 +873,7 @@ consignmentReturns.post('/', async (c) => {
   const sourceCostByNoteItem = await sourceUnitCostByItemId(
     sb, 'consignment_delivery_order_items',
     items.map((it: Record<string, unknown>) => (it.doItemId ?? it.consignmentDoItemId) as string | undefined),
-  );
+    activeCompanyId(c) ?? null);
   const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByNoteItem));
   const { error: iErr } = await sb.from('consignment_delivery_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('consignment_delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -940,7 +973,7 @@ consignmentReturns.post('/:id/items', async (c) => {
 
   /* "no DO, no Return" stays dropped; the over-return bound does not. */
   {
-    const over = await checkCrOverRemaining(sb, [it]);
+    const over = await checkCrOverRemaining(sb, c, [it]);
     if (over) return c.json(over, 409);
   }
 
@@ -953,9 +986,16 @@ consignmentReturns.post('/:id/items', async (c) => {
   const { data: header } = await scopeToCompanyId(sb.from('consignment_delivery_returns').select('id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
+  /* Same cross-company line guard as the create path (2026-08-21, audit A3). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
+      [(it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'consignment_delivery_order_items', [(it.doItemId ?? it.consignmentDoItemId) as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('consignment_delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* The ITEM select echoes the stored line back — cost/margin included. A
@@ -1002,7 +1042,7 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   {
     const noteItemId = (prev as { consignment_do_item_id?: string | null }).consignment_do_item_id ?? null;
     if (noteItemId) {
-      const over = await checkCrOverRemaining(sb, [{ noteItemId, qtyReturned: qty }], itemId);
+      const over = await checkCrOverRemaining(sb, c, [{ noteItemId, qtyReturned: qty }], itemId);
       if (over) return c.json(over, 409);
     }
   }

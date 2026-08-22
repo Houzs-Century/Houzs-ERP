@@ -7,6 +7,58 @@
 
 # Module: Team — Members & Invitations
 
+> ## 2026-08-22 — Team redesign (design handoff) + editable capability matrix
+>
+> The Team strip was rebuilt per the 2026-08 design handoff. New screens live in
+> `frontend/src/pages/team/` and mount as new `?tab=` values on the same
+> `/team` route (`frontend/src/pages/Team.tsx` shell):
+>
+> * `directory` → `frontend/src/pages/team/TeamDirectory.tsx` — the redesigned
+>   member home: department tree rail (Team = `users.division`), scoped roster
+>   table, dark bulk bar (dept / team / manager / position / resend / status).
+>   Derived data the schema does not carry: department LEAD is inferred from
+>   reporting lines (`teamShared.deriveDeptLead`), the EMP id is derived from
+>   the user id (`teamShared.empCode`, same formula as the scm.staff trigger).
+> * `orgchart2` → `TeamOrgChartV2.tsx` — company lanes + department pills;
+>   outsourced teams are excluded by owner ruling (`isOutsourced`).
+> * `departments2` → `TeamDepartmentsV2.tsx`, `mail2` → `TeamMailboxesV2.tsx`
+>   (Mail Center reskin with derived personal/department/orphaned types).
+> * `permissions` → `TeamRolesV2.tsx` — the EDITABLE position-capability
+>   matrix (owner 2026-08-22: "要界面可编辑"). Grants are rows in
+>   `position_capabilities` (PG mig 0322, D1 mirror 150); the catalogue + the
+>   fail-closed gate live in `backend/src/services/positionCapabilities.ts`;
+>   the API is `backend/src/routes/position-capabilities.ts`, mounted at
+>   `/api/position-capabilities` in `backend/src/index.ts` (GET rides
+>   `users.read`, PUT requires `roles.manage`, every change audited).
+>   Enforcement of the four keys (scm.do.load / .dispatch / .revert /
+>   scm.invoice.issue) arrives with the warehouse-line PR; until then the
+>   matrix is declared intent, and the screen's footer note says so.
+>   **Extended same day to 全部 SCM 模块**: the screen's SCM tabs (Sales /
+>   Procurement / Consignment / Transportation / Warehouse / Finance) edit
+>   page-access LEVELS per position. The code policy stays the BASELINE;
+>   an edited cell stores a row in `position_page_overrides` (PG mig 0323,
+>   D1 mirror 151; service `backend/src/services/positionPageOverrides.ts`,
+>   `PUT /api/position-capabilities/:id/pages`). Overrides compose over the
+>   resolved policy at session hydration (`services/auth.ts` — applied after
+>   the sales-JD caps, and any override flips `scm_l2_configured` on so the
+>   SCM area guard enforces the composed map), and they ride the authz
+>   fingerprint (envelope v2) so a matrix edit busts cached sessions on the
+>   next request. Valid targets are the catalogue-derived SCM LEAF keys —
+>   exactly what `scmAreaGuard` reads; god positions are refused (wildcard
+>   bypasses the guard). Pinned by `backend/tests/positionPageOverrides.test.ts`.
+> * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
+>   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
+>   position set before send; company toggle chips).
+>
+> The CLASSIC tabs (`members` / `orgchart` / `departments` / `mail` / `roles`)
+> left the strip but stay URL-reachable during the transition; the sections
+> below describe that classic Members surface, which is unchanged. The mobile
+> menu rows and route mapping (`frontend/src/mobile/MobileApp.tsx`) follow the
+> new NAV_TABS destinations (`?tab=directory` / `?tab=departments2`, legacy
+> values still accepted) but still open the classic mobile modules
+> (`frontend/src/mobile/mobileMenuGates.test.ts` pins the exact gates) until
+> the handoff's mobile pass.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission
@@ -236,6 +288,38 @@ source.
 `GET /staff/by-ids` stays deliberately unscoped — the caller must already hold
 the ids, so it cannot enumerate — but note it returns email and phone, which is
 why an unscoped LIST endpoint beside it was a full directory disclosure.
+
+### `GET /staff/pickable` ALWAYS holds the caller, and whatever you name in `?include=` (2026-08-21)
+
+Route: `backend/src/scm/routes/staff.ts`.
+
+`?onlySales=1` narrows the roster to Sales positions / departments (owner
+2026-07-22 — keep office, admin, owner and test accounts out of the SALESPERSON
+dropdown). That narrowing is unchanged. What is new is that the answer also
+carries two id sets the narrowing may never remove:
+
+| set | how | why |
+| --- | --- | --- |
+| the CALLER's own ACTIVE staff row | automatic — nothing to pass, matched on `staff.user_id` against `c.get('houzsUser').id` | a screen must always be able to resolve the person standing on it to a REAL employee. Without it `SalesOrderNew` synthesized a `__self__` option labelled "<name> (me)" and the Payments "Collected By" default fell to blank |
+| `?include=<uuid>,<uuid>,…` | the caller passes the ids the screen already has to NAME — in practice the one `salesperson_id` stored on the document being shown | without it seven pickers labelled a sitting employee "(former staff)" |
+
+Both defeat `onlySales` **only**. Neither resurrects a deactivated row and
+neither survives the fail-closed branch (an unresolved active company still
+answers `[]`), so `(former staff)` still means the row is genuinely gone.
+`include` cannot enumerate — it answers exactly the ids handed to it — which
+makes it strictly narrower than `GET /staff/by-ids` above. Capped at 50 ids;
+past that the endpoint answers **400 `too_many_include_ids`** rather than
+truncating, because a truncated include IS the bug it exists to fix.
+
+Rule and cap live in `backend/src/scm/lib/staffCompanyScope.ts`
+(`alwaysPickableStaffIds`, `unionAlwaysPickable`, `parseIncludeIds`), beside the
+company derivation, and every exit from the handler goes through one `answer()`
+helper so a future narrowing branch cannot forget them —
+`backend/tests/staffPickableAlwaysHolds.test.ts` pins that structurally. The
+frontend entry point is `usePickableStaff({ onlySales, include })`
+(`frontend/src/vendor/scm/lib/admin-queries.ts`); `include` is part of the
+query key. Full trace:
+`docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
 `PATCH /staff/by-user/:userId/showroom` now proves the TARGET PERSON is in the
 caller's company before writing. The warehouse half was already scoped; the write

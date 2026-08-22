@@ -145,6 +145,7 @@ import {
 import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -1857,9 +1858,19 @@ export const SalesOrderDetail = () => {
                 (header as { lifecycle_state?: SoLifecycle }).lifecycle_state,
               );
               return (
-                <span className={`${styles.statusPill} ${STATUS_CLASS[eff.classKey as SoStatus] ?? ''}`}>
-                  {eff.label ?? SO_STATUS_LABEL[header.status] ?? header.status.replace(/_/g, ' ')}
-                </span>
+                <>
+                  <span className={`${styles.statusPill} ${STATUS_CLASS[eff.classKey as SoStatus] ?? ''}`}>
+                    {eff.label ?? SO_STATUS_LABEL[header.status] ?? header.status.replace(/_/g, ' ')}
+                  </span>
+                  {/* mig 0324 — the hold marker sits BESIDE the status, never
+                      instead of it. Before this change an order that went on
+                      hold stopped saying "In Production" anywhere on this page,
+                      and the fact was gone from the database too. */}
+                  <HoldChip
+                    onHold={(header as { on_hold?: boolean | null }).on_hold}
+                    reason={(header as { hold_reason?: string | null }).hold_reason}
+                  />
+                </>
               );
             })()}
             {/* PR-D — History drawer toggle (HOOKKA-style timeline). */}
@@ -2782,7 +2793,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      via the Team-grant rule (usePickableStaff). The self-resolution copy above
      (for the Collected-By default) stays on the FULL useStaff roster; only the
      list of people you can PICK is company-scoped. */
-  const staffQ = usePickableStaff({ onlySales: true });
+  /* `include` carries the salesperson already ON this document, so someone the
+     onlySales narrowing hides is still named. "(former staff)" below is then
+     only reachable for a row that genuinely is gone. */
+  const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
   /* Commander 2026-05-27: Venue is locked to the picked salesperson's
      staff.venue_id; only admin / sales_director may swap the salesperson.

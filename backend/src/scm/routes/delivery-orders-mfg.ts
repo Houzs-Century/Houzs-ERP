@@ -14,10 +14,14 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { mountHoldRoute } from './document-hold-routes';
+import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
-  DO_STATUSES as SHARED_DO_STATUSES,
+  DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
 } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
@@ -302,7 +306,10 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at';
+  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at, ' +
+  /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
+     needed no enum change. docs/modules/delivery-order.md. */
+  HOLD_COLUMNS;
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the DO list payload) but must
@@ -2659,47 +2666,11 @@ async function soRemainingByItemId(
   return out;
 }
 
-/* ── SO-must-be-deliverable guard (audit gap #4) ──────────────────────────────
-   A Delivery Order may only be raised against a Sales Order that is committed —
-   i.e. CONFIRMED or beyond. A DRAFT (never-confirmed), CANCELLED, or ON_HOLD SO
-   is NOT committed, so shipping goods against it (writing an OUT stock movement)
-   is wrong. Mirrors the purchasing-side rule that a GRN's parent PO must be
-   SUBMITTED / PARTIALLY_RECEIVED (grns.ts /outstanding-po-items). New SOs are
-   CONFIRMED on insert (only asDraft lands DRAFT), so the normal deliver flow is
-   unaffected — this only blocks a draft / on-hold / cancelled source. The block
-   set is a DENY-list (not an allow-list) so any legitimate forward status
-   (CONFIRMED, IN_PRODUCTION, DELIVERED, …) stays deliverable.
-   OWNER FLAG: ON_HOLD is treated as NOT deliverable — an order paused mid-flight
-   should not ship until it is taken off hold. */
-const SO_UNDELIVERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']);
-async function firstUndeliverableSo(
-  sb: any,
-  soDocNos: Array<string | null | undefined>,
-): Promise<{ docNo: string; status: string } | null> {
-  const docNos = [...new Set(soDocNos.filter((d): d is string => !!d))];
-  if (docNos.length === 0) return null;
-  const { data } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', docNos);
-  for (const r of (data ?? []) as Array<{ doc_no: string; status: string | null }>) {
-    const st = (r.status ?? '').toUpperCase();
-    // A row with no readable status is left to fall through (never over-block);
-    // an unknown doc_no simply isn't returned here (FK rejects it downstream).
-    if (SO_UNDELIVERABLE_STATUSES.has(st)) return { docNo: r.doc_no, status: st };
-  }
-  return null;
-}
-function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
-  const label =
-    offender.status === 'DRAFT' ? 'is still a draft'
-    : offender.status === 'CANCELLED' ? 'has been cancelled'
-    : offender.status === 'ON_HOLD' ? 'is on hold'
-    : `is ${offender.status.toLowerCase()}`;
-  return {
-    error: 'so_not_deliverable',
-    message: `Sales Order ${offender.docNo} ${label}, so a Delivery Order cannot be created from it. Confirm the Sales Order first.`,
-    soDocNo: offender.docNo,
-    soStatus: offender.status,
-  };
-}
+/* THE SO-MUST-BE-DELIVERABLE GATE MOVED to lib/source-document-gates.ts on
+   2026-08-22 (mig 0324), beside the two conversions that ask the same question
+   of the same row — SO -> PO and PO -> GRN. All three had to learn to read the
+   hold MARKER, because the hold stopped living in the `status` column they were
+   already reading. Behaviour unchanged; that module's header has the trace. */
 
 /* Filter-pill bucket → the raw delivery_orders.status values it covers. Single source of truth for BOTH the status-count
    queries and the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
@@ -2707,12 +2678,6 @@ function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
    until 2026-08-17 and is NOT a member: the tab 500'd (`22P02 invalid input value for enum do_status`) and its COUNT failed to
    a silent 0 — measured in prod that day, company 1 `all:27 delivered:0` with 25 DOs in no tab, company 2 `all:36 delivered:0`
    with 12. COMPLETED stays in shared/do-shipped-states.ts on purpose: those sets compare a status already in hand, in JS, where an impossible value is inert. This map is the one copy Postgres has to PARSE, which is why only this one was fatal. */
-const DO_STATUS_BUCKETS: Record<string, string[]> = {
-  open: ['DRAFT', 'LOADED'],
-  in_transit: ['DISPATCHED', 'IN_TRANSIT'],
-  delivered: ['SIGNED', 'DELIVERED', 'INVOICED'],
-  cancelled: ['CANCELLED'],
-};
 
 // ── List ────────────────────────────────────────────────────────────────
 deliveryOrdersMfg.get('/', async (c) => {
@@ -2745,7 +2710,10 @@ deliveryOrdersMfg.get('/', async (c) => {
   let total = 0;
   let page = 0;
   let pageSize = 50;
-  let statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } | undefined;
+  /* Keyed by BUCKET NAME, not a hand-written literal shape: the buckets are
+     declared once in DO_STATUS_BUCKETS and the counts are derived from that
+     map, so adding a tab cannot leave a count behind. */
+  let statusCounts: Record<string, number> | undefined;
   let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
@@ -2776,8 +2744,11 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise treat it as a raw DB status. */
     const status = c.req.query('status');
+    /* The `on_hold` tab reads the MARKER (mig 0324) — on this document the only
+       thing it can read, since scm.do_status has no ON_HOLD label. */
     if (status && status !== 'all') {
-      if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
+      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      else if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
       else q = q.eq('status', status);
     }
     /* free-text search over the columns the FE list's client-side search matches
@@ -2811,15 +2782,22 @@ deliveryOrdersMfg.get('/', async (c) => {
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
       return cq;
     };
-    const [allC, openC, transitC, deliveredC, cancelledC] = await Promise.all([
+    /* One count per BUCKET, derived from the map — a bucket added there cannot
+       be left without a count, the shape that renders a tab beside a silent 0. */
+    const bucketNames = Object.keys(DO_STATUS_BUCKETS);
+    /* `on_hold` is NOT in DO_STATUS_BUCKETS and must not be — that map is an
+       exhaustive partition of scm.do_status (statusBucketsEnumMembership.test.mjs)
+       and this is a column. Counted here as an OVERLAY: a held DO is counted
+       under its real status too, so these do not sum to `all`. */
+    const [allC, heldC, ...bucketC] = await Promise.all([
       countBase(),
-      countBase().in('status', DO_STATUS_BUCKETS.open),
-      countBase().in('status', DO_STATUS_BUCKETS.in_transit),
-      countBase().in('status', DO_STATUS_BUCKETS.delivered),
-      countBase().in('status', DO_STATUS_BUCKETS.cancelled),
+      countBase().or(HELD_OR_TERM),
+      ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
     ]);
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-    const counted = readStatusCounts({ all: allC, open: openC, in_transit: transitC, delivered: deliveredC, cancelled: cancelledC });
+    const counted = readStatusCounts(Object.fromEntries([
+      ['all', allC], ['on_hold', heldC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
+    ]));
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -3513,12 +3491,14 @@ deliveryOrdersMfg.post('/', async (c) => {
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
     currency: (body.currency as string) ?? 'MYR',
     /* Commander 2026-05-29 — a DO means goods are OUT the moment it's created.
-       Skip the LOADED→DISPATCHED→IN_TRANSIT… hand-walk: start at DISPATCHED
-       (= shipped) and deduct stock right after the items insert below.
+       UNCHANGED, and now the reason this lands on LOADED: raising a DO IS the
+       confirm, and Confirmed is where the stock leaves since 2026-08-22. Only
+       the NAME moved (was DISPATCHED) — the deduction still runs right after the
+       items insert, gated on asDraft and not on this value.
        DRAFT flow (2026-06-24) — opt-in asDraft lands the DO as DRAFT instead,
        with NO stock deduction and NO SO-delivered sync; the commit moves to the
-       Confirm transition (PATCH /:id/status → DISPATCHED). Mirror of the SO. */
-    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+       Confirm transition (PATCH /:id/status → LOADED). Mirror of the SO. */
+    status: (body.asDraft === true) ? 'DRAFT' : 'LOADED',
     /* Drop-ship (mig 0057) — flags the UI badge; inventory reconcile is ledger-driven. */
     is_dropship: dropShipped,
     notes: (body.notes as string) ?? null,
@@ -4092,11 +4072,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     emergency_contact_phone: emPhoneRaw ? (normalizePhone(emPhoneRaw) ?? emPhoneRaw) : null,
     emergency_contact_relationship: (head.emergency_contact_relationship as string | null) ?? null,
     currency: (head.currency as string | null) ?? 'MYR',
-    /* A DO means goods are OUT the moment it's created — start at DISPATCHED
-       (= shipped) and deduct stock below. DRAFT flow (2026-06-24) — opt-in
-       asDraft lands the DO as DRAFT (no stock OUT, no SO sync); the commit
-       moves to the Confirm transition. Mirror of the SO. */
-    status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED',
+    /* A DO means goods are OUT the moment it's created — so it starts at LOADED
+       (= Confirmed, where the stock leaves since 2026-08-22) and deducts below.
+       Was DISPATCHED; the NAME changed, not the timing. asDraft → DRAFT. */
+    status: (body.asDraft === true) ? 'DRAFT' : 'LOADED',
     /* Drop-ship (mig 0057) — flags the UI badge; inventory reconcile is ledger-driven. */
     is_dropship: dropShipped,
     created_by: user.id,
@@ -5403,12 +5382,12 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   }
 
   /* Audit gap #4 — legal-transition guard. Once a DO has shipped (an inventory
-     OUT was written), it must NOT fall back to a pre-ship status (DRAFT / LOADED):
-     a plain status write does NOT reverse the OUT movement, so the DO would read
-     un-shipped while its stock stays deducted (e.g. DELIVERED→DRAFT left stock
-     out of balance). Cancel it (which DOES reverse) and raise a new DO instead.
-     Forward + lateral moves among shipped states, the DRAFT/LOADED→shipped
-     confirm, and the CANCELLED transition (handled below) are all unaffected. */
+     OUT was written), it must NOT fall back to a pre-ship status: a plain status
+     write does NOT reverse the OUT, so the DO reads un-shipped while its stock
+     stays deducted. Cancel it (which DOES reverse) and raise a new DO instead.
+     Forward + lateral moves, the confirm and CANCELLED are unaffected. STRICTER
+     since 2026-08-22 — pre-ship is DRAFT alone, so LOADED→DRAFT is now refused,
+     while DISPATCHED→LOADED is legal (both sides have their stock out). */
   {
     const prevUpper = (prevStatus ?? '').toUpperCase();
     if (DO_STOCK_OUT_STATUSES.has(prevUpper) && DO_PRESHIP_STATUSES.has(toStatus)) {
@@ -5470,7 +5449,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   /* Over-delivery guard on FIRST ship (pre-ship -> shipped). A DRAFT DO skips
      the create-path cap (asDraft-gated) and can land its full qty, so the same
      cap is re-checked HERE — the single point a draft's stock leaves — before
-     the flip. 409 if a line ships past the SO's live remaining. Read-only. */
+     the flip, DRAFT→LOADED since 2026-08-22. 409 past the live remaining. */
   if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
     const { data: shipLines } = await sb.from('delivery_order_items')
       .select('so_item_id, item_code, qty').eq('delivery_order_id', id);
@@ -5544,9 +5523,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   }
 
-  /* Inventory OUT — fire on the first transition into ANY shipped state.
-     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a jump to
-     SIGNED/DELIVERED deducts once. DRAFT CONFIRM (2026-06-24) = DRAFT→DISPATCHED. */
+  /* Inventory OUT — first transition into ANY shipped state; the first rung is
+     LOADED (= Confirm) since 2026-08-22. Idempotent twice over (existence check
+     + prod's uq_inv_mov_do_source_v2); ruling + evidence in the shared set. */
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
@@ -5560,12 +5539,11 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
 
     /* Customer DO email (owner trigger "A", 2026-07-17). Owner ruled "send on
-       CONFIRMED, NOT on delivered": the deduction fires on any shipped state, but
-       the email ("your order is on its way") is false once arrived, so it fires
-       only on entering DISPATCHED from a pre-ship status — a DRAFT→DELIVERED POD
-       deducts here but does NOT email. Once-per-DO (the :3708 shipped→pre-ship
-       guard bars repeats). Gated OFF and fail-closed inside; best-effort. */
-    if (toStatus === 'DISPATCHED' && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+       CONFIRMED, NOT on delivered": every shipped state deducts, but "on its way"
+       is false once arrived, so this fires only on the CONFIRM hop out of a
+       pre-ship status. Once-per-DO (do_email_sent_at, claimed atomically inside);
+       gated OFF and fail-closed. CONFIRM_HOP_STATES gained LOADED 2026-08-22. */
+    if ((CONFIRM_HOP_STATES as readonly string[]).includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
       emailNotice = await maybeSendDeliveryOrderEmail(sb, c.env, id);
     }
   }
@@ -5625,3 +5603,6 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   });
 };
 deliveryOrdersMfg.patch('/:id/status', patchDeliveryOrderStatusHandler);
+
+/* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
+mountHoldRoute(deliveryOrdersMfg, 'do');

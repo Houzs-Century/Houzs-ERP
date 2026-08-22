@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
 import { NEXT_STAGE, STAGE_FUNNEL_DESC } from "./serviceCaseStages";
 import { createPortal } from "react-dom";
+import { useAnchoredPanel, anchoredPanelStyle } from "../lib/anchoredPanel";
 import { Link, useSearchParams, useNavigate, useParams, Navigate } from "react-router-dom";
 import {
   Plus,
@@ -90,6 +91,12 @@ import { readAssrListFilter, writeAssrListFilter } from "../lib/assrListFilter";
    why the two changes ship together. 5 minutes matches the reference-data
    callsites in Team.tsx. */
 const LOOKUP_CACHE = { staleTime: 300_000 } as const;
+
+/* How tall the SO typeahead lists on this page want to be when there is room
+   (what the old `max-h-72` class asked for). lib/anchoredPanel shortens them
+   to the room actually available on the side it opens, so the last suggestion
+   is never below the bottom of the window. */
+const SO_SUGGEST_MAX_H = 288;
 import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
@@ -602,18 +609,15 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status detail (Nick 2026-07-15: the list must show e.g.
-        // "Pending Inspection" under Verification rows) — second muted
-        // line so the stage name + badges stay single-line above it.
-        //
-        // Owner 2026-07-16 ("duplicate 了"): the stage is shown ONCE. The sub
-        // line renders only when it ADDS information — a sub-status that just
-        // restates the stage ("Supplier Pickup" over "Pending Supplier Pickup")
-        // is suppressed; a distinguishing one ("Pending Supplier Return") stays.
+        // Sub-status rides a second muted line (Nick 2026-07-15). Owner 2026-07-16:
+        // hide a sub that merely restates its stage — except the combined Supplier
+        // stage, where naming the leg is the point (Nico 2026-08-22, chase list).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
-          sub && assrSubStatusAddsInfo(stageText, sub.label) ? sub.label : null;
+          sub && (r.stage === "pending_supplier_pickup" || assrSubStatusAddsInfo(stageText, sub.label))
+            ? sub.label
+            : null;
         return (
           <div>
             <div className="flex items-center gap-1.5">
@@ -622,9 +626,7 @@ function CasesView({
                   Archived
                 </Badge>
               )}
-              {/* Funnel-consistent dot: red when this row is SLA-breached
-                  (the funnel box goes red for the same reason), else the
-                  stage's own colour (amber open / green completed). */}
+              {/* Funnel-consistent dot: red = SLA-breached, else the stage's own colour. */}
               <StatusDot
                 variant={
                   r.stage !== "completed" && r.is_breached === 1
@@ -634,9 +636,7 @@ function CasesView({
                 label={stageText}
               />
               {r.stage !== "completed" && (r.is_breached === 1 || r.escalated_at) && (
-                // One SLA badge: solid red = breached, outline = escalated
-                // only (overdue >24h). Merged from the old separate SLA + Esc
-                // pills to calm the row.
+                // One SLA badge: solid = breached, outline = escalated (>24h overdue).
                 <Badge
                   tone="error"
                   variant={r.is_breached === 1 ? "solid" : "outline"}
@@ -658,10 +658,12 @@ function CasesView({
           </div>
         );
       },
-      // caseStageLabel (not the legacy StatusDot stageLabel) — the old
-      // helper only maps the 5 legacy slugs, so 9-stage rows fell through
-      // to raw slugs in the funnel filter + CSV export.
-      getValue: (r) => caseStageLabel(r.stage),
+      // caseStageLabel, plus the sub label so the column FILTER and CSV split
+      // the legs (pickup vs return, inspection vs QC issue result).
+      getValue: (r) => {
+        const sub = assrSubStatus(r.stage, r.sub_status ?? null);
+        return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
+      },
     },
     {
       key: "assr_no",
@@ -1223,7 +1225,7 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-type StageFunnelRow = { stage: string; total: number; breached: number };
+type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number };
 type AssrSummary = {
   total?: number;
   active_count?: number;
@@ -1314,8 +1316,7 @@ function StageStatStrip({
         />
       </div>
 
-      {/* Stage pipeline — compact horizontal funnel; click a stage to filter
-          the list/board/calendar, click again (or All) to clear. */}
+      {/* Stage funnel — click a stage to filter; click again (or All) to clear. */}
       <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[13px] font-bold text-ink">Stage funnel</div>
@@ -1324,22 +1325,27 @@ function StageStatStrip({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {[
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
-            ...stages.map((s) => ({
-              value: s.value as StageFilter,
-              label: s.label,
-              desc: STAGE_FUNNEL_DESC[s.value] ?? "",
-              total: byStage.get(s.value)?.total ?? 0,
-              breached: byStage.get(s.value)?.breached ?? 0,
-            })),
+            ...stages.map((s) => {
+              const row = byStage.get(s.value);
+              // Supplier bucket names its two legs (Nico 2026-08-22) so ops sees
+              // at a glance how many suppliers to chase for pickup vs return.
+              const desc =
+                s.value === "pending_supplier_pickup" && ready && row?.total
+                  ? `${row.total - (row.sub_return ?? 0)} await pickup · ${row.sub_return ?? 0} await return`
+                  : STAGE_FUNNEL_DESC[s.value] ?? "";
+              return {
+                value: s.value as StageFilter,
+                label: s.label,
+                desc,
+                total: row?.total ?? 0,
+                breached: row?.breached ?? 0,
+              };
+            }),
           ].map((s) => {
             const isActive = stage === s.value;
             const empty = ready && s.total === 0;
-            // Dot severity: red = stage holds SLA-breached cases,
-            // dimmed grey = empty, green = All aggregate, solid grey =
-            // Completed (archived), petrol = open work otherwise.
-            // Nico 2026-07-09 — Completed split off from All so the
-            // closed-cases bucket reads as neutral grey (archived), not
-            // healthy green (which stays for the All summary).
+            // Dot: red = holds breached cases, dim grey = empty, green = All,
+            // solid grey = Completed split off All (Nico 2026-07-09), petrol = open.
             const dot =
               s.breached > 0
                 ? "bg-err"
@@ -2245,7 +2251,6 @@ function SoNoSearchEdit({
   >([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
     setDraft(current);
@@ -2277,25 +2282,10 @@ function SoNoSearchEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, current]);
 
-  // Track the input rect so the portaled dropdown follows it.
-  useLayoutEffect(() => {
-    if (!suggestions.length || !inputRef.current) {
-      setRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!inputRef.current) return;
-      const r = inputRef.current.getBoundingClientRect();
-      setRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [suggestions]);
+  /* Track the input rect so the portaled dropdown follows it — shared
+     geometry (lib/anchoredPanel), so the list flips above the field when the
+     room below cannot hold it and is never taller than the space it is in. */
+  const rect = useAnchoredPanel(inputRef, suggestions.length > 0, SO_SUGGEST_MAX_H);
 
   async function commit(next: string) {
     setSuggestions([]);
@@ -2355,8 +2345,11 @@ function SoNoSearchEdit({
       {rect &&
         createPortal(
           <div
-            style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width, zIndex: 60 }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            /* The SO list needs a readable minimum even under a narrow field,
+               so the width floor overrides the anchor's own width. zIndex
+               stays this page's 60. */
+            style={{ ...anchoredPanelStyle(rect), width: Math.max(rect.width, 320), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {suggestions.map((s) => (
               <button
@@ -2478,7 +2471,6 @@ function CreatePanel({
   // otherwise clip suggestions extending below the section. Track the
   // input's viewport rect and re-render dropdown in fixed coordinates.
   const soInputRef = useRef<HTMLInputElement | null>(null);
-  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [lookupItems, setLookupItems] = useState<{ item_code: string; item_description: string | null; qty?: number }[] | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   // Per-item affected quantity (owner 2026-07: multiselect + per-product
@@ -2634,28 +2626,14 @@ function CreatePanel({
     return () => clearTimeout(handle);
   }, [docNo, pickedDocNo]);
 
-  // Sync the portaled dropdown's coords to the input rect whenever
-  // results or visibility change, and on scroll/resize so the menu
-  // tracks if the panel body scrolls.
-  useLayoutEffect(() => {
-    const open = soSuggestions.length > 0 && pickedDocNo !== docNo.trim();
-    if (!open || !soInputRef.current) {
-      setDropdownRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!soInputRef.current) return;
-      const r = soInputRef.current.getBoundingClientRect();
-      setDropdownRect({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [soSuggestions, pickedDocNo, docNo]);
+  /* Sync the portaled dropdown to the input rect, tracking scroll/resize so
+     the menu follows if the panel body scrolls — shared geometry, same flip
+     and clamp as every other picker here. */
+  const dropdownRect = useAnchoredPanel(
+    soInputRef,
+    soSuggestions.length > 0 && pickedDocNo !== docNo.trim(),
+    SO_SUGGEST_MAX_H,
+  );
 
   function pickSuggestion(s: { doc_no: string; ref?: string | null; debtor_name: string | null; phone: string | null }) {
     setDocNo(s.doc_no);
@@ -2821,14 +2799,8 @@ function CreatePanel({
             the section. Coords are tracked in `dropdownRect`. */}
         {dropdownRect && createPortal(
           <div
-            style={{
-              position: "fixed",
-              top: dropdownRect.top,
-              left: dropdownRect.left,
-              width: dropdownRect.width,
-              zIndex: 60,
-            }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            style={{ ...anchoredPanelStyle(dropdownRect), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {soSuggestions.map((s) => (
               <button

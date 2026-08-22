@@ -41,7 +41,7 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. |
 | Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. |
 | Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). |
-| Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. |
+| Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. Two display rules changed 2026-08-21, both shared and neither local: the Warehouse column reads through `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts` — code first, then name; the picker rows carry FLAT columns, so a one-line adapter wraps them rather than a second rule), and the variant line under each row is now LABELLED `Description 2` by the shared `VariantDescription` component. Neither changes what is read or written. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
 | Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
@@ -112,6 +112,10 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
   GRN changes SO list rows that never mention the GRN.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -354,6 +358,33 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
 
 ---
 
+## 3a. `item_group` on a receipt line is the SKU's, not the request's (2026-08-22)
+
+A GRN line's `item_group` is an **input to the stock bucket**, not a label:
+`variant_key = computeVariantKey(item_group, variants)` composes a sofa's
+fabric / seat / leg **only** for a sofa or bedframe group, so a line that reaches
+`postGrnAndRollup` with a blank or `others` group keys its stock with the
+PRODUCT CODE ALONE and the goods land in the unclassified bucket, where no sofa
+order can ever see them (`docs/bugs/0514-…`).
+
+Both hand-entry paths — `POST /grns` (the manual receipt) and
+`POST /grns/:id/items` (a line added afterwards) — used to store
+`it.itemGroup ?? null`, i.e. whatever the browser sent. They now resolve it from
+`mfg_products.category` by item code through `lib/sku-category.ts`,
+company-scoped for the reason `:287` gives (`code` is shared between the two
+organisations). The caller's value survives only as the fallback for a
+raw-material line, which has no product row. `description2` is built from the
+SAME resolved value, so the printed text and the stock key cannot disagree.
+
+The from-PO path (`:1897`) is unchanged and correct: it copies the PO line,
+which is itself resolved from the SKU at PO-create time.
+
+**The receipt also SAYS SO when a group throws attributes away.**
+`keyedVariantWithWarning` logs the receipt number, the group it saw and the
+attributes being dropped whenever a line carries a fabric or seat size that its
+group does not compose. It reports and never repairs — composing regardless of
+group would re-key every historical row in the ledger.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL `backend/scripts/scm-schema/2990s-full-schema.sql:371`
@@ -497,6 +528,36 @@ The OUT counterpart for goods sent back to the supplier is the **Purchase
 Return** (`/purchase-returns`), a separate module.
 
 ---
+
+## 5a. `ON_HOLD` — a paperwork pause, never a stock event (mig 0319)
+
+Added 2026-08-21 (owner: 「GR ... also hold」).
+
+**It moves no stock, and that is the point of preferring it to a cancel here.**
+The inventory IN fires at the DRAFT -> POSTED transition and a CANCEL writes the
+reversing OUT; holding a posted GRN changes no movement at all. The goods are in
+the warehouse either way — what stops is the paperwork.
+
+**What it blocks:** a held GRN cannot become a Purchase Invoice.
+
+> **THAT BLOCK USED TO COME FREE AND NO LONGER DOES — mig 0324, 2026-08-22.**
+> This paragraph said the billable-GRN read `.eq('status','POSTED')` excluded a
+> held GRN "with no new code", and that was true only while the hold OVERWROTE
+> the status. Since the hold became a MARKER beside the status (owner:
+> 「我们的hold是给我们知道一个 order hold这的」) a held GRN reads `POSTED`, so
+> `purchase-invoices.ts` checks `on_hold` explicitly on all three billing paths —
+> `/outstanding-grn-items`, `from-grn-items` and `from-grn`, the last two
+> refusing with `grn_on_hold` (409). Missing one bills a supplier for a receipt
+> somebody deliberately stopped.
+>
+> The GRN's hold is written by `PATCH /:id/hold` — its first working hold of any
+> kind, because the status added on 2026-08-21 had no writer anywhere. A held
+> POSTED GRN is still POSTED, so the "paperwork pause, never a stock event"
+> promise above is now literally true rather than approximately.
+
+`GoodsReceivedDetailV2`'s `effectiveOf` names it explicitly. Its fall-through is
+`draft`, so a held receipt would otherwise have read as an un-posted DRAFT — the
+opposite of the truth, since a held GRN has already posted and its stock is in.
 
 ## 6. What locks and when
 

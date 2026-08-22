@@ -56,6 +56,20 @@ export function isSoFullyCovered(
 
 // SO statuses we may auto-advance to DELIVERED. Anything already at
 // INVOICED/CLOSED is done; ON_HOLD/CANCELLED must NOT be auto-flipped.
+//
+// NO `on_hold` TERM HERE, AND THAT IS DELIBERATE (mig 0324). Every guard that
+// asks "may somebody ACT on this document" gained one; this is not that kind of
+// site. This is a WRITER that re-derives a status from a fact — the goods were
+// delivered — and the reason ON_HOLD was excluded was that the auto-flip would
+// have OVERWRITTEN a hold a person had set. Since the hold moved into its own
+// column, writing `status` cannot touch it, so a held order whose delivery
+// completes should read DELIVERED and carry its Hold chip: both facts, at once,
+// which is precisely what a status-hold made impossible.
+//
+// `ON_HOLD` stays in neither list and out of DELIVERABLE_FROM for a different
+// reason that still holds: a LEGACY row sitting on that label keeps its hold in
+// the status column and nowhere else, so auto-flipping it would destroy the
+// hold. Same reasoning as recomputePoReceived in routes/grns.ts.
 const DELIVERABLE_FROM = ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED'];
 
 // Bug #4 — the status we RELEASE a DELIVERED SO back to when its DO is cancelled
@@ -111,9 +125,15 @@ export async function syncSoDeliveredFromDo(
       // LEAK GUARD (PRE-SHIP): a DO that has not shipped must never count
       // toward SO delivery coverage (else it could auto-advance the SO to
       // DELIVERED or stamp lines READY without any stock leaving). That is
-      // DRAFT *and* LOADED — this list named only DRAFT until 2026-08-20. The
-      // literal is built from DO_NOT_DELIVERED_STATES, so it cannot drift from
-      // the JS predicate the coverage engine uses.
+      // DRAFT and CANCELLED. It named only DRAFT until 2026-08-20, then DRAFT
+      // *and* LOADED; on 2026-08-22 LOADED left again because the owner moved
+      // the stock-out to the confirm step, so a Confirmed delivery HAS shipped
+      // and must count. The literal is built from DO_NOT_DELIVERED_STATES, so it
+      // cannot drift from the JS predicate the coverage engine uses — which is
+      // why that ruling re-computed this site rather than leaving it behind.
+      // The HOLD is deliberately not read here (mig 0324): a held delivery's
+      // goods have still left, and freezing its counts is exactly what #2661
+      // avoided by leaving this site status-only.
       const { data: doItemsRaw } = await sb
         .from('delivery_order_items')
         .select('id, so_item_id, qty, delivery_orders!inner(status)')

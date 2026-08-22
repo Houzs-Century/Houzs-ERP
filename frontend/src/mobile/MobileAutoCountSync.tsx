@@ -45,6 +45,23 @@ import {
   type AcSaid,
   type AcTone,
 } from "../lib/autocountOutbox";
+import {
+  AC_BOOK_DIFFERENT_FLAG,
+  AC_DATE_RANGES,
+  AC_DATE_RANGE_LABEL,
+  AC_DEFAULT_DATE_RANGE,
+  AC_DEFAULT_SORT,
+  AC_SORT_LABEL,
+  acBookDifferentNote,
+  acBookNumber,
+  acGroupsInRange,
+  acRegisterItems,
+  acShowingLine,
+  acSortGroups,
+  type AcDateRange,
+  type AcRegisterItem,
+  type AcSort,
+} from "../lib/autocountRegister";
 import { MobileVirtualList } from "./MobileVirtualList";
 import "./mobile.css";
 
@@ -80,6 +97,22 @@ import "./mobile.css";
  * same helper (acGroupByDocument): "为什么在 AutoCount 里面一张 Sales Order 会出现
  * 两次呢?" The card is the document, its newest send says where it stands, and
  * every earlier send is folded under it.
+ *
+ * THE DESKTOP BECAME A REGISTER on 2026-08-21 AND THIS SCREEN DID NOT, and that
+ * is the decision rather than an omission: eight columns do not fit 375 px, and
+ * a table that scrolls sideways on a phone is a table nobody reads. What DID
+ * cross over is everything that is a verdict rather than a layout, all of it
+ * from lib/autocountRegister so the two surfaces cannot disagree about a row:
+ *
+ *   - the MISMATCH FLAG. `HC-PO-2608-001` is in the account book as `PO-009968`
+ *     and nobody saw it for three days. A flag the owner only gets at his desk
+ *     is a flag he does not get on the floor, which is where he uses this.
+ *     A phone has room for the whole sentence, so it prints it.
+ *   - DAY SEPARATORS, the same buckets, in the same flat windowed list.
+ *   - the DATE RANGE. A filter on one surface and not the other is the bug
+ *     class this repo names; it is component state here, as every other mobile
+ *     filter is, because the mobile shell has no router.
+ *   - the SORT, and the line that closes the list.
  *
  * Send again is here too, and it has to be: a rule or a control on one surface
  * and not the other is the recurring bug class this repo names. Same shared
@@ -221,6 +254,52 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
   );
 }
 
+/**
+ * THE ACCOUNT BOOK FILED IT UNDER A DIFFERENT NUMBER — the desktop register's
+ * flagged cell, in this file's idiom and with the room a phone actually has.
+ *
+ * ON THE CARD, never behind the opener. A document already in the account book
+ * has nothing to open — that ruling stands — so a flag that needed a click
+ * would be a flag on exactly the rows that have no click. It is also why this
+ * is the one thing a quiet card is allowed to grow for: in production the two
+ * numbers are the same string on anything sent since the ERP started supplying
+ * its own (module guide §7g), so this is rare, and on the day it is not rare it
+ * is the most useful thing on the screen.
+ */
+function BookMismatch({ docNo, acDocNo }: { docNo: string; acDocNo: string }) {
+  return (
+    <div
+      data-ac-book-flag=""
+      style={{
+        marginTop: 5, borderRadius: 8, padding: "5px 8px",
+        background: "var(--amber-bg)", border: "1px solid var(--amber)",
+        fontSize: 10.5, lineHeight: 1.45, color: "var(--amber)",
+      }}
+    >
+      {/* ONE FLOWING LINE, not a heading over a paragraph. The phone pays for
+          every line, and the flag reads perfectly well as the opening words of
+          the sentence it introduces. */}
+      <b style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase" }}>
+        {AC_BOOK_DIFFERENT_FLAG}
+      </b>
+      <span style={{ color: "var(--ink2)" }}>{` — ${acBookDifferentNote(docNo, acDocNo)}`}</span>
+    </div>
+  );
+}
+
+/** The day a run of cards happened on. A rule and a few words — the desktop
+ *  register's separator, from the same buckets. */
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div data-ac-day="" style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 2px 0" }}>
+      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: "var(--mut)" }}>
+        {label}
+      </span>
+      <span aria-hidden style={{ flex: 1, height: 1, background: "var(--line)" }} />
+    </div>
+  );
+}
+
 function OutboxCard(
   { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
     group: AcDocGroup;
@@ -242,6 +321,8 @@ function OutboxCard(
   const c = TONE_COLOR[tone];
   /* Cleared the moment the re-send is accepted — see the desktop twin. */
   const detail = acRowDetail(row, note?.clearsReason === true);
+  /* The SAME verdict the desktop register's fifth column reads. */
+  const book = acBookNumber(row);
 
   return (
     <div
@@ -299,6 +380,9 @@ function OutboxCard(
         >
           {acRowStandsAt(row, maxAttempts)}
         </div>
+        {book.flagged && book.number !== null && (
+          <BookMismatch docNo={row.doc_no} acDocNo={book.number} />
+        )}
       </div>
 
       {/* THE REASON, ONE LINE, ALWAYS VISIBLE — and it is the opener. */}
@@ -422,6 +506,11 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const [state, setState] = useState<AcFilterState>(AC_DEFAULT_STATE);
   const [docType, setDocType] = useState<AcDocType | "">("");
   const [docNo, setDocNo] = useState("");
+  /* Component state, not the URL — the mobile shell has no router, and every
+     other mobile filter is held the same way. The DEFAULTS are the shared
+     ones, so the two surfaces open on the same view. */
+  const [range, setRange] = useState<AcDateRange>(AC_DEFAULT_DATE_RANGE);
+  const [sort, setSort] = useState<AcSort>(AC_DEFAULT_SORT);
 
   const q = useAutoCountOutbox({ state, docNo });
   const d = q.data;
@@ -437,10 +526,33 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
      more. */
   const loaded = acGroupByDocument(d?.rows ?? []);
   const typeCounts = acDocTypeCounts(loaded);
-  const groups = acGroupsOfType(loaded, docType);
+  /* THE TWO LENSES, IN THE DESKTOP'S ORDER, and the order matters for the same
+     reason there: the type chips count what the STATE filter left, and the date
+     range narrows what both left. Reversing them would have the type chips
+     counting a window and the two strips disagreeing. */
+  const groups = acGroupsInRange(acGroupsOfType(loaded, docType), range);
   /* History folds away here too — a phone has less room to spend on documents
      that already went through, not more. Same helper, same default. */
   const split = acSplitReplaced(groups);
+  const live = acSortGroups(split.live, sort);
+  /* ONE FLAT LIST of day separators and cards, from the same helper the desktop
+     register builds its rows from, so a day breaks in the same place on both. */
+  const items = acRegisterItems(live);
+
+  const renderCard = (g: AcDocGroup) => (
+    <OutboxCard
+      group={g}
+      maxAttempts={maxAttempts}
+      sending={requeue.sendingId === g.current.id}
+      note={requeue.notes[g.current.id]}
+      open={expanded.isOpen(g.current)}
+      onToggle={() => expanded.toggle(g.current)}
+      historyOpen={sendHistory.isOpen(g)}
+      onToggleHistory={() => sendHistory.toggle(g)}
+      onSendAgain={() => void requeue.sendAgain(g.current.id)}
+      onSendNow={() => void requeue.sendNow(g.current.id)}
+    />
+  );
 
   return (
     <div className="hz-m" style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
@@ -484,6 +596,22 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               on={docType === t}
               onClick={() => setDocType(t)}
             />
+          ))}
+        </div>
+        {/* THE DATE LENS, the third strip, beside the other two — a filter the
+            desktop has and this screen did not would be the split the shared
+            layer exists to stop. No counts on it: it narrows the loaded page
+            rather than describing a population, and a count would read as one. */}
+        <div className="chips" style={{ marginTop: 7 }}>
+          {AC_DATE_RANGES.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={range === r ? "chip on" : "chip"}
+              aria-pressed={range === r}
+            >
+              {AC_DATE_RANGE_LABEL[r]}
+            </button>
           ))}
         </div>
       </header>
@@ -551,6 +679,22 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               </span>
             </div>
 
+            {/* THE SORT. A control the desktop register has, in the shape this
+                surface can afford: one button that names the order it is IN,
+                because a phone has no column heading to click. */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <button
+                onClick={() => setSort(sort === "newest" ? "oldest" : "newest")}
+                style={{
+                  fontFamily: "inherit", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  border: "1px solid var(--line)", borderRadius: 8, padding: "3px 9px",
+                  background: "var(--card)", color: "var(--mut)",
+                }}
+              >
+                {AC_SORT_LABEL[sort]}
+              </button>
+            </div>
+
             {(d.truncated || !d.counts_complete) && (
               <div style={{ fontSize: 11, color: "var(--amber)", background: "var(--amber-bg)", borderRadius: 9, padding: "8px 10px", marginBottom: 11 }}>
                 {d.truncated && (
@@ -574,27 +718,31 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                 {AC_ONLY_REPLACED_LINE}
               </div>
             ) : (
-              <MobileVirtualList
-                items={split.live}
-                getKey={(g) => g.key}
-                gap={8}
-                estimateHeight={62}
-                ariaLabel={`${split.live.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
-                renderItem={(g) => (
-                  <OutboxCard
-                    group={g}
-                    maxAttempts={maxAttempts}
-                    sending={requeue.sendingId === g.current.id}
-                    note={requeue.notes[g.current.id]}
-                    open={expanded.isOpen(g.current)}
-                    onToggle={() => expanded.toggle(g.current)}
-                    historyOpen={sendHistory.isOpen(g)}
-                    onToggleHistory={() => sendHistory.toggle(g)}
-                    onSendAgain={() => void requeue.sendAgain(g.current.id)}
-                    onSendNow={() => void requeue.sendNow(g.current.id)}
-                  />
-                )}
-              />
+              <>
+                <MobileVirtualList
+                  items={items}
+                  getKey={(i) => i.key}
+                  gap={8}
+                  estimateHeight={62}
+                  ariaLabel={`${live.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
+                  renderItem={(i: AcRegisterItem) => (
+                    i.kind === "day" ? <DaySeparator label={i.label} /> : renderCard(i.group)
+                  )}
+                />
+                {/* THE LINE THAT CLOSES THE LIST — the desktop register's
+                    footer, same sentence. A windowed list draws its scrollbar
+                    from estimates, so on a phone even more than on a screen the
+                    scrollbar cannot answer "am I looking at all of it". */}
+                <div
+                  style={{
+                    marginTop: 10, fontSize: 10.5, color: "var(--mut)",
+                    display: "flex", justifyContent: "space-between", gap: 10,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span>{acShowingLine(live.length, d.counts.total)}</span>
+                </div>
+              </>
             )}
 
             {/* THE RECORD, FOLDED — under the live cards, never among them, and
@@ -634,20 +782,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                       gap={8}
                       estimateHeight={62}
                       ariaLabel={`${split.replaced.length} replaced documents, kept as a record.`}
-                      renderItem={(g) => (
-                        <OutboxCard
-                          group={g}
-                          maxAttempts={maxAttempts}
-                          sending={requeue.sendingId === g.current.id}
-                          note={requeue.notes[g.current.id]}
-                          open={expanded.isOpen(g.current)}
-                          onToggle={() => expanded.toggle(g.current)}
-                          historyOpen={sendHistory.isOpen(g)}
-                          onToggleHistory={() => sendHistory.toggle(g)}
-                          onSendAgain={() => void requeue.sendAgain(g.current.id)}
-                          onSendNow={() => void requeue.sendNow(g.current.id)}
-                        />
-                      )}
+                      renderItem={renderCard}
                     />
                   </div>
                 )}

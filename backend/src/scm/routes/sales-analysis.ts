@@ -212,6 +212,9 @@ salesAnalysis.get('/', async (c) => {
     let q = sb
       .from('mfg_sales_orders')
       .select('doc_no, cross_category_source_doc_no, so_date, total_revenue_sen, total_margin_sen, service_sen, customer_id, city, customer_state')
+      /* `on_hold` since mig 0324 — the hold is a MARKER beside the status now,
+         so the status arm below can no longer see one on its own. */
+      .eq('on_hold', false)
       .not('status', 'in', '("CANCELLED","ON_HOLD")')
       .order('doc_no')
       .range(from, to);

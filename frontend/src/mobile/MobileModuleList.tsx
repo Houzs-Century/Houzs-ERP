@@ -19,6 +19,7 @@ import {
 } from "../vendor/scm/lib/status-pill";
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
+import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -1248,7 +1249,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     chips: [
       { key: "all", label: "All", match: () => true },
       { key: "draft", label: "Draft", match: (r) => eq(pick(r, "status"), "draft") },
-      { key: "posted", label: "Posted", match: (r) => eq(pick(r, "status"), "posted") },
+      { key: "posted", label: "Confirmed", match: (r) => eq(pick(r, "status"), "posted") },
     ],
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "receivedAt", "received_at"), pick(b, "receivedAt", "received_at")) }],
   },
@@ -1703,7 +1704,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     chips: [
       { key: "all", label: "All", match: () => true },
       { key: "draft", label: "Draft", match: (r) => eq(pick(r, "status"), "draft") },
-      { key: "posted", label: "Posted", match: (r) => eq(pick(r, "status"), "posted") },
+      { key: "posted", label: "Confirmed", match: (r) => eq(pick(r, "status"), "posted") },
       { key: "completed", label: "Completed", match: (r) => eq(pick(r, "status"), "completed") },
       { key: "cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],
@@ -2002,8 +2003,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     endpoint: "/stock-transfers",
     listKey: "transfers",
     primary: (r) => {
-      const from = pick(r, "fromWarehouse", "from_warehouse")?.name ?? pick(r, "fromWarehouse", "from_warehouse")?.code;
-      const to = pick(r, "toWarehouse", "to_warehouse")?.name ?? pick(r, "toWarehouse", "to_warehouse")?.code;
+      const [from, to] = [pick(r, "fromWarehouse", "from_warehouse"), pick(r, "toWarehouse", "to_warehouse")].map(warehouseLabel);
       return from && to ? `${from} → ${to}` : pick(r, "transferNo", "transfer_no") ?? "—";
     },
     secondary: (r) => join(pick(r, "transferNo", "transfer_no"), pick(r, "status"), dm(pick(r, "transferDate", "transfer_date"))),
@@ -2015,7 +2015,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     footL: (r) => { const n = pick(r, "lineCount", "line_count"); return ["", n == null ? "" : `${n} lines`]; },
     chips: [
       { key: "all", label: "All", match: () => true },
-      { key: "posted", label: "Posted", match: (r) => eq(pick(r, "status"), "posted") },
+      { key: "posted", label: "Confirmed", match: (r) => eq(pick(r, "status"), "posted") },
       { key: "cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "transferDate", "transfer_date"), pick(b, "transferDate", "transfer_date")) }],
@@ -2032,7 +2032,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     placeholder: "Search stock take · warehouse",
     endpoint: "/stock-takes",
     listKey: "takes",
-    primary: (r) => pick(r, "warehouse")?.name ?? pick(r, "warehouse")?.code ?? pick(r, "takeNo", "take_no") ?? "—",
+    primary: (r) => warehouseLabel(pick(r, "warehouse")) ?? pick(r, "takeNo", "take_no") ?? "—",
     secondary: (r) => join(pick(r, "takeNo", "take_no"), pick(r, "status"), dm(pick(r, "takeDate", "take_date"))),
     search: (r) => join(pick(r, "takeNo", "take_no"), pick(r, "warehouse")?.name, pick(r, "scopeValue", "scope_value")),
     statusDocType: "stockTake",
@@ -2046,7 +2046,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     },
     chips: [
       { key: "all", label: "All", match: () => true },
-      { key: "posted", label: "Posted", match: (r) => eq(pick(r, "status"), "posted") },
+      { key: "posted", label: "Confirmed", match: (r) => eq(pick(r, "status"), "posted") },
       { key: "cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "takeDate", "take_date"), pick(b, "takeDate", "take_date")) }],

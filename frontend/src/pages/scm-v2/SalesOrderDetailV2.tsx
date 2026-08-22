@@ -1243,12 +1243,12 @@ function SalesOrderDetailV2ReadOnly() {
                   muted={!salesOrder.venue}
                 />
                 <Field
-                  label="Processing date"
+                  label="Processing Date"
                   value={fmtDate(salesOrder.processing_date)}
                   muted={!salesOrder.processing_date}
                 />
                 <Field
-                  label="Delivery date"
+                  label="Delivery Date"
                   value={
                     salesOrder.customer_delivery_date
                       ? fmtDate(salesOrder.customer_delivery_date)

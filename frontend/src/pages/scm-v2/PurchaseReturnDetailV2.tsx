@@ -105,7 +105,7 @@ const effectiveOf = (h: PrHeader): Effective => {
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft:     { tone: "warning", label: "Draft",     blurb: "Draft · not yet posted" },
-  posted:    { tone: "warning", label: "Posted",    blurb: "Posted · awaiting credit note" },
+  posted:    { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting credit note" },
   completed: { tone: "success", label: "Completed", blurb: "Completed · credit note issued" },
   cancelled: { tone: "error",   label: "Cancelled", blurb: "Cancelled · no further action" },
 };

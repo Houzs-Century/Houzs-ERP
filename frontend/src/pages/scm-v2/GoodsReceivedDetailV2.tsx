@@ -42,10 +42,11 @@ import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../l
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
-type GrnHeader = {
+type GrnHeader = HoldFields & {
   id: string;
   grn_number: string;
   status: GrnStatus;
@@ -115,17 +116,23 @@ const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
 const poOf = (h: GrnHeader): string => h.purchase_order?.po_number || "—";
 
-type Effective = "draft" | "posted" | "cancelled";
+type Effective = "draft" | "posted" | "cancelled" | "on_hold";
+/* ON_HOLD named explicitly (mig 0319). The fall-through is "draft", so a HELD
+   goods receipt would have read as an un-posted DRAFT — which is the opposite
+   of what it is: a held GRN has already posted, and its stock IN already
+   fired. A hold is a paperwork pause, never a stock event. */
 const effectiveOf = (h: GrnHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
+  if (s === "ON_HOLD") return "on_hold";
   if (s === "POSTED") return "posted";
   return "draft";
 };
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Posted", blurb: "Posted · inventory received" },
+  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
 };
 
@@ -544,7 +551,11 @@ function GoodsReceivedDetailV2ReadOnly() {
         <div className="px-4 pb-4 pt-3">
           <h1 className="font-display text-[19px] font-bold leading-tight text-white">{supplierNameOf(grn)}</h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -558,7 +569,11 @@ function GoodsReceivedDetailV2ReadOnly() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">{supplierNameOf(grn)}</h1>
-                <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-primary-ink">{grn.grn_number}</span>

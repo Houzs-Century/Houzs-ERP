@@ -35,15 +35,35 @@ export const COMMISSION_ENGINE_VERSION = 'v2';
  * 2990 excluded only CANCELLED + ON_HOLD out of the 10 statuses
  * (mfg-sales-orders.ts SO_STATUSES), which left DRAFT — rank 0, the state every
  * SO is born in — paying full commission.
+ *
+ * CLOSED IS DELIBERATELY NOT HERE (considered 2026-08-22, when the status came
+ * back). Closing means the remainder is not coming — the customer took 7 of the
+ * 10 — but the 7 were really sold, so the salesperson keeps the commission on
+ * them. Excluding a closed order would dock a salesperson's pay because the
+ * customer shortened his own order. It is the opposite of CANCELLED, which
+ * voids the sale.
  */
 export const COMMISSION_EXCLUDED_STATUSES = ['CANCELLED', 'ON_HOLD', 'DRAFT'] as const;
 
-/** Does an SO in this status earn commission? Unknown statuses EARN — matching
+/** Does an SO in this state earn commission? Unknown statuses EARN — matching
  *  the PostgREST `not in` filter exactly (it excludes a listed status, it does
  *  not require a known one) and matching soStatusTransitionError's "status-blind
- *  → allow" rule. A new status must be considered here deliberately. */
-export const soEarnsCommission = (status: string | null | undefined): boolean =>
-  !(COMMISSION_EXCLUDED_STATUSES as readonly string[]).includes(String(status ?? '').toUpperCase());
+ *  → allow" rule. A new status must be considered here deliberately.
+ *
+ *  `onHold` IS THE mig-0324 MARKER AND IT IS REQUIRED, no default. A held order
+ *  keeps its real status, so the list above stopped being able to see a hold on
+ *  its own — and this is the commission engine, where the silent failure is
+ *  paying commission on orders somebody deliberately stopped. An optional
+ *  parameter would have let every existing caller keep exactly that behaviour
+ *  with nothing failing (BUG CLASS optional-param-noop). Pass `null` only where
+ *  the column genuinely could not be read; it is treated as NOT held, because
+ *  over-blocking a commission is its own kind of wrong. */
+export const soEarnsCommission = (
+  status: string | null | undefined,
+  onHold: boolean | null,
+): boolean =>
+  onHold !== true
+  && !(COMMISSION_EXCLUDED_STATUSES as readonly string[]).includes(String(status ?? '').toUpperCase());
 
 export interface CommissionConfig {
   baseBps: number;

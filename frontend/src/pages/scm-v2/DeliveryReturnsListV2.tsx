@@ -16,6 +16,7 @@
 // about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -66,6 +67,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
+import { deliveryReturnRowMenu } from "./row-menus";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -138,13 +140,10 @@ const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 
 const brandOf = (r: DrRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home for both. This copy had also lost
+   the BEDFRAME arm — a THIRD spelling across the five lists. */
+const brandTone = brandingToneForLabel;
 
 // DR status flow: PENDING → RECEIVED (goods back, stock IN) → INSPECTED →
 // REFUNDED / CREDIT_NOTED, plus REJECTED / CANCELLED. Compress into 4
@@ -1040,6 +1039,53 @@ export function DeliveryReturnsListV2() {
     );
   };
 
+  /* Right-click (owner 2026-08-22): 「只要有 Cancel / On Hold 状态的，全部都可以
+     右键 Cancel」. This list had no cancel of any kind — cancelling a return
+     lived only on its detail page — but it needed no new endpoint: the status
+     PATCH it already uses for Inspected, Refunded and Reopen is the same one
+     the detail page's Cancel calls, with CANCELLED as the target.
+
+     The words match the detail page's, because the consequence is the same one
+     and the operator must read it in both places: creating the return put the
+     goods back INTO stock, so cancelling takes them out again.
+
+     Inspected and Refunded stay OFF the menu and on the drawer. Refunded in
+     particular is a money statement, and the drawer is where the refund figure
+     that justifies it is on screen. */
+  const doCancelDr = async (r: DrRow) => {
+    if (
+      !(await askConfirm({
+        title: `Cancel return ${r.return_number}?`,
+        body: "The stock added on create will be reversed via a negative ADJUSTMENT. A cancelled return cannot be reopened.",
+        confirmLabel: "Cancel return",
+        danger: true,
+      }))
+    )
+      return;
+    updateStatus.mutate(
+      { id: r.id, status: "CANCELLED" },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) =>
+          notify({
+            title: `Couldn't cancel ${r.return_number}`,
+            body: `${e instanceof Error ? e.message : "Something went wrong."} The return is unchanged — please try again.`,
+            tone: "error",
+          }),
+      }
+    );
+  };
+  /* No Confirm entry: a Delivery Return is RECEIVED on create and has no draft
+     step, so there is no confirm transition to offer. Cancelling is final — the
+     server refuses to un-cancel — so an already cancelled row gets no entry. */
+  const drContextMenu = deliveryReturnRowMenu<DrRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: goPrint,
+    cancel: doCancelDr,
+    canCancel: (r) => (r.status || "").toUpperCase() !== "CANCELLED",
+  });
+
   // Table columns — Reason gets a first-class spot (a DR-only signal).
   const columns: Column<DrRow>[] = [
     {
@@ -1642,6 +1688,7 @@ export function DeliveryReturnsListV2() {
               columns={columns}
               getRowKey={(r) => r.id}
               onRowClick={(r) => setSelected(r)}
+              contextMenu={drContextMenu}
               expandable={{
                 render: (r) => <DrLinesExpansion id={r.id} />,
                 rowKey: (r) => r.id,

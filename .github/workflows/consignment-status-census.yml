@@ -1,0 +1,62 @@
+name: Consignment status census (read-only)
+
+# How many rows does each consignment document hold, by status and by company —
+# and what status vocabulary does the database actually allow?
+#
+# The owner, 2026-08-22: 「CO=SO，DO=Consignment note。状态等等全部都是要对齐的」
+# and 「正常来说每个 Status 都应该有 On Hold 和 Cancel」.
+#
+# Aligning the consignment chain with the sales chain is written up as a
+# proposal (docs/modules/consignment-alignment.md). A proposal costed against
+# guesses is worthless, and two of its facts live only in production:
+#   1. WHAT THE COLUMN ALLOWS. Every consignment status column is declared as a
+#      REUSED enum (consignment_sales_orders.status is the Sales Order's own
+#      mfg_so_status). That is read off DDL files, and this repo's schema README
+#      records DDL applied out-of-band more than once — so pg_enum is the
+#      authority, not the file.
+#   2. HOW MANY ROWS the change would land on. Cheap on an empty table,
+#      expensive on a live one.
+#
+# THE REPOSITORY IS PUBLIC AND SO IS THIS LOG. The script prints counts, table
+# names, column types and enum labels — no document number, no customer name, no
+# supplier, no staff, no amount, no date.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only — it is a
+# question, not a gate. Own concurrency group so a diagnostic can never queue
+# behind or displace a release. Exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: consignment-status-census
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Count consignment rows by status and company
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/check-consignment-status-census.mjs

@@ -30,7 +30,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx` | Server-paginated, `pageSize = 50` (`:834`), page in `?page=`. Sends the **bucket name** as `status` (`:854`). Revenue card is page-only; In-transit / Delivered cards read full-set `statusCounts` (`:878-880`). |
 | Desktop detail | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` | Header + lines + payments + crew. |
-| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | |
+| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | The Sales-location dropdown labels each option with the ONE warehouse rule — `warehouseLabel`, code first then name (`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of the backend module; 2026-08-21). It printed the NAME first. Do not hand-write the order — see `docs/modules/warehouses.md`. |
 | Desktop from-SO | `frontend/src/pages/scm-v2/DeliveryOrderFromSo.tsx` | Line-level picker over `/deliverable-so-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
@@ -110,10 +110,12 @@ confirm. One POD confirm anywhere in those five weeks would have left a non-null
 value. There are none.
 
 **Why nobody opens it, stated plainly and not as a complaint about drivers.**
-`DISPATCHED` is already a member of `DO_SHIPPED_STATES` *and* of
+`DISPATCHED` is a member of `DO_SHIPPED_STATES` *and* of
 `SI_TRANSFERABLE_DO_STATES` (`backend/src/scm/shared/do-shipped-states.ts`), so
-the moment a DO is dispatched the stock is out, the SO counts the lines as
-delivered, and the Sales Invoice can be raised. Every rung above it —
+by the time a DO is dispatched the stock is out, the SO counts the lines as
+delivered, and the Sales Invoice can be raised. (Since 2026-08-22 all three are
+true one rung EARLIER, at `LOADED` / Confirmed — which sharpens this point
+rather than changing it.) Every rung above it —
 `IN_TRANSIT`, `SIGNED`, `DELIVERED`, and therefore the whole POD capture — is
 optional, and the desktop's one-click control for it is *labelled* "Mark
 signed". Capturing proof buys the office nothing the system asks for. That is a
@@ -141,6 +143,54 @@ that the object is in the bucket.
 Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and
 without `allowSales` for new / from-so.
+
+### The list's right-click menu (owner ruling, 2026-08-22)
+
+His words, looking at this list's menu: 「DO 这一边没有问题，可是为什么没有
+Cancel 呢？By right 每一个 Transaction Record 应该都可以右键（Right click）Move
+to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and 「我的 DO 也应该有右键
+Transfer to Delivery Return，对吧？」
+
+The menu is built by `deliveryOrderRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts` and wired in
+`MfgDeliveryOrdersListV2.tsx`. It offers five things, and every one of them
+calls a handler this page or its drawer already had:
+
+The list's own status vocabulary — the tab buckets, the pill tones, and
+`doCancellableStatus` — lives beside it in
+`frontend/src/pages/scm-v2/do-list-status.ts`, lifted out because the list file
+sits at its size ceiling.
+
+| entry | shown when | what it does |
+|---|---|---|
+| Open · Edit · Print | always | navigation only |
+| Transfer to Sales Invoice | `doCountsAsInvoiceable(status)` | `convertToLink('doToSi', id)` |
+| Transfer to Delivery Return | `doCountsAsDelivered(status)` | `convertToLink('doToDr', id)` |
+| Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `DISPATCHED` |
+| Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | in-app confirm, then `PATCH /:id/status` → `CANCELLED` |
+
+Everything above additionally requires `canWriteDo`
+(`canOperateDeliveryOrders`).
+
+**Cancel asks first because it reverses stock.** `doCancelDo` goes through
+`useConfirm` — the same shape the Sales Order list uses — and posts the DETAIL
+page's endpoint, not a new one. What the list CANNOT see is the route's second
+refusal: `doHasDownstream` blocks a cancel once a live Sales Invoice or Delivery
+Return points at this DO, and no list row carries that fact. That refusal
+therefore arrives as the mutation's error notice
+(`useUpdateMfgDeliveryOrderStatus`'s `onError`) rather than as a missing entry.
+
+**Which returnable statuses.** `doCountsAsDelivered` is the SHARED predicate,
+the same one `resolveCandidateDoIds(…, 'delivered')` applies server-side
+(`backend/src/scm/lib/do-line-remaining.ts`): DRAFT, LOADED and CANCELLED are
+out — goods still on the lorry never left, so nothing can come back. The menu
+cannot advertise a delivery the picker would then not list.
+
+**Only ONE status entry.** The rest of the ladder stays off this menu: the DO is
+the one document where a status move writes inventory OUT, and `DELIVERED`
+belongs to the driver's Proof-of-Delivery screen, which closes it with a
+signature. `Reopen` is absent for a harder reason — see "Who moves the DO status"
+below; every transition out of `CANCELLED` is refused.
 
 ### Data hooks
 `frontend/src/vendor/scm/lib/delivery-order-queries.ts`
@@ -184,6 +234,10 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
 
 ---
 
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
+
 ## 2. API surface
 
 `backend/src/scm/routes/delivery-orders-mfg.ts`, mounted at
@@ -198,8 +252,8 @@ still need `edit` on `scm.sales.delivery`.
 | GET | `/deliverable-so-lines` | `:2347` | SO lines with `remaining > 0` (qty − delivered + returned). |
 | GET | `/so-source/:docNo` | `:2425` | SO header fields for the convert form. |
 | GET | `/:id` | `:2451` | Header + items + `has_children` + `lifecycle_state` + crew. |
-| POST | `/` | `:2591` | Create. `asDraft: true` → DRAFT (no stock); else born DISPATCHED. |
-| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. Same `asDraft` rule as `POST /` — **omitting the field means DISPATCHED**, i.e. stock OUT + SO synced to delivered + customer email. Callers that want a reviewable document must send it explicitly. |
+| POST | `/` | `:2591` | Create. `asDraft: true` → DRAFT (no stock); else born **LOADED** (Confirmed) with the stock deducted. |
+| POST | `/from-sos` | `:2976` | Line-level batch convert from SO picks. Same `asDraft` rule as `POST /` — **omitting the field means LOADED (Confirmed)**, i.e. stock OUT + SO synced to delivered + customer email. Callers that want a reviewable document must send it explicitly. |
 | PUT | `/:id/crew` | `:3314` | Driver / helper / lorry assignment + snapshot. |
 | PATCH | `/:id` | `:3450` | Header edit (+ SO amend-field mirror). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
@@ -277,8 +331,10 @@ still need `edit` on `scm.sales.delivery`.
   the source-SO gate — every SO referenced by `soDocNo` or by any line's
   `soItemId` must be past `SO_UNDELIVERABLE_STATUSES` (`firstUndeliverableSo`,
   `:2146`). `asDraft === true` → `status: 'DRAFT'`, otherwise the DO is born
-  **DISPATCHED** (`:2785`) and stock is deducted immediately (`:2842-2855`). The
-  create path also fires `syncSoDeliveredFromDo` and the customer DO email.
+  **LOADED** (= Confirmed; `DISPATCHED` until 2026-08-22) and stock is deducted
+  immediately. Both are gated on `asDraft`, not on the status, so the rename
+  moved no deduction. The create path also fires `syncSoDeliveredFromDo` and the
+  customer DO email.
 - **`/from-sos`** (`:2976`). Same shape, `asDraft` respected at `:3185` / `:3283`.
 - **Header PATCH** (`:3450`). **FIELD-LEVEL lock since 2026-08-20 (§8 GAP-1):** a
   live DR/SI no longer freezes the whole header — only the columns that child
@@ -386,6 +442,56 @@ holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test
 > company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
 > failed count now returns `500 status_counts_failed` instead of a zero.
 
+### The list shows ONE TAB PER STATUS (owner ruling, 2026-08-21)
+
+Until this date the list had **four tabs over eight statuses** — Open, In
+Transit, Delivered, Cancelled — so the screen could not tell a DRAFT from a
+LOADED delivery, or a DISPATCHED one from an IN_TRANSIT one. The owner:
+「draft和load要分开吧？」and「怎么定义这几个状态呢？我不明白」. He asked for the
+shape the Sales Order list already has: 页签＝状态.
+
+| tab | status | what it means |
+|---|---|---|
+| Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
+| Confirmed | `LOADED` | **the first entry here writes the inventory OUT**, once. The stock has left, and the customer email goes out here |
+| Shipped | `DISPATCHED` | on the road. Stock already gone — a tracking step, set by a person. Holds the 30 delivery orders raised before 2026-08-22, when a create landed here; it drains as they age out |
+| In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
+| Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it. A RECORD of arrival, not a stock event |
+| Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
+| Cancelled | `CANCELLED` | final; stock returned |
+
+`DO_STATUS_BUCKETS` is still the one source for both the tab filter and the
+counts, and the counts are now DERIVED from that map rather than hand-listed —
+so a bucket added there cannot be left without a count. Every enum member is in
+exactly one bucket and every bucket value is a member, pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`. That pin is not
+decoration: `COMPLETED` once sat in `delivered` while not being an enum member,
+and the tab 500'd with `22P02` while its count silently read 0.
+
+**The two KPI cards deliberately did NOT split with the tabs.** "On the road" is
+`dispatched + in_transit` and "Delivered" counts `delivered + invoiced` — an
+invoiced delivery was delivered. Splitting them the way the tabs split would
+have quietly halved both numbers on the owner's dashboard.
+
+### SIGNED is merged into DELIVERED (owner ruling, 2026-08-21)
+
+「SIGNED 和 DELIVERED 意思几乎重叠 … 这个整合」. The two agree on every question
+this system asks of a delivery order's status — both are in
+`DO_STOCK_OUT_STATES`, both in `SI_TRANSFERABLE_DO_STATES`, both outside
+`DO_NOT_DELIVERED_STATES` — and nothing in the tree branches on one and not the
+other.
+
+**The label cannot be removed.** Postgres has no `DROP VALUE` for an enum, so
+`SIGNED` stays in `scm.do_status` for ever. The app therefore keeps folding it
+into the `delivered` bucket and rendering it as "Delivered", permanently, so a
+row written by anything outside this repo still lands in a tab and still shows a
+word rather than a raw slug.
+
+**The DATA move is separate and gated**:
+`backend/scripts/merge-do-signed-into-delivered.mjs` +
+`.github/workflows/merge-do-signed-into-delivered.yml`. Dry-run is the default
+and performs the real UPDATE inside a transaction it rolls back.
+
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
 DB type is the `scm.do_status` ENUM (base body in
@@ -397,9 +503,128 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded") | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
-| `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
-| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
+| `LOADED` | **a non-draft create**, the office/phone **Confirm** button, or the print's loading QR (§ below) | **THE STOCK CHOKEPOINT since 2026-08-22.** The create deducts on arrival here; a Confirm from DRAFT deducts on entry. Either way the OUT is written, the lines count as delivered, and the customer is emailed. Reads as **Confirmed** on every screen. |
+| `DISPATCHED` | `PATCH /:id/status` — the row menu's "Mark Shipped", the phone's "Dispatch" rung | Shipped state; the stock already left at Confirm. **No longer a create landing status** (2026-08-22) — a person records that the goods went on the road. |
+| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD; the row menu's "Mark In Transit" / "Mark Delivered" | shipped states; stock has already left |
+
+### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
+
+The DO print's header carries a **"SCAN · MARK LOADED"** QR encoding
+`/scm/do-load?id=<do uuid>`. The warehouse scans the paper that travels with
+the goods; the landing page (`frontend/src/pages/scm-v2/DoLoadScan.tsx`,
+routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action —
+**Confirm loading** — which is the ordinary status PATCH to `LOADED`
+(audited; the illegal-transition guard owns legality, so a shipped DO can
+never be pulled back by a stray scan). A re-scan reads as confirmation, not an
+error.
+
+**SINCE 2026-08-22 THIS SCAN MOVES STOCK.** It did not before, and this
+paragraph said so. `LOADED` is now a member of `DO_SHIPPED_STATES`, so pressing
+**Confirm loading** writes the inventory OUT for the whole delivery order. A
+repeat scan still writes nothing — the page short-circuits on `LOADED`, and the
+deduction's existence check plus `uq_inv_mov_do_source_v2` make a second one
+impossible regardless. The page copy was corrected in the same change, because
+the person reading it is standing at the dock deciding whether to press it.
+
+> **KNOWN WORDING GAP — fix before the QR goes into use.** The PRINT still says
+> **"SCAN · MARK LOADED"**, and scanning it now takes the goods out of stock.
+> The owner's position is that the QR feature stays, Confirmed is the stock-out
+> point, and the QR is not in use yet: 「QR 跑 可是confirmed就出货 QR之后才用」.
+> So this is a wording change to make before anyone scans a printed DO in
+> anger — deliberately NOT made here, because changing print text is a separate
+> decision from moving the deduction.
+
+### The three manual status moves on the row menu (2026-08-22)
+
+`Mark Shipped`, `Mark In Transit` and `Mark Delivered` are offered on the
+delivery-order list's right-click menu (`frontend/src/pages/scm-v2/row-menus.ts`,
+`deliveryOrderRowMenu`). The owner maintains those three by hand until their
+machines exist: 「保留全部状态 我可以convert，可是库存当我开了DO 就是confirmed的时候
+就直接扣。然后我的shipped in transit delivered 我手动维护，之后我才弄自动」, and
+「是的 因为现在完全没有这些功能 提前铺路而已」.
+
+This is a **named, dated exception** to the rule that a machine-derived status is
+never offered to a person, and the reasoning, the end state each entry is
+temporary against, and what retires each one live in
+`docs/modules/document-status-vocabulary.md` §1b. Read that before changing this
+menu.
+
+**They cannot move stock.** The entries are gated on `DO_STOCK_OUT_STATES`, so
+they appear only where the OUT has already been written — never on a `DRAFT`
+(where they WOULD be the deducting hop, which belongs behind the Confirm control
+with its own words) and never on a `CANCELLED` delivery order (which the server
+refuses every transition out of). The status a row already holds is omitted, and
+a read-only user gets no status entries at all.
+
+**`Mark Invoiced` is deliberately absent** and is not to be added: nothing in
+this codebase writes `delivery_orders.status = 'INVOICED'`, so the label means
+"somebody clicked it", not "this was billed".
+
+### A HELD delivery order can still be confirmed, and its stock still ships
+
+**FINDING, 2026-08-22 — reported, not fixed here.** #2661 turned Hold into a
+marker on `scm.delivery_orders` (mig 0324: `on_hold`, `hold_reason`, `held_at`,
+`held_by`). Since this change makes entering `LOADED` write the inventory OUT,
+the obvious question is whether a hold stops that. **It does not.**
+
+- **The server does not look.** `PATCH /:id/status` is 284 lines and contains
+  ZERO references to `on_hold` / `isDocumentHeld` / `held`, and its scoped load
+  selects `status, so_doc_no` — the hold column is not even in the projection.
+  By #2661's own rule ("the hold column is SELECTED, never inferred; an
+  unselected column reads `undefined`, which is not held, which is the permissive
+  answer"), this is precisely the silently-open-gate shape that header warns
+  about.
+- **The gates that DO read a hold answer a different question.**
+  `lib/source-document-gates.ts` covers SO→DO, SO→PO, PO→GRN and GRN→PI — may
+  this document be the SOURCE of a downstream one. A held Sales Order cannot
+  raise a delivery order. But once the delivery order EXISTS, holding it gates
+  nothing on the delivery order itself.
+- **The block is client-side only.** The list menu ANDs `!rowIsHeld(r)` into
+  `canConfirm`, `canInvoice`, `canReturn` and (since this change)
+  `canSetStatus`, so a held row is not OFFERED a confirm. Any other caller — the
+  phone, an integration, a stale bundle — is not refused.
+
+**No gate is built here, deliberately.** Whether a hold should block the confirm
+is a business decision (it would make Hold a hard stop on stock rather than a
+marker, which is the opposite of what 「我们的hold是给我们知道一个 order hold这的」
+asks for), and it belongs to whoever owns the hold work. It is written down so
+the next reader does not have to re-derive it.
+
+### FOLLOW-UP — the consignment note has the same shape and was NOT changed
+
+`backend/src/scm/routes/consignment-notes.ts` spreads the same
+`DO_SHIPPED_STATES` into its own `SHIPPED_STATES` — on purpose, and its comment
+says why — so promoting `LOADED` widens that module's shipped set too. No
+consignment file was edited here; that inheritance is the whole of the effect,
+and it is traced rather than assumed:
+
+- A consignment note is CREATED at `DISPATCHED` (`:797`) and deducts on the
+  create path, so no note is ever born into the promoted state.
+- The status PATCH runs `resyncNoteInventory` on entry to a shipped state. That
+  function is a SELF-HEALING resync — it drives the net OUT per bucket to match
+  the note's current lines — so on a note whose stock already went out at create
+  it computes a zero delta and writes nothing. Where it does change behaviour it
+  changes it in the safe direction: a note sitting at `LOADED` used to have the
+  resync bail out at `:323`, so line edits made there never reached the ledger.
+  Now they do.
+- **PROVEN, and it makes the whole question academic for now:**
+  `scm.consignment_delivery_orders` holds **no rows at all** in production —
+  `backend/scripts/check-consignment-status-census.mjs`, run `32576078732`,
+  2026-08-22, both companies. The same run confirms the column is the SAME
+  `scm.do_status` enum the delivery order uses. So this inheritance lands on
+  zero existing documents.
+
+Whether a consignment note's stock should ALSO leave at Confirm — the same
+question the owner answered for delivery orders — has not been asked, and it
+belongs to the consignment owner rather than to this change.
+
+The QR is armed by an **explicit `loadScanId`** on the PDF header (never a
+generic id): the Consignment Note print reuses this renderer
+(`delivery-order-pdf.ts`), and a CN must never grow a control that flips a
+DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
+stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
+`vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
+Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
@@ -413,6 +638,58 @@ Refusals the operator sees, in the order they fire:
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
+
+> **THE DELIVERY ORDER HAS A HOLD OF ITS OWN SINCE 2026-08-22 (mig 0324).**
+> The owner asked for one on 2026-08-21 (「再加到一个 Hold」) and it was missed
+> while the PO, GRN and PI got theirs. `scm.delivery_orders` carries `on_hold` /
+> `hold_reason` / `held_at` / `held_by`, written by `PATCH /:id/hold`, and
+> **`scm.do_status` is untouched** — which is the plainest illustration of why a
+> marker beats a status: the other three each cost an irreversible
+> `ALTER TYPE ... ADD VALUE`.
+>
+> A held DO keeps its real stage — LOADED, DISPATCHED, IN_TRANSIT — because that
+> is the fact the warehouse and the driver need, and carries a Hold chip beside
+> it. The list gained an **On Hold** tab that reads the flag and deliberately
+> overlaps the stage tabs. A held DO is not invoiceable (`canInvoice` ANDs
+> `!rowIsHeld(r)` with the shared `doCountsAsInvoiceable`).
+>
+> It is also the ONE status-shaped entry the DO row menu accepts. That menu
+> refuses status moves because a DO status move writes an inventory OUT; a hold
+> writes no movement at all, so the objection does not apply.
+
+> **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
+> The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD, CLOSED}`
+> in `backend/src/scm/shared/so-deliverable-states.ts`, with
+> `soCanRaiseDo(status, onHold)` as the predicate — the second argument is the
+> mig-0324 marker and is REQUIRED, because a held SO now keeps its real status
+> and the deny-list alone would wave it through; this router imports it instead of declaring its own `Set`,
+> and the frontend runs a byte-identical vendored twin
+> (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
+> `so-deliverable-states.canonical.test.ts`).
+>
+> **`CLOSED` joined the set on 2026-08-22**, when the status came back on the
+> Sales Order meaning **stop chasing the remainder** — the customer took 7 of the
+> 10, or the supplier cannot supply the last 3, and the delivered part stands
+> (owner, asked whether that case happens here: 「有的」). If the remainder is not
+> coming there is nothing left to deliver, so no NEW delivery order may be
+> raised; a DO already raised is untouched. It is the one shape a deny-list can
+> get wrong — a status that READS as forward and would otherwise sail through —
+> which is why it is stated here and not left to be noticed. `CLOSED` is not
+> `CANCELLED`: a cancelled order is void, a closed one is a real sale that came
+> up short. Definition: `backend/src/scm/lib/so-lifecycle-guards.ts`.
+>
+> **It is a DENY-list and it must stay one.** Every forward status — CONFIRMED,
+> IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED, INVOICED — is deliverable,
+> because this business ships one order in several batches. The Sales Order
+> list's row-drawer CTA had written the same rule as an ALLOW-list of one value
+> (`s === "confirmed"`), so the Transfer button was absent on READY_TO_SHIP —
+> a status `recomputeSoStockAllocation` writes BY ITSELF when the goods land.
+> `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
+>
+> A blank or unreadable status returns `true` on purpose, on both sides: the
+> server is the gate, the predicate only decides whether to OFFER, and offering
+> something the server then refuses in plain language beats hiding something it
+> would have accepted.
 
 > **"Has this delivery counted?" is ONE predicate now (2026-08-20).**
 > `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES` live in
@@ -525,16 +802,88 @@ no `trip_stop` at all, so it can never read `TIME_ARRANGED`.
 
 **A Delivery Order moves inventory OUT.**
 
+### THE STOCK LEAVES AT CONFIRM (owner ruling, 2026-08-22)
+
+> 「once confirmed就代表出货了 就是直接扣库存」
+> 「draft 没出货，Confirmed就代表出货了 然后delivered只是记录而已，记录送到了」
+
+In plain terms: a draft has not shipped; **confirming a delivery order is what
+takes the goods out of stock**; and Shipped / In transit / Delivered are the
+office's record of where those goods have got to. The whole ladder is kept —
+「保留全部状态 我可以convert」 — and the three tracking rungs are moved by hand
+until their machines exist.
+
+`LOADED` (rendered **Confirmed**) therefore joined `DO_SHIPPED_STATES`, and
+`DO_PRESHIP_STATES` is now `DRAFT` alone. The office **Confirm** button also
+changed target: it wrote `DISPATCHED` — which every screen renders as
+"Shipped" — while calling itself Confirm, so pressing it skipped the Confirmed
+state entirely. It writes `LOADED` now (`do-next-step.ts`).
+
+**Why this could not re-deduct anything that had already shipped**, measured
+rather than argued:
+
+- **Nothing was in the promoted state.** Production census, run `32573972467`
+  (2026-08-22): 44 delivery orders — 30 `DISPATCHED`, 12 `DELIVERED`, 2
+  `CANCELLED`, and **zero** in `DRAFT` / `LOADED` / `IN_TRANSIT` / `SIGNED` /
+  `INVOICED`. The 30 dispatched rows are not touched: the OUT fires on a
+  TRANSITION, and none of them transitions.
+- **The deduction is idempotent, at two levels.** In the application,
+  `deductInventoryForDo` opens with an existence check — any
+  `source_doc_type='DO'`, `movement_type='OUT'` row for this DO and it returns
+  without writing. In the database, run `32574476216` (2026-08-22, read from
+  `pg_indexes`) confirms `uq_inv_mov_do_source_v2` is live: UNIQUE over
+  `(source_doc_type, source_doc_id, item_code, variant_key,
+  COALESCE(correction_seq,0)) WHERE source_doc_type='DO'`. `movement_type` is
+  not in the key, so a second primary posting is refused by Postgres. That run
+  also reports **zero** multi-row DO buckets in production.
+
 **When:** the FIRST transition into ANY status in `SHIPPED_STATES` (`:402`,
 spread from `DO_SHIPPED_STATES`). This is deliberately a set, not a single
 status, so a DO that jumps straight to SIGNED or DELIVERED still deducts exactly
 once. There are two entry points to that same deduction:
 
-- **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
-  `deductInventoryForDo` runs right after the item insert.
+- **Non-draft create** — the DO is born LOADED (Confirmed) since 2026-08-22, so
+  `deductInventoryForDo` runs right after the item insert. This is the path every
+  live delivery order took; the status name changed, the timing did not.
 - **Status PATCH** — `if (SHIPPED_STATES.includes(body.status))`.
-  A DRAFT confirm is exactly DRAFT→DISPATCHED, so the deduction skipped at
+  A DRAFT confirm is exactly DRAFT→LOADED, so the deduction skipped at
   draft-create fires here.
+
+### THE CREATE IS THE PATH THAT MATTERS, and it lands on Confirmed too
+
+The status PATCH is the MINORITY path. **Every live delivery order in production
+was raised by a plain non-draft create** — run 32573972467 — which deducts at
+creation and performs no status transition at all. The owner:
+「我们是只要出DO就扣了库存了不是吗？」 — raising a DO already takes the stock out.
+The code has said so since 2026-05-29: *"a DO means goods are OUT the moment it's
+created"*.
+
+So both create paths land `LOADED` (Confirmed) rather than `DISPATCHED`:
+`status: (body.asDraft === true) ? 'DRAFT' : 'LOADED'`. Raising a delivery order
+IS the confirm, so it belongs on Confirmed, and `DISPATCHED` is left to mean what
+it says — a person or (later) the storekeeper's scan recording that the goods
+went on the road.
+
+> **THE MOMENT THE STOCK IS DEDUCTED DOES NOT CHANGE.** Before and after, a
+> non-draft create deducts right after the items insert. The deduction, the
+> SO-delivered sync and the customer email are all gated on `body.asDraft`, never
+> on the status literal, so renaming what the row lands in cannot reach them.
+> `backend/tests/doStockLeavesOnConfirm.test.ts` pins that gate on both create
+> paths precisely because a create that silently stopped deducting is the worst
+> outcome this change could have.
+
+**The 30 existing `DISPATCHED` rows are NOT backfilled, and they are correct as
+they stand.** Their stock is out, `DISPATCHED` is a legal status that still means
+something, and rewriting settled documents to make a tab look tidy is not worth
+touching history for. An owner reading **Shipped · 30** after this ships is
+looking at deliveries raised under the old naming. The Shipped tab drains
+naturally: every new delivery order lands on **Confirmed**, and a row reaches
+Shipped only when somebody marks it so.
+
+Also corrected with the create: `DeliveryOrderNewV2.tsx` posts
+`status: draft ? "DRAFT" : "LOADED"` in its create body and the server ignores
+`body.status` on create entirely — that field has never done anything, and the
+server now independently agrees with what it was asking for.
 
 **Over-delivery cap at the confirm chokepoint (2026-07-25).** BEFORE that
 first-ship deduction, the Status PATCH now re-derives `soRemainingByItemId` for
@@ -950,6 +1299,31 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## A DO line SEEDS its variants from line 1, and then stops (2026-08-21)
+
+`DeliveryOrderNewV2.tsx` seeds a newly picked line's `variants` from the first
+line of the same category — and that is ALL it does. Unlike `SalesOrderNew`,
+`MobileNewSO` and `ConsignmentOrderNew`, it runs **no live cascade**: once a
+line is on the page, changing line 1 afterwards does not reach it.
+
+That is an open owner decision, not an oversight. Whether a delivery-order line
+*should* follow line 1 is a business question — a DO is a snapshot of what
+ships, and quietly rewriting line 2's fabric because someone corrected line 1
+would be a different kind of wrong from leaving it alone. It is named here, and
+in the module header of `frontend/src/vendor/scm/lib/so-variant-cascade.ts`,
+rather than left to whoever reads the file next.
+
+What DID change on 2026-08-21: the seed comes from that shared module
+(`seedableMasterVariants` + `seedFollowerVariants`) instead of a hand-written
+memo plus a raw `{ ...inherited }` spread. The spread handed the master's
+`buildKey` to the new line, forging a sofa compartment on an unrelated line —
+which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
+the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
+which is per-line by nature. `seedFollowerVariants` strips both.
+`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+The rule itself, and which pages are on it, are documented in
+`docs/modules/sales-order.md`.
 
 ## A migrated DO line's snapshot columns (2026-08-11)
 

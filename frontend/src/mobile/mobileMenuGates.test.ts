@@ -210,14 +210,17 @@ describe("mobile menu permission gates", () => {
 
   it("gates every Team row on its exact query-bearing NAV_TABS destination", () => {
     const teamRows = allRows.filter((item) => item.to.startsWith("/team?tab="));
+    /* The 2026-08 Team redesign renamed the strip tabs — the mobile rows follow
+       the NAV_TABS destinations (directory / departments2) so the gate stays an
+       exact query match while the mobile screens remain the classic modules. */
     expect(teamRows.map((item) => item.to).sort()).toEqual([
-      "/team?tab=departments",
-      "/team?tab=members",
+      "/team?tab=departments2",
+      "/team?tab=directory",
     ]);
     for (const row of teamRows) {
       const matches = navDestinations.filter((navTo) => mobileDestinationMatches(row.to, navTo));
       expect(matches, `${row.to} must have exactly one gate`).toEqual([row.to]);
     }
-    expect(mobileDestinationMatches("/team?tab=members", "/team?tab=departments")).toBe(false);
+    expect(mobileDestinationMatches("/team?tab=directory", "/team?tab=departments2")).toBe(false);
   });
 });

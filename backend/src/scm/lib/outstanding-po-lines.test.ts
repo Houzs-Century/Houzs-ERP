@@ -24,15 +24,18 @@ import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import grnRouterSrc from '../routes/grns.ts?raw';
 import libSrc from './outstanding-po-lines.ts?raw';
 
-const row = (poId: string, qty: number, received: number, status = 'SUBMITTED'): CountableRow => ({
+const row = (poId: string, qty: number, received: number, status = 'SUBMITTED', onHold = false): CountableRow => ({
   purchase_order_id: poId, qty, received_qty: received,
-  po: { po_number: `PO-${poId}`, status },
+  po: { po_number: `PO-${poId}`, status, on_hold: onHold },
 });
 
 /* The predicate the ROUTE owns. Passed in on purpose: this module must not hold
-   a second copy of the receivable set (see the module header). */
-const isReceivable = (s: string | null | undefined): boolean =>
-  s === 'SUBMITTED' || s === 'PARTIALLY_RECEIVED';
+   a second copy of the receivable set (see the module header).
+
+   It takes the PO ROW since mig 0324 — the hold is a MARKER beside the status,
+   so a held PO reads SUBMITTED and a status-only predicate cannot see it. */
+const isReceivable = (po: { status?: string | null; on_hold?: boolean | null } | null): boolean =>
+  po?.on_hold !== true && (po?.status === 'SUBMITTED' || po?.status === 'PARTIALLY_RECEIVED');
 
 describe('MECHANISM 1 — the read is paged, and says so when it stops early', () => {
   /* A fake page source: hands out `total` rows in windows, counting the calls. */
@@ -99,12 +102,18 @@ describe('MECHANISM 2 — the SQL status filter is the form already proven in pr
     expect(libSrc).toContain(".not('po.status', 'in', poDeadForReceiptSql())");
   });
 
+  /* THE PREDICATE TAKES THE ROW, NOT THE STATUS, since mig 0324. A hold is a
+     MARKER beside the status now, so a held PO reads SUBMITTED here — a
+     status-only predicate could no longer see one, in the permissive direction,
+     and the block migration 0318 described as coming "for free" would have gone
+     silently missing. Asserting on `r.po` rather than `r.po.status` is what
+     pins that. */
   test('the JS gate is still the authority on the exact receivable set', () => {
-    expect(libSrc).toContain('.filter((r) => isReceivable(r.po.status))');
+    expect(libSrc).toContain('.filter((r) => isReceivable(r.po))');
   });
 
   test('the route hands its OWN receivable predicate in, so it stays the authority', () => {
-    expect(grnRouterSrc).toContain('isReceivable: isReceivablePoStatus');
+    expect(grnRouterSrc).toContain('isReceivable: isReceivablePo');
   });
 });
 
@@ -180,7 +189,7 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
       ['p1'], [row('p1', 5, 5, 'PARTIALLY_RECEIVED')], new Map(), false, isReceivable,
     );
     expect(s.pos).toEqual([{
-      poId: 'p1', poDocNo: 'PO-p1', status: 'PARTIALLY_RECEIVED',
+      poId: 'p1', poDocNo: 'PO-p1', status: 'PARTIALLY_RECEIVED', onHold: false,
       receivable: true, candidateLines: 1, outstandingLines: 0,
     }]);
   });
@@ -201,15 +210,37 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
     expect(s.pos[0]!.status).toBe('RECEIVED');
   });
 
+  /* THE MARKER, mig 0324. Before the flag this case could not exist: putting a
+     PO on hold overwrote SUBMITTED, so the allow-list refused it for free. Now
+     the status says SUBMITTED and only the marker says stop — and getting this
+     wrong writes stock IN against a purchase order somebody deliberately
+     halted. */
+  test('a HELD PO still reads SUBMITTED and is reported NOT receivable', () => {
+    const s = explainOutstanding(
+      ['p1'], [row('p1', 5, 0, 'SUBMITTED', true)], new Map(), false, isReceivable,
+    );
+    expect(s.pos[0]!.status).toBe('SUBMITTED');
+    expect(s.pos[0]!.onHold).toBe(true);
+    expect(s.pos[0]!.receivable).toBe(false);
+  });
+
+  test('the hold marker travels from the HEADER read when the PO produced no lines', () => {
+    const s = explainOutstanding(
+      ['p1'], [], new Map([['p1', { poDocNo: 'PO-9', status: 'SUBMITTED', onHold: true }]]), false, isReceivable,
+    );
+    expect(s.pos[0]!.onHold).toBe(true);
+    expect(s.pos[0]!.receivable).toBe(false);
+  });
+
   test('a DRAFT PO produces no candidate rows, so its status comes from the HEADER read', () => {
     // The SQL filter drops it, so without the header read "your PO is a draft"
     // is indistinguishable from "your PO does not exist" — and both used to
     // render as "every line has been received".
     const s = explainOutstanding(
-      ['p1'], [], new Map([['p1', { poDocNo: 'PO-9', status: 'DRAFT' }]]), false, isReceivable,
+      ['p1'], [], new Map([['p1', { poDocNo: 'PO-9', status: 'DRAFT', onHold: false }]]), false, isReceivable,
     );
     expect(s.pos).toEqual([{
-      poId: 'p1', poDocNo: 'PO-9', status: 'DRAFT',
+      poId: 'p1', poDocNo: 'PO-9', status: 'DRAFT', onHold: false,
       receivable: false, candidateLines: 0, outstandingLines: 0,
     }]);
     expect(s.unknownPoIds).toEqual([]);
@@ -228,7 +259,7 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
   test('the caller\'s predicate is what decides receivable — this module holds no copy', () => {
     // A caller whose rule is "SUBMITTED only" must get SUBMITTED only. If this
     // module ever grows its own list, this test fails.
-    const submittedOnly = (s: string | null | undefined) => s === 'SUBMITTED';
+    const submittedOnly = (po: { status?: string | null } | null) => po?.status === 'SUBMITTED';
     const r = explainOutstanding(
       ['p1'], [row('p1', 5, 0, 'PARTIALLY_RECEIVED')], new Map(), false, submittedOnly,
     );

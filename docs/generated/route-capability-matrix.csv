@@ -240,6 +240,9 @@ GET,/api/pos/sales-staff,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,IN
 GET,/api/pos/sales-stats,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,,NO,INHERITED_ONLY,backend/src/routes/pos.ts
 POST,/api/pos/set-pin,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/pos.ts
 POST,/api/pos/verify-pin,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,verifyPassword,YES,HANDLER_GUARD_REVIEW,backend/src/routes/pos.ts
+GET,/api/position-capabilities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/position-capabilities.ts
+PUT,/api/position-capabilities/:positionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-capabilities.ts
+PUT,/api/position-capabilities/:positionId/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-capabilities.ts
 GET,/api/positions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
 POST,/api/positions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
 DELETE,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts

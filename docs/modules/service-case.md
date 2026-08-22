@@ -26,6 +26,17 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 
 ## 1. Frontend
 
+### The two SO typeahead dropdowns are placed by the shared positioner
+
+Both SO search boxes — the one on the case detail panel and the one on the
+intake form — portal their suggestion list to `<body>` and place it with
+`frontend/src/lib/anchoredPanel.ts`, the same module every other floating picker
+in this app uses. It opens the list on whichever side of the input has more
+room and clamps its height to that room, so the last suggestion is never below
+the fold; each passes 288px as its preferred cap (what the old `max-h-72` class
+asked for) and keeps this page's own `z-index: 60`. The detail-panel list also
+keeps its 320px width floor, which overrides the anchor's own width.
+
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
@@ -144,7 +155,15 @@ Two **sub-statuses** (小类) live inside two stages only — `ASSR_SUB_STATUSES
 `pending_supplier_return`. They are directly switchable by ops (desktop select
 at `ServiceCases.tsx:5241-5252`), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts:156-161`) hides one that merely restates
-its stage label.
+its stage label — with one exception (Nico 2026-08-22): under the combined
+"Supplier Pickup / Return" stage the list's stage cell shows the sub line on
+BOTH legs, because naming the leg is how ops splits its supplier chase list.
+The same split reaches the other two read surfaces: the stage column's
+`getValue` appends the sub label ("Supplier Pickup / Return — Pending Supplier
+Return"), so the column filter menu and the CSV export isolate one leg; and the
+`/api/assr/summary` `stage_funnel` rows carry a `sub_return` count so the
+Supplier funnel card's caption reads "X await pickup · Y await return" instead
+of the static description.
 
 > `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered

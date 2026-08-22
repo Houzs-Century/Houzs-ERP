@@ -356,19 +356,31 @@ describe('soEarnsCommission (DRAFT exclusion)', () => {
   ];
 
   it('a DRAFT earns NO commission (the ruling)', () => {
-    expect(soEarnsCommission('DRAFT')).toBe(false);
+    expect(soEarnsCommission('DRAFT', false)).toBe(false);
   });
 
   it('still excludes CANCELLED and ON_HOLD (2990 parity — unchanged)', () => {
-    expect(soEarnsCommission('CANCELLED')).toBe(false);
-    expect(soEarnsCommission('ON_HOLD')).toBe(false);
+    expect(soEarnsCommission('CANCELLED', false)).toBe(false);
+    expect(soEarnsCommission('ON_HOLD', false)).toBe(false);
+  });
+
+  /* THE MARKER, mig 0324. The hold left the status column, so every held order
+     now arrives here wearing a status that earns — and the silent failure is
+     paying commission on orders somebody deliberately stopped. */
+  it.each(['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'DELIVERED', 'INVOICED'])(
+    'a HELD order on %s earns NO commission, whatever its status says',
+    (status) => { expect(soEarnsCommission(status, true)).toBe(false); },
+  );
+
+  it('an unreadable marker does NOT block a commission — over-blocking pay is its own wrong', () => {
+    expect(soEarnsCommission('CONFIRMED', null)).toBe(true);
   });
 
   it('EXACTLY 7 of the 10 statuses earn — nothing else was quietly cut', () => {
     // The real risk in touching this filter is not missing DRAFT, it is
     // excluding one status too many: dropping CLOSED or INVOICED would silently
     // stop paying on completed sales and just look like a slow month.
-    expect(ALL_STATUSES.filter(soEarnsCommission)).toEqual([
+    expect(ALL_STATUSES.filter((st) => soEarnsCommission(st, false))).toEqual([
       'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED',
       'DELIVERED', 'INVOICED', 'CLOSED',
     ]);
@@ -380,10 +392,10 @@ describe('soEarnsCommission (DRAFT exclusion)', () => {
   });
 
   it('is case-insensitive, and an unknown status EARNS (matches the SQL filter)', () => {
-    expect(soEarnsCommission('draft')).toBe(false);
+    expect(soEarnsCommission('draft', false)).toBe(false);
     // `not in (...)` excludes a LISTED status — it does not require a known one.
-    expect(soEarnsCommission('SOMETHING_NEW')).toBe(true);
-    expect(soEarnsCommission(null)).toBe(true);
+    expect(soEarnsCommission('SOMETHING_NEW', false)).toBe(true);
+    expect(soEarnsCommission(null, false)).toBe(true);
   });
 });
 

@@ -30,12 +30,21 @@ only document in it that leaves the building as a customer's own copy.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
 | Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments. Status flags computed at `:991-998`. |
-| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | |
+| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is computed client-side as `total − paid`, floored at 0 (`balanceCenti`, `:287-291`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:275`; status actions `:498-511`. |
 | Mobile convert (DO→SI) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "si"` (`:73`). |
+
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
 Desktop routes: `frontend/src/App.tsx:658-661`, behind
 `<ScmGuard area="scm.sales.invoices" allowSales>` for list + detail, without
@@ -77,6 +86,10 @@ Three layers as in `docs/modules/sales-order.md` §1. SI specifics:
 
 ---
 
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
+
 ## 2. API surface
 
 `backend/src/scm/routes/sales-invoices.ts`, mounted at `/api/scm/sales-invoices`
@@ -117,9 +130,19 @@ by someone who knows whether the goods arrived, so the system does not
 second-guess them. The picker, this gate and the write-path cap all now read
 the `'invoiceable'` basis of `do-line-remaining.ts`, so they cannot disagree
 again; `backend/tests/loadedStaysInvoiceable.test.ts` fails by name if LOADED is
-re-excluded. NOTE that #2485's argument — "stock was already deducted at
-dispatch" — is false for LOADED: the rule stands on the owner's choice, not on
-that reasoning. The batch path's `DO_HEADER` projection must keep selecting `status`;
+re-excluded.
+
+**#2485's argument was false for LOADED and stopped being false on 2026-08-22.**
+It justified itself with "stock was already deducted at dispatch", which was true
+of `DISPATCHED` and `IN_TRANSIT` and not of `LOADED` — so the rule stood on the
+owner's choice rather than on that reasoning. He has since moved the deduction to
+the confirm step (「once confirmed就代表出货了 就是直接扣库存」), so `LOADED` is a
+member of `DO_SHIPPED_STATES` and the stock IS out by the time an invoice can be
+raised. Nothing about this gate changes: the rule was already right, and it is
+now right for the reason #2485 gave as well as the one it actually rested on.
+Full trace in `docs/modules/delivery-order.md`.
+
+The batch path's `DO_HEADER` projection must keep selecting `status`;
 it did not at first, and the guard then refused every batch invoice
 (`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |

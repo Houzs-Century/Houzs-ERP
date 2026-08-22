@@ -134,6 +134,59 @@ that forgets its gate will not typecheck.
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.
 
+**The "Purchase Location" column shows the warehouse CODE (2026-08-21).** It
+printed `purchase_location?.name || purchase_location?.code`, so the grid
+truncated the full name to `BALAKONG WAREHO…` while this same page's PDF export
+already printed the code. The one display rule is `warehouseLabel` — code first,
+then name — and it now has a FRONTEND home to import:
+`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of
+`backend/src/scm/lib/warehouse-label.ts`. Never hand-write the order again; see
+`docs/modules/warehouses.md` for the mirror and its referee. The GRN-from-PO
+picker's Warehouse column reads through the same rule.
+
+### `item_group` is the SKU's, and it decides where the stock lands (2026-08-22)
+
+A PO line's `item_group` is not a label. It is an **input to the stock bucket**:
+`computeVariantKey(item_group, variants)` composes a sofa's fabric / seat / leg
+into the key **only** for a sofa or bedframe group — for null or `others` it
+returns `''` by design (`shared/variant-key.ts`, "Accessory / Others / Service —
+product code only").
+
+So a PO line that lost its group produces a GRN that lost it (`grns.ts:1897`
+copies the PO line), and `postGrnAndRollup` writes the receipt's inventory
+movement under the EMPTY key. The goods are then in the warehouse, at the right
+value, with their `variants` jsonb fully intact — and invisible to every sofa
+order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
+
+**The variants are never the thing that goes missing.** `description2` is built
+from the jsonb alone and prints correctly the whole time, which is exactly why
+this reads as impossible from the screen: the specs are right there on the PO.
+Only the one word that says *how to read them* was blank. Owner 2026-08-22:
+「我们的 PO 没有规格 generate 不出的啊？所以应该不可能没有规格？」 — the specs
+were there; the category was not.
+
+**The server resolves it from the product, not from the request.**
+`POST /mfg-purchase-orders` reads `mfg_products.category` for every
+`mfg_product` line's code — company-scoped, because `code` is shared between the
+two organisations (the reason `grns.ts:287` gives) — and uses it in preference
+to `it.itemGroup`. The caller's value survives only as the fallback for a
+raw-material line, which has no product row. `description2` is built from the
+SAME resolved group, so the printed text and the stock key cannot describe
+different things.
+
+That server rule is the load-bearing half. The desktop From-SO mapper also stops
+re-deriving the group (it now uses the pick's own `itemGroup`, which the picker
+already renders as the row's Category chip) — but fixing only the browser would
+leave the next client free to lose it again. Trace:
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
+
+**The variant summary on the transfer pickers is labelled "Description 2"
+(2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
+other Convert-From pickers render that column through) exports
+`DESCRIPTION_2_LABEL` and prints it above the summary. The word is the system's
+existing one — the SO line editor's column header and
+`pages/scm-v2/so-audit-labels.ts` — not a new name for the string.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/suppliers-queries.ts` — the PO hook block was
 vendored into the Suppliers slice, **not** a `purchase-order-queries.ts` (see the
@@ -173,6 +226,10 @@ PO-specific facts:
    entry's own comment names the bug this paragraph used to describe.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -365,9 +422,19 @@ works and is multi-select at line level — but only for a line that is
   A drop-ship DO ships against the PO's *expected* batch before receipt; cancelling
   the PO would strand that OUT with no incoming batch. Best-effort: a read error
   or a missing `batch_no` column returns `null` (no block).
-- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD}` (`:312`) — a PO line
-  sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
+- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD, CLOSED}` (`:312`) — a PO
+  line sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
   A purely manual line with no SO link skips the check entirely.
+  **This is a threshold on the SALES order, not on this document's own status.**
+  It must stay EQUAL to the delivery side's `SO_UNDELIVERABLE_STATUSES`
+  (`backend/src/scm/shared/so-deliverable-states.ts`), and
+  `backend/tests/duplicatedDecisionPins.test.ts` PIN 2 fails if the two drift:
+  a threshold one write path enforces and the other does not means a document
+  type can be built from an order the other refuses. `CLOSED` joined both on
+  2026-08-22 — on a Sales Order it means **stop chasing the remainder**, so
+  nothing more ships against the order and nothing more is bought for it. The
+  PURCHASE ORDER'S OWN `CLOSED` is a separate question and is not built; see
+  `docs/modules/document-status-vocabulary.md` §1b.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 
@@ -734,6 +801,42 @@ importer); there is no PO upload or delete route to drift from the SO's
 lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
+
+> **THE HOLD IS A MARKER NOW, NOT A STATUS — 2026-08-22, mig 0324.** Owner:
+> 「我们的hold是给我们知道一个 order hold这的」. `scm.purchase_orders` carries
+> `on_hold` / `hold_reason` / `held_at` / `held_by`, and `PATCH /:id/hold` is the
+> control — **the PO's first working hold of any kind**, because the status added
+> on 2026-08-21 had no writer anywhere in `frontend/src`. A held
+> `PARTIALLY_RECEIVED` order is still partially received; the list shows the real
+> pill plus a Hold chip, and the **On Hold** tab reads the flag.
+>
+> **THE FREE BLOCK STOPPED BEING FREE, and this is the paragraph to read before
+> touching the receive path.** The note below said a held PO was excluded from
+> `RECEIVABLE_PO_STATUSES` "without a line of new code". That was true only while
+> the hold OVERWROTE the status. A held PO now reads `SUBMITTED` and sails
+> through an allow-list of `SUBMITTED / PARTIALLY_RECEIVED` — so the predicate is
+> now `isReceivablePo(po)` in `grns.ts`, which reads the marker off the ROW.
+> Getting this wrong writes stock IN against a purchase order somebody
+> deliberately stopped.
+>
+> **`recomputePoReceived` deliberately did NOT gain a flag term.** It excluded
+> `ON_HOLD` only because re-deriving the status would have erased a hold living
+> in that column. It cannot any more, and freezing a held PO's received counts
+> would be the same lossiness the marker removes. It keeps the `ON_HOLD` literal
+> for a LEGACY row, whose hold is in the status column and nowhere else.
+
+> **`ON_HOLD` added 2026-08-21 (mig 0318, owner: 「PO 加 hold」).** The purchase
+> side never had a reversible stop — only `CANCELLED`, which is final and which
+> the ERP pushes to AutoCount where it cannot be un-cancelled. The LABEL stays in
+> `scm.po_status` for ever (Postgres has no `DROP VALUE`) and every pill map
+> keeps rendering it; nothing writes it.
+>
+> **Three display maps move with it**, two of them on the detail page:
+> `status-pill.ts`'s PO map, `PurchaseOrderDetailV2`'s `STAGE_LABEL`, and that
+> page's `effectiveOf` — whose fall-through answered **`cancelled`**, so a held
+> order would have told the buyer it was cancelled.
+
+
 
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
 Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw

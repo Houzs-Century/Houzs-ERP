@@ -238,7 +238,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/consignment-notes.ts": {
-      "reads": 13,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
@@ -246,11 +246,11 @@
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
-      "reads": 12,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 50,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
@@ -322,7 +322,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 46,
+      "reads": 45,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {

@@ -118,10 +118,18 @@ describe('the not-delivered set is the complement of the shipped set', () => {
     expect([...DO_NOT_DELIVERED_STATES]).toEqual([...DO_PRESHIP_STATES, 'CANCELLED']);
   });
 
-  test('LOADED is in it — the whole point', () => {
-    expect(DO_NOT_DELIVERED_STATES).toContain('LOADED');
-    expect(doCountsAsDelivered('LOADED')).toBe(false);
-    expect(doCountsAsDelivered('loaded')).toBe(false);       // the column is text
+  /* LOADED LEFT THIS SET ON 2026-08-22, and the assertion is inverted rather
+     than deleted. It used to read "LOADED is in it — the whole point", pinning
+     the 2026-08-20 fix that stopped a Confirmed delivery counting its own lines
+     as delivered while its stock was still in the warehouse. The owner then
+     moved the deduction to the confirm step — 「once confirmed就代表出货了 就是
+     直接扣库存」 — so LOADED's stock IS out and it MUST count as delivered. The
+     premise moved; the rule that a delivery counts exactly when its stock has
+     left did not, which is why the derivation above needed no edit. */
+  test('LOADED is NOT in it — Confirmed means the stock has already gone', () => {
+    expect(DO_NOT_DELIVERED_STATES).not.toContain('LOADED');
+    expect(doCountsAsDelivered('LOADED')).toBe(true);
+    expect(doCountsAsDelivered('loaded')).toBe(true);        // the column is text
   });
 
   test('together with the stock-out set it partitions the vocabulary, no overlap', () => {
@@ -138,7 +146,7 @@ describe('the not-delivered set is the complement of the shipped set', () => {
   });
 
   test('the PostgREST literal is BUILT from the array, not typed beside it', () => {
-    expect(DO_NOT_DELIVERED_IN_LIST).toBe('("DRAFT","LOADED","CANCELLED")');
+    expect(DO_NOT_DELIVERED_IN_LIST).toBe('("DRAFT","CANCELLED")');
     for (const s of DO_NOT_DELIVERED_STATES) expect(DO_NOT_DELIVERED_IN_LIST).toContain(`"${s}"`);
   });
 });
@@ -152,7 +160,7 @@ describe('the .mjs mirror carries the same set', () => {
   });
 
   test('the SQL literal quotes for SQL, the PostgREST one for PostgREST', () => {
-    expect(jsSqlIn).toBe(`('DRAFT', 'LOADED', 'CANCELLED')`);
+    expect(jsSqlIn).toBe(`('DRAFT', 'CANCELLED')`);
     expect(jsSqlIn).not.toContain('"');
   });
 });

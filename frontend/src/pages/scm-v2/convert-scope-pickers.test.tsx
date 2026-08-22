@@ -14,14 +14,18 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertToLink } from "../../lib/convertScope";
 
-const { invoiceableDoLines, deliverableSoLines, outstandingGrnItems } = vi.hoisted(() => ({
+const { invoiceableDoLines, deliverableSoLines, outstandingGrnItems, returnableDoLines } = vi.hoisted(() => ({
   invoiceableDoLines: vi.fn(),
   deliverableSoLines: vi.fn(),
   outstandingGrnItems: vi.fn(),
+  returnableDoLines: vi.fn(),
 }));
 
 vi.mock("../../vendor/scm/lib/sales-invoice-queries", () => ({
   useInvoiceableDoLines: invoiceableDoLines,
+}));
+vi.mock("../../vendor/scm/lib/delivery-return-queries", () => ({
+  useReturnableDoLines: returnableDoLines,
 }));
 vi.mock("../../vendor/scm/lib/delivery-order-queries", () => ({
   useDeliverableSoLines: deliverableSoLines,
@@ -34,6 +38,7 @@ vi.mock("../../vendor/scm/components/NotifyDialog", () => ({
 }));
 
 import { SalesInvoiceFromDo } from "./SalesInvoiceFromDo";
+import { DeliveryReturnFromDo } from "./DeliveryReturnFromDo";
 import { DeliveryOrderFromSo } from "./DeliveryOrderFromSo";
 import { PurchaseInvoiceFromGrn } from "./PurchaseInvoiceFromGrn";
 
@@ -90,6 +95,43 @@ describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from
     at("/scm/sales-invoices/from-do?do=do-1", <SalesInvoiceFromDo />);
     expect(screen.getByRole("alert").textContent).toContain('"do"');
     // and it did NOT quietly scope on the unrecognised name
+    expect(screen.getAllByText("HC-DO-0002").length).toBeGreaterThan(0);
+  });
+});
+
+/* ── DO → DR ─────────────────────────────────────────────────────────────────
+   Added 2026-08-22 with the Delivery Order row menu's "Transfer to Delivery
+   Return" entry (owner: 「我的 DO 也应该有右键 Transfer to Delivery Return，对
+   吧？」). The picker existed and read NO parameter, so the new menu entry would
+   have opened every returnable delivery in the company — the exact defect the
+   suite above was written for, one document later. */
+
+describe('DO → DR: "Transfer to Delivery Return" lands on the note you came from', () => {
+  it("shows only the scoped Delivery Order, not the whole company's", () => {
+    returnableDoLines.mockReturnValue(loaded(TWO_DOS));
+    at(convertToLink("doToDr", "do-1"), <DeliveryReturnFromDo />);
+    expect(screen.getAllByText("HC-DO-0001").length).toBeGreaterThan(0);
+    expect(screen.queryByText("HC-DO-0002")).toBeNull();
+  });
+
+  it("pre-ticks the scoped note so the screen is a draft, not a search", () => {
+    returnableDoLines.mockReturnValue(loaded(TWO_DOS));
+    at(convertToLink("doToDr", "do-1"), <DeliveryReturnFromDo />);
+    expect(screen.getByText(/Continue with 1 line/)).toBeTruthy();
+  });
+
+  it("no parameter still opens the FULL picker", () => {
+    returnableDoLines.mockReturnValue(loaded(TWO_DOS));
+    at("/scm/delivery-returns/from-do", <DeliveryReturnFromDo />);
+    expect(screen.getAllByText("HC-DO-0001").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("HC-DO-0002").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Pick at least 1 line/)).toBeTruthy();
+  });
+
+  it("a parameter it cannot act on is shown, never dropped", () => {
+    returnableDoLines.mockReturnValue(loaded(TWO_DOS));
+    at("/scm/delivery-returns/from-do?do=do-1", <DeliveryReturnFromDo />);
+    expect(screen.getByRole("alert").textContent).toContain('"do"');
     expect(screen.getAllByText("HC-DO-0002").length).toBeGreaterThan(0);
   });
 });

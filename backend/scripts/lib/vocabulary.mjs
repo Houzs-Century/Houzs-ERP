@@ -77,6 +77,35 @@ export const VOCABULARY = [
       "it. It is NOT a production date.",
   },
   {
+    concept: "Delivery Date",
+    canonical: "customer_delivery_date",
+    alsoCanonical: ["customerDeliveryDate"],
+    /* NOT retired, and NOT this concept: `line_delivery_date` is a SECOND,
+       REAL column — the per-LINE date that cascades from this header value and
+       can then be hand-overridden per line (MobileNewSO's `ddate`). Listing it
+       as an alias would fold two live columns into one name, which is the exact
+       fault this registry exists to prevent. Its display name is "Line Delivery
+       Date" and it stays distinguishable on screen. `amended_delivery_date` is
+       likewise its own column (the rescheduled date the delivery board writes),
+       not a spelling of this one. */
+    retired: [],
+    declaredIn: "backend/src/scm/shared/so-processing-date.ts",
+    allow: [
+      "scripts/lib/vocabulary.mjs",
+      "scripts/lib/drift-catalogue.mjs",
+    ],
+    note:
+      "The date the customer is promised the goods. ONE column, and until 2026-08-21 it was " +
+      "shown under FOUR different labels on seven screens — \"Customer Delivery Date\" on the " +
+      "Sales Order list and both Consignment Note screens, \"Delivery date\" on the SO detail, " +
+      "the SI detail, the DO list and mobile, \"Delivery Date\" on the SO form. The owner, " +
+      "2026-08-21: \"为什么我外面的 listing 写着 customer delivereydate，里面却是 delivery date？" +
+      "这种应该要统一的吧\" — and he chose the name: Delivery Date, everywhere. It drifted " +
+      "because the concept was never registered here while its partner Processing Date was, " +
+      "which is why the pair could be half-governed. Paired with Processing Date by the " +
+      "both-or-neither rule (soDatePairRefusal): an order carries both dates or neither.",
+  },
+  {
     concept: "Transfer (document conversion)",
     canonical: "Transfer to / Transfer from",
     alsoCanonical: [],

@@ -1,0 +1,78 @@
+name: probe-convert-link-gaps
+
+# On every conversion chain, which downstream lines never named the source line
+# they came from?
+#
+# Owner, 2026-08-21, on one goods receipt:
+#   「然后我不是收货了吗？为什么是show PO outstanding？还显示ordered？」
+#   「为什么 AutoCount 这一边 GRN 是进不进去的？不是 convert 而已嘛？」
+# and then, on being shown the mechanism: 「你要看 DO SI PI 也是」.
+#
+# It is one column repeated four times — delivery_order_items.so_item_id,
+# grn_items.purchase_order_item_id, sales_invoice_items.do_item_id,
+# purchase_invoice_items.grn_item_id. NULL there is a legitimate hand-added
+# line, but it costs three things: the AutoCount conversion has nothing to name,
+# the "already converted" ceiling cannot see it (so the source can be converted
+# again), and on the purchase chain the stored received_qty never moves, which
+# is why MRP keeps showing the order as outstanding.
+#
+# THE COMPLEMENT of diag-po-receipt-drift, whose first clause is
+# `WHERE gi.purchase_order_item_id IS NOT NULL` — this population is invisible
+# to it by construction. Run both; they watch different failures.
+#
+# Runs under `npx tsx` so the script can import the REAL DOWNSTREAM table out of
+# src/ instead of copying it — the same reuse-not-replication rule
+# probe-so-stock-status-stale.yml follows. It also proves each document-number
+# column against that table's own docNoOf before reporting a single number.
+#
+# Read-only: SELECTs only, no writes, no DDL, no transaction, no lock.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990, blank = both)"
+        required: false
+        default: "1"
+        type: string
+      doc:
+        description: "One document number to print line by line, any chain (e.g. HC-GRN-2608-002). Blank = corpus only."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-convert-link-gaps
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count the lines that never named their source
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          npx tsx scripts/probe-convert-link-gaps.mjs | tee convert-link-gaps.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-convert-link-gaps
+          path: backend/convert-link-gaps.txt
+          retention-days: 14

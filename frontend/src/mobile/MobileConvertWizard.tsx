@@ -12,6 +12,11 @@ import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
 import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
+/* The word, from the desktop picker's own component, so the phone and the desk
+   cannot drift into two names for one field. Mobile spells its field labels
+   "Label: value" (see "Supplier SKU:" below), not uppercase — the WORD is
+   shared, the presentation stays per surface. */
+import { DESCRIPTION_2_LABEL } from '../vendor/scm/components/VariantDescription';
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -507,8 +512,10 @@ export function MobileConvertWizard({
 
       if (target === "do") {
         /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
-           `status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED'`, and the
-           same flag gates the write half (deductInventoryForDo +
+           `status: (body.asDraft === true) ? 'DRAFT' : 'LOADED'` (it landed
+           DISPATCHED until 2026-08-22; raising a DO IS the confirm, so it now
+           lands on Confirmed — the stock timing is unchanged), and the same
+           flag gates the write half (deductInventoryForDo +
            syncSoDeliveredFromDo + the customer email). OMITTING the field is
            not a neutral default, it is "ship it now" — a tap in a driveway
            emptied the shelf, advanced the SO to delivered and emailed the
@@ -945,7 +952,7 @@ function LinesStep({
                       the phone too. Wraps (no ellipsis): a truncated
                       "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
                   {l.variantLine && (
-                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{l.variantLine}</span>
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{l.variantLine}</span></span>
                   )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
@@ -1064,7 +1071,7 @@ function GrnLinesStep({
                       itemGroup + variants (they are needed to CREATE the GRN
                       line); only the render was missing them. */}
                   {variantLine && (
-                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{variantLine}</span>
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{variantLine}</span></span>
                   )}
                   {l.supplierSku && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

@@ -50,6 +50,52 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **This picker is SCOPED since 2026-08-22.** It reads `doToDr` through
+> `readConvertScope`, so the Delivery Order list's right-click "Transfer to
+> Delivery Return" opens on the note the operator came from — pre-ticked at each
+> line's full remaining — instead of on every returnable delivery in the
+> company. With no parameter it is still the full picker, which is what this
+> module's own "From Delivery Order" button wants. It read NO parameter at all
+> until that date, which is why the menu entry could not be added without
+> building the destination half. Contract and guard:
+> `docs/modules/document-conversion.md` §4a, §8a.
+
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
+### The desktop list has a right-click menu (2026-08-22)
+
+Open · Edit · Print, then **Cancel Delivery Return** alone at the bottom in red.
+Built by `deliveryReturnRowMenu` in `frontend/src/pages/scm-v2/row-menus.ts`, on
+the shared `buildRowMenu`, so its shape is the one every other document list has
+(`document-conversion.md` §8a).
+
+**Cancel was NEW to the list and NOT a new capability.** It sends `CANCELLED`
+through `useUpdateDeliveryReturnStatus` — the same status PATCH this list was
+already using for Inspected, Refunded and Reopen, and the same one the detail
+page's own Cancel calls. Its confirmation repeats the detail page's words
+because the consequence is the same one: creating the return put the goods back
+INTO stock, so cancelling reverses that via a negative ADJUSTMENT (§6).
+
+**There is no Confirm entry, and that is not an omission** — a Delivery Return
+is RECEIVED on create and has no draft step, so there is no "make this real"
+transition for a person to perform.
+
+**Inspected and Refunded stay OFF the menu**, on the row drawer where the
+figures that justify them are on screen. Only Confirm, Hold and Cancel are ever
+offered to a person (`document-status-vocabulary.md` §1b). Hold is not here yet;
+it lands when Hold becomes a flag rather than a status.
+
+**Cancelling is FINAL**, so an already-cancelled row is offered no second
+Cancel — the server refuses to un-cancel (§7), which would otherwise leave the
+cancel's stock drain in place.
+
 There is **no dedicated mobile screen**. The generic `MobileModuleList` /
 `MobileModuleDetail` render it. That is worth knowing before assuming the
 repo-wide "desktop and mobile are one product" rule implies a paired file here —
@@ -187,6 +233,26 @@ resync is the first thing to try, not the last.
 |---|---|
 | `scm.delivery_returns` | Header — `return_number`, `status`, `delivery_order_id`, `warehouse_id`, `company_id` |
 | `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_sen` |
+
+> **Source-cost reads are company-scoped (2026-08-21, docs/bugs/0501).**
+> `lib/source-cost.ts sourceUnitCostByItemId` now takes a REQUIRED `companyId`
+> and predicates the line read on it — the link ids are caller-supplied and the
+> client is service-role, so an unscoped read resolved the OTHER tenant's stored
+> cost. This router already refused foreign ids upstream
+> (`crossCompanySourceRefusal`); the consignment clones
+> (`consignment-notes.ts` / `consignment-returns.ts`) did NOT, and gained the
+> full guard set in the same change: `assertSourceLinesInCompany` on the create
+> and add-line paths, a company-scoped `consignment_so_doc_no` existence check
+> on the note create, and a company predicate on the note's CO-line warehouse
+> resolver (a foreign CO line id used to deduct stock out of the other
+> company's warehouse under this company's stamp).
+>
+> **And their "live documents" reads page + scope (2026-08-21, docs/bugs/0503).**
+> `checkCrOverRemaining`, `/returnable-note-lines` and
+> `/deliverable-order-lines` fetched non-cancelled documents with one un-paged,
+> company-blind read — silently capped at 1000 rows, past which the over-return
+> guard passed a second full return. The three reads now go through
+> `paginateAll` + `scopeToCompany` with errors bound.
 
 Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already
