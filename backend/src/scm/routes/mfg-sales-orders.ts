@@ -4226,19 +4226,40 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const lineDeliveryDateOverridden = hasExplicitLineDate
       ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
       : Boolean(it.lineDeliveryDateOverridden ?? false);
+    /* THE SKU'S CATEGORY, not the client's — and `description2` below is built
+       from the SAME value, so the printed text and the stock key cannot describe
+       different things.
+
+       `productRowByCode` is the PRICING loader's map, already read above and
+       already carrying `category`, so this costs no extra query and is
+       company-scoped in LOCK-STEP with pricing — which migration 0233 requires
+       by name.
+
+       It used to be `it.itemGroup ?? 'others'`. That fallback is not a label:
+       computeVariantKey composes a sofa's fabric/seat/leg ONLY for a sofa or
+       bedframe group, so a line stored as `others` keys its stock with the
+       PRODUCT CODE ALONE and the goods land in the unclassified bucket. And
+       `'others'` is worse than null — null reads as "unknown", `others` reads as
+       a category somebody chose, so nobody questions it. The Sales Order is the
+       ORIGIN of the chain and every downstream document copies this value
+       faithfully. docs/bugs/0514. */
+    const soLineGroup = (line: Record<string, unknown>): string =>
+      (productRowByCode.get(String(line.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase()
+      || String(line.itemGroup ?? '').trim()
+      || 'others';
     const baseRow = {
       line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: agentToStamp,
-      item_group: it.itemGroup ?? 'others',
+      item_group: soLineGroup(it),
       item_code: it.itemCode,
       description: correctedSizeDescription(itemCode, it.description as string | null, sizeSkuMap)
         ?? ((it.description as string) ?? null),
       /* Commander 2026-05-28 — "Description 2" is the auto-combined variant
          summary (the long attribute string). Server-generated from the line's
          variants so it stays the single source of truth. */
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary(String(soLineGroup(it)), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Spec 2026-06-06 — per-line operator remark from the POS product page.
          Same column SoLineCard edits (mfg_sales_order_items.remark). */
       remark: (() => {
