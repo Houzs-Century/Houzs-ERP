@@ -29,7 +29,11 @@ describe('mig 0321 — the PC backstop indexes', () => {
       expect(at, `${idx} missing`).toBeGreaterThan(-1);
       const stmt = MIG.slice(at, MIG.indexOf(';', at));
       expect(stmt).toContain('COALESCE(correction_seq, 0)');
-      expect(stmt).toContain('source_doc_type, source_doc_id, product_code, variant_key');
+      /* item_code, not product_code: 0307_item_code_unify renamed the column,
+         and the original 0321 (written in 0279's vocabulary) failed on prod
+         with `column "product_code" does not exist` — ledger 0513. This
+         assertion pinned the stale name; it now pins the live one. */
+      expect(stmt).toContain('source_doc_type, source_doc_id, item_code, variant_key');
     }
     expect(MIG).toContain("WHERE (source_doc_type = 'PC_RECEIVE'::text)");
     expect(MIG).toContain("WHERE (source_doc_type = 'PC_RETURN'::text)");
