@@ -1,6 +1,6 @@
 ## The consignment salesperson was never filled in, and a non-admin was offered "null (null)" [high]
 
-<!-- area: Staff, salesperson, attribution -->
+<!-- area: Auth, permissions, sessions -->
 
 **白话.** 开寄售单那张画面的 Salesperson，**从来不会自动带出开单的人** —— 那段自动
 填的程式码判断的是一个**永远是 null 的东西**，所以一次都没执行过。更难看的是：没有
