@@ -78,13 +78,11 @@ const TOTAL_SECTIONS = 4;  // 1 keys, 1b unjudgeable, 2 stranded stock, 3 no-bat
    holds the category. Kept explicit rather than derived: this list is the
    probe's SCOPE and a reader must be able to see it without running anything. */
 const LINE_TABLES = [
-  { label: "销售单 Sales order",     table: "mfg_sales_order_items",         code: "item_code" },
-  { label: "采购单 Purchase order",  table: "purchase_order_items",          code: "item_code" },
-  { label: "收货单 Goods receipt",   table: "grn_items",                     code: "item_code" },
-  { label: "送货单 Delivery order",  table: "delivery_order_items",          code: "item_code" },
-  /* Consignment purchase lines name the SKU `material_code`, not `item_code` —
-     the same column the alternative-material family uses everywhere. */
-  { label: "寄售采购单 Consign PO",  table: "purchase_consignment_order_items", code: "material_code" },
+  { label: "销售单 Sales order",     table: "mfg_sales_order_items" },
+  { label: "采购单 Purchase order",  table: "purchase_order_items" },
+  { label: "收货单 Goods receipt",   table: "grn_items" },
+  { label: "送货单 Delivery order",  table: "delivery_order_items" },
+  { label: "寄售采购单 Consign PO",  table: "purchase_consignment_order_items" },
 ];
 
 /* NOT MEASURED, said out loud rather than left as a gap in a list.
@@ -127,13 +125,13 @@ async function main() {
   for (const t of LINE_TABLES) {
     try {
       const rows = await sql`
-        SELECT i.${sql(t.code)} AS item_code,
+        SELECT i.item_code,
                i.item_group,
                i.variants,
                p.category AS master_category
           FROM scm.${sql(t.table)} i
           JOIN scm.mfg_products p
-            ON p.code = i.${sql(t.code)}
+            ON p.code = i.item_code
            AND (${CO}::int IS NULL OR p.company_id = ${CO}::int)
          WHERE i.variants IS NOT NULL
            AND (${CO}::int IS NULL OR i.company_id = ${CO}::int)
@@ -188,10 +186,10 @@ async function main() {
         SELECT COUNT(*) AS n
           FROM scm.${sql(t.table)} i
           LEFT JOIN scm.mfg_products p
-            ON p.code = i.${sql(t.code)}
+            ON p.code = i.item_code
            AND (${CO}::int IS NULL OR p.company_id = ${CO}::int)
          WHERE p.code IS NULL
-           AND i.${sql(t.code)} IS NOT NULL
+           AND i.item_code IS NOT NULL
            AND (${CO}::int IS NULL OR i.company_id = ${CO}::int)
       `;
       note(`   ${pad(t.label, 26)}${rpad(r.n, 9)} 行判不了`);
