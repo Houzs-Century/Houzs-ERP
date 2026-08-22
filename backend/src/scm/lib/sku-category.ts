@@ -137,3 +137,46 @@ export function lineIdentityFields(
     ) || null,
   };
 }
+
+/* ── The contradiction detector ────────────────────────────────────────────
+   A line that CARRIES physical attributes but whose group does not compose
+   them is a contradiction: the operator picked a fabric and a seat size, and
+   the stock key is about to ignore both.
+
+   This REPORTS; it does not repair. Changing `computeVariantKey` to compose
+   attributes regardless of group would re-key every historical row in the
+   ledger — a different and much larger risk than the one being fixed — so the
+   rule stays exactly as it is and the contradiction is made LOUD instead.
+
+   Owner 2026-08-22, on why the goods were invisible: 「什么叫判断？为什么不是
+   跟着源代码是绝对的？」 The code IS absolute; it executed a rule whose unstated
+   precondition — that the group is correct — nobody checked, and said nothing
+   when it failed. This is that check. */
+
+/** Attribute keys that only a sofa/bedframe group composes into the key. */
+const COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME = [
+  'fabricCode', 'colorCode', 'colourCode', 'fabricColor',
+  'seatHeight', 'depth', 'gap', 'divanHeight', 'legHeight', 'sofaLegHeight',
+] as const;
+
+const COMPOSING_GROUPS = new Set(['sofa', 'bedframe']);
+
+/**
+ * Does this line carry attributes its group will throw away?
+ *
+ * Returns the offending attribute names, or `[]`. Callers log it — a receipt
+ * must never fail to post because its paperwork is self-contradictory; the
+ * goods are physically in the building either way.
+ */
+export function attributesTheGroupWillIgnore(
+  itemGroup: string | null | undefined,
+  variants: Record<string, unknown> | null | undefined,
+): string[] {
+  const group = (itemGroup ?? '').trim().toLowerCase();
+  if (COMPOSING_GROUPS.has(group)) return [];
+  if (!variants) return [];
+  return COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME.filter((k) => {
+    const v = (variants as Record<string, unknown>)[k];
+    return typeof v === 'string' ? v.trim() !== '' : v != null;
+  });
+}

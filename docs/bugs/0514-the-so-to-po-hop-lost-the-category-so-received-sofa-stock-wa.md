@@ -71,6 +71,21 @@ consequence: a sofa group composes the fabric into the key, a lost group returns
 `''`, and the two can never match. Proved RED by restoring the derivation: 2
 failed.
 
+**The precondition nobody checked, made loud.** Owner 2026-08-22: 「什么叫判断？
+为什么不是跟着源代码是绝对的？」 The code IS absolute — it executed
+`computeVariantKey`'s rule faithfully. The rule simply carries an unstated
+precondition (*the group is correct*), and the `otherwise` branch swallows a
+BLANK group as readily as a real one, so a failure of that precondition is
+indistinguishable from an accessory.
+
+`attributesTheGroupWillIgnore` (`lib/sku-category.ts`) names the contradiction:
+a line carrying a fabric and a seat size whose group composes neither.
+`postGrnAndRollup` calls it and writes the finding to the log beside the receipt
+number and the attributes being dropped. It **reports and never repairs** —
+composing attributes regardless of group would re-key every historical row in
+the ledger, which is a different and far larger risk than the one being fixed.
+The rule itself is untouched.
+
 **Still open, deliberately not in this PR.** The receipts already posted carry
 the empty key; existing stock is NOT migrated by this change, and
 `HC-GRN-2608-003`'s two units are still in the unclassified bucket. A backfill

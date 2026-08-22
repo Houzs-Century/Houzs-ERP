@@ -3047,6 +3047,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   const childLock = await poHasDownstream(sb, poId);
   if (childLock) return c.json(childLock, 409);
 
+  const addGroupOf = await skuCategoryResolver(sb, [it], co.companyId ?? null); // SKU wins — lib/sku-category.ts
   /* Non-finite guard — the clamp below cannot catch NaN (Math.max(0, NaN) is
      NaN), so a junk qty/price reached line_total_sen and the PO total. */
   const parsedLine = parseLineNumbers({
@@ -3100,10 +3101,11 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     line_suffix: (it.lineSuffix as string) ?? null,
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     variants: (it.variants as unknown) ?? null,
-    item_group: (it.itemGroup as string) ?? null,
     description: (it.description as string) ?? null,
-    /* Commander 2026-05-28 — Description 2 auto-generated from variants. */
-    description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+    /* item_group + Description 2, from the SKU's group — the same rule the
+       create path uses. Adding a line by hand used to trust the payload here
+       too, so a line added after conversion could re-open docs/bugs/0514. */
+    ...lineIdentityFields(addGroupOf, it, buildVariantSummary),
     uom: (it.uom as string) ?? 'UNIT',
     discount_sen: discountSen,
     unit_cost_sen: Number(it.unitCostSen ?? 0),
