@@ -968,8 +968,7 @@ export function MfgDeliveryOrdersListV2() {
     }))) return;
     updateStatus.mutate({ id: r.id, status: "CANCELLED" });
   };
-  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
-     prompt wording and the write live in ./use-hold-action.ts. */
+  // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
   const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
   /* Every predicate here is a SHARED one, not a status list typed at this call
      site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
@@ -977,12 +976,9 @@ export function MfgDeliveryOrdersListV2() {
      doCountsAsDelivered is the same rule the server's returnable-DO picker
      applies (do-line-remaining.ts) — goods still on the lorry never left, so
      nothing can come back; doAdvanceStep supplies the one DRAFT rung.
-
-     THE HOLD IS A SECOND AXIS, ANDed with them rather than folded into any of
-     them (mig 0324). Those predicates answer "where has this delivery got to";
-     the marker answers "did somebody stop it". A held DO may not be invoiced or
-     returned and may not be advanced — but the shared predicates stay untouched,
-     because a held delivery's stage is still its real stage. */
+     THE HOLD IS A SECOND AXIS (mig 0324), ANDed with them rather than folded in:
+     those answer "where has this delivery got to", the marker answers "did
+     somebody stop it". A held DO's stage is still its real stage. */
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToSi: doConvertToSi, transferToDr: doConvertToDr,
@@ -1663,8 +1659,7 @@ export function MfgDeliveryOrdersListV2() {
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
-    /* `on_hold` sits before Cancelled, the same place it sits on the other four
-       lists, so the five strips read the same way left to right. Mig 0324. */
+    // `on_hold` sits before Cancelled, as on the other four lists. Mig 0324.
     [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
      ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
      ["on_hold", "On Hold"], ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
