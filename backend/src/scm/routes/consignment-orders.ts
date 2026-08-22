@@ -442,6 +442,9 @@ consignmentOrders.get('/mine', async (c) => {
         'total_revenue_sen, line_count, deposit_sen',
       )
       .eq('salesperson_id', myStaffId)
+      /* `on_hold` since mig 0324 — the hold is a MARKER beside the status now,
+         so the status arm below can no longer see one on its own. */
+      .eq('on_hold', false)
       .not('status', 'in', '("CANCELLED","ON_HOLD")'),
     c,
   )
@@ -593,7 +596,6 @@ consignmentOrders.post('/', async (c) => {
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const sb = c.get('supabase'); const user = c.get('user');
-  // The group is the SKU's — lib/sku-category.ts says why (docs/bugs/0514).
   const coGroupOf = await skuCategoryResolver(sb, items.map((it) => ({ materialKind: 'mfg_product', itemCode: it.itemCode })), activeCompanyId(c) ?? null);
 
   // itemCode catalog guard.
@@ -1489,11 +1491,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
-  /* The group is the SKU's — lib/sku-category.ts (docs/bugs/0514). Same rule as
-     the create path above, so a line added by hand cannot re-open it. */
-  const addGroup = (await skuCategoryResolver(
-    sb, [{ materialKind: 'mfg_product', itemCode: it.itemCode }], activeCompanyId(c) ?? null,
-  ))(it) ?? 'others';
+  const addGroup = (await skuCategoryResolver(sb, [{ materialKind: 'mfg_product', itemCode: it.itemCode }], activeCompanyId(c) ?? null))(it) ?? 'others'; // SKU wins — docs/bugs/0514
 
   /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
   const childLock = await coHasDownstream(sb, docNo);
