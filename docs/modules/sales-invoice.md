@@ -130,9 +130,19 @@ by someone who knows whether the goods arrived, so the system does not
 second-guess them. The picker, this gate and the write-path cap all now read
 the `'invoiceable'` basis of `do-line-remaining.ts`, so they cannot disagree
 again; `backend/tests/loadedStaysInvoiceable.test.ts` fails by name if LOADED is
-re-excluded. NOTE that #2485's argument — "stock was already deducted at
-dispatch" — is false for LOADED: the rule stands on the owner's choice, not on
-that reasoning. The batch path's `DO_HEADER` projection must keep selecting `status`;
+re-excluded.
+
+**#2485's argument was false for LOADED and stopped being false on 2026-08-22.**
+It justified itself with "stock was already deducted at dispatch", which was true
+of `DISPATCHED` and `IN_TRANSIT` and not of `LOADED` — so the rule stood on the
+owner's choice rather than on that reasoning. He has since moved the deduction to
+the confirm step (「once confirmed就代表出货了 就是直接扣库存」), so `LOADED` is a
+member of `DO_SHIPPED_STATES` and the stock IS out by the time an invoice can be
+raised. Nothing about this gate changes: the rule was already right, and it is
+now right for the reason #2485 gave as well as the one it actually rested on.
+Full trace in `docs/modules/delivery-order.md`.
+
+The batch path's `DO_HEADER` projection must keep selecting `status`;
 it did not at first, and the guard then refused every batch invoice
 (`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |
