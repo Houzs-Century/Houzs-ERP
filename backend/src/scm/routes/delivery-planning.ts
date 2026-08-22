@@ -424,13 +424,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   for (const w of (whRows ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
     const code = (w.code ?? '').trim();
     whCode.set(w.id, code);
-    /* THE CODE — owner 2026-08-22: 「我要显示代码，我不要又代码又名字」. This map
-       feeds `warehouse_name` on the planning board, and it used to be the NAME,
-       so the SAME warehouse read "KL WAREHOUSE" on a delivery order and
-       "BALAKONG WAREHOUSE" here. Same row, two vocabularies, and an operator
-       reasonably concluded they were two places. The map keeps its column name
-       (the API shape is public) but carries the label the one rule gives. */
-    whName.set(w.id, warehouseLabel(w) ?? code);
+    whName.set(w.id, warehouseLabel(w) ?? code); // the CODE — lib/warehouse-label.ts
   }
 
   /* 2. Live SO headers needing delivery — NOT DRAFT / CANCELLED, and carrying a
