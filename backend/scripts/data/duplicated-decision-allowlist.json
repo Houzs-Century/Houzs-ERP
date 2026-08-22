@@ -432,11 +432,6 @@
     },
     {
       "check": "D1",
-      "key": "COLOURHEX,COLOURID,COLOURLABEL,FABRICCODE,FABRICID,FABRICLABEL|frontend/src/mobile/MobileNewSO.tsx frontend/src/pages/scm-v2/SalesOrderNew.tsx",
-      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: FABRIC_SYNC_KEYS. Divergence shows as one surface missing an option."
-    },
-    {
-      "check": "D1",
       "key": "COMPLETED_AT,STATUS,UPDATED_AT|backend/src/scm/routes/purchase-consignment-returns.ts backend/src/scm/routes/purchase-returns.ts",
       "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
     },
@@ -1124,6 +1119,11 @@
       "check": "D2",
       "key": "CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,READY_TO_SHIP,SHIPPED",
       "why": "TWO ARMS OF ONE DECLARATION, eight lines apart in so-lifecycle-guards.ts, and they are meant to differ: SO_STATUS_RANK is the FORWARD SPINE and CANCELLED / ON_HOLD are deliberately UNRANKED side states — the file says so directly above them. Ranking them would make ON_HOLD comparable to DELIVERED and turn a legal pause into an illegal backward jump."
+    },
+    {
+      "check": "D2",
+      "key": "BEDFRAME,MATTRESS,OTHER,SOFA ~ BEDFRAME,MATTRESS,SOFA",
+      "why": "TWO DIFFERENT QUESTIONS that share three words. MAIN_CATS asks which categories are MAIN PRODUCTS — a business rule about what blocks a sale from shipping, and accessories are deliberately not in it. TONE_BY_BUCKET asks which COLOUR each display group gets, and it needs a fourth member for exactly the reason the first one does not have it: everything that is NOT a main product still has to be drawn, so OTHER is the catch-all. Merging them would make a colour table decide what blocks a shipment. The extra member is the difference between a rule and a palette, and it is the whole point of both. See frontend/src/lib/brandingTone.ts and docs/modules/document-status-vocabulary.md."
     }
   ]
 }
