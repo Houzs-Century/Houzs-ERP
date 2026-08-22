@@ -39,6 +39,23 @@ source_doc_no; the read fails CLOSED) → numbering (per-company `JE-YYMM-NNNN`,
 mint-retry on collision). Account codes resolve through ROLES
 (`scm.acc_account_roles`, per company) — never hardcoded at call sites.
 
+**The numbering step reaches ACROSS SCHEMAS, and that is the one thing to know
+before touching it.** `jePrefixForCompany` (`scm/lib/doc-no.ts`) resolves the
+per-company prefix from the company's CODE — HOUZS mints bare, every other
+company takes `<CODE>-` — and the companies master is **`public.companies`**,
+while the SCM client is pinned to `scm` (`db/supabase.ts:77`). The read must
+therefore say `sb.schema('public')` explicitly. It is the only
+`from('companies')` in the backend; every other reader goes through raw SQL
+(`middleware/companyContext.ts:120`), so there is no sibling call to disagree
+with a mistake here.
+
+It **fails closed** — minting under the wrong company's prefix would collide two
+ledgers' running numbers — but `postJournal` CONTAINS that failure as
+`je_prefix_failed` rather than letting it escape. Between 2026-08-18 and
+2026-08-23 it escaped, and no journal entry was written in either company for
+five days while the documents themselves posted normally: see
+`docs/bugs/0522`.
+
 ## 2. Database layer (second checks, migration 0296)
 
 - `acc_je_balanced_totals` CHECK — header totals always equal.

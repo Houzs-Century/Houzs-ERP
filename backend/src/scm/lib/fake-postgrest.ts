@@ -252,5 +252,25 @@ export function fakeSb(
     };
     return builder;
   };
-  return { from, tables } as never as { from: (t: string) => any; tables: Record<string, Row[]> };
+  /* `.schema('public')` — a real supabase-js client returns a client scoped to
+     that schema. The fakes model ONE table namespace, so it returns itself: a
+     test's `tables` map is the whole database and has no schema dimension.
+     Present because production code reaches ACROSS schemas: the SCM client is
+     pinned to `scm` (db/supabase.ts), and the companies master lives in
+     `public`, so `jePrefixForCompany` must say so explicitly. Without this the
+     fake throws `sb.schema is not a function` and the test would be measuring
+     the fake, not the code. See docs/bugs/0522. */
+  const schemaCalls: string[] = [];
+  const api: {
+    from: (t: string) => any;
+    tables: Record<string, Row[]>;
+    schema: (s: string) => any;
+    schemaCalls: string[];
+  } = {
+    from,
+    tables,
+    schema: (s: string) => { schemaCalls.push(s); return api; },
+    schemaCalls,
+  };
+  return api as never as typeof api;
 }
