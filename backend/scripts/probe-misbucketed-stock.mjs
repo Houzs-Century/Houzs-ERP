@@ -82,7 +82,17 @@ const LINE_TABLES = [
   { label: "采购单 Purchase order",  table: "purchase_order_items" },
   { label: "收货单 Goods receipt",   table: "grn_items" },
   { label: "送货单 Delivery order",  table: "delivery_order_items" },
-  { label: "寄售单 Consignment",     table: "consignment_order_items" },
+  { label: "寄售采购单 Consign PO",  table: "purchase_consignment_order_items" },
+];
+
+/* NOT MEASURED, said out loud rather than left as a gap in a list.
+   `consignment_sales_order_items` and `consignment_delivery_order_items` carry
+   NO item-code / item_group / variants columns at all, so the question this
+   probe asks cannot be put to them. Naming them here costs one line and stops a
+   reader concluding from silence that consignment sales were covered and clean. */
+const NOT_MEASURED = [
+  "寄售销售单 consignment_sales_order_items — 没有料号／类别／规格栏位，问不了",
+  "寄售送货单 consignment_delivery_order_items — 同上",
 ];
 
 async function main() {
@@ -103,6 +113,7 @@ async function main() {
       note(`   ${pad(t.label, 26)}读不到 — ${why(e).slice(0, 90)}`);
     }
   }
+  for (const line of NOT_MEASURED) note(`   ${line}`);
   note("");
 
   /* ── 1. LINES WHOSE KEY WOULD CHANGE ─────────────────────────────────────
@@ -210,7 +221,7 @@ async function main() {
          AND (${CO}::int IS NULL OR p.company_id = ${CO}::int)
        WHERE COALESCE(l.qty_remaining, 0) > 0
          AND COALESCE(l.variant_key, '') = ''
-         AND LOWER(COALESCE(p.category, '')) IN ('sofa', 'bedframe')
+         AND LOWER(COALESCE(p.category::text, '')) IN ('sofa', 'bedframe')
     `;
     let qty = 0;
     let valueSen = 0;
@@ -256,7 +267,7 @@ async function main() {
          AND (${CO}::int IS NULL OR p.company_id = ${CO}::int)
        WHERE COALESCE(l.qty_remaining, 0) > 0
          AND l.batch_no IS NULL
-         AND LOWER(COALESCE(p.category, '')) = 'sofa'
+         AND LOWER(COALESCE(p.category::text, '')) = 'sofa'
        GROUP BY l.item_code
        ORDER BY 3 DESC
     `;
