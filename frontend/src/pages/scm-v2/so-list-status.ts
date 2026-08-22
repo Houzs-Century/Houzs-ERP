@@ -79,6 +79,26 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
      right tone on its own terms: closed is terminal but not a failure, the same
      reading Invoiced gets in status-pill.ts. */
   closed: { tone: "neutral", label: "Closed" },
+  /* THE THREE THE OWNER WAS LOOKING AT. Until this change the list printed the
+     RAW STORED VALUE for each of them — his own screenshot of production shows
+     18 orders in a pill reading `READY_TO_SHIP`, underscore and all, beside
+     others reading a proper "Confirmed". The fall-through below hands back
+     `s`, so a status with no row here is not merely uncoloured, it is
+     UNTRANSLATED.
+
+     IN_PRODUCTION is `progress` in status-pill.ts and READY_TO_SHIP / SHIPPED
+     are `success`; this list's four-tone palette has no `progress`, so
+     In Production takes `warning` (the in-flight tone it already gives Draft)
+     and the two ship states take `success`. The LABELS match status-pill.ts
+     exactly, which is the part that must not drift.
+
+     SHIPPED has no tab of its own — it folds into Delivered (so-tab-statuses.ts,
+     2026-08-22) — and it still needs a label: folding decides which TAB a row
+     appears under, not what its own pill says, and nothing writes SHIPPED today
+     but the enum label is permanent. */
+  in_production: { tone: "warning", label: "In Production" },
+  ready_to_ship: { tone: "success", label: "Ready to Ship" },
+  shipped: { tone: "success", label: "Shipped" },
   /* A LEGACY ROW ONLY, and it needs the entry precisely because it is rare.
      Nothing writes ON_HOLD to a status any more (mig 0324 made the hold a
      MARKER column with its own chip), but Postgres cannot drop an enum label,
