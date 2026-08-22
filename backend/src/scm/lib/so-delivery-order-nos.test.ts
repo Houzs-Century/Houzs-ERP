@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { doNosBySalesOrder, type DeliveryOrderNoRow } from './so-delivery-order-nos';
+import { doNosBySalesOrder, doRefsBySalesOrder, type DeliveryOrderNoRow } from './so-delivery-order-nos';
 
 const row = (o: Partial<DeliveryOrderNoRow>): DeliveryOrderNoRow => ({
+  id: 'do-uuid-1',
   so_doc_no: 'SO-1',
   do_number: 'DO-1',
   do_date: '2026-08-01',
@@ -62,5 +63,55 @@ describe('doNosBySalesOrder', () => {
     const out = doNosBySalesOrder([]);
     expect(out.size).toBe(0);
     expect(out.get('SO-1')).toBeUndefined();
+  });
+});
+
+/* ── The ADDRESS, beside the number (owner 2026-08-22) ──────────────────────
+   The Sales Order list's right-click gained "Print Delivery Order <no>", and a
+   PDF is fetched by ADDRESS: `/delivery-orders-mfg/:id` is `.eq('id', id)`, so
+   the numbers this file is named for can NAME a delivery order and cannot fetch
+   one. `doRefsBySalesOrder` is the same grouping with the id kept.
+
+   The two views must not diverge in ORDER — a menu that lists the deliveries in
+   a different order from the column above it reads as a different set — and
+   they diverge in exactly ONE way, deliberately: a row with no id is dropped
+   from the refs and kept in the numbers. A number with no address can still be
+   DISPLAYED; it cannot be FETCHED, and a menu entry that 404s is worse than one
+   that is not offered. */
+describe('doRefsBySalesOrder', () => {
+  it('keeps every delivery order, in the SAME order as the numbers view', () => {
+    const rows = [
+      row({ id: 'a', do_number: '2990-DO-2607-001', do_date: '2026-07-02' }),
+      row({ id: 'b', do_number: '2990-DO-2608-004', do_date: '2026-08-11' }),
+      row({ id: 'c', do_number: '2990-DO-2607-013', do_date: '2026-07-20' }),
+    ];
+    expect(doRefsBySalesOrder(rows).get('SO-1')).toEqual([
+      { id: 'b', docNo: '2990-DO-2608-004' },
+      { id: 'c', docNo: '2990-DO-2607-013' },
+      { id: 'a', docNo: '2990-DO-2607-001' },
+    ]);
+    expect(doRefsBySalesOrder(rows).get('SO-1')!.map((r) => r.docNo))
+      .toEqual(doNosBySalesOrder(rows).get('SO-1'));
+  });
+
+  it('drops a delivery order with no id — but the NUMBERS view keeps it', () => {
+    const rows = [
+      row({ id: null, do_number: 'DO-NO-ADDRESS', do_date: '2026-08-12' }),
+      row({ id: 'has-id', do_number: 'DO-ADDRESSABLE', do_date: '2026-08-11' }),
+    ];
+    expect(doRefsBySalesOrder(rows).get('SO-1')).toEqual([{ id: 'has-id', docNo: 'DO-ADDRESSABLE' }]);
+    // The delivery still happened, so the column must still show it.
+    expect(doNosBySalesOrder(rows).get('SO-1')).toEqual(['DO-NO-ADDRESS', 'DO-ADDRESSABLE']);
+  });
+
+  it('drops the same rows the numbers view drops — no order, no number', () => {
+    const rows = [row({ so_doc_no: null }), row({ do_number: null }), row({ id: 'x', do_number: 'DO-REAL' })];
+    expect(doRefsBySalesOrder(rows).get('SO-1')).toEqual([{ id: 'x', docNo: 'DO-REAL' }]);
+    expect(doRefsBySalesOrder(rows).size).toBe(1);
+  });
+
+  it('returns an EMPTY list, never a stand-in, for an order with no delivery', () => {
+    expect(doRefsBySalesOrder([]).size).toBe(0);
+    expect(doRefsBySalesOrder([]).get('SO-1')).toBeUndefined();
   });
 });

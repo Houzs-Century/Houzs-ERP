@@ -64,6 +64,8 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { grnPrintChain } from "../../lib/printChain";
 
 type GrnRow = HoldFields & {
   id: string;
@@ -615,7 +617,7 @@ export function GoodsReceivedListV2() {
   const goPos = () => navigate("/scm/purchase-orders");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goEdit = (r: GrnRow) => navigate(`/scm/grns/${r.id}?edit=1`);
-  const goPrint = (r: GrnRow) => navigate(`/scm/grns/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: GrnRow) => navigate(`/scm/grns/${r.id}`);
   const goConvertToPi = (r: GrnRow) => navigate(convertToLink('grnToPi', r.id));
   const goConvertToPr = (r: GrnRow) => navigate(convertToLink('grnToPr', r.id));
@@ -712,7 +714,7 @@ export function GoodsReceivedListV2() {
      The prompt wording and the write live in ./use-hold-action.ts. */
   const setGrnHold = (r: GrnRow, onHold: boolean) => holdAction(r.id, r.grn_number, onHold);
   const grnContextMenu = grnRowMenu<GrnRow>({
-    open: goFullPage, edit: goEdit, print: goPrint,
+    open: goFullPage, edit: goEdit, print: printDocument,
     transferToPi: goConvertToPi, transferToPr: goConvertToPr,
     post: (r) => doPost(r), cancel: (r) => doCancel(r), setHold: setGrnHold,
     canBill: (r) => !rowIsHeld(r) && r.status.toUpperCase() === "POSTED",
@@ -1042,7 +1044,7 @@ export function GoodsReceivedListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(grnPrintChain(selected).own)}
         onPost={() => selected && doPost(selected)}
         onCancel={() => selected && doCancel(selected)}
         onConvertToPi={() => selected && goConvertToPi(selected)}

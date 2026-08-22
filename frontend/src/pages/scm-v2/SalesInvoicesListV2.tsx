@@ -73,6 +73,8 @@ import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { salesInvoicePrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -951,7 +953,7 @@ export function SalesInvoicesListV2() {
   const goDoList = () => navigate("/scm/delivery-orders");
   const goOutstanding = () => navigate("/scm/outstanding");
   const goEdit = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?edit=1`);
-  const goPrint = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -1032,7 +1034,7 @@ export function SalesInvoicesListV2() {
      with `not_payable`, and the menu simply does not offer what it would
      refuse. */
   const siContextMenu = salesInvoiceRowMenu<SiRow>({
-    open: goFullPage, edit: goEdit, print: goPrint,
+    open: goFullPage, edit: goEdit, print: printDocument,
     recordPayment: (r) => goRecordPayment(r),
     canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
   });
@@ -1867,7 +1869,7 @@ export function SalesInvoicesListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(salesInvoicePrintChain(selected).own)}
         onMarkPaid={() => selected && doMarkPaid(selected)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
         onReopen={() => selected && void doReopen(selected)}

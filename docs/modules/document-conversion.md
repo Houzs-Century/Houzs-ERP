@@ -445,7 +445,7 @@ source tree and FAILS on any site that hand-writes a query onto a convert path
 ### The shape, on every list
 
 ```
-open / edit / print     what you do WITH this document
+open / edit / print …   what you do WITH this document, and with its chain
 ────────
 transfer to …           what you make FROM it
 ────────
@@ -456,6 +456,10 @@ cancel                  destructive, alone, last, red
 
 Assembled by `lib/rowMenu.ts`'s `buildRowMenu`, which drops empty groups so a
 row that does not qualify never renders a stray separator.
+
+**The first group is no longer three fixed entries** — since 2026-08-23 it is
+Open, Edit, and one print entry per document the row can reach. §8b has the
+whole of that.
 
 ### What each list offers, and what it deliberately does not
 
@@ -573,6 +577,144 @@ and `convert-scope-pickers.test.tsx` now mounts this picker too.
 **No cancel on the Sales Invoice** — still a recorded gap, not a decision. That
 list has no cancel handler; cancelling lives on its detail page, and it reverses
 revenue.
+
+---
+
+## 8b. Print, for the whole chain, from the row (owner ruling, 2026-08-22)
+
+**His words**, looking at the Sales Order list beside the detail page's Print
+PDF button:
+
+> 「简单来说，正常我们 print PDF 都是点进去 print 的吧。那我要在这边 right
+> click，可以点 print SalesOrder、print DO，这样的意思其实就是 print PDF」
+
+and, asked whether he meant only the Sales Order:
+
+> 「要的啊，我是要全部的 Transaction Flow 都要」
+
+**What "Print" used to do, and why it was not this.** Every one of the ten lists
+had `print: (r) => navigate('/scm/<doc>/<key>?print=1')` — it LEFT the list,
+opened the document, and let the detail page open its own preview. That is a
+shortcut for "click into it", which is the thing he is asking to avoid, and it
+could only ever reach the row's OWN document.
+
+**Now the row menu prints any document in that row's chain, in place.** From a
+Sales Order row: the order, each of its delivery orders, each of its sales
+invoices. From a Purchase Order row: the order, the Sales Order it is bound to,
+each GRN it was received into. Nothing navigates.
+
+### The mechanism, and what was rejected
+
+`PrintChainProvider` mounts **`PrintPreviewModal`** — the ONE print dialog
+(owner 2026-08-06, 「全部打印的时候都需要有这个」) — once in `Scm2990Shell`, beside
+`useConfirm` / `useChoice` / `useNotify`, and hands every descendant an
+imperative `usePrintDocument()`. The rejected alternative was keeping
+`?print=1`; it is cheaper and it is the behaviour he asked to stop.
+
+Two things made the provider the right shape rather than a modal per list:
+
+- **A list prints any of nine documents, chosen at right-click time.**
+  `usePrintPreview` + a mounted modal is right for a DETAIL page, which prints
+  one document and knows which one.
+- **It fits.** `MfgDeliveryOrdersListV2.tsx` sits at its file-size ceiling
+  exactly (2004 of 2004, measured 2026-08-23) and `MfgSalesOrdersListV2.tsx` had
+  three lines of headroom; `scripts/file-size-ceilings.json` may only ever FALL.
+  A modal plus three handlers in each of ten lists does not fit. An imperative
+  call costs each list one import.
+
+**Print now still goes through the PDF (`action: 'print'`), never
+`window.print()`.** The global `@media print` block in `index.css` hides
+`body *` and reveals only `.org-print-area`, so `window.print()` from a list
+prints a blank sheet — which the Delivery Order shipped once.
+
+### An entry is built only where the row carries an ADDRESS
+
+**This is the constraint the whole feature turns on.** A PDF is fetched by
+address, and the addresses differ:
+
+| document | detail route | keyed by |
+|---|---|---|
+| Sales Order | `GET /mfg-sales-orders/:docNo` | the document NUMBER |
+| every other document | `GET /<resource>/:id` (`.eq('id', id)`) | a UUID |
+
+So a row that carries a related document's NUMBER and no id knows the document
+exists, can label it, and **cannot fetch it**. Those entries are not built — not
+built and greyed out, not built at all, because `buildRowMenu` drops empty
+groups and a menu line that 404s is worse than one that is not offered. Nothing
+is fetched to BUILD a menu either: a round trip per row would cost more than the
+navigation it replaces, and these lists page 50 rows at a time.
+
+### What each row payload actually carries (measured 2026-08-23)
+
+Read from the row types in each list page and the endpoint that fills them.
+**Offered** means the row carries an address; **number only** means it carries
+the number and no id, so no entry is built.
+
+| list | offered | number only — NO entry | not carried at all |
+|---|---|---|---|
+| Sales Order | its DOs (`do_refs`), its SIs (`si_refs`) — both added 2026-08-23 | `converted_po_nos`, `source_po_union` (PO numbers) | — |
+| Delivery Order | its SO (`so_doc_no`), its SIs (`si_refs`), its DRs (`dr_refs`) — the last two added 2026-08-23 | `source_pos`, `source_sos` | — |
+| Sales Invoice | its SO (`so_doc_no`), its DO (`delivery_order_id` + `do_number`) | `source_pos` | — |
+| Delivery Return | its SO (`so_doc_no`), its DO (`delivery_order_id` + `do_doc_no`) | — | — |
+| Purchase Order | its bound SOs (`assigned_sos`), its GRNs (`transfer_to_grns`) | `delivered_dos`; a PRE-2026-07-31 bare-string GRN chip | its PIs |
+| Goods Received | its PO (`purchase_order`), its bound SOs | `delivered_dos` | its PIs, its PRs |
+| Purchase Invoice | its PO, its GRN, its bound SOs | `delivered_dos` | — |
+| Purchase Return | its PO, its GRN | — | — |
+| Stock Transfer | **nothing, including its own** | — | — |
+| Stock Take | **nothing, including its own** | — | — |
+
+**The two stock documents print nothing, and that is unchanged.** No PDF generator for
+either exists in `frontend/src/vendor/scm/lib/`, and neither list nor detail
+page has ever had a print handler, so their menus stay
+Open + Cancel. An entry pointing at a generator that does not exist is worse
+than a shorter menu.
+
+**Four links were closed at the SOURCE, not worked around.** The Sales Order
+list already read `delivery_orders` and `sales_invoices` by `so_doc_no`, and the
+Delivery Order list already read `sales_invoices` and `delivery_returns` by
+`delivery_order_id` — all four for `has_children` and the lineage columns.
+Adding `id` to a select already in flight costs **no extra round trip**, which is
+why `do_refs` / `si_refs` / `dr_refs` exist rather than a per-row lookup. The
+`*_nos` arrays are untouched: they feed DISPLAY columns that must still show a
+document carrying no id, and `so-delivery-order-nos.ts` states that difference.
+
+**An MRP allocation is not a link.** `assigned_sos` can be a live MRP projection
+(`OriginAssignment.source === 'mrp'`) rather than anything stored, and reading
+one as a binding is the 2026-07-29 incident. Only `'linked'` and `'delivered'`
+build an entry; a row from a backend that does not send `source` at all builds
+none, which is the stricter direction.
+
+### One-to-many is listed, never collapsed
+
+A part-delivered order has several delivery orders — that is why the DO No.
+column returns a list at all — so **each one gets its own entry**, labelled with
+its own number. Printing "the delivery order" of an order that has three is a
+question the menu cannot answer for the operator.
+
+Past `PRINT_CHAIN_MAX` (five per document type) the remainder becomes ONE entry
+that **says how many are not listed** and opens the document:
+`+3 more Delivery Order — Open to print`. A silent cap reads as "that's all of
+them", which is the same lie as showing only the first.
+
+### The words
+
+`Print Delivery Order HC-DO-2608-003` — the document name comes from
+`TRANSFER_DOC` in `frontend/src/vendor/shared/transfer-vocabulary.ts`, the one
+home for those words (§10 and #2370). It is generated, never typed, so this is
+not a thirteenth spelling.
+
+### Where it lives
+
+| file | what it decides |
+|---|---|
+| `frontend/src/lib/printChain.ts` | WHICH documents a row may print, per list |
+| `frontend/src/lib/printDocumentPdf.ts` | type → detail endpoint → generator, and the DR mapping |
+| `frontend/src/components/scm-v2/PrintChainProvider.tsx` | the one dialog, and `usePrintDocument()` |
+| `frontend/src/pages/scm-v2/row-menus.ts` | `printEntries` — where they land in the menu |
+
+`MfgSalesOrdersListV2`, `MfgDeliveryOrdersListV2` and `DeliveryReturnsListV2`
+now read their batch-export bundles from `printDocumentPdf.ts` too, so the row
+menu's print and the list's "Export PDF (N)" cannot drift apart.
 
 ---
 

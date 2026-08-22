@@ -68,6 +68,9 @@ import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { deliveryReturnRowMenu } from "./row-menus";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { deliveryReturnPrintChain } from "../../lib/printChain";
+import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -870,7 +873,7 @@ export function DeliveryReturnsListV2() {
   const goDoList = () => navigate("/scm/delivery-orders");
   const goInvoiceList = () => navigate("/scm/sales-invoices");
   const goEdit = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}?edit=1`);
-  const goPrint = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -890,51 +893,16 @@ export function DeliveryReturnsListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One DR's full detail shaped into the { header, items } bundle the generator
-  // expects — the SAME mapping the DR Detail page's Print PDF uses. Endpoint:
-  // GET /delivery-returns/:id → { deliveryReturn, items }.
-  const fetchDrBundle = async (
-    id: string
-  ): Promise<{ header: unknown; items: unknown[] }> => {
-    const data = await authedFetch<{
-      deliveryReturn: Record<string, unknown>;
-      items: Array<Record<string, unknown>>;
-    }>(`/delivery-returns/${id}`);
-    const h = data.deliveryReturn ?? {};
-    const items = (data.items ?? []).map((it) => ({
-      item_code: it.item_code as string,
-      description: (it.description as string | null) ?? null,
-      qty_returned: it.qty_returned as number,
-      condition: (it.condition as string | null) ?? null,
-      unit_price_sen: it.unit_price_sen as number,
-      refund_sen: it.line_total_sen as number,
-    }));
-    return {
-      header: {
-        return_number: h.return_number as string,
-        status: h.status as string,
-        return_date: h.return_date as string,
-        debtor_code: (h.debtor_code as string | null) ?? null,
-        debtor_name: h.debtor_name as string,
-        reason: (h.reason as string | null) ?? null,
-        refund_sen: h.local_total_sen as number,
-        notes: ((h.note as string | null) ?? (h.notes as string | null)) ?? null,
-        delivery_order_id: (h.delivery_order_id as string | null) ?? null,
-        sales_invoice_id: null,
-        /* Feed the DO-clone address block (migration 0102) into the unified
-           BILL TO block so batch-printed DRs carry the customer address, not
-           just the single-detail print path. Same fields as the detail page. */
-        address1: (h.address1 as string | null) ?? null,
-        address2: (h.address2 as string | null) ?? null,
-        city: (h.city as string | null) ?? null,
-        state: (h.customer_state as string | null) ?? (h.state as string | null) ?? null,
-        postcode: (h.postcode as string | null) ?? null,
-        phone: (h.phone as string | null) ?? null,
-        email: (h.email as string | null) ?? null,
-      },
-      items,
-    };
-  };
+  /* Delegated to lib/printDocumentPdf's `deliveryReturnPdfBundle`, the ONE home
+     for the DR-record → DR-generator mapping (the generator takes a shape the
+     record is not stored in, and migration 0102's address block has to be
+     threaded through by hand). The row menu's print reads the same function. */
+  const fetchDrBundle = async (id: string): Promise<{ header: unknown; items: unknown[] }> =>
+    deliveryReturnPdfBundle(
+      await authedFetch<{ deliveryReturn: Record<string, unknown>; items: Array<Record<string, unknown>> }>(
+        `/delivery-returns/${id}`,
+      ),
+    );
 
   // Batch "Print all" — one ticked DR downloads straight; several prompt
   // combined-vs-separate.
@@ -1081,7 +1049,7 @@ export function DeliveryReturnsListV2() {
   const drContextMenu = deliveryReturnRowMenu<DrRow>({
     open: goFullPage,
     edit: goEdit,
-    print: goPrint,
+    print: printDocument,
     cancel: doCancelDr,
     canCancel: (r) => (r.status || "").toUpperCase() !== "CANCELLED",
   });
@@ -1754,7 +1722,7 @@ export function DeliveryReturnsListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(deliveryReturnPrintChain(selected).own)}
         onMarkInspected={() => selected && doMarkInspected(selected)}
         onMarkRefunded={() => selected && doMarkRefunded(selected)}
         onReopen={() => selected && void doReopen(selected)}

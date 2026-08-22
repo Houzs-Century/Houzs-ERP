@@ -33,7 +33,16 @@
        cancel                  destructive, alone, last, red
    ---------------------------------------------------------------------------- */
 
-import { buildRowMenu, dangerItem, type RowMenuItem } from "../../lib/rowMenu";
+import { buildRowMenu, dangerItem, type MaybeItem, type RowMenuItem } from "../../lib/rowMenu";
+import {
+  printChainLabel, printChainOverflowLabel,
+  salesOrderPrintChain, deliveryOrderPrintChain, salesInvoicePrintChain,
+  deliveryReturnPrintChain, purchaseOrderPrintChain, grnPrintChain,
+  purchaseInvoicePrintChain, purchaseReturnPrintChain,
+  type PrintChain, type PrintTarget,
+  type SoChainRow, type DoChainRow, type SiChainRow, type DrChainRow,
+  type PoChainRow, type GrnChainRow, type PiChainRow, type PrChainRow,
+} from "../../lib/printChain";
 import { transferToLabel } from "../../lib/convertScope";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { DO_STOCK_OUT_STATES } from "../../vendor/shared/do-shipped-states";
@@ -85,6 +94,46 @@ function holdEntries<R extends StatusRow>(
   return [
     !held && { label: "Put On Hold", onClick: () => setHold(r, true) },
     held && { label: "Take Off Hold", onClick: () => setHold(r, false) },
+  ];
+}
+
+/* ── PRINT, FOR THE WHOLE CHAIN (owner 2026-08-22) ───────────────────────────
+   「正常我们 print PDF 都是点进去 print 的吧。那我要在这边 right click，可以点
+   print SalesOrder、print DO，这样的意思其实就是 print PDF」 and, asked whether
+   he meant only the Sales Order, 「要的啊，我是要全部的 Transaction Flow 都要」.
+
+   WHAT "Print" USED TO DO, and why it was not this. Every one of the ten lists
+   had `print: (r) => navigate('/scm/<doc>/<key>?print=1')` — it left the list,
+   opened the document, and let the detail page open its own preview. That is a
+   shortcut for "click into it", which is the thing he is asking to avoid, and
+   it could only ever reach the row's OWN document.
+
+   Now `h.print` takes a TARGET rather than a row, and the entries come from
+   `printChain.ts`, which reads what the row already carries. Three properties
+   follow, and each one is the point:
+
+     · NOTHING IS FETCHED TO BUILD A MENU. A round trip per row would cost more
+       than the navigation it replaces; these lists page 50 rows at a time.
+     · AN ENTRY THAT CANNOT WORK IS NOT BUILT. Not greyed out — `buildRowMenu`
+       drops empty groups, so a Sales Order with no delivery order simply has no
+       "Print Delivery Order" line. A PDF is fetched by ADDRESS, and several
+       rows carry a related document's NUMBER without one; those build nothing,
+       and §8b of docs/modules/document-conversion.md names each gap.
+     · THE WORDS COME FROM `TRANSFER_DOC`. "Print Delivery Order HC-DO-2608-003"
+       is generated, never typed, so this is not a thirteenth spelling of the
+       document names (frontend/src/vendor/shared/transfer-vocabulary.ts).
+
+   ONE-TO-MANY IS LISTED, NOT COLLAPSED. A part-delivered order has several
+   delivery orders and each gets its own entry, because "print the delivery
+   order" is a question the menu cannot answer on the operator's behalf. Past
+   PRINT_CHAIN_MAX the remainder becomes ONE entry that SAYS how many are not
+   listed and opens the document — a silent cap reads as "that's all of them".
+ */
+function printEntries(chain: PrintChain, h: { print: (t: PrintTarget) => void; open: () => void }): MaybeItem[] {
+  return [
+    { label: "Print", onClick: () => h.print(chain.own) },
+    ...chain.related.map((t) => ({ label: printChainLabel(t), onClick: () => h.print(t) })),
+    ...chain.hidden.map((x) => ({ label: printChainOverflowLabel(x), onClick: h.open })),
   ];
 }
 
@@ -146,10 +195,10 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
    Cancel. The list of buttons a human gets is short everywhere, and it is short
    for this reason. */
-export function salesOrderRowMenu<R extends StatusRow>(h: {
+export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
   setStatus: (r: R, status: string) => void;
@@ -175,7 +224,7 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
       [
         { label: "Open", onClick: () => h.open(r) },
         { label: "Edit", onClick: () => h.edit(r) },
-        { label: "Print", onClick: () => h.print(r) },
+        ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
       ],
       [
         h.canDeliver && soCanRaiseDo(r.status, r.on_hold ?? null) && !isDraft &&
@@ -267,10 +316,10 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
    above answer "where has this delivery got to"; the marker answers "did
    somebody stop it". They are ANDed, never folded together — and every entry
    here that #2661 gated on `!rowIsHeld` stays gated, these three included. */
-export function deliveryOrderRowMenu<R extends StatusRow>(h: {
+export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   transferToSi: (r: R) => void;
   transferToDr: (r: R) => void;
   confirm: (r: R) => void;
@@ -302,7 +351,7 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
       [
         { label: "Open", onClick: () => h.open(r) },
         { label: "Edit", onClick: () => h.edit(r) },
-        { label: "Print", onClick: () => h.print(r) },
+        ...printEntries(deliveryOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
       ],
       [
         h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
@@ -329,10 +378,10 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
    PO -> GRN is the one transfer in this system that was already complete from
    the source side (detail, row drawer AND a list bulk bar), so the menu adds
    the entry point rather than the capability. */
-export function purchaseOrderRowMenu<R extends StatusRow>(h: {
+export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   transferToGrn: (r: R) => void;
   setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
@@ -343,7 +392,7 @@ export function purchaseOrderRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(purchaseOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canReceive(r) && { label: transferToLabel("grn"), onClick: () => h.transferToGrn(r) }],
     holdEntries(r, h.setHold),
@@ -356,10 +405,10 @@ export function purchaseOrderRowMenu<R extends StatusRow>(h: {
    this list's drawer already carried both and the menu simply mirrors it.
    `Post` stays here because it is the GRN's confirm step and it is what moves
    the stock IN; it reads as a status change and is grouped as one. */
-export function grnRowMenu<R extends StatusRow>(h: {
+export function grnRowMenu<R extends StatusRow & GrnChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   transferToPi: (r: R) => void;
   transferToPr: (r: R) => void;
   post: (r: R) => void;
@@ -373,7 +422,7 @@ export function grnRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(grnPrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [
       h.canBill(r) && { label: transferToLabel("pi"), onClick: () => h.transferToPi(r) },
@@ -392,10 +441,10 @@ export function grnRowMenu<R extends StatusRow>(h: {
    exist in this system in either direction — the only converter the backend
    exposes is `from-dos`, which is why the button that once pointed at
    `/scm/sales-invoices/from-so` was REMOVED rather than repointed. */
-export function salesInvoiceRowMenu<R extends StatusRow>(h: {
+export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   recordPayment: (r: R) => void;
   canPay: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
@@ -406,7 +455,7 @@ export function salesInvoiceRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(salesInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canPay(r) && { label: "Record payment", onClick: () => h.recordPayment(r) }],
   );
@@ -446,10 +495,10 @@ export function salesInvoiceRowMenu<R extends StatusRow>(h: {
    The server refuses a cancel once any money has been paid
    (`cancelPurchaseInvoiceHandler`: PAID or `paid_sen > 0` → 409), so `canCancel`
    has to know that too — an entry the server will refuse is a menu that lies. */
-export function purchaseInvoiceRowMenu<R extends StatusRow>(h: {
+export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   cancel: (r: R) => void;
   canConfirm: (r: R) => boolean;
@@ -460,7 +509,7 @@ export function purchaseInvoiceRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(purchaseInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
     [h.canCancel(r) && dangerItem("Cancel Purchase Invoice", () => h.cancel(r))],
@@ -474,10 +523,10 @@ export function purchaseInvoiceRowMenu<R extends StatusRow>(h: {
    COMPLETE IS DELIBERATELY ABSENT. It records the supplier's credit note — a
    money statement that wants the reference field the drawer's Complete tab
    asks for, and a right-click cannot ask for it. */
-export function purchaseReturnRowMenu<R extends StatusRow>(h: {
+export function purchaseReturnRowMenu<R extends StatusRow & PrChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   cancel: (r: R) => void;
   canConfirm: (r: R) => boolean;
@@ -488,7 +537,7 @@ export function purchaseReturnRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(purchaseReturnPrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
     [h.canCancel(r) && dangerItem("Cancel Purchase Return", () => h.cancel(r))],
@@ -507,10 +556,10 @@ export function purchaseReturnRowMenu<R extends StatusRow>(h: {
    row rather than relying on the server: un-cancelling is refused outright
    (`patchDeliveryReturnStatusHandler` — the cancel's stock drain would be left
    in place), so a second Cancel is a dead entry, not a no-op. */
-export function deliveryReturnRowMenu<R extends StatusRow>(h: {
+export function deliveryReturnRowMenu<R extends StatusRow & DrChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
-  print: (r: R) => void;
+  print: (t: PrintTarget) => void;
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
@@ -519,7 +568,7 @@ export function deliveryReturnRowMenu<R extends StatusRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
-      { label: "Print", onClick: () => h.print(r) },
+      ...printEntries(deliveryReturnPrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canCancel(r) && dangerItem("Cancel Delivery Return", () => h.cancel(r))],
   );

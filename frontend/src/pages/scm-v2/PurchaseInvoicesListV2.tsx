@@ -62,6 +62,8 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { purchaseInvoiceRowMenu } from "./row-menus";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { purchaseInvoicePrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -734,7 +736,7 @@ export function PurchaseInvoicesListV2() {
   const goGrns = () => navigate("/scm/grns");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goEdit = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}?edit=1`);
-  const goPrint = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -865,7 +867,7 @@ export function PurchaseInvoicesListV2() {
   const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
     open: goFullPage,
     edit: goEdit,
-    print: goPrint,
+    print: printDocument,
     confirm: doConfirm,
     cancel: doCancelPi,
     canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
@@ -1274,7 +1276,7 @@ export function PurchaseInvoicesListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(purchaseInvoicePrintChain(selected).own)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
         onMarkPaid={() => selected && doMarkPaid(selected)}
       />

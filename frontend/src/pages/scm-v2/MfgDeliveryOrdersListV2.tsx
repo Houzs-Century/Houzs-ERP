@@ -34,6 +34,9 @@ import {
   ArrowRightLeft,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { deliveryOrderPrintChain } from "../../lib/printChain";
+import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -138,6 +141,11 @@ type DoRow = HoldFields & {
    *  was invoiced into, and the DR number(s) returned against it. */
   invoiced_si_nos?: string[] | null;
   return_nos?: string[] | null;
+  /** The same two children with the id the right-click print needs — a PDF is
+   *  fetched by ADDRESS and the `*_nos` above carry only numbers. Optional so a
+   *  bundle talking to an older worker offers fewer entries rather than 404ing. */
+  si_refs?: Array<{ id: string; docNo: string }> | null;
+  dr_refs?: Array<{ id: string; docNo: string }> | null;
   is_dropship?: boolean;
   isDropship?: boolean;
   // ── Phase 2: NON-finance fields already on the DO list payload (HEADER).
@@ -940,7 +948,7 @@ export function MfgDeliveryOrdersListV2() {
   const goSoList = () => navigate("/scm/sales-orders");
   const goPlanning = () => navigate("/scm/delivery-planning");
   const goEdit = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?edit=1`);
-  const goPrint = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
   /* One advance handler, target status supplied by do-next-step.ts — so this
      drawer walks the same ladder as the detail page and the mobile shell. */
@@ -980,7 +988,7 @@ export function MfgDeliveryOrdersListV2() {
      those answer "where has this delivery got to", the marker answers "did
      somebody stop it". A held DO's stage is still its real stage. */
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
-    open: goFullPage, edit: goEdit, print: goPrint,
+    open: goFullPage, edit: goEdit, print: printDocument,
     transferToSi: doConvertToSi, transferToDr: doConvertToDr,
     confirm: doAdvance, cancel: doCancelDo, setHold: setDoHold,
     setStatus: (r, status) => updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) }),
@@ -1001,19 +1009,12 @@ export function MfgDeliveryOrdersListV2() {
      delivery order. */
 
   // ─── Batch PDF export (ported from MfgDeliveryOrdersList) ─────────────────
-  // One DO's full detail for the PDF generator. Reads via the vendored
-  // authedFetch (→ /api/scm); same endpoint + shape as the single-row path.
-  const fetchDoBundle = async (
-    row: DoRow
-  ): Promise<{ header: unknown; items: unknown[] }> => {
-    const json = await authedFetch<{ deliveryOrder: unknown; items: unknown[] }>(
-      `/delivery-orders-mfg/${row.id}`
-    );
-    /* loadScanId arms the print's "scan to mark loaded" QR (delivery-order-pdf).
-       Stamped HERE so every export shape — single, combined, per-file — carries
-       it without three call sites remembering to. */
-    return { header: { ...(json.deliveryOrder as Record<string, unknown>), loadScanId: row.id }, items: json.items };
-  };
+  /* Delegated to lib/printDocumentPdf, which is now the ONE place that knows a
+     DO's detail endpoint and that its header must carry `loadScanId` to arm the
+     print's "scan to mark loaded" QR. The row menu's print reads the same
+     function, so batch and single cannot drift apart. */
+  const fetchDoBundle = (row: DoRow): Promise<{ header: unknown; items: unknown[] }> =>
+    fetchPrintBundle({ doc: "do", docNo: row.do_number, key: row.id });
 
   const clearSelection = () => setSelectedIds(new Set());
 
@@ -1989,7 +1990,7 @@ export function MfgDeliveryOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(deliveryOrderPrintChain(selected).own)}
         onAdvance={() => selected && doAdvance(selected)}
         onConvertToSi={() => selected && doConvertToSi(selected)}
         canWrite={canWriteDo}
