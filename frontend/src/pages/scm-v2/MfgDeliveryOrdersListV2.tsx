@@ -979,7 +979,10 @@ export function MfgDeliveryOrdersListV2() {
     const json = await authedFetch<{ deliveryOrder: unknown; items: unknown[] }>(
       `/delivery-orders-mfg/${row.id}`
     );
-    return { header: json.deliveryOrder, items: json.items };
+    /* loadScanId arms the print's "scan to mark loaded" QR (delivery-order-pdf).
+       Stamped HERE so every export shape — single, combined, per-file — carries
+       it without three call sites remembering to. */
+    return { header: { ...(json.deliveryOrder as Record<string, unknown>), loadScanId: row.id }, items: json.items };
   };
 
   const clearSelection = () => setSelectedIds(new Set());

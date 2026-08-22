@@ -451,9 +451,29 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded") | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
+| `LOADED` | `PATCH /:id/status` ("Mark loaded"), **or the print's loading QR** (§ below) | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
+
+### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
+
+The DO print's header carries a **"SCAN · MARK LOADED"** QR encoding
+`/scm/do-load?id=<do uuid>`. The warehouse scans the paper that travels with
+the goods; the landing page (`frontend/src/pages/scm-v2/DoLoadScan.tsx`,
+routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action —
+**Confirm loading** — which is the ordinary status PATCH to `LOADED`
+(audited; the illegal-transition guard owns legality, so a shipped DO can
+never be pulled back by a stray scan). A re-scan reads as confirmation, not an
+error. **Loading moves no stock** — the OUT still fires on `DISPATCHED`, which
+stays the dispatcher's action, along with the customer email.
+
+The QR is armed by an **explicit `loadScanId`** on the PDF header (never a
+generic id): the Consignment Note print reuses this renderer
+(`delivery-order-pdf.ts`), and a CN must never grow a control that flips a
+DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
+stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
+`vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
+Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
