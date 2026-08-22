@@ -50,6 +50,15 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
+
 There is **no dedicated mobile screen**. The generic `MobileModuleList` /
 `MobileModuleDetail` render it. That is worth knowing before assuming the
 repo-wide "desktop and mobile are one product" rule implies a paired file here —
@@ -200,6 +209,13 @@ resync is the first thing to try, not the last.
 > on the note create, and a company predicate on the note's CO-line warehouse
 > resolver (a foreign CO line id used to deduct stock out of the other
 > company's warehouse under this company's stamp).
+>
+> **And their "live documents" reads page + scope (2026-08-21, docs/bugs/0503).**
+> `checkCrOverRemaining`, `/returnable-note-lines` and
+> `/deliverable-order-lines` fetched non-cancelled documents with one un-paged,
+> company-blind read — silently capped at 1000 rows, past which the over-return
+> guard passed a second full return. The three reads now go through
+> `paginateAll` + `scopeToCompany` with errors bound.
 
 Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already

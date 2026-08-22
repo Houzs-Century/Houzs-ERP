@@ -1490,7 +1490,10 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     try {
       if (moduleKey === "delivery-orders-mfg") {
         const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-        await generateDeliveryOrderPdf(header as never, items as never, { action });
+        // loadScanId arms the print's "scan to mark loaded" QR (desktop parity).
+        await generateDeliveryOrderPdf(
+          { ...(header as Record<string, unknown>), loadScanId: (header as { id?: string }).id } as never,
+          items as never, { action });
       } else {
         const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
         await generateSalesInvoicePdf(header as never, items as never, { action });

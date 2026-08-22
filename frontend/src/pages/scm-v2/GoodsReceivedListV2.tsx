@@ -4,6 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { grnRowMenu } from "./row-menus";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -103,7 +104,7 @@ type GrnItem = {
   warehouse_code?: string | null;
 };
 
-type StatusTab = "all" | "draft" | "posted" | "cancelled";
+type StatusTab = "all" | "draft" | "posted" | "cancelled" | "on_hold";
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
@@ -121,9 +122,13 @@ const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 // receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
   CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+  /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory
+     IN fired at POSTED and a hold moves nothing. A held GRN cannot be
+     invoiced, because the billable-GRN read is .eq(status, POSTED). */
+  ON_HOLD:   { tone: "warning", label: "On Hold",   bucket: "on_hold" },
 };
 
 const statusFor = (s: string) =>
@@ -544,7 +549,7 @@ export function GoodsReceivedListV2() {
   const serverRows = (data?.grns ?? []) as GrnRow[];
   const rows = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
-  const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0 };
+  const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0, on_hold: 0 };
 
   // Money KPIs are summed over the CURRENT page only (paginated contract has no
   // full-set money sums), so their cards are labelled "on this page".
@@ -693,6 +698,16 @@ export function GoodsReceivedListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedGrns);
 
+  /* POSTED is the only billable state (the billable-GRN read is
+     .eq(status, POSTED)), so a held or cancelled receipt offers no transfer. */
+  const grnContextMenu = grnRowMenu<GrnRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToPi: goConvertToPi, transferToPr: goConvertToPr,
+    post: (r) => doPost(r), cancel: (r) => doCancel(r),
+    canBill: (r) => r.status.toUpperCase() === "POSTED",
+    canPost: (r) => r.status.toUpperCase() === "DRAFT",
+    canCancel: (r) => r.status.toUpperCase() !== "CANCELLED",
+  });
   const doPost = (r: GrnRow) => {
     if (window.confirm(`Post GRN ${r.grn_number}? Inventory will be received into the warehouse.`)) {
       postGrn.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -830,8 +845,9 @@ export function GoodsReceivedListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (
@@ -962,7 +978,8 @@ export function GoodsReceivedListV2() {
                   onToggle: toggleSelect,
                   onToggleAll: toggleSelectAll,
                 }}
-                exportName="grns"
+                contextMenu={grnContextMenu}
+            exportName="grns"
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}

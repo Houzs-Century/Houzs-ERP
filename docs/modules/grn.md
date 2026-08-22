@@ -41,7 +41,7 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Desktop detail (read) | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx` | Read-only shell; `?edit=1` forwards to the legacy editor (`:240-248`), lazily loaded. |
 | Desktop detail (edit) | `frontend/src/pages/scm-v2/GoodsReceivedDetail.tsx` | The inline editor. Lock logic at `:244-248`. |
 | Desktop new | `frontend/src/pages/scm-v2/GrnNew.tsx` | Uses `usePurchaseOrders()` (the legacy unpaginated PO hook, `:156`). |
-| Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. |
+| Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. Two display rules changed 2026-08-21, both shared and neither local: the Warehouse column reads through `warehouseLabel` (`frontend/src/vendor/scm/lib/warehouse-label.ts` — code first, then name; the picker rows carry FLAT columns, so a one-line adapter wraps them rather than a second rule), and the variant line under each row is now LABELLED `Description 2` by the shared `VariantDescription` component. Neither changes what is read or written. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
 | Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
@@ -112,6 +112,10 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
   GRN changes SO list rows that never mention the GRN.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -497,6 +501,23 @@ The OUT counterpart for goods sent back to the supplier is the **Purchase
 Return** (`/purchase-returns`), a separate module.
 
 ---
+
+## 5a. `ON_HOLD` — a paperwork pause, never a stock event (mig 0319)
+
+Added 2026-08-21 (owner: 「GR ... also hold」).
+
+**It moves no stock, and that is the point of preferring it to a cancel here.**
+The inventory IN fires at the DRAFT -> POSTED transition and a CANCEL writes the
+reversing OUT; holding a posted GRN changes no movement at all. The goods are in
+the warehouse either way — what stops is the paperwork.
+
+**What it blocks:** a held GRN cannot become a Purchase Invoice, because the
+billable-GRN read is `.eq('status','POSTED')` — an allow-list, so the block
+needs no new code.
+
+`GoodsReceivedDetailV2`'s `effectiveOf` names it explicitly. Its fall-through is
+`draft`, so a held receipt would otherwise have read as an un-posted DRAFT — the
+opposite of the truth, since a held GRN has already posted and its stock is in.
 
 ## 6. What locks and when
 

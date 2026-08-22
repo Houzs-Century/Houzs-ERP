@@ -30,7 +30,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx` | Server-paginated, `pageSize = 50` (`:834`), page in `?page=`. Sends the **bucket name** as `status` (`:854`). Revenue card is page-only; In-transit / Delivered cards read full-set `statusCounts` (`:878-880`). |
 | Desktop detail | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` | Header + lines + payments + crew. |
-| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | |
+| Desktop new | `frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx` | The Sales-location dropdown labels each option with the ONE warehouse rule — `warehouseLabel`, code first then name (`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of the backend module; 2026-08-21). It printed the NAME first. Do not hand-write the order — see `docs/modules/warehouses.md`. |
 | Desktop from-SO | `frontend/src/pages/scm-v2/DeliveryOrderFromSo.tsx` | Line-level picker over `/deliverable-so-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
@@ -183,6 +183,10 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
   driver collects.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -386,6 +390,56 @@ holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test
 > company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
 > failed count now returns `500 status_counts_failed` instead of a zero.
 
+### The list shows ONE TAB PER STATUS (owner ruling, 2026-08-21)
+
+Until this date the list had **four tabs over eight statuses** — Open, In
+Transit, Delivered, Cancelled — so the screen could not tell a DRAFT from a
+LOADED delivery, or a DISPATCHED one from an IN_TRANSIT one. The owner:
+「draft和load要分开吧？」and「怎么定义这几个状态呢？我不明白」. He asked for the
+shape the Sales Order list already has: 页签＝状态.
+
+| tab | status | what it means |
+|---|---|---|
+| Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
+| Confirmed | `LOADED` | the document is real, goods packed. **Stock still untouched** |
+| Shipped | `DISPATCHED` | **the first entry here writes the inventory OUT**, once. The only status that emails the customer |
+| In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
+| Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it |
+| Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
+| Cancelled | `CANCELLED` | final; stock returned |
+
+`DO_STATUS_BUCKETS` is still the one source for both the tab filter and the
+counts, and the counts are now DERIVED from that map rather than hand-listed —
+so a bucket added there cannot be left without a count. Every enum member is in
+exactly one bucket and every bucket value is a member, pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`. That pin is not
+decoration: `COMPLETED` once sat in `delivered` while not being an enum member,
+and the tab 500'd with `22P02` while its count silently read 0.
+
+**The two KPI cards deliberately did NOT split with the tabs.** "On the road" is
+`dispatched + in_transit` and "Delivered" counts `delivered + invoiced` — an
+invoiced delivery was delivered. Splitting them the way the tabs split would
+have quietly halved both numbers on the owner's dashboard.
+
+### SIGNED is merged into DELIVERED (owner ruling, 2026-08-21)
+
+「SIGNED 和 DELIVERED 意思几乎重叠 … 这个整合」. The two agree on every question
+this system asks of a delivery order's status — both are in
+`DO_STOCK_OUT_STATES`, both in `SI_TRANSFERABLE_DO_STATES`, both outside
+`DO_NOT_DELIVERED_STATES` — and nothing in the tree branches on one and not the
+other.
+
+**The label cannot be removed.** Postgres has no `DROP VALUE` for an enum, so
+`SIGNED` stays in `scm.do_status` for ever. The app therefore keeps folding it
+into the `delivered` bucket and rendering it as "Delivered", permanently, so a
+row written by anything outside this repo still lands in a tab and still shows a
+word rather than a raw slug.
+
+**The DATA move is separate and gated**:
+`backend/scripts/merge-do-signed-into-delivered.mjs` +
+`.github/workflows/merge-do-signed-into-delivered.yml`. Dry-run is the default
+and performs the real UPDATE inside a transaction it rolls back.
+
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
 DB type is the `scm.do_status` ENUM (base body in
@@ -397,9 +451,29 @@ status from a child document.
 | Value | Set by | What it does / blocks |
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
-| `LOADED` | `PATCH /:id/status` ("Mark loaded") | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
+| `LOADED` | `PATCH /:id/status` ("Mark loaded"), **or the print's loading QR** (§ below) | Pre-ship, and it counts as delivered NOWHERE — same rule as DRAFT. Until 2026-08-20 it did: nine hand-written "has this delivery counted?" tests all read `{CANCELLED, DRAFT}`, so a LOADED DO counted its OWN lines as delivered and the confirm gate below refused it against itself on any full delivery. See the box under the refusal table. |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
+
+### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
+
+The DO print's header carries a **"SCAN · MARK LOADED"** QR encoding
+`/scm/do-load?id=<do uuid>`. The warehouse scans the paper that travels with
+the goods; the landing page (`frontend/src/pages/scm-v2/DoLoadScan.tsx`,
+routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action —
+**Confirm loading** — which is the ordinary status PATCH to `LOADED`
+(audited; the illegal-transition guard owns legality, so a shipped DO can
+never be pulled back by a stray scan). A re-scan reads as confirmation, not an
+error. **Loading moves no stock** — the OUT still fires on `DISPATCHED`, which
+stays the dispatcher's action, along with the customer email.
+
+The QR is armed by an **explicit `loadScanId`** on the PDF header (never a
+generic id): the Consignment Note print reuses this renderer
+(`delivery-order-pdf.ts`), and a CN must never grow a control that flips a
+DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
+stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
+`vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
+Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
@@ -413,6 +487,27 @@ Refusals the operator sees, in the order they fire:
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
+
+> **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
+> The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD}` in
+> `backend/src/scm/shared/so-deliverable-states.ts`, with `soCanRaiseDo(status)`
+> as the predicate; this router imports it instead of declaring its own `Set`,
+> and the frontend runs a byte-identical vendored twin
+> (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
+> `so-deliverable-states.canonical.test.ts`).
+>
+> **It is a DENY-list and it must stay one.** Every forward status — CONFIRMED,
+> IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED, INVOICED — is deliverable,
+> because this business ships one order in several batches. The Sales Order
+> list's row-drawer CTA had written the same rule as an ALLOW-list of one value
+> (`s === "confirmed"`), so the Transfer button was absent on READY_TO_SHIP —
+> a status `recomputeSoStockAllocation` writes BY ITSELF when the goods land.
+> `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
+>
+> A blank or unreadable status returns `true` on purpose, on both sides: the
+> server is the gate, the predicate only decides whether to OFFER, and offering
+> something the server then refuses in plain language beats hiding something it
+> would have accepted.
 
 > **"Has this delivery counted?" is ONE predicate now (2026-08-20).**
 > `doCountsAsDelivered(status)` and `DO_NOT_DELIVERED_STATES` live in
@@ -950,6 +1045,31 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## A DO line SEEDS its variants from line 1, and then stops (2026-08-21)
+
+`DeliveryOrderNewV2.tsx` seeds a newly picked line's `variants` from the first
+line of the same category — and that is ALL it does. Unlike `SalesOrderNew`,
+`MobileNewSO` and `ConsignmentOrderNew`, it runs **no live cascade**: once a
+line is on the page, changing line 1 afterwards does not reach it.
+
+That is an open owner decision, not an oversight. Whether a delivery-order line
+*should* follow line 1 is a business question — a DO is a snapshot of what
+ships, and quietly rewriting line 2's fabric because someone corrected line 1
+would be a different kind of wrong from leaving it alone. It is named here, and
+in the module header of `frontend/src/vendor/scm/lib/so-variant-cascade.ts`,
+rather than left to whoever reads the file next.
+
+What DID change on 2026-08-21: the seed comes from that shared module
+(`seedableMasterVariants` + `seedFollowerVariants`) instead of a hand-written
+memo plus a raw `{ ...inherited }` spread. The spread handed the master's
+`buildKey` to the new line, forging a sofa compartment on an unrelated line —
+which reaches the free-gift trigger (`backend/src/scm/shared/free-gift.ts`) and
+the PDF module grouping (`vendor/shared/so-line-display.ts`) — and its `remark`,
+which is per-line by nature. `seedFollowerVariants` strips both.
+`docs/bugs/0508-the-consignment-order-ran-its-own-copy-of-the-variant-cascad.md`.
+The rule itself, and which pages are on it, are documented in
+`docs/modules/sales-order.md`.
 
 ## A migrated DO line's snapshot columns (2026-08-11)
 

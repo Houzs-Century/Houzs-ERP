@@ -11,6 +11,10 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { statusFor, type StatusTab } from "./do-list-status";
+import { deliveryOrderRowMenu } from "./row-menus";
+import { doCountsAsInvoiceable } from "../../vendor/shared/do-shipped-states";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -155,7 +159,6 @@ type DoRow = {
   margin_pct_basis?: number;
 };
 
-type StatusTab = "all" | "open" | "in_transit" | "delivered" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -174,44 +177,11 @@ const refOf = (r: DoRow): string =>
 const soOf = (r: DoRow): string => r.so_doc_no || "—";
 
 const brandOf = (r: DoRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home. This copy had lost the BEDFRAME
+   arm too. */
+const brandTone = brandingToneForLabel;
 
-// DO lifecycle: LOADED → DISPATCHED → IN_TRANSIT → SIGNED → DELIVERED →
-// INVOICED, plus CANCELLED. Compress into 4 buckets for the filter pills
-// (open / in_transit / delivered / cancelled) so the row of tabs stays
-// scannable — the full status shows in each row's Badge.
-const STATUS_TONE: Record<
-  string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
-> = {
-  draft:       { tone: "warning", label: "Draft",       bucket: "open" },
-  loaded:      { tone: "warning", label: "Loaded",      bucket: "open" },
-  // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
-  // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Dispatched",  bucket: "in_transit" },
-  in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  signed:      { tone: "success", label: "Signed",      bucket: "delivered" },
-  delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
-  invoiced:    { tone: "success", label: "Invoiced",    bucket: "delivered" },
-  completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
-  cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-  cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-};
-
-const statusFor = (
-  s: string
-): { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab } =>
-  STATUS_TONE[(s || "").toLowerCase()] ?? {
-    tone: "neutral",
-    label: s || "—",
-    bucket: "open",
-  };
 
 // ─── Split-menu dropdown (mirrors SO V2) ───────────────────────────────────
 
@@ -494,7 +464,7 @@ function DetailDrawer({
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
                 <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
-                <MetaItem k="Delivery date" v={fmtDate(row.customer_delivery_date)} />
+                <MetaItem k="Delivery Date" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem k="Expected at" v={fmtDate(row.expected_delivery_at)} />
                 <MetaItem k="Driver" v={row.driver_name || "—"} />
                 <MetaItem k="Vehicle" v={row.vehicle || "—"} />
@@ -876,13 +846,7 @@ export function MfgDeliveryOrdersListV2() {
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
   // Full-set status-tab counts from the server (stable while paging / searching).
-  const counts = data?.statusCounts ?? {
-    all: 0,
-    open: 0,
-    in_transit: 0,
-    delivered: 0,
-    cancelled: 0,
-  };
+  const counts: Record<string, number> = data?.statusCounts ?? {};
 
   /* The rows the TABLE is showing — the server page minus whatever the
      per-column funnels hide (owner 2026-08-13, following the Purchase Orders
@@ -904,13 +868,15 @@ export function MfgDeliveryOrdersListV2() {
      handful of rows, which is the exact contradiction this change exists to
      remove. So while a funnel is narrowing the page, they describe the visible
      set instead; with no funnel they are byte-identical to before. */
+  /* The TABS split one-per-status; these two cards must NOT — an invoiced
+     delivery was delivered, and en-route is dispatched + in transit. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;
     for (const r of visible.rows) {
       const b = statusFor(r.status).bucket;
-      if (b === "in_transit") inTransit += 1;
-      if (b === "delivered") delivered += 1;
+      if (b === "dispatched" || b === "in_transit") inTransit += 1;
+      if (b === "delivered" || b === "invoiced") delivered += 1;
     }
     return { inTransit, delivered };
   }, [visible.rows]);
@@ -985,6 +951,15 @@ export function MfgDeliveryOrdersListV2() {
     );
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
+  /* The invoiceable predicate is the SHARED one, not a status list typed here:
+     doCountsAsInvoiceable is the system's only definition, and it already
+     carries the owner's 2026-08-20 ruling that a LOADED delivery may be
+     invoiced (「不要拦 —— 人自己知道」). */
+  const doContextMenu = deliveryOrderRowMenu<DoRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToSi: doConvertToSi,
+    canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
+  });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
      never succeed: PATCH /:id/status refuses every transition out of CANCELLED
      with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
@@ -1004,7 +979,10 @@ export function MfgDeliveryOrdersListV2() {
     const json = await authedFetch<{ deliveryOrder: unknown; items: unknown[] }>(
       `/delivery-orders-mfg/${row.id}`
     );
-    return { header: json.deliveryOrder, items: json.items };
+    /* loadScanId arms the print's "scan to mark loaded" QR (delivery-order-pdf).
+       Stamped HERE so every export shape — single, combined, per-file — carries
+       it without three call sites remembering to. */
+    return { header: { ...(json.deliveryOrder as Record<string, unknown>), loadScanId: row.id }, items: json.items };
   };
 
   const clearSelection = () => setSelectedIds(new Set());
@@ -1226,7 +1204,7 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "delivery_date",
-      label: "Delivery date",
+      label: "Delivery Date",
       width: "128px",
       getValue: (r) => r.customer_delivery_date ?? "",
       render: (r) => (
@@ -1655,13 +1633,11 @@ export function MfgDeliveryOrdersListV2() {
       : ([] satisfies Column<DoRow>[])),
   ];
 
-  const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
-    { value: "all", label: `All · ${counts.all}` },
-    { value: "open", label: `Open · ${counts.open}` },
-    { value: "in_transit", label: `In transit · ${counts.in_transit}` },
-    { value: "delivered", label: `Delivered · ${counts.delivered}` },
-    { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
-  ];
+  const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
+    [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
+     ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
+     ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
+  ).map(([value, label]) => ({ value, label: `${label} · ${counts[value] ?? 0}` }));
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
@@ -1755,9 +1731,9 @@ export function MfgDeliveryOrdersListV2() {
               label="In transit"
               value={(visible.filtered
                 ? visibleBucketCounts.inTransit
-                : counts.in_transit
+                : counts.dispatched + counts.in_transit
               ).toLocaleString("en-MY")}
-              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
+              subtitle={visible.filtered ? "En route · filtered" : "Shipped · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
@@ -1766,10 +1742,10 @@ export function MfgDeliveryOrdersListV2() {
               label="Delivered"
               value={(visible.filtered
                 ? visibleBucketCounts.delivered
-                : counts.delivered
+                : counts.delivered + counts.invoiced
               ).toLocaleString("en-MY")}
               subtitle={
-                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+                visible.filtered ? "Delivered · filtered" : "Delivered · including invoiced"
               }
               tone="success"
               rail="bg-synced"
@@ -1906,7 +1882,8 @@ export function MfgDeliveryOrdersListV2() {
                     return next;
                   }),
               }}
-              exportName="delivery-orders"
+              contextMenu={doContextMenu}
+            exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

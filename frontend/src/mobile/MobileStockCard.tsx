@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { adjustmentReasonLabel, formatVariantKey } from "@2990s/shared";
 import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
+import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import {
   useInventoryMovements,
   useInventoryReservations,
@@ -76,7 +77,7 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {l.warehouse_code || l.warehouse_name || "—"}
+          {warehouseLabel({ code: l.warehouse_code, name: l.warehouse_name }) ?? "—"}
           {consignment && (
             <span
               style={{

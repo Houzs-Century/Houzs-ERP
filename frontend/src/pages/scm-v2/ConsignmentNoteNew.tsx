@@ -83,10 +83,17 @@ export const ConsignmentNoteNew = () => {
   const idemKey = useIdempotencyKey();
   const create = useCreateConsignmentNote();
   const addPayment = useAddConsignmentNotePayment();
-  const staffQ = usePickableStaff({ onlySales: true });
   const driversQ = useDrivers();
   const loc = useLocalities();
   const coDetail = useConsignmentOrderDetail(fromConsignmentOrder);
+  /* `include` carries the salesperson already on the SOURCE document this one is
+     being raised from, so someone the onlySales narrowing hides is still named.
+     "(former staff)" below is then only reachable for a row that genuinely is
+     gone. Declared after the source query so the id is in scope. */
+  const staffQ = usePickableStaff({
+    onlySales: true,
+    include: [(coDetail.data?.salesOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+  });
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
   const buildingTypeOptsQ = useSoDropdownOptions('building_type');
@@ -486,7 +493,7 @@ export const ConsignmentNoteNew = () => {
               <DateField fullWidth className={styles.fieldInput} value={expectedDeliveryAt} onChange={(iso) => setExpectedDeliveryAt(iso)}/>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Delivery Date</span>
+              <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField fullWidth className={styles.fieldInput} value={customerDeliveryDate} onChange={(iso) => setCustomerDeliveryDate(iso)}/>
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>

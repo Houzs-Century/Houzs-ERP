@@ -176,8 +176,13 @@ describe("F16 — ON_HOLD is not a route back to DRAFT", () => {
     expect(soStatusTransitionError("DELIVERED", "DRAFT")).not.toBeNull();
   });
 
+  /* CLOSED left this list on 2026-08-21 with the owner's ruling that retired it
+     from SO_STATUSES — resuming an order INTO a status the system no longer
+     offers is not "untouched", it is a move to an unknown target, and
+     `invalid_status` is the correct answer. The assertion below is the same
+     one, over the statuses that still exist. */
   test("ordinary pause and resume are untouched", () => {
-    for (const to of ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED", "CLOSED"]) {
+    for (const to of ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED"]) {
       expect(soStatusTransitionError("ON_HOLD", to)).toBeNull();
     }
     for (const from of ["DRAFT", "CONFIRMED", "IN_PRODUCTION", "DELIVERED", "INVOICED"]) {

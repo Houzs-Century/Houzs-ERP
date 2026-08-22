@@ -51,7 +51,8 @@
 import { describe, expect, test } from "vitest";
 
 import poRouterSrc from "../src/scm/routes/mfg-purchase-orders.ts?raw";
-import doRouterSrc from "../src/scm/routes/delivery-orders-mfg.ts?raw";
+import poBucketsSrc from "../src/scm/lib/po-status-buckets.ts?raw";
+import soDeliverableSrc from "../src/scm/shared/so-deliverable-states.ts?raw";
 import grnRouterSrc from "../src/scm/routes/grns.ts?raw";
 import inventoryRouterSrc from "../src/scm/routes/inventory.ts?raw";
 import procurementLearningSrc from "../src/services/agents/procurement-learning.ts?raw";
@@ -161,7 +162,12 @@ describe("SO 'done' has three live answers and the count must not change", () =>
 // ─────────────────────────────────────────────────────────────────────────────
 describe("the SO threshold: a PO and a DO refuse the same orders", () => {
   const unorderable = oneSet(poRouterSrc, "SO_UNORDERABLE_STATUSES", "mfg-purchase-orders.ts");
-  const undeliverable = oneSet(doRouterSrc, "SO_UNDELIVERABLE_STATUSES", "delivery-orders-mfg.ts");
+  /* MOVED 2026-08-21 out of delivery-orders-mfg.ts into shared/so-deliverable-states.ts,
+     because the same rule was ALSO hand-written in the SO list as an allow-list of one
+     value and the Transfer button vanished on READY_TO_SHIP. This pin follows the set to
+     its new home rather than being deleted with the old one — the PO and DO thresholds
+     still have to agree, and now one of them has a single home to agree FROM. */
+  const undeliverable = oneSet(soDeliverableSrc, "SO_UNDELIVERABLE_STATUSES", "shared/so-deliverable-states.ts");
 
   test("both are exactly DRAFT, CANCELLED, ON_HOLD", () => {
     expect(unorderable).toEqual(["CANCELLED", "DRAFT", "ON_HOLD"]);
@@ -189,8 +195,12 @@ describe("the PO receivable threshold: four spellings, one membership", () => {
     expect(oneSet(inventoryRouterSrc, "PO_LIVE", "inventory.ts")).toEqual(expected);
   });
 
-  test("mfg-purchase-orders.ts PO_STATUS_BUCKETS.outstanding", () => {
-    const m = decomment(poRouterSrc).match(/outstanding:\s*\[([^\]]*)\]/);
+  /* MOVED 2026-08-21 into lib/po-status-buckets.ts, out of a router that is over
+     its file-size ceiling. The pin follows the map: this membership still has to
+     agree with the other three spellings of "a PO you can still receive
+     against", and now one of them has its own home to agree from. */
+  test("lib/po-status-buckets.ts PO_STATUS_BUCKETS.outstanding", () => {
+    const m = decomment(poBucketsSrc).match(/outstanding:\s*\[([^\]]*)\]/);
     expect(m, "PO_STATUS_BUCKETS.outstanding not found").not.toBeNull();
     const members = [...m![1].matchAll(/'([^']*)'/g)].map((x) => x[1]);
     expect(members.length, "outstanding bucket parsed empty").toBeGreaterThan(0);

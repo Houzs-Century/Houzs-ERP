@@ -619,10 +619,17 @@ consignmentNotes.get('/deliverable-order-lines', async (c) => {
   const itemIds = itemList.map((it) => it.id as string);
 
   // Already-delivered per CO line — only count non-cancelled notes.
-  const { data: noteRows } = await sb
+  // Paged + company-scoped + error bound (2026-08-21, audit A6): the sibling
+  // read two queries up has used paginateAll all along; this one was a bare
+  // .neq() capped at 1000 rows, so past that the picker under-counted delivered
+  // and re-offered CO lines that were already fully shipped.
+  const { data: noteRows, error: noteErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_orders')
     .select('id, status')
-    .neq('status', 'CANCELLED');
+    .neq('status', 'CANCELLED'), c)
+    .order('id', { ascending: true })
+    .range(from, to));
+  if (noteErr) return c.json({ error: 'load_failed', reason: noteErr.message }, 500);
   const liveNoteIds = new Set(((noteRows ?? []) as Array<{ id: string }>).map((r) => r.id));
   const { data: noteItems } = await chunkIn<{ consignment_delivery_order_id: string; consignment_so_item_id: string | null; qty: number }>(itemIds, (batch, from, to) => sb
     .from('consignment_delivery_order_items')

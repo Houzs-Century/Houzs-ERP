@@ -29,19 +29,22 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtDate } from "../../vendor/shared/format";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 type StatusTab = "all" | "posted" | "cancelled";
 
+/* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts).
+   The raw id stays as the last resort so an unresolved embed still says something. */
 const fromWarehouseOf = (r: StockTransferRow): string =>
-  r.from_warehouse?.name || r.from_warehouse?.code || r.from_warehouse_id || "—";
+  warehouseLabel(r.from_warehouse) || r.from_warehouse_id || "—";
 const toWarehouseOf = (r: StockTransferRow): string =>
-  r.to_warehouse?.name || r.to_warehouse?.code || r.to_warehouse_id || "—";
+  warehouseLabel(r.to_warehouse) || r.to_warehouse_id || "—";
 
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
-  POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
 const statusFor = (s: string) =>
@@ -278,7 +281,7 @@ export function StockTransfersListV2() {
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];
 

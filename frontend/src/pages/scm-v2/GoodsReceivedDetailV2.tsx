@@ -115,17 +115,23 @@ const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
 const poOf = (h: GrnHeader): string => h.purchase_order?.po_number || "—";
 
-type Effective = "draft" | "posted" | "cancelled";
+type Effective = "draft" | "posted" | "cancelled" | "on_hold";
+/* ON_HOLD named explicitly (mig 0319). The fall-through is "draft", so a HELD
+   goods receipt would have read as an un-posted DRAFT — which is the opposite
+   of what it is: a held GRN has already posted, and its stock IN already
+   fired. A hold is a paperwork pause, never a stock event. */
 const effectiveOf = (h: GrnHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
+  if (s === "ON_HOLD") return "on_hold";
   if (s === "POSTED") return "posted";
   return "draft";
 };
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Posted", blurb: "Posted · inventory received" },
+  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
 };
 

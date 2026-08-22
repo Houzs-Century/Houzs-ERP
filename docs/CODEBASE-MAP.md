@@ -444,6 +444,12 @@ re-check the cited file rather than trusting the line.
   which of those is dangerous.
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- **`docs/modules/document-status-vocabulary.md`** — what WORD each document
+  shows for its confirm step, which words deliberately differ because they name a
+  different event, and why the delivery date is called what it is. Read it before
+  adding a status label anywhere: `status-pill.ts` is the canonical map and is NOT
+  the only copy — sixteen pages carry their own, which is how five spellings of
+  one step survived to 2026-08-21.
 - **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**
   There is not one connection, there are **four channels** with different directions,
   different credentials and different jobs, and treating them as one is how sessions

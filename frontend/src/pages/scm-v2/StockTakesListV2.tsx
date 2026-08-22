@@ -29,18 +29,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { fmtDate } from "../../vendor/shared/format";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
 
+/* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts). */
 const warehouseOf = (r: StockTakeRow): string =>
-  r.warehouse?.name || r.warehouse?.code || r.warehouse_id || "—";
+  warehouseLabel(r.warehouse) || r.warehouse_id || "—";
 
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   OPEN:      { tone: "warning", label: "Open",      bucket: "open" },
-  POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
 const statusFor = (s: string) =>
@@ -305,7 +307,7 @@ export function StockTakesListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "open", label: `Open · ${counts.open}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];
 

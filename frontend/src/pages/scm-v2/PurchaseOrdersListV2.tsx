@@ -7,6 +7,7 @@
 // Data: usePurchaseOrders (vendored suppliers-queries slice).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { purchaseOrderRowMenu } from "./row-menus";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -35,6 +36,7 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
   DocumentLinesExpansion,
   AssignedSoCell,
@@ -83,7 +85,8 @@ type StatusTab =
   | "open"
   | "partial"
   | "received"
-  | "cancelled";
+  | "cancelled"
+  | "on_hold";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -100,9 +103,12 @@ const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 const itemsSummaryOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
-/* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
+/* Purchase Location display — the ONE warehouse rule, code first then name
+   (vendor/scm/lib/warehouse-label.ts). This column printed the NAME first and
+   the grid truncated it to "BALAKONG WAREHO…", while the same page's PDF
+   export already printed the CODE — one page, two answers for one warehouse. */
 const locationOf = (r: PoHeaderRow): string =>
-  r.purchase_location?.name || r.purchase_location?.code || "";
+  warehouseLabel(r.purchase_location) ?? "";
 
 /* Supplier-SKU summary (owner 2026-08-05) — the SUPPLIER's own codes, aligned
    with the Items column line-for-line ("—" holds the slot for an unbound
@@ -126,6 +132,10 @@ const STATUS_TONE: Record<
   PARTIALLY_RECEIVED: { tone: "warning", label: "Partially received", bucket: "partial" },
   RECEIVED:           { tone: "success", label: "Received",           bucket: "received" },
   CANCELLED:          { tone: "error",   label: "Cancelled",          bucket: "cancelled" },
+  /* ON_HOLD (mig 0318, owner 2026-08-21) — the REVERSIBLE stop the purchase
+     side never had. A held PO is not receivable: grns.ts filters receivable
+     POs through an allow-list, so the block needs no code here. */
+  ON_HOLD:            { tone: "warning", label: "On Hold",            bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -775,6 +785,7 @@ export function PurchaseOrdersListV2() {
     partial: 0,
     received: 0,
     cancelled: 0,
+    on_hold: 0,
   };
 
   /* The rows the TABLE is actually showing — the page rows minus whatever the
@@ -995,6 +1006,15 @@ export function PurchaseOrdersListV2() {
     }
   };
 
+  /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
+     — SUBMITTED or PARTIALLY_RECEIVED. A held or cancelled PO is excluded by
+     being absent from it, which is why ON_HOLD needed no line here. */
+  const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r),
+    canReceive: (r) => ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
+    canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
+  });
   const doCancel = (r: PoHeaderRow) => {
     if (window.confirm(`Cancel PO ${r.po_number}? This can only be undone if no GRN has been raised.`)) {
       cancelPo.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -1210,6 +1230,7 @@ export function PurchaseOrdersListV2() {
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "received", label: `Received · ${counts.received}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (
@@ -1417,7 +1438,8 @@ export function PurchaseOrdersListV2() {
                   onToggle: toggleSelect,
                   onToggleAll: toggleSelectAll,
                 }}
-                exportName="purchase-orders"
+                contextMenu={poContextMenu}
+            exportName="purchase-orders"
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={

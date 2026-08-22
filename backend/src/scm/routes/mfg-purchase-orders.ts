@@ -17,6 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
@@ -315,7 +316,11 @@ async function poHasOutstandingDropshipOut(
 }
 
 /* NOT shared with the PCO — it has no DRAFT. See lib/purchase-doc-vocab.ts. */
-const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
+/* ON_HOLD added 2026-08-21 (owner: "PO 加 hold"). It is the REVERSIBLE answer
+   the purchase side never had — CANCELLED is final and reaches AutoCount, where
+   it cannot be un-cancelled. A held PO is not receivable, because
+   RECEIVABLE_PO_STATUSES in grns.ts is an ALLOW-list. */
+const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED', 'ON_HOLD']);
 /* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
    source of truth for BOTH the status-count queries and the list `status`
    filter. Five buckets are 1:1, but their KEYS differ from the raw status
@@ -328,14 +333,6 @@ const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'REC
    Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
    than replacing them, so the counts across the pills no longer add up to
    `all`; that's the point of a roll-up and why it sits right after All. */
-const PO_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  outstanding: ['SUBMITTED', 'PARTIALLY_RECEIVED'],
-  open: ['SUBMITTED'],
-  partial: ['PARTIALLY_RECEIVED'],
-  received: ['RECEIVED'],
-  cancelled: ['CANCELLED'],
-};
 
 /* ── PO/MRP source-SO gate (mirror of the DO create-gate) ────────────────────
    Owner ruling: PO and MRP are built ONLY from a CONFIRMED Sales Order. A PO
@@ -522,14 +519,15 @@ mfgPurchaseOrders.get('/', async (c) => {
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
       countBase().in('status', PO_STATUS_BUCKETS.cancelled),
+      countBase().in('status', PO_STATUS_BUCKETS.on_hold),
     ]));
     const res = await q;
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
-    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = (await countsProm)();
+    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC, onHoldC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-    const counted = readStatusCounts({ all: allC, draft: draftC, outstanding: outstandingC, open: openC, partial: partialC, received: receivedC, cancelled: cancelledC });
+    const counted = readStatusCounts({ all: allC, draft: draftC, outstanding: outstandingC, open: openC, partial: partialC, received: receivedC, cancelled: cancelledC, on_hold: onHoldC });
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

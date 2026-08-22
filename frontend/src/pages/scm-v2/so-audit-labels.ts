@@ -23,7 +23,7 @@ const FIELDS: Record<string, string> = {
   paymentMethod: 'Payment method', depositSen: 'Deposit',
   processingDate: 'Processing date', customerSoNo: 'Customer SO ref',
   customerPo: 'Customer PO', customerState: 'State',
-  customerDeliveryDate: 'Delivery date', city: 'City', postcode: 'Postcode',
+  customerDeliveryDate: 'Delivery Date', city: 'City', postcode: 'Postcode',
   buildingType: 'Building type', address1: 'Address 1', address2: 'Address 2',
   address3: 'Address 3', address4: 'Address 4', note: 'Note',
   remark2: 'Remark 2', remark3: 'Remark 3', remark4: 'Remark 4',

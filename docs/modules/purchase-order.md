@@ -134,6 +134,23 @@ that forgets its gate will not typecheck.
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.
 
+**The "Purchase Location" column shows the warehouse CODE (2026-08-21).** It
+printed `purchase_location?.name || purchase_location?.code`, so the grid
+truncated the full name to `BALAKONG WAREHO…` while this same page's PDF export
+already printed the code. The one display rule is `warehouseLabel` — code first,
+then name — and it now has a FRONTEND home to import:
+`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of
+`backend/src/scm/lib/warehouse-label.ts`. Never hand-write the order again; see
+`docs/modules/warehouses.md` for the mirror and its referee. The GRN-from-PO
+picker's Warehouse column reads through the same rule.
+
+**The variant summary on the transfer pickers is labelled "Description 2"
+(2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
+other Convert-From pickers render that column through) exports
+`DESCRIPTION_2_LABEL` and prints it above the summary. The word is the system's
+existing one — the SO line editor's column header and
+`pages/scm-v2/so-audit-labels.ts` — not a new name for the string.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/suppliers-queries.ts` — the PO hook block was
 vendored into the Suppliers slice, **not** a `purchase-order-queries.ts` (see the
@@ -173,6 +190,10 @@ PO-specific facts:
    entry's own comment names the bug this paragraph used to describe.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -734,6 +755,28 @@ importer); there is no PO upload or delete route to drift from the SO's
 lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
+
+> **`ON_HOLD` added 2026-08-21 (mig 0318, owner: 「PO 加 hold」).** The purchase
+> side never had a reversible stop — only `CANCELLED`, which is final and which
+> the ERP pushes to AutoCount where it cannot be un-cancelled.
+>
+> **What it blocks, and where the block lives.** A held PO is **not receivable**:
+> `RECEIVABLE_PO_STATUSES` in `grns.ts` is an ALLOW-list of
+> `SUBMITTED / PARTIALLY_RECEIVED`, so ON_HOLD is excluded without a line of new
+> code. Worth knowing when the next status is added: an allow-list gives you the
+> block for free and a deny-list does not.
+>
+> **What had to be written.** `recomputePoReceived` re-derives a PO's status from
+> its lines on every GRN post, so it would have overwritten the hold. ON_HOLD now
+> joins CANCELLED in that exclusion. A status that vanishes by itself is worse
+> than one that was never offered.
+>
+> **Three display maps move with it**, two of them on the detail page:
+> `status-pill.ts`'s PO map, `PurchaseOrderDetailV2`'s `STAGE_LABEL`, and that
+> page's `effectiveOf` — whose fall-through answered **`cancelled`**, so a held
+> order would have told the buyer it was cancelled.
+
+
 
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
 Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw

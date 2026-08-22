@@ -7,7 +7,7 @@
 // whose output is a workflow log, which he cannot open.
 //
 // SO THE ORDER OF THE PAGE IS THE ORDER OF HIS QUESTION: is anything stuck (the
-// verdict), then which documents (the two filter strips and the list), then why
+// verdict), then which documents (the filter strips and the register), then why
 // (the reason, on the row itself).
 //
 // SIMPLIFIED 2026-08-16, the same day it was rebuilt, because he read the
@@ -31,15 +31,40 @@
 // under In AutoCount / Sales orders — three changes and the create — while the
 // account book holds exactly one of it. Nothing was duplicated; the list was one
 // row per SEND. `acGroupByDocument` folds the sends into the document they
-// belong to, the newest one draws the card, and the rest are the audit trail,
+// belong to, the newest one draws the row, and the rest are the audit trail,
 // one click down. Both chip strips and the "N of M documents" line count
 // documents to match.
 //
+// A REGISTER, NOT A LIST OF CARDS — 2026-08-21. He reviewed a mockup at the real
+// size and chose the dense-table direction. Eight columns, every one of them a
+// field the payload already carries, so no endpoint changed. What the table buys
+// that a card list could not:
+//   - **In the book as.** `HC-PO-2608-001` is in AED_HOUZS as `PO-009968` and
+//     nobody saw it for three days, because no screen held the ERP's number and
+//     the account book's number up against each other. A match is silent; a
+//     mismatch is FLAGGED on the row, unclicked, and that is the column that
+//     earns the table its keep (docs/modules/autocount-writeback.md §7g).
+//   - **What was sent.** A create, a change and a cancellation are three
+//     different events on one document and the page could not say which.
+//   - **Sends.** One row per document means a document sent four times has to
+//     say so; the cell IS the opener for its own history, so the row stays one
+//     line either way. Blank at one — the common case adds no ink.
+//   - **A day separator** every time the date changes, and a footer saying how
+//     much of the company is on screen.
+// Four things are deliberately NOT columns and must not be "restored": the try
+// count (it reads as a dash on nearly every row and it belongs inside the
+// problem row's reason block, where it means something), the reason SENTENCE (a
+// paragraph in a cell wrecks the row height for every row), the raw op /
+// reason_kind / remedy strings (column names and an SDK primitive — they stay in
+// the API and out of the operator's table), and the company (this endpoint is
+// already scoped to one, so the column would be identical on every row).
+//
 // Presentation only. The state, the reason kind and the remedy are decided by
 // the server (backend/src/scm/lib/autocount-outbox-status.ts); the words, and
-// how much of them is on screen before a click, are lib/autocountOutbox. The
-// mobile twin is mobile/MobileAutoCountSync.tsx and renders the SAME hook, the
-// SAME words and the SAME opener.
+// how much of them is on screen before a click, are lib/autocountOutbox and
+// lib/autocountRegister. The mobile twin is mobile/MobileAutoCountSync.tsx: it
+// KEEPS its cards, because a table does not fit 375 px, and renders the SAME
+// hook, the SAME words and the SAME verdicts.
 //
 // SEND AGAIN, per row, since #2321 landed the backend action. Offered only
 // where the server's `can_requeue` says an answer other than a flat no is
@@ -50,7 +75,7 @@
 // ---------------------------------------------------------------------------
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw } from "lucide-react";
 
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
@@ -75,6 +100,7 @@ import {
   AC_SEND_NOW_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_TECHNICAL_LABEL,
+  acDocTypeLabel,
   acDocTypePlural,
   acDocTypeCounts,
   acEarlierSendsHeading,
@@ -84,9 +110,11 @@ import {
   acHeadline,
   acListCountLine,
   acListTitle,
+  acOpLabel,
   acReplacedHeading,
   acRowDetail,
   acRowStandsAt,
+  acRowStatusLine,
   acSplitReplaced,
   acStateCount,
   acStateLabel,
@@ -104,6 +132,30 @@ import {
   type AcSaid,
   type AcTone,
 } from "../lib/autocountOutbox";
+import {
+  AC_BOOK_DIFFERENT_FLAG,
+  AC_BOOK_NOT_RECORDED_NOTE,
+  AC_DATE_RANGES,
+  AC_DATE_RANGE_LABEL,
+  AC_DEFAULT_DATE_RANGE,
+  AC_DEFAULT_SORT,
+  AC_NO_VALUE,
+  AC_REGISTER_COLUMNS,
+  AC_SORTED_BY_LINE,
+  AC_SORTS,
+  acBookDifferentNote,
+  acBookNumber,
+  acGroupsInRange,
+  acRegisterItems,
+  acSendsMark,
+  acShowingLine,
+  acSortGroups,
+  acWhenText,
+  type AcBookNumber,
+  type AcDateRange,
+  type AcRegisterItem,
+  type AcSort,
+} from "../lib/autocountRegister";
 
 const TONE_BANNER: Record<AcTone, string> = {
   good: "border-synced/40 bg-synced/5 text-synced",
@@ -117,14 +169,6 @@ const TONE_BADGE: Record<AcTone, string> = {
   bad: "border-err/40 bg-err/10 text-err",
   wait: "border-amber-500/40 bg-amber-500/10 text-warning-text",
   muted: "border-border bg-canvas text-ink-muted",
-};
-
-/** The rail down the left edge of a row — the state, readable at a glance. */
-const TONE_RAIL: Record<AcTone, string> = {
-  good: "border-l-synced",
-  bad: "border-l-err",
-  wait: "border-l-amber-500",
-  muted: "border-l-border",
 };
 
 const TONE_WHY: Record<AcTone, string> = {
@@ -141,16 +185,105 @@ const TONE_TEXT: Record<AcTone, string> = {
   muted: "text-ink-muted",
 };
 
+/**
+ * THE COLUMN WIDTHS, one string, used by the heading row and by every body row.
+ *
+ * An inline `gridTemplateColumns` rather than a Tailwind arbitrary class, for
+ * one reason that matters more than tidiness: the heading and the rows MUST
+ * come from the same value. Two class names that happen to agree today are two
+ * things to keep in step, and a register whose heading is one column out is
+ * worse than no heading at all.
+ *
+ * Two tracks flex and six are fixed, so a column of document numbers, a column
+ * of dates and a column of pills all line up down the page — which is the whole
+ * reason for putting them in columns at all. *What was sent* takes slack up to
+ * a cap, because past about 320 px the eye has to jump a gap to reach the next
+ * cell; the ACTION column takes whatever is left over, which puts the buttons on
+ * the right edge where a register keeps them.
+ *
+ * *In the book as* is the widest fixed track on purpose. It has to hold the
+ * account book's number AND the flag beside it without clipping either, on the
+ * one row in a thousand where the two numbers disagree — a flag that is cut off
+ * is a flag nobody trusts, and every other width here was traded down to buy it.
+ *
+ * The minimums total 998 px as of 2026-08-21, which is what keeps the register
+ * inside the content area of a 1280-wide laptop with no sideways scrollbar. That
+ * total is the budget: widening any track means narrowing another.
+ */
+const AC_COLS = "118px 152px 126px minmax(110px,320px) 236px 60px 108px minmax(88px,1fr)";
+
+/** A register cell: clipped, never wrapped. A cell that wraps is a row that is
+ *  suddenly two rows tall, and at three thousand rows that is the whole page. */
+function Cell(
+  { className, title, children, ...rest }:
+  { className?: string; title?: string; children?: React.ReactNode } & Record<string, unknown>,
+) {
+  return (
+    <div className={cn("flex min-w-0 items-center px-2.5", className)} title={title} {...rest}>
+      {children}
+    </div>
+  );
+}
+
 function StateBadge({ state }: { state: string }) {
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide",
         TONE_BADGE[acStateTone(state)],
       )}
     >
       {acStateLabel(state)}
     </span>
+  );
+}
+
+/**
+ * WHAT THE ACCOUNT BOOK ANSWERED WITH — and the one cell allowed to shout.
+ *
+ * Quiet three ways out of four, which is what makes the fourth readable. The
+ * verdict is `acBookNumber`'s, in the shared layer, so the phone flags exactly
+ * the same rows; this component only decides how loud the flag looks.
+ *
+ * The whole sentence is the cell's `title` rather than a second line of text:
+ * the row has to stay 36 px tall on three thousand rows, and the flag plus the
+ * two numbers beside it already say the thing. The sentence is for the reader
+ * who stops on the row and wants it spelled out.
+ */
+function BookCell({ book, docNo }: { book: AcBookNumber; docNo: string }) {
+  if (book.number === null) {
+    return (
+      <Cell
+        className="text-ink-muted"
+        title={book.verdict === "not-recorded" ? AC_BOOK_NOT_RECORDED_NOTE : undefined}
+      >
+        {AC_NO_VALUE}
+      </Cell>
+    );
+  }
+  if (!book.flagged) {
+    return (
+      <Cell className="font-mono text-[12.5px] text-ink-secondary" title={book.number}>
+        <span className="truncate">{book.number}</span>
+      </Cell>
+    );
+  }
+  return (
+    <Cell className="gap-1.5" title={acBookDifferentNote(docNo, book.number)}>
+      {/* The NUMBER never truncates — it is the thing the reader has to take to
+          AutoCount and look up. The flag is what gives way if the column is
+          squeezed, because by then the colour has already done its job. */}
+      <span className="shrink-0 font-mono text-[12.5px] font-semibold text-warning-text">
+        {book.number}
+      </span>
+      <span
+        data-ac-book-flag=""
+        className="flex min-w-0 items-center gap-1 truncate rounded-full border border-amber-500/40 bg-warning-bg px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-warning-text"
+      >
+        <AlertTriangle size={10} aria-hidden className="shrink-0" />
+        {AC_BOOK_DIFFERENT_FLAG}
+      </span>
+    </Cell>
   );
 }
 
@@ -217,7 +350,8 @@ function WhatWasSaid({ said }: { said: AcSaid }) {
  *
  * The audit trail, and it is why the page must not simply drop the extra rows:
  * the queue is the record of what the ERP told AutoCount and when. What it is
- * NOT is the list — one document is one line, and its history is one click.
+ * NOT is the register — one document is one line, and its history is one click,
+ * on the Sends cell that says how many there are.
  */
 function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempts: number }) {
   return (
@@ -238,17 +372,18 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
 }
 
 /**
- * ONE DOCUMENT, ONE LINE — and since 2026-08-17 that is one line per DOCUMENT
- * rather than one per send.
+ * ONE DOCUMENT, ONE LINE OF THE REGISTER.
  *
- * The card is drawn from `group.current`, the newest send, which is where the
- * document stands. Everything sent before it is behind the second opener.
+ * The line is drawn from `group.current`, the newest send, which is where the
+ * document stands. Everything sent before it is behind the Sends cell.
  *
- * A document already in the account book is that line and nothing else. One with
- * a problem adds a second line — the plain-language headline, which is never
- * hidden — and that line is the button that opens the rest.
+ * A document already in the account book is that line and nothing else. One
+ * with a problem adds a second line — the plain-language headline, which is
+ * never hidden — and that line is the button that opens the rest. The try count
+ * lives INSIDE that block, where "Tried 3 times, will keep trying up to 6" is a
+ * sentence, rather than in a column where it is a dash on every healthy row.
  */
-function OutboxRowCard(
+function RegisterRow(
   { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
     group: AcDocGroup;
     maxAttempts: number;
@@ -269,66 +404,104 @@ function OutboxRowCard(
      false instruction. Off the row the moment the server accepts it, not on the
      re-read a round trip later. */
   const detail = acRowDetail(row, note?.clearsReason === true);
+  const book = acBookNumber(row);
+  const sends = acSendsMark(group.sends.length);
 
   return (
     <div
       data-ac-row=""
       className={cn(
-        "overflow-hidden rounded-md border border-l-[3px] bg-surface",
-        row.needs_attention ? "border-err/40" : "border-border",
-        TONE_RAIL[tone],
+        "border-b border-border-subtle bg-surface hover:bg-primary-soft/30",
+        row.needs_attention && "bg-err/[0.03]",
       )}
     >
-      <div className="flex items-center gap-x-2.5 px-2.5 py-1.5">
-        <StateBadge state={row.state} />
-        <span className="shrink-0 font-mono text-[13px] font-bold tracking-tight text-ink">
-          {row.doc_no}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-right text-[11.5px] text-ink-muted">
-          {acRowStandsAt(row, maxAttempts)}
-        </span>
-        {/* Offered only where the SERVER says a re-send can mean anything
-            (`can_requeue`). Everywhere else there is no button rather than a
-            button that always answers no. */}
-        {row.can_requeue && (
-          /* `!h-7 !px-2 !text-[11.5px]`, with the important prefix, because
-             Button hardcodes h-9/px-4/text-[13px] and `cn` is a plain join, not
-             a Tailwind merge — a bare `h-7` loses to `h-9` on stylesheet order
-             and the row silently stays 36 px tall. Measured in perf-lab at
-             1440x900 on 2026-08-16: the row goes 77.8 px -> 69.8 px. */
-          <Button
-            variant="secondary"
-            className="!h-7 shrink-0 !px-2 !text-[11.5px]"
-            disabled={sending}
-            onClick={onSendAgain}
+      <div
+        className="grid min-h-[36px] items-center text-[13px]"
+        style={{ gridTemplateColumns: AC_COLS }}
+      >
+        <Cell><StateBadge state={row.state} /></Cell>
+        {/* `data-ac-doc` names the cell that holds the ERP's own number. It is
+            a contract hook like `data-ac-row`, and it earns its place because
+            the register prints a document number TWICE on a healthy row — here
+            and, identically, in *In the book as* — so "the element with this
+            text" stopped identifying a row the day the fifth column landed. */}
+        <Cell
+          data-ac-doc=""
+          className="font-mono text-[12.5px] font-semibold text-ink"
+          title={row.doc_no}
+        >
+          <span className="truncate">{row.doc_no}</span>
+        </Cell>
+        <Cell className="text-ink-secondary">
+          <span className="truncate">{acDocTypeLabel(row.doc_type)}</span>
+        </Cell>
+        <Cell className="text-ink-secondary" title={acOpLabel(row.op)}>
+          <span className="truncate">{acOpLabel(row.op)}</span>
+        </Cell>
+        <BookCell book={book} docNo={row.doc_no} />
+        {/* THE SENDS CELL IS THE HISTORY OPENER, where there is a history. That
+            keeps a document sent four times on ONE line — folding the audit
+            trail behind its own row would have added a second line to exactly
+            the rows the 2026-08-17 change was about. A document sent once has
+            no control here at all. */}
+        {group.earlier.length > 0 ? (
+          <button
+            type="button"
+            aria-expanded={historyOpen}
+            aria-label={acEarlierSendsHeading(group.earlier.length)}
+            onClick={onToggleHistory}
+            className="flex min-w-0 items-center justify-end px-2.5 text-[12px] tabular-nums text-primary hover:underline"
           >
-            {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
-          </Button>
+            {sends}
+          </button>
+        ) : (
+          <Cell className="justify-end text-[12px] tabular-nums text-ink-muted">{sends}</Cell>
         )}
-        {/* THE WAITING ROW'S CONTROL. Offered where the server says the row is
-            still queued and has tries left (`can_send_now`) — the owner asked
-            for a manual push beside the automatic sync, and until now a waiting
-            row had no button at all because a RE-QUEUE of one would duplicate
-            the document. This dispatches the row that is already there.
+        <Cell className="text-[12px] tabular-nums text-ink-muted">{acWhenText(row)}</Cell>
+        <Cell className="justify-end">
+          {/* Offered only where the SERVER says a re-send can mean anything
+              (`can_requeue`). Everywhere else there is no button rather than a
+              button that always answers no. */}
+          {row.can_requeue && (
+            /* `!h-7 !px-2 !text-[11.5px]`, with the important prefix, because
+               Button hardcodes h-9/px-4/text-[13px] and `cn` is a plain join,
+               not a Tailwind merge — a bare `h-7` loses to `h-9` on stylesheet
+               order and the row silently grows past its 36 px line. */
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onSendAgain}
+            >
+              {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+            </Button>
+          )}
+          {/* THE WAITING ROW'S CONTROL. Offered where the server says the row is
+              still queued and has tries left (`can_send_now`) — the owner asked
+              for a manual push beside the automatic sync, and until now a
+              waiting row had no button at all because a RE-QUEUE of one would
+              duplicate the document. This dispatches the row that is there.
 
-            Never rendered beside Send again: the two server predicates are
-            disjoint, so at most one of these blocks is ever true for a row. */}
-        {row.can_send_now && (
-          <Button
-            variant="secondary"
-            className="!h-7 shrink-0 !px-2 !text-[11.5px]"
-            disabled={sending}
-            onClick={onSendNow}
-          >
-            {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
-          </Button>
-        )}
+              Never rendered beside Send again: the two server predicates are
+              disjoint, so at most one of these blocks is ever true for a row. */}
+          {row.can_send_now && (
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onSendNow}
+            >
+              {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
+            </Button>
+          )}
+        </Cell>
       </div>
 
       {/* THE REASON, ONE LINE, ALWAYS VISIBLE — and it is the opener. */}
       {detail.line !== null && (
         <button
           type="button"
+          data-ac-why=""
           aria-expanded={open}
           onClick={onToggle}
           className={cn(
@@ -366,28 +539,19 @@ function OutboxRowCard(
           {detail.showRequeuedNote && (
             <p className="max-w-[84ch] text-[13px] text-ink-muted">{AC_REPLACED_NOTE}</p>
           )}
+          {/* THE TRY COUNT, HERE AND NOWHERE ELSE. As a column it read as a dash
+              on nearly every row; in the problem row's own block it is a
+              sentence — "Tried 3 times, will keep trying up to 6" — that says
+              whether the queue is still working on this or has given up. */}
+          <p className="mt-1.5 text-[12px] text-ink-muted">
+            {acRowStatusLine(row, maxAttempts)}
+          </p>
           {detail.said && <WhatWasSaid said={detail.said} />}
         </div>
       )}
 
-      {/* THE SEND HISTORY, folded. Only where there IS one — the majority of
-          documents were sent once and get no second opener. */}
-      {group.earlier.length > 0 && (
-        <>
-          <button
-            type="button"
-            aria-expanded={historyOpen}
-            onClick={onToggleHistory}
-            className="flex w-full items-center gap-1.5 border-t border-border px-2.5 py-1 text-left text-[11.5px] font-semibold text-ink-muted"
-          >
-            <ChevronRight
-              size={13}
-              className={cn("shrink-0 transition-transform", historyOpen && "rotate-90")}
-            />
-            {acEarlierSendsHeading(group.earlier.length)}
-          </button>
-          {historyOpen && <EarlierSends sends={group.earlier} maxAttempts={maxAttempts} />}
-        </>
+      {historyOpen && group.earlier.length > 0 && (
+        <EarlierSends sends={group.earlier} maxAttempts={maxAttempts} />
       )}
 
       {/* The answer to Send again lands HERE, on the row that was pressed —
@@ -422,12 +586,75 @@ function OutboxRowCard(
   );
 }
 
+/** The day a run of rows happened on. Cheap and quiet — a rule and six words. */
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div data-ac-day="" className="flex items-center gap-2 bg-surface px-2.5 pb-1 pt-2">
+      <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+        {label}
+      </span>
+      <span aria-hidden className="h-px flex-1 bg-border-subtle" />
+    </div>
+  );
+}
+
+/**
+ * THE HEADING ROW.
+ *
+ * Sticky, and it lives inside the same pinned block as the filter strips rather
+ * than sticking on its own at a computed offset: two sticky boxes whose offsets
+ * are derived separately are two boxes that overlap the first time either one
+ * changes height. One box cannot get out of step with itself.
+ *
+ * *When* is a button because it is the sort. Nothing else is sortable yet — the
+ * default order is the one a register is read in, and a column that can be
+ * clicked but has no second order is a control that lies.
+ *
+ * NO `role="table"` / `row` / `columnheader`, deliberately. The rows below are
+ * inside `<MobileVirtualList>`, which publishes `role="list"` and `role="listitem"`
+ * — declaring a table over the top would put a table's roles and a list's roles
+ * in one tree and leave assistive technology reading neither. A half-built ARIA
+ * table is worse than an honest strip of labels, which is what this is; the
+ * sortable heading is a real `<button>` and carries `aria-sort` itself.
+ */
+function RegisterHead({ sort, onSort }: { sort: AcSort; onSort: () => void }) {
+  return (
+    <div
+      className="grid h-[30px] items-center rounded-t-lg border-x border-t border-border bg-surface-2 text-[10px] font-bold uppercase tracking-brand text-ink-muted"
+      style={{ gridTemplateColumns: AC_COLS }}
+    >
+      {AC_REGISTER_COLUMNS.map((c) => (
+        c.key === "when" ? (
+          <button
+            key={c.key}
+            type="button"
+            onClick={onSort}
+            aria-sort={sort === "newest" ? "descending" : "ascending"}
+            className="flex min-w-0 items-center gap-1 px-2.5 text-left uppercase tracking-brand text-ink-muted hover:text-ink"
+          >
+            {c.label}
+            {sort === "newest"
+              ? <ChevronDown size={11} aria-hidden className="shrink-0" />
+              : <ChevronUp size={11} aria-hidden className="shrink-0" />}
+          </button>
+        ) : (
+          <Cell key={c.key} className={c.key === "sends" ? "justify-end" : undefined}>
+            {c.label}
+          </Cell>
+        )
+      ))}
+    </div>
+  );
+}
+
 export function AutoCountSync() {
   const [params, setParams] = useSearchParams();
 
   /* URL IS STATE (CLAUDE.md). An unknown ?state= falls back to the default
      rather than being passed through — the server refuses it with a 400, and a
-     hand-edited URL should not turn this page into an error message. */
+     hand-edited URL should not turn this page into an error message. The same
+     rule covers the two register controls, which are client-side lenses: an
+     unreadable value is the default, never an empty register. */
   const rawState = params.get("state") ?? AC_DEFAULT_STATE;
   const state: AcFilterState = (AC_FILTER_STATES as readonly string[]).includes(rawState)
     ? (rawState as AcFilterState)
@@ -437,19 +664,31 @@ export function AutoCountSync() {
     ? (rawDocType as AcDocType)
     : "";
   const docNo = params.get("docNo") ?? "";
+  const rawRange = params.get("range") ?? AC_DEFAULT_DATE_RANGE;
+  const range: AcDateRange = (AC_DATE_RANGES as readonly string[]).includes(rawRange)
+    ? (rawRange as AcDateRange)
+    : AC_DEFAULT_DATE_RANGE;
+  const rawSort = params.get("sort") ?? AC_DEFAULT_SORT;
+  const sort: AcSort = (AC_SORTS as readonly string[]).includes(rawSort)
+    ? (rawSort as AcSort)
+    : AC_DEFAULT_SORT;
 
-  /* The type is NOT sent to the server — see AcOutboxFilters. A server already
-     narrowed to one type cannot answer "how many of each type", which is the
-     whole reason the second strip exists. */
+  /* The type, the date range and the sort are NOT sent to the server — see
+     AcOutboxFilters. A server already narrowed to one type cannot answer "how
+     many of each type", which is the whole reason the second strip exists, and
+     the same argument covers the date lens. */
   const filters = useMemo(() => ({ state, docNo }), [state, docNo]);
   const q = useAutoCountOutbox(filters);
   const d = q.data;
 
-  const setFilter = (key: "state" | "docType" | "docNo", value: string) => {
+  const setFilter = (key: "state" | "docType" | "docNo" | "range" | "sort", value: string) => {
     const next = new URLSearchParams(params);
     /* The DEFAULT is the absent one, so the tidy URL is the one the page opens
        on. Choosing Everything is a decision and stays in the URL as `all`. */
-    if (!value || (key === "state" && value === AC_DEFAULT_STATE)) next.delete(key);
+    const isDefault = (key === "state" && value === AC_DEFAULT_STATE)
+      || (key === "range" && value === AC_DEFAULT_DATE_RANGE)
+      || (key === "sort" && value === AC_DEFAULT_SORT);
+    if (!value || isDefault) next.delete(key);
     else next.set(key, value);
     setParams(next, { replace: true });
   };
@@ -465,17 +704,23 @@ export function AutoCountSync() {
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
   /* ONE ROW PER DOCUMENT. The sends are folded into the document they belong to
-     before anything else looks at them, so every count below — and the list
+     before anything else looks at them, so every count below — and the register
      itself — is about documents. `HC-SO-2608-002` was four of six rows here. */
   const loaded = acGroupByDocument(d?.rows ?? []);
   const typeCounts = acDocTypeCounts(loaded);
-  const groups = acGroupsOfType(loaded, docType);
+  /* THE TWO LENSES, IN THIS ORDER, and the order is not arbitrary: the type
+     chips count what the STATE filter left, and the date range narrows what
+     both of them left. Putting the date first would make the type chips count a
+     window rather than the loaded page and the two strips would disagree. */
+  const groups = acGroupsInRange(acGroupsOfType(loaded, docType), range);
   /* HISTORY IS NOT A TASK LIST. Six of fifteen rows on the live page were
      replaced refusals, two documents appearing twice. They stay reachable —
-     folded under the list, and the Replaced chip still shows them as the
-     list — but they no longer stand between the reader and a live refusal. The
-     counts on the chips are untouched: they are the server's. */
+     folded under the register — but they no longer stand between the reader and
+     a live refusal. The counts on the chips are untouched: they are the
+     server's. */
   const split = acSplitReplaced(groups);
+  const live = acSortGroups(split.live, sort);
+  const items = acRegisterItems(live);
 
   /* The state counts are the SERVER's, exact and whole-company. The type counts
      are of the rows actually loaded — a different kind of number, and the only
@@ -491,6 +736,27 @@ export function AutoCountSync() {
     { value: "all" as const, label: "Every type", count: typeCounts.all },
     ...AC_DOC_TYPES.map((t) => ({ value: t, label: acDocTypePlural(t), count: typeCounts[t] })),
   ];
+
+  const rangePills = AC_DATE_RANGES.map((r) => ({ value: r, label: AC_DATE_RANGE_LABEL[r] }));
+
+  const renderRow = (g: AcDocGroup) => (
+    <RegisterRow
+      group={g}
+      maxAttempts={maxAttempts}
+      sending={requeue.sendingId === g.current.id}
+      note={requeue.notes[g.current.id]}
+      open={expanded.isOpen(g.current)}
+      onToggle={() => expanded.toggle(g.current)}
+      historyOpen={sendHistory.isOpen(g)}
+      onToggleHistory={() => sendHistory.toggle(g)}
+      onSendAgain={() => void requeue.sendAgain(g.current.id)}
+      onSendNow={() => void requeue.sendNow(g.current.id)}
+    />
+  );
+
+  const renderItem = (item: AcRegisterItem) => (
+    item.kind === "day" ? <DaySeparator label={item.label} /> : renderRow(item.group)
+  );
 
   return (
     <div className="space-y-4">
@@ -531,22 +797,37 @@ export function AutoCountSync() {
       ) : (
         d && (
           <>
+            {(d.truncated || !d.counts_complete) && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[12px] text-warning-text">
+                {d.truncated && (
+                  <p>
+                    Only the most recent documents are shown. The status counts above still cover
+                    every one; the document-type counts cover what is on screen. Narrow the search
+                    to see the rest.
+                  </p>
+                )}
+                {/* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. */}
+                {!d.counts_complete && <p>{AC_COUNTS_PARTIAL_LINE}</p>}
+              </div>
+            )}
+
             {/* PINNED, under the page header, whose own height it reads out of
                 --page-header-offset rather than guessing at a constant (the
                 header publishes it for exactly this). A filter strip you have
                 to scroll back up to reach is a filter strip nobody re-uses, and
-                the whole point of a windowed thousand-row list is that you are
-                a long way down it.
+                the whole point of a windowed thousand-row register is that you
+                are a long way down it. The COLUMN HEADING is inside this same
+                block, so the two cannot drift apart or overlap.
 
                 z-[5] keeps this BELOW the page header (z-10, lg:z-20) — the
                 tie that put a page-local strip on top of frozen chrome is
                 written up in MfgSalesOrdersListV2. */}
             <div
-              className="sticky z-[5] -mx-3 space-y-2 border-b border-border bg-bg px-3 pb-2 pt-1 sm:-mx-4 sm:px-4"
+              className="sticky z-[5] -mx-3 space-y-2 border-b border-border bg-bg px-3 pb-0 pt-1 sm:-mx-4 sm:px-4"
               style={{ top: "var(--page-header-offset, 7rem)" }}
             >
-              {/* Both strips are <FilterPills>, the same component the Sales
-                  Order list uses for ALL / DRAFT / CONFIRMED. */}
+              {/* All three strips are <FilterPills>, the same component the
+                  Sales Order list uses for ALL / DRAFT / CONFIRMED. */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <span className="w-[74px] shrink-0 text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
                   Status
@@ -569,29 +850,34 @@ export function AutoCountSync() {
                   value={docType === "" ? "all" : docType}
                   onChange={(v) => setFilter("docType", v === "all" ? "" : v)}
                 />
-                <span className="ml-auto text-[12px] text-ink-muted">
-                  <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
-                  <span className="mx-2 opacity-50">|</span>
-                  <span className="tabular-nums">
-                    {q.fetching ? "Loading…" : acListCountLine(groups.length, d.counts.total)}
+                {/* THE DATE LENS, beside the document chips — a lens on the
+                    loaded page, like the type chips and for the same reason.
+                    It defaults to All time on purpose: a register that opened
+                    on This month would hide a document stuck since July from
+                    the one screen whose job is finding it. */}
+                <div className="ml-auto flex items-center gap-x-3">
+                  <FilterPills
+                    options={rangePills}
+                    value={range}
+                    onChange={(v) => setFilter("range", v)}
+                  />
+                  <span className="text-[12px] text-ink-muted">
+                    <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
+                    <span className="mx-2 opacity-50">|</span>
+                    <span className="tabular-nums">
+                      {q.fetching ? "Loading…" : acListCountLine(groups.length, d.counts.total)}
+                    </span>
                   </span>
-                </span>
+                </div>
               </div>
-            </div>
 
-            {(d.truncated || !d.counts_complete) && (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[12px] text-warning-text">
-                {d.truncated && (
-                  <p>
-                    Only the most recent documents are shown. The status counts above still cover
-                    every one; the document-type counts cover what is on screen. Narrow the search
-                    to see the rest.
-                  </p>
-                )}
-                {/* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. */}
-                {!d.counts_complete && <p>{AC_COUNTS_PARTIAL_LINE}</p>}
-              </div>
-            )}
+              {groups.length > 0 && split.live.length > 0 && (
+                <RegisterHead
+                  sort={sort}
+                  onSort={() => setFilter("sort", sort === "newest" ? "oldest" : "newest")}
+                />
+              )}
+            </div>
 
             {groups.length === 0 ? (
               <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
@@ -602,34 +888,34 @@ export function AutoCountSync() {
                 {AC_ONLY_REPLACED_LINE}
               </div>
             ) : (
-              /* WINDOWED. The same component eight mobile screens and DataTable
-                 already use, rather than a second mechanism: below its own
-                 threshold it renders every row exactly as a plain map did, and
-                 above it only the visible slice is in the DOM. */
-              <MobileVirtualList
-                items={split.live}
-                getKey={(g) => g.key}
-                gap={6}
-                estimateHeight={52}
-                ariaLabel={`${split.live.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
-                renderItem={(g) => (
-                  <OutboxRowCard
-                    group={g}
-                    maxAttempts={maxAttempts}
-                    sending={requeue.sendingId === g.current.id}
-                    note={requeue.notes[g.current.id]}
-                    open={expanded.isOpen(g.current)}
-                    onToggle={() => expanded.toggle(g.current)}
-                    historyOpen={sendHistory.isOpen(g)}
-                    onToggleHistory={() => sendHistory.toggle(g)}
-                    onSendAgain={() => void requeue.sendAgain(g.current.id)}
-                    onSendNow={() => void requeue.sendNow(g.current.id)}
-                  />
-                )}
-              />
+              <div className="-mt-4 overflow-hidden rounded-b-lg border-x border-b border-border bg-surface">
+                {/* WINDOWED. The same component eight mobile screens and
+                    DataTable already use, rather than a second mechanism: below
+                    its own threshold it renders every row exactly as a plain
+                    map did, and above it only the visible slice is in the DOM.
+                    Day separators are IN the same flat list, so one never
+                    scrolls away from the day it introduces. */}
+                <MobileVirtualList
+                  items={items}
+                  getKey={(i) => i.key}
+                  gap={0}
+                  estimateHeight={36}
+                  ariaLabel={`${live.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
+                  renderItem={renderItem}
+                />
+                {/* THE LINE THAT CLOSES THE REGISTER. A windowed list draws its
+                    scrollbar from estimates, so the scrollbar cannot honestly
+                    answer "am I looking at all of it". This can. */}
+                <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink-muted">
+                  <span className="tabular-nums">
+                    {acShowingLine(live.length, d.counts.total)}
+                  </span>
+                  <span>{AC_SORTED_BY_LINE[sort]}</span>
+                </div>
+              </div>
             )}
 
-            {/* THE RECORD, FOLDED. Under the live list, never inside it. The
+            {/* THE RECORD, FOLDED. Under the register, never inside it. The
                 rows are not rendered at all until it is opened — a replaced
                 document costs nothing to keep and should cost nothing to
                 ignore. */}
@@ -652,27 +938,16 @@ export function AutoCountSync() {
                     <p className="mb-2 max-w-[84ch] text-[12px] text-ink-muted">
                       {AC_REPLACED_GROUP_NOTE}
                     </p>
-                    <MobileVirtualList
-                      items={split.replaced}
-                      getKey={(g) => g.key}
-                      gap={6}
-                      estimateHeight={52}
-                      ariaLabel={`${split.replaced.length} replaced documents, kept as a record.`}
-                      renderItem={(g) => (
-                        <OutboxRowCard
-                          group={g}
-                          maxAttempts={maxAttempts}
-                          sending={requeue.sendingId === g.current.id}
-                          note={requeue.notes[g.current.id]}
-                          open={expanded.isOpen(g.current)}
-                          onToggle={() => expanded.toggle(g.current)}
-                          historyOpen={sendHistory.isOpen(g)}
-                          onToggleHistory={() => sendHistory.toggle(g)}
-                          onSendAgain={() => void requeue.sendAgain(g.current.id)}
-                          onSendNow={() => void requeue.sendNow(g.current.id)}
-                        />
-                      )}
-                    />
+                    <div className="overflow-hidden rounded-md border border-border">
+                      <MobileVirtualList
+                        items={split.replaced}
+                        getKey={(g) => g.key}
+                        gap={0}
+                        estimateHeight={36}
+                        ariaLabel={`${split.replaced.length} replaced documents, kept as a record.`}
+                        renderItem={renderRow}
+                      />
+                    </div>
                   </div>
                 )}
               </div>

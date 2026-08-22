@@ -12,6 +12,8 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { salesInvoiceRowMenu } from "./row-menus";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -167,13 +169,9 @@ const soOf = (r: SiRow): string => r.so_doc_no || "—";
 const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Was a THREE-tone copy while the other four lists had four — the drift this
+   module exists to end. ../../lib/brandingTone is the one home. */
+const brandTone = brandingToneForLabel;
 
 // SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
 // PAID → CANCELLED. Buckets: sent (Draft + Sent + Overdue) / partial / paid /
@@ -193,7 +191,7 @@ const STATUS_TONE: Record<
 > = {
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
   sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
-  issued:          { tone: "warning", label: "Issued",      bucket: "sent" },
+  issued:          { tone: "warning", label: "Confirmed",   bucket: "sent" },
   overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
   partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
   partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },
@@ -1030,6 +1028,14 @@ export function SalesInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  /* A cancelled or draft invoice takes no payment — the server refuses both
+     with `not_payable`, and the menu simply does not offer what it would
+     refuse. */
+  const siContextMenu = salesInvoiceRowMenu<SiRow>({
+    open: goFullPage, edit: goEdit, print: goPrint,
+    recordPayment: (r) => goRecordPayment(r),
+    canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
+  });
   const doMarkPaid = (r: SiRow) =>
     updateStatus.mutate(
       { id: r.id, status: "paid" },
@@ -1786,7 +1792,8 @@ export function SalesInvoicesListV2() {
                 onToggle: toggleSelect,
                 onToggleAll: toggleSelectAll,
               }}
-              exportName="sales-invoices"
+              contextMenu={siContextMenu}
+            exportName="sales-invoices"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={
