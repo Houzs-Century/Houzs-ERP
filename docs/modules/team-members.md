@@ -39,10 +39,12 @@
 >
 > The CLASSIC tabs (`members` / `orgchart` / `departments` / `mail` / `roles`)
 > left the strip but stay URL-reachable during the transition; the sections
-> below describe that classic Members surface, which is unchanged. Mobile menu
-> rows follow the new NAV_TABS destinations (`?tab=directory` /
-> `?tab=departments2`) but still open the classic mobile modules until the
-> handoff's mobile pass.
+> below describe that classic Members surface, which is unchanged. The mobile
+> menu rows and route mapping (`frontend/src/mobile/MobileApp.tsx`) follow the
+> new NAV_TABS destinations (`?tab=directory` / `?tab=departments2`, legacy
+> values still accepted) but still open the classic mobile modules
+> (`frontend/src/mobile/mobileMenuGates.test.ts` pins the exact gates) until
+> the handoff's mobile pass.
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found

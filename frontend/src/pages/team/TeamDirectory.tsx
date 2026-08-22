@@ -219,7 +219,11 @@ export function TeamDirectory({
     api
       .get<{ enabled: boolean }>("/api/users/impersonation-enabled")
       .then((r) => alive && setCanImpersonate(!!r.enabled))
-      .catch(() => {});
+      .catch(() => {
+        // Probe unreachable or refused — fail closed: the Login-as button
+        // stays hidden, which is the designed answer for "not enabled".
+        if (alive) setCanImpersonate(false);
+      });
     return () => {
       alive = false;
     };
