@@ -1116,6 +1116,27 @@ The 2026-07-22 narrowing is untouched: an ordinary sales user's pick list is
 exactly what it was. Trace:
 `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
+**The consignment order was NOT on that ladder, and it showed (2026-08-21).**
+`ConsignmentOrderNew` read `useAuth().staff` from the vendored 2990 bridge
+(`vendor/scm/lib/auth.ts:60`) and used it ON ITS OWN. That bridge exists so the
+MRP page can ask `isAdminLevel(staff?.role)`; `role` is the ONLY field it
+computes, and it returns a hard-coded `null` for `id`, `name`, `staffCode` and
+`venueId` on every Houzs user. `useAuth().staff` itself is never null — only its
+fields are — so a truthiness check on the object passes and every optional chain
+silently yields null. The page therefore:
+
+- gated its salesperson seed on `if (!currentStaff?.id) return`, which could
+  never pass, so **Salesperson was never filled in on a consignment order**;
+- built the non-admin branch of its picker from the same object, offering **one
+  option labelled with the literal text `null (null)`** and an empty value.
+
+`SalesOrderNew` and `SalesOrderDetail` pass those same fields into
+`resolveSelfStaff` as ONE RUNG of the ladder above, so the nulls miss and the
+ladder falls through — which is why only the consignment page showed it. It is
+now on the same ladder. `bridgeStaffIsNotAPerson.test.ts` pins the bridge's
+contract and holds every consumer to it. Trace:
+`docs/bugs/0510-the-consignment-salesperson-picker-offered-null-null.md`.
+
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
 Two changes to the header PATCH, both because a resigning rep's orders have to
