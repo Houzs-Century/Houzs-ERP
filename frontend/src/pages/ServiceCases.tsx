@@ -609,18 +609,15 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status detail (Nick 2026-07-15: the list must show e.g.
-        // "Pending Inspection" under Verification rows) — second muted
-        // line so the stage name + badges stay single-line above it.
-        //
-        // Owner 2026-07-16 ("duplicate 了"): the stage is shown ONCE. The sub
-        // line renders only when it ADDS information — a sub-status that just
-        // restates the stage ("Supplier Pickup" over "Pending Supplier Pickup")
-        // is suppressed; a distinguishing one ("Pending Supplier Return") stays.
+        // Sub-status rides a second muted line (Nick 2026-07-15). Owner 2026-07-16:
+        // hide a sub that merely restates its stage — except the combined Supplier
+        // stage, where naming the leg is the point (Nico 2026-08-22, chase list).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
-          sub && assrSubStatusAddsInfo(stageText, sub.label) ? sub.label : null;
+          sub && (r.stage === "pending_supplier_pickup" || assrSubStatusAddsInfo(stageText, sub.label))
+            ? sub.label
+            : null;
         return (
           <div>
             <div className="flex items-center gap-1.5">
@@ -629,9 +626,7 @@ function CasesView({
                   Archived
                 </Badge>
               )}
-              {/* Funnel-consistent dot: red when this row is SLA-breached
-                  (the funnel box goes red for the same reason), else the
-                  stage's own colour (amber open / green completed). */}
+              {/* Funnel-consistent dot: red = SLA-breached, else the stage's own colour. */}
               <StatusDot
                 variant={
                   r.stage !== "completed" && r.is_breached === 1
@@ -641,9 +636,7 @@ function CasesView({
                 label={stageText}
               />
               {r.stage !== "completed" && (r.is_breached === 1 || r.escalated_at) && (
-                // One SLA badge: solid red = breached, outline = escalated
-                // only (overdue >24h). Merged from the old separate SLA + Esc
-                // pills to calm the row.
+                // One SLA badge: solid = breached, outline = escalated (>24h overdue).
                 <Badge
                   tone="error"
                   variant={r.is_breached === 1 ? "solid" : "outline"}
@@ -665,10 +658,12 @@ function CasesView({
           </div>
         );
       },
-      // caseStageLabel (not the legacy StatusDot stageLabel) — the old
-      // helper only maps the 5 legacy slugs, so 9-stage rows fell through
-      // to raw slugs in the funnel filter + CSV export.
-      getValue: (r) => caseStageLabel(r.stage),
+      // caseStageLabel, plus the sub label so the column FILTER and CSV split
+      // the legs (pickup vs return, inspection vs QC issue result).
+      getValue: (r) => {
+        const sub = assrSubStatus(r.stage, r.sub_status ?? null);
+        return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
+      },
     },
     {
       key: "assr_no",
@@ -1230,7 +1225,7 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-type StageFunnelRow = { stage: string; total: number; breached: number };
+type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number };
 type AssrSummary = {
   total?: number;
   active_count?: number;
@@ -1321,8 +1316,7 @@ function StageStatStrip({
         />
       </div>
 
-      {/* Stage pipeline — compact horizontal funnel; click a stage to filter
-          the list/board/calendar, click again (or All) to clear. */}
+      {/* Stage funnel — click a stage to filter; click again (or All) to clear. */}
       <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[13px] font-bold text-ink">Stage funnel</div>
@@ -1331,22 +1325,27 @@ function StageStatStrip({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {[
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
-            ...stages.map((s) => ({
-              value: s.value as StageFilter,
-              label: s.label,
-              desc: STAGE_FUNNEL_DESC[s.value] ?? "",
-              total: byStage.get(s.value)?.total ?? 0,
-              breached: byStage.get(s.value)?.breached ?? 0,
-            })),
+            ...stages.map((s) => {
+              const row = byStage.get(s.value);
+              // Supplier bucket names its two legs (Nico 2026-08-22) so ops sees
+              // at a glance how many suppliers to chase for pickup vs return.
+              const desc =
+                s.value === "pending_supplier_pickup" && ready && row?.total
+                  ? `${row.total - (row.sub_return ?? 0)} await pickup · ${row.sub_return ?? 0} await return`
+                  : STAGE_FUNNEL_DESC[s.value] ?? "";
+              return {
+                value: s.value as StageFilter,
+                label: s.label,
+                desc,
+                total: row?.total ?? 0,
+                breached: row?.breached ?? 0,
+              };
+            }),
           ].map((s) => {
             const isActive = stage === s.value;
             const empty = ready && s.total === 0;
-            // Dot severity: red = stage holds SLA-breached cases,
-            // dimmed grey = empty, green = All aggregate, solid grey =
-            // Completed (archived), petrol = open work otherwise.
-            // Nico 2026-07-09 — Completed split off from All so the
-            // closed-cases bucket reads as neutral grey (archived), not
-            // healthy green (which stays for the All summary).
+            // Dot: red = holds breached cases, dim grey = empty, green = All,
+            // solid grey = Completed split off All (Nico 2026-07-09), petrol = open.
             const dot =
               s.breached > 0
                 ? "bg-err"
