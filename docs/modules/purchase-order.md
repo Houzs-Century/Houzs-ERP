@@ -144,6 +144,42 @@ then name — and it now has a FRONTEND home to import:
 `docs/modules/warehouses.md` for the mirror and its referee. The GRN-from-PO
 picker's Warehouse column reads through the same rule.
 
+### `item_group` is the SKU's, and it decides where the stock lands (2026-08-22)
+
+A PO line's `item_group` is not a label. It is an **input to the stock bucket**:
+`computeVariantKey(item_group, variants)` composes a sofa's fabric / seat / leg
+into the key **only** for a sofa or bedframe group — for null or `others` it
+returns `''` by design (`shared/variant-key.ts`, "Accessory / Others / Service —
+product code only").
+
+So a PO line that lost its group produces a GRN that lost it (`grns.ts:1897`
+copies the PO line), and `postGrnAndRollup` writes the receipt's inventory
+movement under the EMPTY key. The goods are then in the warehouse, at the right
+value, with their `variants` jsonb fully intact — and invisible to every sofa
+order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
+
+**The variants are never the thing that goes missing.** `description2` is built
+from the jsonb alone and prints correctly the whole time, which is exactly why
+this reads as impossible from the screen: the specs are right there on the PO.
+Only the one word that says *how to read them* was blank. Owner 2026-08-22:
+「我们的 PO 没有规格 generate 不出的啊？所以应该不可能没有规格？」 — the specs
+were there; the category was not.
+
+**The server resolves it from the product, not from the request.**
+`POST /mfg-purchase-orders` reads `mfg_products.category` for every
+`mfg_product` line's code — company-scoped, because `code` is shared between the
+two organisations (the reason `grns.ts:287` gives) — and uses it in preference
+to `it.itemGroup`. The caller's value survives only as the fallback for a
+raw-material line, which has no product row. `description2` is built from the
+SAME resolved group, so the printed text and the stock key cannot describe
+different things.
+
+That server rule is the load-bearing half. The desktop From-SO mapper also stops
+re-deriving the group (it now uses the pick's own `itemGroup`, which the picker
+already renders as the row's Category chip) — but fixing only the browser would
+leave the next client free to lose it again. Trace:
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
+
 **The variant summary on the transfer pickers is labelled "Description 2"
 (2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
 other Convert-From pickers render that column through) exports
