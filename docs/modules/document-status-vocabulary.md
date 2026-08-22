@@ -65,6 +65,18 @@ this drifted.** Sixteen list and detail pages declare their own
 > document type today? Its confirm step reads **Confirmed**, in `status-pill.ts`
 > AND in that page's own map.
 
+### `ON_HOLD` on the purchase side (2026-08-21, migs 0318/0319/0320)
+
+The Purchase Order, GRN and Purchase Invoice gained a REVERSIBLE stop — owner:
+「PO 加 hold / GR / PI also hold」. All three read **On Hold** in `status-pill.ts`
+and in their own detail maps.
+
+**Adding a status means updating every map that can be handed it, and the detail
+pages carry TWO each** — a label map and an `effectiveOf` chain. All three
+`effectiveOf` chains end in a default arm, so before this change a held document
+would have rendered as *cancelled*, *draft* and *partly paid* respectively. See
+`docs/bugs/0512-a-held-purchase-document-read-as-cancelled-draft-or-partly-p.md`.
+
 ### Not renamed, and it would be wrong to
 
 The Sales Invoice **Sent** tab and the Delivery Order **Open** tab are BUCKETS

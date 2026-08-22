@@ -598,6 +598,9 @@ export type PoStatusCounts = {
   partial: number;
   received: number;
   cancelled: number;
+  /* ON_HOLD (mig 0318, owner 2026-08-21). Optional for the same reason
+     `outstanding` is: an older deployment answers without it. */
+  on_hold?: number;
 };
 export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, supplierId, q, sort } = params;

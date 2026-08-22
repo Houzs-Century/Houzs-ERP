@@ -66,7 +66,13 @@ describe('VALID_STATUSES differs on purpose, and stays different', () => {
     expect(declaredSet(pco, 'VALID_STATUSES').length, 'the PCO stopped declaring VALID_STATUSES').toBeGreaterThan(0);
   });
 
-  test('they differ by exactly DRAFT — a PCO has no draft state', () => {
+  /* ON_HOLD joined the PO on 2026-08-21 (mig 0318) and DELIBERATELY NOT the
+     purchase CONSIGNMENT order. The owner named three documents — 「PO 加 hold /
+     GR / PI also hold」 — and the consignment chain was not among them. Recorded
+     as a SCOPE BOUNDARY, not an oversight: extending it later is one migration
+     plus one entry in this list, and this test is where that decision is made
+     rather than discovered. */
+  test('they differ by DRAFT and ON_HOLD — a PCO has neither', () => {
     const poStatuses = declaredSet(po, 'VALID_STATUSES');
     const pcoStatuses = declaredSet(pco, 'VALID_STATUSES');
 
@@ -75,9 +81,9 @@ describe('VALID_STATUSES differs on purpose, and stays different', () => {
 
     expect(
       onlyPo,
-      'the PO should have exactly one status the PCO lacks, and it should be DRAFT.\n' +
+      'the PO has statuses the PCO lacks, and the list should be exactly DRAFT + ON_HOLD.\n' +
         'If a new status was added to the PO alone, decide whether the PCO needs it and say so here.',
-    ).toEqual(['DRAFT']);
+    ).toEqual(['DRAFT', 'ON_HOLD']);
 
     expect(
       onlyPco,

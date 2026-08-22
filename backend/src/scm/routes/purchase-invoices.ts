@@ -1,6 +1,7 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
 import { Hono } from 'hono';
+import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -314,13 +315,6 @@ async function migratedRefusalForGrnItems(
    source of truth for BOTH the status-count queries and the list `status`
    filter. All five buckets are 1:1 today, but the FE sends the BUCKET NAME as
    `status`; a raw DB status still works (backward-compatible fallback). */
-const PI_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  posted: ['POSTED'],
-  partial: ['PARTIALLY_PAID'],
-  paid: ['PAID'],
-  cancelled: ['CANCELLED'],
-};
 
 
 purchaseInvoices.get('/', async (c) => {
@@ -393,16 +387,17 @@ purchaseInvoices.get('/', async (c) => {
      paid / cancelled) over the SAME company filter but WITHOUT status / search /
      pagination. */
   const countBase = () => scopeToCompany(sb.from('purchase_invoices').select('*', { count: 'exact', head: true }), c);
-  const [allC, draftC, postedC, partialC, paidC, cancelledC] = await Promise.all([
+  const [allC, draftC, postedC, partialC, paidC, cancelledC, onHoldC] = await Promise.all([
     countBase(),
     countBase().in('status', PI_STATUS_BUCKETS.draft),
     countBase().in('status', PI_STATUS_BUCKETS.posted),
     countBase().in('status', PI_STATUS_BUCKETS.partial),
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
+    countBase().in('status', PI_STATUS_BUCKETS.on_hold),
   ]);
   // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 

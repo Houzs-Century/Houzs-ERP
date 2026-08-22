@@ -103,7 +103,7 @@ type GrnItem = {
   warehouse_code?: string | null;
 };
 
-type StatusTab = "all" | "draft" | "posted" | "cancelled";
+type StatusTab = "all" | "draft" | "posted" | "cancelled" | "on_hold";
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
@@ -124,6 +124,10 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
   POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
   CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+  /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory
+     IN fired at POSTED and a hold moves nothing. A held GRN cannot be
+     invoiced, because the billable-GRN read is .eq(status, POSTED). */
+  ON_HOLD:   { tone: "warning", label: "On Hold",   bucket: "on_hold" },
 };
 
 const statusFor = (s: string) =>
@@ -544,7 +548,7 @@ export function GoodsReceivedListV2() {
   const serverRows = (data?.grns ?? []) as GrnRow[];
   const rows = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
-  const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0 };
+  const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0, on_hold: 0 };
 
   // Money KPIs are summed over the CURRENT page only (paginated contract has no
   // full-set money sums), so their cards are labelled "on this page".
@@ -832,6 +836,7 @@ export function GoodsReceivedListV2() {
     { value: "draft", label: `Draft · ${counts.draft}` },
     { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (

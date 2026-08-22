@@ -109,7 +109,7 @@ type PiItem = {
   line_total_sen?: number;
 };
 
-type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled";
+type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled" | "on_hold";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -135,6 +135,10 @@ const STATUS_TONE: Record<
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },
+  /* ON_HOLD (mig 0320) — the disputed bill that must not be paid while it is
+     queried. This is the ONE hold of the three that needed a written guard:
+     payment-vouchers.ts refuses to settle a held invoice (allocation_on_hold). */
+  ON_HOLD:        { tone: "warning", label: "On Hold",         bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -650,6 +654,7 @@ export function PurchaseInvoicesListV2() {
     partial: 0,
     paid: 0,
     cancelled: 0,
+    on_hold: 0,
   };
 
   /* The rows the TABLE is showing — the server page minus whatever the
@@ -961,6 +966,7 @@ export function PurchaseInvoicesListV2() {
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "paid", label: `Paid · ${counts.paid}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (

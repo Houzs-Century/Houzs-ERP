@@ -131,10 +131,15 @@ const outstandingOf = (h: PiHeader): number =>
   Math.max(0, (h.total_sen ?? 0) - (h.paid_sen ?? 0));
 
 // PI effective lifecycle.
-type Effective = "draft" | "posted" | "partial" | "paid" | "overdue" | "cancelled";
+type Effective = "draft" | "posted" | "partial" | "paid" | "overdue" | "cancelled" | "on_hold";
 const effectiveOf = (h: PiHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
+  /* BEFORE the money checks (mig 0320). They read paid_sen, so a partly-paid
+     invoice that was then put ON HOLD would have shown "Partially paid" and the
+     hold would have been invisible on the one screen a person opens to decide
+     whether to pay the rest. */
+  if (s === "ON_HOLD") return "on_hold";
   if (s === "PAID" || outstandingOf(h) === 0) return "paid";
   if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
   if (s === "DRAFT") return "draft";
@@ -149,6 +154,7 @@ const EFFECTIVE_TONE: Record<
 > = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
   posted: { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting payment" },
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · payment blocked until released" },
   partial: { tone: "warning", label: "Partially paid", blurb: "Partially paid · balance still due" },
   paid: { tone: "success", label: "Paid", blurb: "Paid · loop closed" },
   overdue: { tone: "error", label: "Overdue", blurb: "Overdue · past due date" },
