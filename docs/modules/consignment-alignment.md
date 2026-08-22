@@ -68,6 +68,23 @@ Confirm、Hold、Cancel**，因为这三个不是从任何事实推出来的，�
 
 ---
 
+## 0b. 寄售单的类别也由 SKU 决定（2026-08-22）
+
+跟销售链对齐的不只是状态。寄售单的行也有 `item_group`，而它**不是标签，是决定货
+放进哪一个库存格子的输入** —— `computeVariantKey` 只有在类别是沙发或床架时才把
+布色 / 座位 / 脚高组进钥匙，类别空掉就只用料号，货进「没分类」那个桶，任何一张
+沙发订单都拿不到。
+
+`consignment-orders.ts` 的两条写入路径（建立、加行）原本都存
+`it.itemGroup ?? 'others'` —— 也就是浏览器送什么就存什么，而 `'others'` 正是让
+规格被完全忽略的那个值。两条现在都从 `mfg_products.category` 用料号解析，走
+`lib/sku-category.ts`，按公司范围（两间公司各有 SKU 主档）。`description2` 从
+**同一个**解析出来的值去组，所以印出来的字和库存钥匙不可能各说各话。
+
+销售单、采购单、收货单是同一天用同一支模组修的 —— 这就是「跟销售链对齐」在资料层
+的意思：同一个概念，同一条规则，六张单一致。追溯：
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`。
+
 ## 1. 这六张单到底是什么，各自对到销售链的哪一张
 
 老板讲的 CO 和 CN 是其中两张。系统里其实有**六**张 consignment 单据，分成

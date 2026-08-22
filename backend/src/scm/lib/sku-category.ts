@@ -67,7 +67,19 @@ export async function skuCategoryMap(
   try {
     let q = sb.from('mfg_products').select('code, category').in('code', codes);
     if (companyId != null) q = q.eq('company_id', companyId);
-    const { data } = await q;
+    const { data, error } = await q;
+    /* FAIL SOFT, BUT NEVER SILENT. An empty map sends every line back to the
+       caller's own value, which is the pre-2026-08-22 behaviour — a product read
+       that blipped must not stop a receipt being saved. But a read that failed
+       and a catalogue with no rows are different facts, and only one of them is
+       somebody's problem: without this line the failure looks exactly like "no
+       products matched", and every line silently keeps a category the SKU could
+       have corrected. */
+    if (error) {
+      /* eslint-disable-next-line no-console */
+      console.error('[sku-category] product read failed — lines keep the caller\'s group:', error.message);
+      return out;
+    }
     for (const r of (data ?? []) as Array<{ code: string; category: string | null }>) {
       const cat = (r.category ?? '').trim().toLowerCase();
       if (cat) out.set(r.code, cat);
