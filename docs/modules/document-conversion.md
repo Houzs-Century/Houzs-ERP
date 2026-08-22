@@ -1105,6 +1105,15 @@ three missing after-write rechecks are.
 2. **No conversion endpoint is idempotent.** No `Idempotency-Key`, no client
    request id, on any of the `from-*` POST endpoints. A double-submit is caught
    only by the quantity ceiling, and only if the counter has already moved.
+
+   > CORRECTED IN PART, 2026-08-21 (docs/bugs/0502): the purchase-consignment
+   > LEDGER writes now carry the same database backstop their siblings had —
+   > `uq_inv_mov_pc_receive_source` / `uq_inv_mov_pc_return_source` (mig 0321,
+   > the 0279 v2 shape with `COALESCE(correction_seq,0)`), so a concurrent
+   > double-post of a PC Receive / PC Return books its stock ONCE whatever the
+   > route does, and `purchase-consignment-receives.ts` no longer discards the
+   > resync result behind a bare catch — refusals ride the response as
+   > `movementErrors`. The DOCUMENT-level non-idempotency above still stands.
 3. **The flow is inferred at read time, not recorded.**
    `backend/src/scm/routes/document-flow.ts` builds the relationship graph — its
    own header calls it *"the SAP-Business-One-style Relationship Map"* — from
