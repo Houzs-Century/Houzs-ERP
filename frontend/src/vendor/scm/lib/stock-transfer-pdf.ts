@@ -114,14 +114,22 @@ export async function renderStockTransferInto(
   doc.text('TO WAREHOUSE', rightX, y);
   doc.setTextColor(0);
   y += 6;
+  /* WRAPPED, and the band's height follows the wrap. A warehouse with no code
+     falls back to its NAME (warehouse-label.ts), which can be long enough to
+     take two lines at this size — and a fixed step here would put the second
+     line straight through the name row below it. */
+  const LABEL_LH = 5.5;
+  const NAME_LH = 4;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-  doc.text(doc.splitTextToSize(fromLabel, colW) as string[], margin, y);
-  doc.text(doc.splitTextToSize(toLabel, colW) as string[], rightX, y);
-  /* The arrow sits on the two labels' baseline, in the gutter between them —
-     the direction is the one thing a reader must not have to work out. DRAWN,
-     not typed: U+2192 is not one of the 27 codepoints jspdf's WinAnsi table
-     knows, and `ensurePdfCjkFont` only scans the PAYLOAD, so an arrow written
-     as a literal here would be painted as mojibake with nothing to catch it. */
+  const fromLines = doc.splitTextToSize(fromLabel, colW) as string[];
+  const toLines = doc.splitTextToSize(toLabel, colW) as string[];
+  fromLines.forEach((line, i) => doc.text(line, margin, y + i * LABEL_LH));
+  toLines.forEach((line, i) => doc.text(line, rightX, y + i * LABEL_LH));
+  /* The arrow sits on the two labels' FIRST baseline, in the gutter between
+     them — the direction is the one thing a reader must not have to work out.
+     DRAWN, not typed: U+2192 is not one of the 27 codepoints jspdf's WinAnsi
+     table knows, and `ensurePdfCjkFont` only scans the PAYLOAD, so an arrow
+     written as a literal here would paint as mojibake with nothing to catch it. */
   const arrowY = y - 1.5;
   const arrowX = margin + colW + 3;
   doc.setDrawColor(60); doc.setLineWidth(0.5);
@@ -129,14 +137,18 @@ export async function renderStockTransferInto(
   doc.line(arrowX + 8, arrowY, arrowX + 5.4, arrowY - 2);
   doc.line(arrowX + 8, arrowY, arrowX + 5.4, arrowY + 2);
   doc.setLineWidth(0.2);
+  y += Math.max(fromLines.length, toLines.length, 1) * LABEL_LH;
+
   if (fromName || toName) {
-    y += 4.5;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90);
-    if (fromName) doc.text(doc.splitTextToSize(fromName, colW) as string[], margin, y);
-    if (toName) doc.text(doc.splitTextToSize(toName, colW) as string[], rightX, y);
+    const fromNameLines = fromName ? doc.splitTextToSize(fromName, colW) as string[] : [];
+    const toNameLines = toName ? doc.splitTextToSize(toName, colW) as string[] : [];
+    fromNameLines.forEach((line, i) => doc.text(line, margin, y + i * NAME_LH));
+    toNameLines.forEach((line, i) => doc.text(line, rightX, y + i * NAME_LH));
     doc.setTextColor(0);
+    y += Math.max(fromNameLines.length, toNameLines.length, 1) * NAME_LH;
   }
-  y += 7;
+  y += 3;
   doc.setDrawColor(180); doc.line(margin, y, pageW - margin, y);
   y += 5;
 

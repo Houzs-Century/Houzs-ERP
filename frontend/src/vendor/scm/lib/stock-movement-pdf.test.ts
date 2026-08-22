@@ -264,6 +264,36 @@ describe('Stock Transfer PDF', () => {
     expect(longText.some((t) => t.startsWith('Released By —'))).toBe(false);
   });
 
+  /* A warehouse with no CODE falls back to its NAME (warehouse-label.ts), which
+     can be long enough to take two lines in the band. The band's height has to
+     follow the wrap: a fixed step would put the label's second line straight
+     through the warehouse-name row under it, and nothing would report it. */
+  test('a long warehouse label wraps without landing on the row beneath it', async () => {
+    const longName = 'Balakong Main Warehouse and Overflow Showroom Annexe Block C';
+    const { draws } = await renderTransfer(
+      {
+        ...TRANSFER_HEADER,
+        from_warehouse: { code: 'WH-BLK', name: longName },
+        to_warehouse: { code: 'WH-KL', name: 'KL Showroom' },
+      },
+      TRANSFER_LINES,
+    );
+
+    // The name really did wrap — otherwise this test proves nothing.
+    const nameFragments = draws.filter((d) => longName.startsWith(d.text) || longName.endsWith(d.text));
+    const wrapped = draws.filter((d) => d.text !== '' && longName.includes(d.text) && d.text !== longName);
+    expect(wrapped.length, 'the fixture name must be long enough to wrap').toBeGreaterThan(1);
+    expect(nameFragments.length).toBeGreaterThan(0);
+
+    // Every fragment sits on its own baseline — none shares a y with another.
+    const ys = wrapped.map((d) => d.y);
+    expect(new Set(ys).size).toBe(ys.length);
+
+    // And the band still finishes above the line items.
+    const firstLineY = Math.min(...rowYsFor(draws, ['ST-A', 'ST-B']));
+    expect(Math.max(...ys)).toBeLessThan(firstLineY);
+  });
+
   test('a transfer with no lines still renders one page and a zero total', async () => {
     const { doc, draws } = await renderTransfer(TRANSFER_HEADER, []);
     expect(doc.getNumberOfPages()).toBe(1);
