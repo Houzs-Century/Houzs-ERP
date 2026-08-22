@@ -652,8 +652,8 @@ the number and no id, so no entry is built.
 
 | list | offered | number only — NO entry | not carried at all |
 |---|---|---|---|
-| Sales Order | its DOs (`do_refs`), its SIs (`si_refs`) — both added 2026-08-23 | `converted_po_nos`, `source_po_union` (PO numbers) | — |
-| Delivery Order | its SO (`so_doc_no`), its SIs (`si_refs`), its DRs (`dr_refs`) — the last two added 2026-08-23 | `source_pos`, `source_sos` | — |
+| Sales Order | its DOs (`do_refs`), its SIs (`si_refs`) — both added 2026-08-23 | `do_nos` for a DO with no id, `converted_po_nos`, `source_po_union` | — |
+| Delivery Order | its SO (`so_doc_no`) | `invoiced_si_nos`, `return_nos`, `source_pos`, `source_sos` | — |
 | Sales Invoice | its SO (`so_doc_no`), its DO (`delivery_order_id` + `do_number`) | `source_pos` | — |
 | Delivery Return | its SO (`so_doc_no`), its DO (`delivery_order_id` + `do_doc_no`) | — | — |
 | Purchase Order | its bound SOs (`assigned_sos`), its GRNs (`transfer_to_grns`) | `delivered_dos`; a PRE-2026-07-31 bare-string GRN chip | its PIs |
@@ -669,14 +669,24 @@ page has ever had a print handler, so their menus stay
 Open + Cancel. An entry pointing at a generator that does not exist is worse
 than a shorter menu.
 
-**Four links were closed at the SOURCE, not worked around.** The Sales Order
-list already read `delivery_orders` and `sales_invoices` by `so_doc_no`, and the
-Delivery Order list already read `sales_invoices` and `delivery_returns` by
-`delivery_order_id` — all four for `has_children` and the lineage columns.
-Adding `id` to a select already in flight costs **no extra round trip**, which is
-why `do_refs` / `si_refs` / `dr_refs` exist rather than a per-row lookup. The
-`*_nos` arrays are untouched: they feed DISPLAY columns that must still show a
-document carrying no id, and `so-delivery-order-nos.ts` states that difference.
+**Two links were closed at the SOURCE, not worked around.** The Sales Order list
+already read `delivery_orders` and `sales_invoices` by `so_doc_no` — both for
+`has_children` and the DO No. column. Adding `id` to a select already in flight
+costs **no extra round trip**, which is why `do_refs` / `si_refs` exist rather
+than a per-row lookup. `do_nos` is untouched: it feeds a DISPLAY column that must
+still show a delivery carrying no id, and `so-delivery-order-nos.ts` states that
+difference in the one place both views are built.
+
+**The Delivery Order's own two downstream links are a SIZED, RECORDED GAP.**
+`invoiced_si_nos` and `return_nos` are numbers with no id, so the DO row offers
+its Sales Order and nothing after it. The fix is the identical one column on two
+selects already in flight (`delivery-orders-mfg.ts`, the `sales_invoices` /
+`delivery_returns` reads beside `has_children`), and `lib/downstream-doc-refs.ts`
+already has the function that would consume it — `refsByParent`. It is NOT in
+this change because that router is **5,625 lines against a 5,418 ceiling**
+(measured 2026-08-23): `scripts/check-file-size.mjs` refuses ANY growth in it and
+a ceiling may only fall, so the four lines belong in a change that shrinks the
+file. Until then the menu offers no entry rather than one that 404s.
 
 **An MRP allocation is not a link.** `assigned_sos` can be a live MRP projection
 (`OriginAssignment.source === 'mrp'`) rather than anything stored, and reading

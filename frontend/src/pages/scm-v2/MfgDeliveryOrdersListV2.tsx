@@ -141,10 +141,6 @@ type DoRow = HoldFields & {
    *  was invoiced into, and the DR number(s) returned against it. */
   invoiced_si_nos?: string[] | null;
   return_nos?: string[] | null;
-  /** The same two children WITH the id the right-click print needs (a PDF is
-   *  fetched by address). Optional: an older worker just yields fewer entries. */
-  si_refs?: Array<{ id: string; docNo: string }> | null;
-  dr_refs?: Array<{ id: string; docNo: string }> | null;
   is_dropship?: boolean;
   isDropship?: boolean;
   // ── Phase 2: NON-finance fields already on the DO list payload (HEADER).

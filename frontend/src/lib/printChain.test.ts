@@ -252,18 +252,14 @@ describe("every list's chain, from the fields its rows actually carry", () => {
     ]);
   });
 
-  test("Delivery Order: its Sales Order, its invoices, its returns", () => {
+  /* Its Sales Order and nothing downstream: the DO list payload carries its
+     invoices and returns as NUMBERS with no id, and that gap is recorded rather
+     than papered over — see the comment on DoChainRow and §8b. */
+  test("Delivery Order: its Sales Order, and no downstream entry it cannot fetch", () => {
     const chain = deliveryOrderPrintChain({
       id: "do-1", do_number: "HC-DO-2608-003", so_doc_no: "HC-SO-2608-001",
-      si_refs: [{ id: "si-1", docNo: "HC-SI-2608-007" }],
-      dr_refs: [{ id: "dr-1", docNo: "HC-DR-2608-002" }],
     });
-    expect(menuLabels(chain)).toEqual([
-      "Print",
-      "Print Sales Order HC-SO-2608-001",
-      "Print Sales Invoice HC-SI-2608-007",
-      "Print Delivery Return HC-DR-2608-002",
-    ]);
+    expect(menuLabels(chain)).toEqual(["Print", "Print Sales Order HC-SO-2608-001"]);
   });
 
   test("Sales Invoice: its Sales Order and the Delivery Order it was raised from", () => {

@@ -191,20 +191,24 @@ export function salesOrderPrintChain(r: SoChainRow): PrintChain {
   ]);
 }
 
+/* NO `si_refs` / `dr_refs`, and that is a RECORDED GAP rather than an oversight.
+   The Delivery Order list payload carries `invoiced_si_nos` and `return_nos` —
+   NUMBERS, no ids — so the row knows those documents exist and cannot fetch
+   them. The fix is one column in a select that is already in flight
+   (`delivery-orders-mfg.ts`, the `sales_invoices` / `delivery_returns` reads
+   beside `has_children`), and it is NOT in this change because that file is
+   5,625 lines against a 5,418 ceiling: `scripts/check-file-size.mjs` refuses any
+   growth in it, and a ceiling may only fall. It belongs in a change that shrinks
+   that router. Until then the menu offers no entry rather than one that 404s —
+   docs/modules/document-conversion.md §8b names it. */
 export type DoChainRow = {
   id: string;
   do_number: string;
   so_doc_no?: string | null;
-  si_refs?: Wire<DocRef>;
-  dr_refs?: Wire<DocRef>;
 };
 
 export function deliveryOrderPrintChain(r: DoChainRow): PrintChain {
-  return merge(target("do", r.do_number, r.id), [
-    soTarget(r.so_doc_no),
-    capRefs("si", r.si_refs),
-    capRefs("dr", r.dr_refs),
-  ]);
+  return merge(target("do", r.do_number, r.id), [soTarget(r.so_doc_no)]);
 }
 
 export type SiChainRow = {

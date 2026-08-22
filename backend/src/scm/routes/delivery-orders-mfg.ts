@@ -106,7 +106,6 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { refsByParent, type DocRef } from '../lib/downstream-doc-refs';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -2817,30 +2816,16 @@ deliveryOrdersMfg.get('/', async (c) => {
      (which stays computeDoLifecycle below). */
   const invoicedSiByDo = new Map<string, Set<string>>();
   const returnedDrByDo = new Map<string, Set<string>>();
-  /* The same two children, address beside number, for the row menu's print —
-     KEPT SEPARATE from the number sets above rather than replacing them: those
-     feed display columns that must still show a child carrying no id. Built by
-     lib/downstream-doc-refs, the one home for that decision. */
-  let siRefsByDo = new Map<string, DocRef[]>();
-  let drRefsByDo = new Map<string, DocRef[]>();
   let lifecycleByDo = new Map<string, DoLifecycle>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
     const [drRes, siRes, lc] = await Promise.all([
-      /* `id` rides both reads for the row menu's "Print Sales Invoice" /
-         "Print Delivery Return" (owner 2026-08-22, 「我是要全部的 Transaction
-         Flow 都要」). A PDF is fetched by ADDRESS, so the numbers below can name
-         a document and cannot fetch one. Both selects were already in flight for
-         has_children and the transfer-to columns — one more column, no extra
-         round trip. */
-      sb.from('delivery_returns').select('id, delivery_order_id, return_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('id, delivery_order_id, invoice_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
+      sb.from('delivery_returns').select('delivery_order_id, return_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
+      sb.from('sales_invoices').select('delivery_order_id, invoice_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
       computeDoLifecycle(sb, ids),
     ]);
     lifecycleByDo = lc;
-    siRefsByDo = refsByParent(siRes.data as Array<Record<string, unknown>>, 'delivery_order_id', 'invoice_number');
-    drRefsByDo = refsByParent(drRes.data as Array<Record<string, unknown>>, 'delivery_order_id', 'return_number');
-    for (const d of ((drRes.data ?? []) as Array<{ id: string | null; delivery_order_id: string | null; return_number: string | null }>)) {
+    for (const d of ((drRes.data ?? []) as Array<{ delivery_order_id: string | null; return_number: string | null }>)) {
       if (!d.delivery_order_id) continue;
       childIds.add(d.delivery_order_id);
       if (d.return_number) {
@@ -2849,7 +2834,7 @@ deliveryOrdersMfg.get('/', async (c) => {
         returnedDrByDo.set(d.delivery_order_id, set);
       }
     }
-    for (const s of ((siRes.data ?? []) as Array<{ id: string | null; delivery_order_id: string | null; invoice_number: string | null }>)) {
+    for (const s of ((siRes.data ?? []) as Array<{ delivery_order_id: string | null; invoice_number: string | null }>)) {
       if (!s.delivery_order_id) continue;
       childIds.add(s.delivery_order_id);
       if (s.invoice_number) {
@@ -2912,8 +2897,6 @@ deliveryOrdersMfg.get('/', async (c) => {
       // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
       return_nos: sortedNos(returnedDrByDo.get(r.id)),
-      si_refs: siRefsByDo.get(r.id) ?? [],
-      dr_refs: drRefsByDo.get(r.id) ?? [],
     };
     if (!showFinance) for (const k of DO_FINANCE_KEYS) delete row[k];
     return row;
