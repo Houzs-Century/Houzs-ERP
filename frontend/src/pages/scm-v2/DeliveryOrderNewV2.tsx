@@ -65,7 +65,10 @@ import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { notifyAcNotSent } from "../../vendor/scm/lib/ac-not-sent";
 import { cn } from "../../lib/utils";
-import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
+import { usePickableStaff } from "../../vendor/scm/lib/admin-queries";
+import { useDebtorSearch, type DebtorSuggestion } from "../../vendor/scm/lib/sales-order-queries";
+import { DebtorSuggestList } from "../../vendor/scm/components/DebtorSuggestList";
+import { useDebouncedValue } from "../../vendor/scm/lib/hooks";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -495,9 +498,11 @@ export function DeliveryOrderNewV2() {
      clean copy, no error text — left for a dedicated dialog sweep.) */
   const askConfirm = useConfirm();
   const notify = useNotify();
-  // Resolve salesperson id -> name (never render a raw UUID) and populate the
-  // Sales-location picker from the real warehouse list (not hardcoded demos).
-  const { nameOf } = useStaffLookup();
+  // Sales staff for the Salesperson picker (id-keyed, same source as the SO
+  // form). We store the id (a Code), not the name string, so the DO matches SO/SI.
+  const staffQ = usePickableStaff({ onlySales: true });
+  const salesStaff = staffQ.data ?? [];
+  // Populate the Sales-location picker from the real warehouse list (not hardcoded demos).
   const stateWarehousesQ = useStateWarehouseMappings();
 
   useSetBreadcrumbs([
@@ -539,13 +544,17 @@ export function DeliveryOrderNewV2() {
 
   // ── Form state ─────────────────────────────────────────────────────
   const [customerName, setCustomerName] = useState("");
+  // The customer's CODE, captured by the debtor picker (like SO/SI). The name is
+  // the human label beside it; the code is what the DO now stores.
+  const [debtorCode, setDebtorCode] = useState("");
   const [customerSoRef, setCustomerSoRef] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [customerType, setCustomerType] = useState("");
   // Customer type from the live maintenance catalog (same as SO), not hardcoded.
   const customerTypeOpts = optionsOrFallback("customer_type", useSoDropdownOptions("customer_type").data);
-  const [salesperson, setSalesperson] = useState("");
+  // Salesperson stored by ID (a Code), not a free-text name — matches SO/SI.
+  const [salespersonId, setSalespersonId] = useState("");
   const [addr1, setAddr1] = useState("");
   const [addr2, setAddr2] = useState("");
   const [state, setState] = useState("");
@@ -657,6 +666,23 @@ export function DeliveryOrderNewV2() {
   // the company-scoped SO detail — otherwise a 2990-mirrored SO converted while
   // browsing as Houzs 404s and every customer field stays blank. Skipped in edit
   // mode — an existing DO prefills from itself, not from its parent SO.
+  // Customer-name typeahead → captures the debtor CODE on pick (SO's pattern).
+  const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  const debtorInputRef = useRef<HTMLInputElement>(null);
+  const debouncedCustomer = useDebouncedValue(customerName, 200);
+  const debtorQ = useDebtorSearch(
+    debouncedCustomer.trim().length >= 2 ? debouncedCustomer.trim() : "",
+  );
+  const debtorSuggestions: DebtorSuggestion[] = (debtorQ.data?.debtors ?? []).filter(
+    (d) => (d.debtor_name ?? "").toLowerCase() !== customerName.trim().toLowerCase(),
+  );
+  const applyDebtorSuggestion = (d: DebtorSuggestion) => {
+    setDebtorCode(d.debtor_code ?? "");
+    setCustomerName(d.debtor_name ?? "");
+    if (d.phone) setPhone(d.phone);
+    setShowDebtorSuggest(false);
+  };
+
   useEffect(() => {
     if (editId) return;
     const so = soSource.data?.source;
@@ -667,13 +693,12 @@ export function DeliveryOrderNewV2() {
        the banner says so). An empty input is the honest rendering of a field the
        source order genuinely does not carry. */
     setCustomerName(so.customerName ?? "");
+    setDebtorCode(so.debtorCode ?? "");
     setCustomerSoRef(so.customerSoRef ?? "");
     setPhone(so.phone ?? "");
     setEmail(so.email ?? "");
     setCustomerType(so.customerType ?? "");
-    // Resolve to a person's name — the SO carries salesperson as a raw UUID on
-    // some rows, which rendered verbatim in the field before.
-    setSalesperson(nameOf(so.agent, so.salespersonId, so.salesperson ?? ""));
+    setSalespersonId(so.salespersonId ?? "");
     setAddr1(so.address1 ?? "");
     setAddr2(so.address2 ?? "");
     setState(so.customerState ?? "");
@@ -685,24 +710,10 @@ export function DeliveryOrderNewV2() {
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
-  /* A RAW UUID MUST NEVER SIT IN THE SALESPERSON FIELD — it is not just ugly,
-     it gets SAVED: the create below writes this value to the DO's `agent`.
-     The prefill above resolves the name through nameOf, but it fires the moment
-     the SO source lands, which is often BEFORE the /staff roster does — and its
-     dep array deliberately omits `nameOf`, because re-running the whole prefill
-     would clobber edits the operator has already typed. So when the roster is
-     the slower of the two, nameOf falls through to its fallback and the field
-     keeps the SO's raw salesperson uuid (Nico, 2026-08-03, on 2990-SO-2606-034).
-     That is one way rows come to "fill agent with the raw id instead of leaving
-     it null" — the note useStaffLookup itself carries.
-     Re-resolve THIS ONE FIELD when the roster arrives, and only while it still
-     holds a uuid, so nothing the operator typed is touched. */
-  useEffect(() => {
-    const raw = salesperson.trim();
-    if (!UUID_RE.test(raw)) return;
-    const resolved = nameOf(null, raw, "");
-    if (resolved) setSalesperson(resolved);
-  }, [salesperson, nameOf]);
+  /* The old raw-UUID-in-the-salesperson-field hazard is gone: the field is now a
+     SELECT keyed on salespersonId, so a uuid can never leak into a name string
+     the way the free-text input allowed. `agent` (legacy name) is derived from
+     the picked staff on submit, never typed. */
 
   // Lines fallback — only when the line-level picker didn't hand a stash over.
   // Sourced from the SO's still-undeliverable remainder (cross-company, same as
@@ -742,11 +753,12 @@ export function DeliveryOrderNewV2() {
     if (!doo) return;
     setEditSeeded(true);
     setCustomerName(String(doo.debtor_name ?? ""));
+    setDebtorCode(String(doo.debtor_code ?? ""));
     setCustomerSoRef(String((doo.customer_so_no ?? doo.po_doc_no ?? doo.ref ?? "") as string));
     setPhone(String(doo.phone ?? ""));
     setEmail(String(doo.email ?? ""));
     setCustomerType(String((doo.customer_type ?? "") as string));
-    setSalesperson(nameOf(doo.agent as string, doo.salesperson_id as string, ""));
+    setSalespersonId(String(doo.salesperson_id ?? ""));
     setAddr1(String(doo.address1 ?? ""));
     setAddr2(String(doo.address2 ?? ""));
     setState(String(doo.customer_state ?? ""));
@@ -858,10 +870,13 @@ export function DeliveryOrderNewV2() {
   // ── Submit — create ────────────────────────────────────────────────
   const buildHeaderBody = () => ({
     debtorName: customerName,
+    debtorCode: debtorCode || undefined,
     phone,
     email,
     customerType,
-    agent: salesperson,
+    salespersonId: salespersonId || undefined,
+    // Legacy name column, derived from the picked staff — never typed.
+    agent: salesStaff.find((s) => s.id === salespersonId)?.name ?? "",
     address1: addr1,
     address2: addr2,
     customerState: state,
@@ -1152,10 +1167,28 @@ export function DeliveryOrderNewV2() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_340px]">
             <div>
               <Label text="Customer name" required />
-              <TextInput
+              <input
+                ref={debtorInputRef}
                 value={customerName}
-                onChange={setCustomerName}
+                onChange={(e) => { setCustomerName(e.target.value); setDebtorCode(""); setShowDebtorSuggest(true); }}
+                onFocus={() => setShowDebtorSuggest(true)}
+                onBlur={() => setTimeout(() => setShowDebtorSuggest(false), 150)}
                 placeholder="e.g. Lim Mei Hua"
+                className={cn(
+                  "h-10 w-full rounded-lg border border-border bg-surface px-3 text-[13.5px] text-ink outline-none transition-colors placeholder:text-ink-muted",
+                  "focus:border-primary focus:shadow-[0_0_0_3px_rgba(22,105,95,.12)]",
+                )}
+              />
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{
+                  list: "z-50 m-0 max-h-[260px] list-none overflow-auto rounded-lg border border-border bg-surface py-1 text-[13px] shadow-lg",
+                  item: "cursor-pointer px-3 py-1.5 text-ink hover:bg-canvas",
+                  code: "text-[11px] text-ink-muted",
+                }}
               />
             </div>
             <div>
@@ -1191,10 +1224,11 @@ export function DeliveryOrderNewV2() {
             </div>
             <div>
               <Label text="Salesperson" />
-              <TextInput
-                value={salesperson}
-                onChange={setSalesperson}
-                placeholder="Pick or type…"
+              <SelectInput
+                value={salespersonId}
+                onChange={setSalespersonId}
+                placeholder="—"
+                options={salesStaff.map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` }))}
               />
             </div>
           </div>
