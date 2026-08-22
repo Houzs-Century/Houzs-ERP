@@ -313,6 +313,17 @@ reads the `case` labels out of `Cancel()` and `Edit()` and asserts the ERP asks
 for exactly the same six document types. A type the service can handle and the
 ERP cannot reach now fails automatically, with nobody having to remember.
 
+**Anchor a pin on the DECLARATION, not on the registration line (2026-08-23).**
+The DO add-line case anchored on `deliveryOrdersMfg.post('/:id/items',` and read
+forward to the handler's own tail. When that handler became a named export
+(`addDeliveryOrderItemHandler`, so the outbound-category suite could drive it —
+`docs/bugs/0523-…`), the registration became a ONE-LINE call BELOW the body: the
+start anchor still matched, the end anchor was now behind it, and the pin failed
+on a handler whose `queueAcDoEdit` had not moved an inch. It is repointed at the
+`export const` line. Prefer the declaration for any handler that is, or might
+become, a named export — `patchDeliveryOrderStatusHandler` and
+`createDoFromSoLinesHandler` are already that shape in the same file.
+
 ### Two cases that need care
 
 **Create then edit before the drain runs.** `enqueueEdit` first looks for a
