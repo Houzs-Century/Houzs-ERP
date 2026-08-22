@@ -461,7 +461,7 @@ row that does not qualify never renders a stray separator.
 
 | list | transfer | status | cancel |
 |---|---|---|---|
-| Sales Order | Delivery Order | Confirm · In Production · Shipped · Invoiced · On Hold · Reopen | yes |
+| Sales Order | Delivery Order | Confirm · On Hold · Take Off Hold · Reopen | yes |
 | Delivery Order | Sales Invoice · Delivery Return | Confirm (DRAFT only) | yes |
 | Purchase Order | Goods Received | — | yes |
 | GRN | Purchase Invoice · Purchase Return | Confirm (post) | yes |
