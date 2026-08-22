@@ -154,6 +154,11 @@ The menu is built by `deliveryOrderRowMenu` in
 `MfgDeliveryOrdersListV2.tsx`. It offers five things, and every one of them
 calls a handler this page or its drawer already had:
 
+The list's own status vocabulary — the tab buckets, the pill tones, and
+`doCancellableStatus` — lives beside it in
+`frontend/src/pages/scm-v2/do-list-status.ts`, lifted out because the list file
+sits at its size ceiling.
+
 | entry | shown when | what it does |
 |---|---|---|
 | Open · Edit · Print | always | navigation only |
