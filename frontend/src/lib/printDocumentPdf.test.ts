@@ -87,6 +87,33 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(authedFetch.mock.calls[0]?.[0]).not.toContain("HUMAN-NUMBER-1");
   });
 
+  test("a Purchase Order resolves its ship-to warehouse into the printed DELIVER TO", async () => {
+    authedFetch.mockImplementation((p: string) =>
+      p.startsWith("/inventory/warehouses")
+        ? Promise.resolve({ warehouses: [{ id: "wh-1", code: "HQ", location: "1 Road, Ipoh" }] })
+        : Promise.resolve({ purchaseOrder: { purchase_location_id: "wh-1" }, items: [] }));
+    const b = await fetchPrintBundle(t("po", "HC-PO-2608-010", "po-uuid"));
+    // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only.
+    expect(b.header).toMatchObject({ purchase_location_name: "HQ", delivery_address: "1 Road, Ipoh" });
+  });
+
+  /* A failed warehouse read must NOT become "no warehouse" — that prints the
+     supplier's copy of the PO telling them to ship nowhere in particular. */
+  test("a failed warehouse read stops the Purchase Order print, it does not blank the address", async () => {
+    authedFetch.mockImplementation((p: string) =>
+      p.startsWith("/inventory/warehouses")
+        ? Promise.reject(new Error("Warehouses are unavailable right now."))
+        : Promise.resolve({ purchaseOrder: { purchase_location_id: "wh-1" }, items: [] }));
+    await expect(fetchPrintBundle(t("po", "HC-PO-2608-010", "po-uuid")))
+      .rejects.toThrow("Warehouses are unavailable right now.");
+  });
+
+  test("a Purchase Order with no ship-to warehouse reads no warehouse table at all", async () => {
+    authedFetch.mockResolvedValue({ purchaseOrder: { purchase_location_id: null }, items: [] });
+    await fetchPrintBundle(t("po", "HC-PO-2608-010", "po-uuid"));
+    expect(authedFetch.mock.calls.map((c) => c[0])).toEqual(["/mfg-purchase-orders/po-uuid"]);
+  });
+
   test("a Delivery Order's header carries loadScanId, which arms the print's QR", async () => {
     authedFetch.mockResolvedValue({ deliveryOrder: { do_number: "HC-DO-2608-003" }, items: [] });
     const b = await fetchPrintBundle(t("do", "HC-DO-2608-003", "do-uuid"));

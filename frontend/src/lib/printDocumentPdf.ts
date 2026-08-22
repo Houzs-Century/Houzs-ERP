@@ -92,9 +92,14 @@ async function purchaseOrderHeaderForPdf(po: Json): Promise<Json> {
   let location: string | null = null;
   const wid = po.purchase_location_id as string | null;
   if (wid) {
-    const wh = await authedFetch<{ warehouses?: Array<Json> }>("/inventory/warehouses?includeInactive=true")
-      .then((r) => (r.warehouses ?? []).find((w) => w.id === wid))
-      .catch(() => undefined);
+    /* A FAILED READ MUST NOT BECOME "no warehouse". This used to end in
+       `.catch(() => undefined)`, which prints the supplier's copy of the PO with
+       an EMPTY Deliver-to — telling the supplier to ship nowhere in particular
+       because a lookup blipped. It is the same shape as the Sales Order payments
+       read below, and `check-swallowed-reads.mjs` caught it. The error
+       propagates; the caller shows a sentence and NO document. */
+    const res = await authedFetch<{ warehouses?: Array<Json> }>("/inventory/warehouses?includeInactive=true");
+    const wh = (res.warehouses ?? []).find((w) => w.id === wid);
     code = (wh?.code as string | null) ?? null;
     location = (wh?.location as string | null) ?? null;
   }
