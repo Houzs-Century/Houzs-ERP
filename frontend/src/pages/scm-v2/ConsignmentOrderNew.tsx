@@ -32,6 +32,7 @@ import {
 } from '../../vendor/scm/lib/consignment-order-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
@@ -102,7 +103,7 @@ export const ConsignmentOrderNew = () => {
   // Houzs-flavoured: gate on the flat permission key `scm.so.attribute_other`
   // (the 2990 bridge always reports either super_admin or sales). Owner + IT
   // Admin pass via `*`; grant to other positions via Team > Positions.
-  const { can } = useHouzsAuth();
+  const { user: currentUser, can } = useHouzsAuth();
   const canChangeSalesperson = can('scm.so.attribute_other');
 
   const customerTypeOptsQ  = useSoDropdownOptions('customer_type');
@@ -340,19 +341,42 @@ export const ConsignmentOrderNew = () => {
     [staffQ.data],
   );
 
+  /* WHO IS OPENING THIS DOCUMENT, resolved to a REAL staff row.
+     The vendored 2990 bridge (`vendor/scm/lib/auth.ts:60`) returns
+     `{ id: null, name: null, staffCode: null, venueId: null }` for EVERY Houzs
+     user — it exists to answer isAdminLevel(role) for the MRP page and nothing
+     else. So the seed this replaces (`if (!currentStaff?.id) return`) could
+     never fire, and the Salesperson on a consignment order was never filled in.
+     The ladder is the shared `resolveSelfStaff`, the one SalesOrderNew and
+     MobileNewSO use: user_id first, then the bridge staff id, then email, then
+     name. `GET /staff/pickable` always carries the caller's own row whatever
+     narrowing it applied (staff.ts, the always-holds rule), so this resolves on
+     every account. */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      staffId: currentStaff?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
+
+  /* Seed once the roster resolves, and never stomp a choice already made. */
   useEffect(() => {
-    if (!currentStaff?.id) return;
-    // HOUZS VENDOR: the bridge's staff.id is `string | null`; coalesce to '' so
-    // the `string`-typed salespersonId state stays string (verbatim seed).
-    setSalespersonId((prev) => prev || currentStaff.id || '');
-  }, [currentStaff?.id]);
+    if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
+  }, [selfStaffMatch]);
 
   const selectedStaff = useMemo(
     () => staffList.find((s) => s.id === salespersonId) ?? null,
     [staffList, salespersonId],
   );
-  const resolvedVenueId: string | null =
-    selectedStaff?.venueId ?? currentStaff?.venueId ?? null;
+  /* `?? currentStaff?.venueId` used to sit in the middle here. The bridge's
+     venueId is null for every Houzs user, so it could never contribute; it is
+     dropped rather than left as a term that reads like a fallback and is not.
+     salespersonId is seeded above, so selectedStaff is the creator by default. */
+  const resolvedVenueId: string | null = selectedStaff?.venueId ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (!resolvedVenueId) return '';
     const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
@@ -682,15 +706,21 @@ export const ConsignmentOrderNew = () => {
                   disabled={!canChangeSalesperson}
                   /* A self-scoped author sees ONE option — themselves — exactly
                      as the native select pinned them before. */
+                  /* A self-scoped author sees ONE option — themselves — and it
+                     must be a REAL person. This used to fall back to the 2990
+                     bridge, whose name and staffCode are null for every Houzs
+                     user, so the single option rendered as the literal text
+                     "null (null)" with an empty value. selfStaffMatch carries a
+                     real id, name and code on every account. */
                   options={canChangeSalesperson
                     ? sortByText(staffList).map((s) => ({
                         value: s.id,
                         label: `${s.name} (${s.staffCode})`,
                       }))
-                    : currentStaff
+                    : selfStaffMatch
                       ? [{
-                          value: currentStaff.id ?? '',
-                          label: `${currentStaff.name} (${currentStaff.staffCode})`,
+                          value: selfStaffMatch.id,
+                          label: `${selfStaffMatch.name} (${selfStaffMatch.staffCode})`,
                         }]
                       : []}
                 />
