@@ -213,3 +213,18 @@ take an id at all.
 
 **It prints the SERVER's rows, not the count sheet's unsaved edits.** A count
 that has not been saved is not yet part of the record.
+**Two layout guards, both measured rather than looked at.** Nobody in this
+repo can open a PDF, so the two places where the sheet could collide with
+itself were found by re-reading the layout arithmetic and then PROVED by
+removing the guard and watching the test go red:
+
+- The **rail is page-guarded**, and this document needs it more than any other:
+  a full-warehouse take is one line per SKU, so its table routinely runs to the
+  bottom of the last page. Measured with the guard removed, a 120-line take puts
+  NET VARIANCE at **y=294.3** — past the footer at 290, on 297mm paper.
+- The Stock Transfer's TOTAL QTY carries the same guard. Its test SWEEPS 88-100
+  lines rather than pinning one count: with the guard removed the total only
+  lands in the danger zone at 93 and 94 lines (282.8 and 290.3), and from 95 up
+  autoTable breaks the page itself. A single fixture missed it and read as a
+  passing test — which is how that sweep came to exist.
+

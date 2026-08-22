@@ -140,6 +140,23 @@ sheet reads as an RM figure.
 `LineDraft` drops `variant_key`, and which bucket moved is exactly what a
 warehouse hand-off sheet has to say.
 
+**Three layout guards, all measured rather than looked at** — nobody in this
+repo can open a PDF, so each was found by re-reading the layout arithmetic and
+PROVED by removing it and watching a test go red:
+
+1. The **movement band's height follows the wrap.** A warehouse with no code
+   falls back to its NAME, which can take two lines at 13pt — a fixed step put
+   the second line through the row beneath it.
+2. The **signature labels are measured** with `getTextWidth` before they are
+   drawn. The two boxes sit half a page apart and `drawSignatureBoxes` does not
+   wrap, so a long label is DROPPED to the bare role rather than allowed to run
+   into its neighbour.
+3. **TOTAL QTY is page-guarded.** Its test sweeps 88-100 lines rather than
+   pinning one count: with the guard removed the total only lands on the footer
+   at 93 and 94 lines (y=282.8 and 290.3), and from 95 up autoTable breaks the
+   page itself. A single 90-line fixture missed it entirely and read as a
+   passing test — which is why the sweep replaced it.
+
 ## 5. Tests
 
 - `frontend/src/vendor/scm/lib/stock-movement-pdf.test.ts` — the printed sheet:
