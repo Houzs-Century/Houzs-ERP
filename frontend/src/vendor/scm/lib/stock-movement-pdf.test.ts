@@ -294,6 +294,36 @@ describe('Stock Transfer PDF', () => {
     expect(Math.max(...ys)).toBeLessThan(firstLineY);
   });
 
+  /* A table that runs to the bottom of the last page would otherwise put the
+     total past the paper, or on top of the footer at y=290.
+
+     SWEPT, not pinned to one line count. Measured with the guard removed, the
+     total only lands in the danger zone for a NARROW band of line counts —
+     282.8 at 93 lines and 290.3 at 94, and from 95 up autoTable breaks the page
+     itself and the total lands near the top. A single fixture is therefore
+     almost certain to miss the bug, and would read as a passing test forever.
+     The invariant is what is asserted, over every count in the band. */
+  test('however many lines it has, TOTAL QTY never lands on the footer', async () => {
+    for (let n = 88; n <= 100; n += 1) {
+      const { doc, draws } = await renderTransfer(
+        TRANSFER_HEADER,
+        Array.from({ length: n }, (_, i) => ({
+          item_code: `T${i}`, product_name: `Item ${i}`, qty: 1,
+          notes: null, variant_key: '',
+        })),
+      );
+      const totalY = yOf(draws, 'TOTAL QTY');
+      // A4 is 297mm and the footer sits at 290.
+      expect(totalY, `${n} lines`).toBeLessThan(288);
+      expect(doc.getNumberOfPages(), `${n} lines`).toBeGreaterThan(1);
+      expect(
+        draws.some((d) => d.text === String(n) && d.y === totalY),
+        `${n} lines`,
+      ).toBe(true);
+      vi.restoreAllMocks();
+    }
+  });
+
   test('a transfer with no lines still renders one page and a zero total', async () => {
     const { doc, draws } = await renderTransfer(TRANSFER_HEADER, []);
     expect(doc.getNumberOfPages()).toBe(1);
@@ -426,6 +456,25 @@ describe('Stock Take PDF', () => {
     expect(text).toContain('System');
     expect(text).toContain('Variance');
     expect(text).not.toContain('Blind count — system quantities and variances are not shown on this sheet.');
+  });
+
+  /* THE case for this document: a full-warehouse count is one line per SKU, so
+     its table routinely fills the last page — and the rail under it is the
+     reason anyone printed the sheet. */
+  test('a long count keeps its NET VARIANCE on the paper, above the footer', async () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({
+      item_code: `K${i}`, product_name: `Item ${i}`,
+      variant_key: '', variant_label: null,
+      system_qty: 5, counted_qty: 5, variance: 0, notes: null,
+    }));
+    const { doc, draws } = await renderTake(TAKE_HEADER, many);
+    expect(doc.getNumberOfPages()).toBeGreaterThan(1);
+
+    const netY = yOf(draws, 'NET VARIANCE');
+    expect(netY).toBeLessThan(290);
+    // Every page of this take's span still gets its footer.
+    const footers = draws.filter((d) => d.text === 'HC-STK-2608-004' && d.y === 290);
+    expect(footers.length).toBe(doc.getNumberOfPages());
   });
 
   test('a scope with a value spells the value out', async () => {

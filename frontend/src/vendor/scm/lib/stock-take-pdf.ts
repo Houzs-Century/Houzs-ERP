@@ -214,7 +214,17 @@ export async function renderStockTakeInto(
   const uncounted = lines.length - counted;
 
   const railX = pageW - margin - 70;
+  /* A PAGE GUARD, which this document needs more than any other in the system:
+     a full-warehouse take is one line per SKU, so its table routinely runs to
+     the bottom of the last page — and the rail below it is the reason anyone
+     printed the sheet. Without this it would be drawn past the paper, or on
+     top of the footer at y=290. The rail is at most five rows (~23mm), so it
+     needs to start above 275. `drawSignatureBoxes` carries its own guard. */
   let railY = lastY + 2;
+  if (railY + 23 > 275) {
+    doc.addPage();
+    railY = margin;
+  }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   doc.text('Counted', railX, railY);
   doc.text(`${counted} of ${lines.length}`, pageW - margin, railY, { align: 'right' });

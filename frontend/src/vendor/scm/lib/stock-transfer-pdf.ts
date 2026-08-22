@@ -215,11 +215,20 @@ export async function renderStockTransferInto(
   const lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
   /* The ONLY total this document has. Named TOTAL QTY rather than TOTAL so it
-     can never be mistaken for a value on a sheet that states none. */
+     can never be mistaken for a value on a sheet that states none.
+
+     Page-guarded for the same reason the Stock Take's rail is: a table that
+     runs to the bottom of the last page would otherwise put this line past the
+     paper, or on top of the footer at y=290. */
   const totalsX = pageW - margin - 70;
+  let totalY = lastY + 2;
+  if (totalY > 275) {
+    doc.addPage();
+    totalY = margin;
+  }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-  doc.text('TOTAL QTY', totalsX, lastY + 2);
-  doc.text(String(totalQty), pageW - margin, lastY + 2, { align: 'right' });
+  doc.text('TOTAL QTY', totalsX, totalY);
+  doc.text(String(totalQty), pageW - margin, totalY, { align: 'right' });
 
   /* Naming the two warehouses on the signature boxes is what makes this a
      hand-off sheet rather than a form — but drawSignatureBoxes does not wrap,
@@ -235,7 +244,9 @@ export async function renderStockTransferInto(
     return doc.getTextWidth(full) <= sigMaxW ? full : role;
   };
   const ty = drawSignatureBoxes(
-    doc, lastY + 12,
+    /* From the total's OWN y, not from lastY — if the total moved to a new
+       page, the signatures follow it there. */
+    doc, totalY + 10,
     sigLabel('Released By', fromLabel),
     sigLabel('Received By', toLabel),
   );
