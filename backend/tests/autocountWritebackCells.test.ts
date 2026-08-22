@@ -117,7 +117,11 @@ describe('the four downstream document types queue an edit on every line and hea
      neighbour's block. */
   test('DO — header PATCH and line add / edit / delete', () => {
     expect(between(DO, "deliveryOrdersMfg.patch('/:id',", 'return c.json({\n    ok: true,')).toContain('queueAcDoEdit(c, id)');
-    expect(between(DO, "deliveryOrdersMfg.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
+    /* Anchored on the DECLARATION, not the registration: the add-line handler
+       became a named export (2026-08-23) so the outbound-category suite could
+       drive it, which moved `deliveryOrdersMfg.post('/:id/items',` to a one-line
+       registration BELOW the body. The pin still spans the same handler. */
+    expect(between(DO, 'export const addDeliveryOrderItemHandler', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });
