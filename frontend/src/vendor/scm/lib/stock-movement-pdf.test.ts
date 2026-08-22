@@ -85,6 +85,27 @@ const readFinalY = (doc: JsPdf): number | undefined =>
    these two sheets looks like a value. */
 const MONEY = /(RM|MYR)\s*[\d,]+(\.\d{2})?|\b\d{1,3}(,\d{3})*\.\d{2}\b/;
 
+/* THE MATCHER SELF-TESTS, because the two assertions that use it are
+   ASSERTIONS OF ABSENCE — a regex that had stopped matching anything would
+   report both documents clean forever and nobody would know. CLAUDE.md: "a
+   verdict computed over nothing must never read as a pass." The positives are
+   what `fmtMoneySen` actually emits; the negatives are what these two sheets
+   legitimately draw and must not be mistaken for a value. */
+describe('the money matcher these tests depend on', () => {
+  test('it matches what a money document draws', () => {
+    for (const v of ['RM 1,200.00', 'RM1,200.00', 'MYR 12.00', '1,200.00', '0.00', '12.50']) {
+      expect(MONEY.test(v), v).toBe(true);
+    }
+  });
+
+  test('it does not match what a stock document legitimately draws', () => {
+    for (const v of ['20/08/2026', 'TOTAL QTY', '10', '-1', '+2', '2 of 3',
+      'HC-ST-2608-001', 'WH-BLK', 'Page 1 of 1', 'fabriccode bf-16 · gap 16']) {
+      expect(MONEY.test(v), v).toBe(false);
+    }
+  });
+});
+
 /* Ordinary ASCII everywhere: no CJK font fetch, no logo fetch, so these tests
    are about geometry and wording only and touch no network. */
 const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
