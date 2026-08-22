@@ -1,6 +1,7 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
 import { Hono } from 'hono';
+import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -314,14 +315,6 @@ async function migratedRefusalForGrnItems(
    source of truth for BOTH the status-count queries and the list `status`
    filter. All five buckets are 1:1 today, but the FE sends the BUCKET NAME as
    `status`; a raw DB status still works (backward-compatible fallback). */
-const PI_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  posted: ['POSTED'],
-  partial: ['PARTIALLY_PAID'],
-  paid: ['PAID'],
-  cancelled: ['CANCELLED'],
-  on_hold: ['ON_HOLD'],
-};
 
 
 purchaseInvoices.get('/', async (c) => {

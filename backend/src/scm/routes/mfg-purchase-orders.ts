@@ -17,6 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
@@ -332,15 +333,6 @@ const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'REC
    Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
    than replacing them, so the counts across the pills no longer add up to
    `all`; that's the point of a roll-up and why it sits right after All. */
-const PO_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  outstanding: ['SUBMITTED', 'PARTIALLY_RECEIVED'],
-  open: ['SUBMITTED'],
-  partial: ['PARTIALLY_RECEIVED'],
-  received: ['RECEIVED'],
-  cancelled: ['CANCELLED'],
-  on_hold: ['ON_HOLD'],
-};
 
 /* ── PO/MRP source-SO gate (mirror of the DO create-gate) ────────────────────
    Owner ruling: PO and MRP are built ONLY from a CONFIRMED Sales Order. A PO

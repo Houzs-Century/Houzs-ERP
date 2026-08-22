@@ -95,10 +95,13 @@ const SRC_ROOT = path.join(backendRoot, "src");
    they are holes, and the honest statement is "every LITERAL declaration", not
    "every map". */
 const BUCKET_OWNERS = {
-  "src/scm/routes/mfg-purchase-orders.ts": "po_status",
-  "src/scm/routes/purchase-invoices.ts": "purchase_invoice_status",
+  /* The purchase-side maps MOVED 2026-08-21 out of their routers, all three of
+     which are over their file-size ceiling, when ON_HOLD was added. Registered
+     at their new addresses; the routes import them. */
+  "src/scm/lib/po-status-buckets.ts": "po_status",
+  "src/scm/lib/pi-status-buckets.ts": "purchase_invoice_status",
   "src/scm/routes/sales-invoices.ts": "sales_invoice_status",
-  "src/scm/routes/grns.ts": "grn_status",
+  "src/scm/lib/grn-status-buckets.ts": "grn_status",
   /* MOVED 2026-08-21 out of routes/delivery-orders-mfg.ts, which is 225 lines
      over its size ceiling, when the four buckets became one-per-status. The map
      is registered at its new address; the route imports it. */
