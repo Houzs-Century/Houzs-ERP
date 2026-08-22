@@ -209,6 +209,12 @@ export function StockTakesListV2() {
   const goNew = () => navigate("/scm/stock-takes/new");
   const goInventory = () => navigate("/scm/inventory");
   const goDetail = (r: StockTakeRow) => navigate(`/scm/stock-takes/${r.id}`);
+  /* Print opens the detail page's preview via ?print=1 — the same contract the
+     other documents' row menus use, and it works because the detail page now
+     consumes the param (useOpenPrintPreviewFromUrl). It could not be rendered
+     from a list row in any case: the row carries a line COUNT and a variance
+     TOTAL, never the count sheet itself. */
+  const goPrint = (r: StockTakeRow) => navigate(`/scm/stock-takes/${r.id}?print=1`);
   const doCancel = (r: StockTakeRow) => {
     if (window.confirm(`Cancel take ${r.take_no}?`)) {
       cancelTake.mutate(r.id);
@@ -223,6 +229,7 @@ export function StockTakesListV2() {
      the variance about to be booked, and the row carries no such number. */
   const takeContextMenu = stockTakeRowMenu<StockTakeRow>({
     open: goDetail,
+    print: goPrint,
     cancel: doCancel,
     canCancel: (r) => r.status.toUpperCase() === "OPEN",
   });

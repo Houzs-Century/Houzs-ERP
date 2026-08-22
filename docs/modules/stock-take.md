@@ -37,13 +37,17 @@ ADJUSTMENT movements) → CANCELLED (cancel, or reverse-of-posted).
 
 ### The desktop list has a right-click menu (2026-08-22)
 
-**Open**, then **Cancel Stock Take** alone at the bottom in red — and nothing
-else. `stockTakeRowMenu` in `frontend/src/pages/scm-v2/row-menus.ts`, shape per
-`document-conversion.md` §8a.
+**Open** and **Print**, then **Cancel Stock Take** alone at the bottom in red —
+and nothing else. `stockTakeRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts`, shape per `document-conversion.md`
+§8a.
 
-**No Edit and no Print** because there is nothing to call: counting happens
-in-place on the detail sheet, there is no `?edit=1` route, and this document has
-never had a print handler on either surface.
+**No Edit**, because there is nothing to call: counting happens in-place on the
+detail sheet and there is no `?edit=1` route.
+
+> **CORRECTED 2026-08-22.** This section said *"No Edit and no Print … this
+> document has never had a print handler on either surface"*. The Edit half
+> stands; the Print half was the gap, and it is closed — see §7 below.
 
 **No Confirm, and this one IS a judgement.** Posting writes one ADJUSTMENT
 movement per non-zero-variance line (§4), and `StockTakeDetail.tsx`'s
@@ -141,6 +145,9 @@ Baseline tables from the 2990 dump; grown by:
   bare five-digit number — the humanApiError filter).
 - `frontend/src/pages/scm-v2/stock-take-grouping.test.ts` — the model fold
   (order, blind-null totals, counted math).
+- `frontend/src/vendor/scm/lib/stock-movement-pdf.test.ts` — the printed sheet
+  (§7): what is drawn and where, the net variance below the lines, the blind
+  sheet's dropped columns, and the absence of anything that reads as money.
 - `backend/tests/companyScopeHardening.test.ts` — the cross-company post
   refusals (pre-date this phase; still green).
 
@@ -165,3 +172,44 @@ the route can `.eq('company_id', <active>)` it". The read is scoped now as well.
 
 A test fixture that drives create must therefore carry a `warehouses` row in the
 active company — see `backend/tests/stockTakeAccountable.test.ts`.
+
+## 7. The count sheet prints (2026-08-22)
+
+**Owner:** 「right click全部也要有可以print SI DO 之类的」 and, asked whether he
+meant this document or the ones made from it, 「不是就是print PDF 啊 print
+documentation」. Until this date the Stock Take and the Stock Transfer were the
+only two documents in the system that could not be printed at all.
+
+| Where | What |
+|-------|------|
+| Generator | `frontend/src/vendor/scm/lib/stock-take-pdf.ts` — `renderStockTakeInto` (draws into a shared doc) + `generateStockTakePdf` (one take → one file / print job / preview tab). |
+| Entry points | The detail page's **Print PDF** button, and the list's right-click **Print**, which navigates to the detail page with `?print=1`. |
+| Dialog | `PrintPreviewModal` — every printable document opens it (owner 2026-08-06: 「全部打印的时候都需要有这个」). **Never `window.print()`**: `index.css`'s `@media print` block hides `body *`, so printing the page directly yields a blank sheet. |
+
+**What it renders**, and nothing it does not: the active company's letterhead
+(via `pdf-common.ts`), the take no, the date, the status, the warehouse, the
+scope, the assignee, the notes, the posted / cancelled dates, then one row per
+line — item code, description, variant, **system**, **counted**, **variance**,
+notes — and a rail carrying counted-of-total, not-counted, variance up, variance
+down and **NET VARIANCE**.
+
+**No money, and it is asserted.** This route carries no value — cost enters a
+take only inside `resolveForcedUnitCostSen` at post time, to decide whether a
+positive variance may be booked (§4), and it is never a figure the document
+states. `stock-movement-pdf.test.ts` fails if anything drawn on the sheet reads
+as an RM figure.
+
+**A BLIND take prints as a count sheet.** The generator gets no `blind`
+parameter: while a blind take is OPEN the server has already stripped
+`system_qty` and `variance` for a non-supervising viewer (§3), so the sheet
+drops both columns and the variance rail and prints the reason. A caller-passed
+flag could go missing and print a rail of dashes that reads as "no variance"; an
+absent field cannot.
+
+**The assignee is resolved by the PAGE, never by the generator.**
+`assignee_staff_id` is a `scm.staff` uuid, and the standing rule is that a uuid
+never reaches a person, so the PDF lib accepts `assignee_name` and has no way to
+take an id at all.
+
+**It prints the SERVER's rows, not the count sheet's unsaved edits.** A count
+that has not been saved is not yet part of the record.

@@ -148,19 +148,22 @@ describe("deliveryReturnRowMenu", () => {
 const stMenu = () =>
   stockTransferRowMenu<Row>({
     open: noop,
+    print: noop,
     cancel: noop,
     canCancel: (r) => (r.status ?? "").toUpperCase() === "POSTED",
   });
 
 describe("stockTransferRowMenu", () => {
-  /* No Edit and no Print, because there is nothing to call: the detail page is
-     read-only and neither surface has ever had a print handler. */
-  test("Open and Cancel only", () => {
-    expect(labels(stMenu()({ status: "POSTED" }))).toEqual(["Open", "—", "Cancel Stock Transfer"]);
+  /* Still no Edit — the detail page is read-only post-0078, so there is no
+     `?edit=1` route to point at. Print landed 2026-08-22 with the generator
+     that gave it something to call (`vendor/scm/lib/stock-transfer-pdf.ts`). */
+  test("Open, Print and Cancel", () => {
+    expect(labels(stMenu()({ status: "POSTED" })))
+      .toEqual(["Open", "Print", "—", "Cancel Stock Transfer"]);
   });
 
-  test("a cancelled transfer keeps Open and loses Cancel, with no stray divider", () => {
-    expect(labels(stMenu()({ status: "CANCELLED" }))).toEqual(["Open"]);
+  test("a cancelled transfer keeps Open and Print and loses Cancel, with no stray divider", () => {
+    expect(labels(stMenu()({ status: "CANCELLED" }))).toEqual(["Open", "Print"]);
   });
 });
 
@@ -169,19 +172,29 @@ describe("stockTransferRowMenu", () => {
 const stkMenu = () =>
   stockTakeRowMenu<Row>({
     open: noop,
+    print: noop,
     cancel: noop,
     canCancel: (r) => (r.status ?? "").toUpperCase() === "OPEN",
   });
 
 describe("stockTakeRowMenu", () => {
   test("an OPEN take can be cancelled — it has written no movement yet", () => {
-    expect(labels(stkMenu()({ status: "OPEN" }))).toEqual(["Open", "—", "Cancel Stock Take"]);
+    expect(labels(stkMenu()({ status: "OPEN" })))
+      .toEqual(["Open", "Print", "—", "Cancel Stock Take"]);
   });
 
   /* Undoing a POSTED take is a different route (/reverse) with its own words,
      and it stays on the detail page. */
   test("a POSTED take is not offered Cancel", () => {
-    expect(labels(stkMenu()({ status: "POSTED" }))).toEqual(["Open"]);
+    expect(labels(stkMenu()({ status: "POSTED" }))).toEqual(["Open", "Print"]);
+  });
+
+  /* Print reads; it never writes. There is no state of this document in which
+     a person may not have it on paper — including a cancelled one. */
+  test("Print is offered on every status, cancelled included", () => {
+    for (const status of ["OPEN", "POSTED", "CANCELLED"]) {
+      expect(labels(stkMenu()({ status })), status).toContain("Print");
+    }
   });
 
   /* Posting books an ADJUSTMENT per variance line, and the detail page's
@@ -240,6 +253,20 @@ describe("every one of the five menus, on every status that document has", () =>
         expect(items.length, `${name} / ${status}`).toBeGreaterThan(0);
         expect(items[0]?.divider, `${name} / ${status}`).toBeFalsy();
         expect(items[items.length - 1]?.divider, `${name} / ${status}`).toBeFalsy();
+      }
+    }
+  });
+
+  /* THE OWNER'S 2026-08-22 ASK, as a ratchet: 「right click全部也要有可以print
+     SI DO 之类的」 — and, asked whether he meant this document or the ones made
+     from it, 「不是就是print PDF 啊 print documentation」. Every document in the
+     system can be printed now; the Stock Transfer and the Stock Take were the
+     last two that could not. Asserted over EVERY status of every list so a
+     later predicate cannot quietly take Print away from one state. */
+  test("every list offers Print, on every status that document has", () => {
+    for (const { name, menu, statuses } of EVERY_MENU) {
+      for (const status of statuses) {
+        expect(labels(menu({ status })), `${name} / ${status}`).toContain("Print");
       }
     }
   });

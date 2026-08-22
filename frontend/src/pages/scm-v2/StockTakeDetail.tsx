@@ -28,7 +28,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -51,6 +51,9 @@ import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -197,6 +200,45 @@ export const StockTakeDetail = () => {
       totalLines: lines.length,
     };
   }, [lines]);
+
+  /* ── Print (owner 2026-08-22: 「不是就是print PDF 啊 print documentation」) ──
+     This document had no print handler at all until now, on any surface.
+
+     The SERVER rows, not the local drafts: a count that has not been saved is
+     not yet part of the record, and a printed sheet that carries typed-but-
+     unsaved numbers is a document nobody can reconcile against the take.
+
+     BLIND NEEDS NO SPECIAL CASE HERE. The server has already stripped
+     `system_qty` / `variance` from this payload for a non-supervising viewer,
+     so the generator has nothing to leak and prints a count sheet instead.
+
+     "Print now" goes through the PDF (action: 'print') and never
+     window.print(): index.css's @media print block hides `body *`, so printing
+     this page directly yields a blank sheet. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    const d = detail.data;
+    if (!d) return;
+    return import('../../vendor/scm/lib/stock-take-pdf')
+      .then(({ generateStockTakePdf }) => generateStockTakePdf(
+        {
+          ...d.take,
+          /* Resolved here, never inside the PDF lib — `assignee_staff_id` is a
+             uuid and a uuid never reaches a person. */
+          assignee_name: d.take.assignee_staff_id ? actorNameOf(d.take.assignee_staff_id) : null,
+        },
+        d.lines,
+        { action },
+      ))
+      .catch((e) => notify({
+        title: 'PDF generation failed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  /* The list's right-click Print navigates here with ?print=1 — same contract
+     every other document's row menu uses. */
+  useOpenPrintPreviewFromUrl(print.openPreview, !!detail.data);
 
   // ── Local edit helpers ───────────────────────────────────────────────
   const setLine = (id: string, patch: Partial<LineDraft>) => {
@@ -393,6 +435,12 @@ export const StockTakeDetail = () => {
                   someone needs to see who changed what. */}
               <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
                 <History {...ICON} /> History
+              </Button>
+              {/* Unconditional, like History. An OPEN take prints as the count
+                  sheet somebody walks the aisles with; a POSTED one prints as
+                  the variance record. Both are wanted. */}
+              <Button variant="ghost" size="md" onClick={print.openPreview}>
+                <Printer {...ICON} /> Print PDF
               </Button>
               {isDraft && (
                 <>
@@ -819,6 +867,26 @@ export const StockTakeDetail = () => {
           onClose={closeHistory}
         />
       )}
+
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Stock Take"
+        docNo={t.take_no}
+        rows={[
+          { label: 'Warehouse', value: warehouseLabel(t.warehouse) ?? t.warehouse_id },
+          { label: 'Scope', value: scopeLabel(t.scope_type, t.scope_value) },
+          { label: 'Date', value: fmtDateOrDash(t.take_date) },
+          { label: 'Lines', value: `${totals.counted} counted of ${totals.totalLines}` },
+          /* The card says what the sheet will say. On a blind take the
+             variance is exactly the number the counter must not see, so it
+             names the blind instead of printing a figure. */
+          blindActive
+            ? { label: 'Variance', value: 'Hidden — blind count' }
+            : { label: 'Net variance', value: `${totals.varianceNet > 0 ? '+' : ''}${fmtQty(totals.varianceNet)}` },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 };

@@ -24,6 +24,7 @@ import { useInventoryBuckets } from '../../vendor/scm/lib/stock-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { variantKeyLabel } from '../../vendor/scm/lib/variant-key-label';
 import {
   useCreateStockTransfer,
   type StockTransferItemInput,
@@ -52,10 +53,15 @@ const todayISO = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-// Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
-// bucket label for the picker. '' = the unclassified / plain-SKU bucket.
-const humanizeVariantKey = (k: string): string =>
-  k ? k.split('|').map((s) => s.replace('=', ' ')).join(' · ') : '(unclassified)';
+/* Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
+   bucket label for the picker. '' = the unclassified / plain-SKU bucket, which
+   is a REAL pickable value, so it gets a word rather than a blank.
+
+   The rule itself moved to `vendor/scm/lib/variant-key-label.ts` on 2026-08-22:
+   the Stock Transfer and Stock Take PDFs print the same key, and a second
+   hand-written copy of a display rule is the drift `warehouse-label.ts` already
+   documents the cost of. */
+const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassified)');
 
 // Sentinel for the "no bucket picked yet" option — distinct from '' (which is a
 // real, pickable unclassified bucket).
