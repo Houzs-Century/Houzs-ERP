@@ -3,6 +3,8 @@
 
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -171,15 +173,7 @@ async function recordGrnCreate(
   });
 }
 
-/* A source PO can only be received against while it is still open for receipt —
-   SUBMITTED (nothing received yet) or PARTIALLY_RECEIVED (some received). A
-   DRAFT / CANCELLED / already-RECEIVED PO must NOT accept a GRN (it would write
-   stock IN against a PO that isn't live). This is the SINGLE predicate the GRN
-   create paths share; `POST /from-po-items` already gated on it inline and the
-   other PO-linked create paths (`POST /`, `POST /from-pos`) now reuse it. */
-const RECEIVABLE_PO_STATUSES = ['SUBMITTED', 'PARTIALLY_RECEIVED'] as const;
-const isReceivablePoStatus = (status: string | null | undefined): boolean =>
-  (RECEIVABLE_PO_STATUSES as readonly string[]).includes(status ?? '');
+/* THE RECEIVABLE-PO PREDICATE MOVED to lib/source-document-gates.ts (mig 0324), where it learned to read the hold MARKER. */
 
 /* Resolve the receive-into warehouse for a GRN WITHOUT ever silently falling
    back to the default (first, code-sorted = China/transit) warehouse. Returns
@@ -678,7 +672,7 @@ const HEADER =
   /* Migration 0101 — GRN ↔ PO money parity; 0082 — exchange_rate (FX→MYR cost) +
      allocation_method (landed-cost "平摊" basis). */
   'currency, exchange_rate, allocation_method, subtotal_sen, tax_sen, total_sen, ' +
-  'posted_at, created_at, created_by, updated_at';
+  'posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // mig 0324's marker, BESIDE the status pill
 const ITEM =
   'id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
   'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
@@ -921,8 +915,9 @@ export async function recomputePoReceived(
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
       // Checked for the same reason as the received_qty writes above: unchecked,
       // the PO stays RECEIVED (or SUBMITTED) under a clean-looking recount.
-      /* ON_HOLD joins CANCELLED (2026-08-21): this recount re-derives a PO's
-         status, so without it the next GRN post would erase a hold by itself. */
+      /* NO `on_hold` TERM, DELIBERATELY — a WRITER re-deriving a status from a
+         fact can no longer erase a hold (mig 0324); the literal stays for a
+         legacy row. docs/modules/purchase-order.md. */
       const { error: poErr } = await sb.from('purchase_orders')
         .update(patch).eq('id', poId).not('status', 'in', '("CANCELLED","ON_HOLD")');
       if (poErr) {
@@ -1075,8 +1070,10 @@ grns.get('/', async (c) => {
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise treat it as a raw DB status. */
     const status = c.req.query('status');
+    /* The `on_hold` tab reads the MARKER (mig 0324), not the status. */
     if (status && status !== 'all') {
-      if (GRN_STATUS_BUCKETS[status]) q = q.in('status', GRN_STATUS_BUCKETS[status]);
+      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      else if (GRN_STATUS_BUCKETS[status]) q = q.in('status', GRN_STATUS_BUCKETS[status]);
       else q = q.eq('status', status);
     }
     const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
@@ -1108,7 +1105,7 @@ grns.get('/', async (c) => {
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
-      countBase().in('status', GRN_STATUS_BUCKETS.on_hold),
+      countBase().or(HELD_OR_TERM),
     ]));
     const res = await q;
     data = res.data;
@@ -1233,13 +1230,13 @@ grns.get('/outstanding-po-items', async (c) => {
      are handed IN — `scopeToCompany` because items carry company_id since mig
      0083 and it must fail closed when the company context cannot resolve (owner
      2026-08-10 "为什么 houzs 的数据进到去 2990": this picker used to return every
-     company's lines), and `isReceivablePoStatus` because it is the same predicate
+     company's lines), and `isReceivablePo` because it is the same predicate
      the create paths gate on, so the picker cannot offer what they refuse. */
   const loaded = await loadOutstandingPoLines({
     sb,
     scopeQuery: (q) => scopeToCompany(q, c),
     requestedPoIds,
-    isReceivable: isReceivablePoStatus,
+    isReceivable: isReceivablePo,
   });
   // `!== null`, not truthiness: an empty-string message is falsy, so TS cannot
   // discriminate the union on `if (loaded.error)` and neither can a reader.
@@ -1494,17 +1491,18 @@ grns.post('/', async (c) => {
       const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
       if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
-        .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
+        .select('id, qty, received_qty, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
          received while its source PO is receivable. Only `/from-po-items`
          enforced this; the manual New-GRN form (this path) could slip PO-linked
          lines onto a DRAFT / CANCELLED / already-RECEIVED PO and write stock IN.
          Manual (no-PO) lines never reach here — they carry no
          purchase_order_item_id, so the intentional manual-GRN flow is unaffected. */
-      for (const r of (poItems ?? []) as Array<{ id: string; po: { status: string } | Array<{ status: string }> | null }>) {
-        const st = Array.isArray(r.po) ? r.po[0]?.status : r.po?.status;
-        if (!isReceivablePoStatus(st)) {
-          return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: r.id, status: st ?? null }, 409);
+      type EPo = { status: string; on_hold: boolean | null };
+      for (const r of (poItems ?? []) as Array<{ id: string; po: EPo | EPo[] | null }>) {
+        const po = Array.isArray(r.po) ? (r.po[0] ?? null) : r.po;
+        if (!isReceivablePo(po)) {
+          return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: r.id, status: po?.status ?? null, onHold: isDocumentHeld(po) }, 409);
         }
       }
       const remByPoItem = new Map<string, number>(
@@ -1764,19 +1762,19 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      switch company" — naming the other company needs an UNSCOPED read this
      handler otherwise never makes. Same trade as /:id/convert-from-so. */
   const { data: pos, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
-    .select('id, po_number, supplier_id, status, currency')
+    .select('id, po_number, supplier_id, status, on_hold, currency')
     .in('id', poIds), c);
   if (poErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: poErr.message }, 500);
-  const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; currency?: string | null }>;
+  const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; on_hold: boolean | null; currency?: string | null }>;
   if (poList.length === 0) return refuseWithoutWriting(c, { error: 'pos_not_found' }, 404);
 
   /* Receivable-PO guard (audit gap #5) — a batch-convert may only receive POs
      that are still open for receipt. Without this a DRAFT / CANCELLED /
      already-RECEIVED PO could be converted to a GRN and write stock IN. Mirrors
      the 409 `/from-po-items` already enforces per pick. */
-  const notReceivable = poList.find((p) => !isReceivablePoStatus(p.status));
+  const notReceivable = poList.find((p) => !isReceivablePo(p));
   if (notReceivable) {
-    return refuseWithoutWriting(c, { error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status }, 409);
+    return refuseWithoutWriting(c, { error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status, onHold: isDocumentHeld(notReceivable) }, 409);
   }
 
   const supplierIds = new Set(poList.map((p) => p.supplier_id));
@@ -2116,7 +2114,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
       special_order_price_sen, discount_sen, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, purchase_location_id, currency )
+      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, purchase_location_id, currency )
     `)
     .in('id', ids), c);
   if (itemsErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: itemsErr.message }, 500);
@@ -2150,8 +2148,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
     if (p.qty > remaining) {
       return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', poItemId: p.poItemId, requested: p.qty, remaining }, 409);
     }
-    if (!isReceivablePoStatus(row.po.status)) {
-      return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status }, 409);
+    if (!isReceivablePo(row.po)) {
+      return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status, onHold: isDocumentHeld(row.po) }, 409);
     }
   }
 
@@ -2388,6 +2386,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   return c.json({ created, total: created.length }, 201);
 };
 grns.post('/from-po-items', createGrnsFromPoItemsHandler);
+
+mountHoldRoute(grns, 'grn'); // the mig-0324 MARKER, never `status` — routes/document-hold-routes.ts
 
 /* ── PATCH /:id/cancel — cancel a GRN + reverse its receipt ─────────────────
    Commander 2026-05-29 — the GRN module is a Confirmed-clone of the PO module,

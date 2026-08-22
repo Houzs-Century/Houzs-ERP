@@ -28,7 +28,13 @@ export const SO_LIST_COLUMNS = [
      storage. The COLUMN is still declared on the synthetic table below, because
      the real table still has it until the follow-up drop; what moved is the
      list CONTRACT this benchmark is asserting against. */
-  "created_at", "created_by", "updated_at", "paid_total_sen",
+  "created_at", "created_by", "updated_at",
+  /* Migration 0324 — the HOLD MARKER. It rides in the route's HEADER via the
+     shared HOLD_COLUMNS constant, so it is part of the list projection the
+     benchmark has to issue; scaleRouteDrift.test.mjs resolves that constant out
+     of scm/lib/document-hold.ts and fails this list if the two drift. */
+  "on_hold", "hold_reason", "held_at", "held_by",
+  "paid_total_sen",
   "balance_sen_live", "company_id",
 ].join(", ");
 

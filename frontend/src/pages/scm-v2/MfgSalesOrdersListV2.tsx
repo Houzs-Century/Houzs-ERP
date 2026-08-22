@@ -67,6 +67,9 @@ import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
+import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
+import { holdPrompt } from "./use-hold-action";
+import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -91,7 +94,7 @@ import { formatPhone } from "@2990s/shared/phone";
 // .tsx) has 60+ fields; we pluck what the redesign shows. Everything is
 // typed loosely as any-safe (nullable) because the backend legacy fields.
 
-type SoRow = {
+type SoRow = HoldFields & {
   doc_no: string;
   so_date: string;
   debtor_name: string;
@@ -350,7 +353,7 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.doc_no}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {r.debtor_name || "—"}
@@ -661,7 +664,7 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (soCanRaiseDo(row.status)) {
+                if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
                   /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
@@ -1032,6 +1035,7 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
@@ -1180,10 +1184,17 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
+     wording lives in ./use-hold-action; this screen runs it through askConfirm
+     because every other action here does. */
+  const setSoHold = async (r: SoRow, onHold: boolean) => {
+    if (!(await askConfirm(holdPrompt(r.doc_no, onHold)))) return;
+    setHold.mutate({ key: r.doc_no, onHold });
+  };
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, setHold: setSoHold, cancel: doCancelSo, canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -1427,11 +1438,8 @@ export function MfgSalesOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {

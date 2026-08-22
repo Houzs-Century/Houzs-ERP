@@ -50,6 +50,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { purchaseReturnRowMenu } from "./row-menus";
 
 type PrRow = {
   id: string;
@@ -646,6 +647,25 @@ export function PurchaseReturnsListV2() {
     }
   };
 
+  /* Right-click (owner 2026-08-22). Every entry is a handler the drawer above
+     already calls; nothing new happens here.
+
+     Cancel is offered WIDER than the drawer shows it. The drawer's action slot
+     is an if/else chain, so a DRAFT renders Post and a POSTED renders Complete
+     and neither ever renders Cancel — yet the server accepts a cancel from
+     both (`cancelPurchaseReturnHandler` refuses only COMPLETED and an already
+     cancelled return). The menu is a separate group, so it can offer what the
+     server actually allows. */
+  const prContextMenu = purchaseReturnRowMenu<PrRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: goPrint,
+    confirm: doPost,
+    cancel: doCancel,
+    canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
+    canCancel: (r) => !["COMPLETED", "CANCELLED"].includes((r.status || "").toUpperCase()),
+  });
+
   const columns: Column<PrRow>[] = [
     {
       key: "return_number",
@@ -835,6 +855,7 @@ export function PurchaseReturnsListV2() {
                 columns={columns}
                 getRowKey={(r) => r.id}
                 onRowClick={(r) => setSelected(r)}
+                contextMenu={prContextMenu}
                 expandable={{
                   render: (r) => <PrLinesExpansion id={r.id} />,
                   rowKey: (r) => r.id,

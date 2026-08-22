@@ -142,6 +142,54 @@ Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and
 without `allowSales` for new / from-so.
 
+### The list's right-click menu (owner ruling, 2026-08-22)
+
+His words, looking at this list's menu: 「DO 这一边没有问题，可是为什么没有
+Cancel 呢？By right 每一个 Transaction Record 应该都可以右键（Right click）Move
+to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and 「我的 DO 也应该有右键
+Transfer to Delivery Return，对吧？」
+
+The menu is built by `deliveryOrderRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts` and wired in
+`MfgDeliveryOrdersListV2.tsx`. It offers five things, and every one of them
+calls a handler this page or its drawer already had:
+
+The list's own status vocabulary — the tab buckets, the pill tones, and
+`doCancellableStatus` — lives beside it in
+`frontend/src/pages/scm-v2/do-list-status.ts`, lifted out because the list file
+sits at its size ceiling.
+
+| entry | shown when | what it does |
+|---|---|---|
+| Open · Edit · Print | always | navigation only |
+| Transfer to Sales Invoice | `doCountsAsInvoiceable(status)` | `convertToLink('doToSi', id)` |
+| Transfer to Delivery Return | `doCountsAsDelivered(status)` | `convertToLink('doToDr', id)` |
+| Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `DISPATCHED` |
+| Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | in-app confirm, then `PATCH /:id/status` → `CANCELLED` |
+
+Everything above additionally requires `canWriteDo`
+(`canOperateDeliveryOrders`).
+
+**Cancel asks first because it reverses stock.** `doCancelDo` goes through
+`useConfirm` — the same shape the Sales Order list uses — and posts the DETAIL
+page's endpoint, not a new one. What the list CANNOT see is the route's second
+refusal: `doHasDownstream` blocks a cancel once a live Sales Invoice or Delivery
+Return points at this DO, and no list row carries that fact. That refusal
+therefore arrives as the mutation's error notice
+(`useUpdateMfgDeliveryOrderStatus`'s `onError`) rather than as a missing entry.
+
+**Which returnable statuses.** `doCountsAsDelivered` is the SHARED predicate,
+the same one `resolveCandidateDoIds(…, 'delivered')` applies server-side
+(`backend/src/scm/lib/do-line-remaining.ts`): DRAFT, LOADED and CANCELLED are
+out — goods still on the lorry never left, so nothing can come back. The menu
+cannot advertise a delivery the picker would then not list.
+
+**Only ONE status entry.** The rest of the ladder stays off this menu: the DO is
+the one document where a status move writes inventory OUT, and `DELIVERED`
+belongs to the driver's Proof-of-Delivery screen, which closes it with a
+signature. `Reopen` is absent for a harder reason — see "Who moves the DO status"
+below; every transition out of `CANCELLED` is refused.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/delivery-order-queries.ts`
 
@@ -488,10 +536,30 @@ Refusals the operator sees, in the order they fire:
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
 
+> **THE DELIVERY ORDER HAS A HOLD OF ITS OWN SINCE 2026-08-22 (mig 0324).**
+> The owner asked for one on 2026-08-21 (「再加到一个 Hold」) and it was missed
+> while the PO, GRN and PI got theirs. `scm.delivery_orders` carries `on_hold` /
+> `hold_reason` / `held_at` / `held_by`, written by `PATCH /:id/hold`, and
+> **`scm.do_status` is untouched** — which is the plainest illustration of why a
+> marker beats a status: the other three each cost an irreversible
+> `ALTER TYPE ... ADD VALUE`.
+>
+> A held DO keeps its real stage — LOADED, DISPATCHED, IN_TRANSIT — because that
+> is the fact the warehouse and the driver need, and carries a Hold chip beside
+> it. The list gained an **On Hold** tab that reads the flag and deliberately
+> overlaps the stage tabs. A held DO is not invoiceable (`canInvoice` ANDs
+> `!rowIsHeld(r)` with the shared `doCountsAsInvoiceable`).
+>
+> It is also the ONE status-shaped entry the DO row menu accepts. That menu
+> refuses status moves because a DO status move writes an inventory OUT; a hold
+> writes no movement at all, so the objection does not apply.
+
 > **Which sales orders may raise a delivery order — ONE home since 2026-08-21.**
 > The set is `SO_UNDELIVERABLE_STATUSES` = `{DRAFT, CANCELLED, ON_HOLD}` in
-> `backend/src/scm/shared/so-deliverable-states.ts`, with `soCanRaiseDo(status)`
-> as the predicate; this router imports it instead of declaring its own `Set`,
+> `backend/src/scm/shared/so-deliverable-states.ts`, with
+> `soCanRaiseDo(status, onHold)` as the predicate — the second argument is the
+> mig-0324 marker and is REQUIRED, because a held SO now keeps its real status
+> and the deny-list alone would wave it through; this router imports it instead of declaring its own `Set`,
 > and the frontend runs a byte-identical vendored twin
 > (`frontend/src/vendor/shared/so-deliverable-states.ts`, refereed by
 > `so-deliverable-states.canonical.test.ts`).

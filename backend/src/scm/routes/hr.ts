@@ -1036,6 +1036,11 @@ async function buildCommissionLive(
     .gte('so_date', from)
     .lte('so_date', to)
     .not('status', 'in', COMMISSION_EXCLUDED_STATUS_FILTER)
+    /* `on_hold` since mig 0324. A held order keeps its real status, so the
+       status filter above stopped being able to see a hold — and this is the
+       COMMISSION engine, so the failure would have been paying commission on
+       orders somebody deliberately stopped. */
+    .eq('on_hold', false)
     .eq('company_id', co.companyId)
     .order('doc_no')
     .range(f, t),

@@ -31,7 +31,6 @@ export type StatusTab =
   | "confirmed"
   | "in_production"
   | "ready_to_ship"
-  | "shipped"
   | "delivered"
   | "invoiced"
   | "on_hold"
@@ -45,7 +44,6 @@ export const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
   { value: "confirmed", label: "Confirmed" },
   { value: "in_production", label: "In Production" },
   { value: "ready_to_ship", label: "Ready to Ship" },
-  { value: "shipped", label: "Shipped" },
   { value: "delivered", label: "Delivered" },
   { value: "invoiced", label: "Invoiced" },
   { value: "on_hold", label: "On Hold" },
@@ -64,6 +62,14 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
   invoiced: { tone: "success", label: "Invoiced" },
   delivered: { tone: "success", label: "Delivered" },
   completed: { tone: "success", label: "Completed" },
+  /* A LEGACY ROW ONLY, and it needs the entry precisely because it is rare.
+     Nothing writes ON_HOLD to a status any more (mig 0324 made the hold a
+     MARKER column with its own chip), but Postgres cannot drop an enum label,
+     so a row can still arrive carrying it. Without a line here `statusFor`
+     falls through to the raw string and the list prints the slug `ON_HOLD` in
+     a grey pill — which is what it did for every held order between
+     2026-08-21 and this change. */
+  on_hold: { tone: "warning", label: "On Hold" },
 };
 
 /* The parameter is NULLABLE, and the guards inside are why. It was typed

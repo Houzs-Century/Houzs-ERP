@@ -134,7 +134,43 @@ unwinds the SI first.
 | `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
 | `CLOSED` | done | `PATCH /:docNo/status` | **nothing** | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
 | `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
-| `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
+| `ON_HOLD` | **RETIRED as a status, 2026-08-22 (mig 0324)** | **nothing** | — | A hold is a MARKER now, not a step — see §0a below. `PATCH /:docNo/status` refuses this target with `hold_is_not_a_status` (409); it is still accepted as a `from`, so a legacy row can leave. The label stays in `scm.mfg_so_status` for ever (no `DROP VALUE`) and every pill map keeps rendering it. |
+
+### §0a. A HOLD is a MARKER beside the status, not a step in the order's life
+
+**The owner, 2026-08-22:** 「我们的hold是给我们知道一个 order hold这的」 — the hold
+is there so people KNOW an order is paused. 「take off hold也要看」.
+
+`scm.mfg_sales_orders` carries `on_hold` / `hold_reason` / `held_at` / `held_by`
+(mig 0324), and the Sales Order LIST reads them through the payment-totals view,
+which had to be taught the four columns separately (mig 0325 — the view
+enumerates its columns, so a base-table column it does not name is invisible to
+the list).
+
+**`status` is never written by a hold, in either direction.** Put On Hold and
+Take Off Hold both go to `PATCH /:docNo/hold` with `{ onHold, reason }`. So an
+`IN_PRODUCTION` order that is held is still `IN_PRODUCTION`, and taking the hold
+off restores nothing because nothing was lost.
+
+**What it replaced.** `Put On Hold` used to write `status = 'ON_HOLD'`, which
+OVERWROTE the progress — and no `previous_status` column exists anywhere in
+`scm`, so `Take Off Hold` sent every released order to `CONFIRMED` regardless of
+where it had been. Trace:
+`docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`.
+
+**On screen:** the real status pill AND a Hold chip, never one instead of the
+other (`frontend/src/vendor/scm/components/HoldChip.tsx`). The list's **On Hold**
+tab filters on the flag and deliberately OVERLAPS the status tabs; `other =
+all − known` is still computed from the status walk alone, so the sum-to-All
+invariant is untouched.
+
+**What a hold blocks on the SO:** raising a Delivery Order
+(`soCanRaiseDo(status, onHold)`), raising a Purchase Order from its lines
+(`firstUnorderableSo`), commission (`soEarnsCommission(status, onHold)`), the
+`/mine` board, customer LTV, sales analysis, the POS revenue cards and the
+order-fulfilment agent. What it does NOT block is the machine re-deriving the
+status from a fact — `so-delivery-sync` still advances a held order to DELIVERED
+when its delivery completes, because that write can no longer erase the hold.
 
 **The transition rule, exactly.** `soStatusTransitionError` rejects only two
 things: an unknown target (`invalid_status`, 400) and a backward jump that is not
@@ -179,9 +215,48 @@ does by itself when the goods land. Owner-reported as a difference between the
 two companies; the predicate carries no company term and never did.
 `docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md`.
 
-**Right-click on the list row** offers the same actions plus the four statuses
-that had no caller — see `docs/modules/document-conversion.md` §8a for the shape
-and for what each of the five lists deliberately does NOT offer.
+**Right-click on the list row** offers Open / Edit / Print, the transfer, and
+then exactly THREE status moves — **Confirm** a draft, **Hold**, **Cancel**.
+See `docs/modules/document-conversion.md` §8a for the shape and for what each of
+the five lists deliberately does NOT offer.
+
+> **CORRECTED 2026-08-22.** This sentence used to read "the same actions plus the
+> four statuses that had no caller". Three of those four —
+> `Mark In Production`, `Mark Shipped`, `Mark Invoiced` — were REMOVED the next
+> day on the owner's ruling: 「按理说不应该允许这样手动去转，否则我们的
+> transaction workflow 就全乱了」. Each is DERIVED by a machine from a fact
+> (§0.2 lists the keys), so hand-setting one changed the list and not the fact,
+> and the next sweep overwrote it. The rule that replaced the list: **a status a
+> machine derives is never offered to a person**, which leaves only the three
+> decisions no machine can make. `docs/modules/document-status-vocabulary.md`
+> §1b, `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status.md`.
+
+### `SHIPPED` is a status with no tab of its own (2026-08-22)
+
+Owner: 「Sales Order 的 Shipped 跟 Delivered 是合起来的」. The **Shipped** tab is
+gone and `backend/src/scm/lib/so-tab-statuses.ts` gives the **Delivered** tab
+both `SHIPPED` and `DELIVERED`.
+
+`SHIPPED` is still WRITTEN — `so-delivery-sync.ts` sets it when a delivery order
+is raised (§0.2) — and it is still a legal transition target. Only its tab is
+gone. That asymmetry is the whole design: Postgres cannot `DROP VALUE`, so a row
+carrying `SHIPPED` can always arrive.
+
+**Where an unfolded status would go, stated accurately.** This list is the one
+that HAS a catch-all — the handler computes `other = allCount - known` and
+`MfgSalesOrdersListV2.tsx:2005` renders an **Other** tab when that count is
+non-zero. So an unfolded `SHIPPED` order would still have been reachable, and
+the reason to fold is the READER rather than reachability: goods that went out
+belong under **Delivered**, not under **Other**. The four purchase/delivery
+lists have NO catch-all, which is why `*_STATUS_BUCKETS` there must partition
+the enum exhaustively and `so-tab-statuses.ts` deliberately does not carry that
+name. Production carried SHIPPED · 0 against DELIVERED · 26 on the day of the
+ruling.
+
+**The list's three query sites all read the bucket**, not the raw param: the row
+query, the count query and the money-KPI query in
+`GET /api/scm/mfg-sales-orders`. A tab covering one status still reads through
+it, so "what does this tab select" has one answer and not four.
 
 **The desktop DETAIL page offers no transfer at all** — `SalesOrderDetailV2.tsx`
 has no `transferToLabel('do')` call. The other desktop routes to a delivery

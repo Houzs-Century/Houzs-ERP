@@ -42,10 +42,11 @@ import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../l
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
-type GrnHeader = {
+type GrnHeader = HoldFields & {
   id: string;
   grn_number: string;
   status: GrnStatus;
@@ -550,7 +551,11 @@ function GoodsReceivedDetailV2ReadOnly() {
         <div className="px-4 pb-4 pt-3">
           <h1 className="font-display text-[19px] font-bold leading-tight text-white">{supplierNameOf(grn)}</h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -564,7 +569,11 @@ function GoodsReceivedDetailV2ReadOnly() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">{supplierNameOf(grn)}</h1>
-                <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-primary-ink">{grn.grn_number}</span>

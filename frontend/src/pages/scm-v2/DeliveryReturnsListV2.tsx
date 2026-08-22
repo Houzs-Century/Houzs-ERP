@@ -67,6 +67,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
+import { deliveryReturnRowMenu } from "./row-menus";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -1038,6 +1039,53 @@ export function DeliveryReturnsListV2() {
     );
   };
 
+  /* Right-click (owner 2026-08-22): 「只要有 Cancel / On Hold 状态的，全部都可以
+     右键 Cancel」. This list had no cancel of any kind — cancelling a return
+     lived only on its detail page — but it needed no new endpoint: the status
+     PATCH it already uses for Inspected, Refunded and Reopen is the same one
+     the detail page's Cancel calls, with CANCELLED as the target.
+
+     The words match the detail page's, because the consequence is the same one
+     and the operator must read it in both places: creating the return put the
+     goods back INTO stock, so cancelling takes them out again.
+
+     Inspected and Refunded stay OFF the menu and on the drawer. Refunded in
+     particular is a money statement, and the drawer is where the refund figure
+     that justifies it is on screen. */
+  const doCancelDr = async (r: DrRow) => {
+    if (
+      !(await askConfirm({
+        title: `Cancel return ${r.return_number}?`,
+        body: "The stock added on create will be reversed via a negative ADJUSTMENT. A cancelled return cannot be reopened.",
+        confirmLabel: "Cancel return",
+        danger: true,
+      }))
+    )
+      return;
+    updateStatus.mutate(
+      { id: r.id, status: "CANCELLED" },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) =>
+          notify({
+            title: `Couldn't cancel ${r.return_number}`,
+            body: `${e instanceof Error ? e.message : "Something went wrong."} The return is unchanged — please try again.`,
+            tone: "error",
+          }),
+      }
+    );
+  };
+  /* No Confirm entry: a Delivery Return is RECEIVED on create and has no draft
+     step, so there is no confirm transition to offer. Cancelling is final — the
+     server refuses to un-cancel — so an already cancelled row gets no entry. */
+  const drContextMenu = deliveryReturnRowMenu<DrRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: goPrint,
+    cancel: doCancelDr,
+    canCancel: (r) => (r.status || "").toUpperCase() !== "CANCELLED",
+  });
+
   // Table columns — Reason gets a first-class spot (a DR-only signal).
   const columns: Column<DrRow>[] = [
     {
@@ -1640,6 +1688,7 @@ export function DeliveryReturnsListV2() {
               columns={columns}
               getRowKey={(r) => r.id}
               onRowClick={(r) => setSelected(r)}
+              contextMenu={drContextMenu}
               expandable={{
                 render: (r) => <DrLinesExpansion id={r.id} />,
                 rowKey: (r) => r.id,

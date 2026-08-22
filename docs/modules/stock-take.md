@@ -35,6 +35,36 @@ ADJUSTMENT movements) → CANCELLED (cancel, or reverse-of-posted).
 | Backend routes | `backend/src/scm/routes/stock-takes.ts` | Mounted at `/api/scm/stock-takes` behind `scmAreaGuard("scm.warehouse.stock_take")`. |
 | Threshold rule (pure) | `backend/src/scm/shared/stock-take-threshold.ts` | Tested beside itself. |
 
+### The desktop list has a right-click menu (2026-08-22)
+
+**Open**, then **Cancel Stock Take** alone at the bottom in red — and nothing
+else. `stockTakeRowMenu` in `frontend/src/pages/scm-v2/row-menus.ts`, shape per
+`document-conversion.md` §8a.
+
+**No Edit and no Print** because there is nothing to call: counting happens
+in-place on the detail sheet, there is no `?edit=1` route, and this document has
+never had a print handler on either surface.
+
+**No Confirm, and this one IS a judgement.** Posting writes one ADJUSTMENT
+movement per non-zero-variance line (§4), and `StockTakeDetail.tsx`'s
+confirmation shows the operator counted / untouched / variance lines / net
+variance BEFORE he agrees. A list row carries none of those numbers, so posting
+stays on the detail page. Cancel is offered because it is the opposite: an OPEN
+take has written no movement, so cancelling one moves no stock.
+
+**Cancel is OPEN-only**, matching the route: `PATCH /stock-takes/:id/cancel`
+gates on `.eq('status','OPEN')`. Undoing a POSTED take is `/reverse`, a
+different action with its own words, and it stays on the detail page.
+
+**The handler already existed and nothing called it.** `doCancel` was written in
+`StockTakesListV2.tsx`, confirmation copy and all, and appeared nowhere else in
+the file; `noUnusedLocals` is false on the frontend so nothing reported it. The
+menu is its first caller —
+`docs/bugs/0516-cancel-was-built-into-three-document-lists-and-reachable-fro.md`.
+
+Hold is not in this menu yet; it lands when Hold becomes a flag rather than a
+status (`document-status-vocabulary.md` §1b).
+
 ## 2. Schema
 
 Baseline tables from the 2990 dump; grown by:

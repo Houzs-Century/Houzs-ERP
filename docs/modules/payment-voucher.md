@@ -49,6 +49,20 @@ an allow-list; a GRN on hold cannot be invoiced because the billable read is
 invoices BY ID and had no status gate at all**, so a held invoice would have been
 paid exactly as before.
 
+> **IT READS THE MARKER SINCE MIG 0324 (2026-08-22).** The hold left the status
+> column — owner: 「我们的hold是给我们知道一个 order hold这的」 — so a held invoice
+> arrives here reading `POSTED` or `PARTIALLY_PAID`, and the old
+> `status === 'ON_HOLD'` test would have matched nothing for ever while still
+> looking like a guard. `allocationPisOnHold` now selects `on_hold` and calls
+> `isDocumentHeld`, which checks the flag AND the retired label. Selecting the
+> column is half the fix: an unselected column reads `undefined`, which is not
+> held, which is the permissive answer.
+>
+> This is also the document where the marker earns its keep most visibly. Under
+> the old status-hold, a PARTIALLY_PAID invoice put on hold stopped saying how
+> much had been paid — on the one screen a person opens to decide whether to pay
+> the rest. It now says both.
+
 `allocationPisOnHold` refuses with **409 `allocation_on_hold`**, checked where the
 id ENTERS — beside the company guard, and for the same reason that one gives:
 nothing has been written yet, so the operator gets a straight refusal instead of

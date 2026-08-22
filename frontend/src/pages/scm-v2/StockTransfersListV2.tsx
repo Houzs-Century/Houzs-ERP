@@ -30,6 +30,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { stockTransferRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "posted" | "cancelled";
 
@@ -200,6 +201,17 @@ export function StockTransfersListV2() {
     }
   };
 
+  /* Right-click (owner 2026-08-22). Cancel is the handler directly above, which
+     until now was written and called from nowhere — the capability was in the
+     page and unreachable. POSTED only: the server gates the flip on
+     POSTED -> CANCELLED, so offering it on a cancelled row would be an entry
+     that can only fail. */
+  const transferContextMenu = stockTransferRowMenu<StockTransferRow>({
+    open: goDetail,
+    cancel: doCancel,
+    canCancel: (r) => r.status.toUpperCase() === "POSTED",
+  });
+
   const columns: Column<StockTransferRow>[] = [
     {
       key: "transfer_no",
@@ -348,6 +360,7 @@ export function StockTransfersListV2() {
             columns={columns}
             getRowKey={(r) => r.id}
             onRowClick={goDetail}
+            contextMenu={transferContextMenu}
             exportName="stock-transfers"
             emptyLabel={filtersActive ? "No transfers match — try Reset layout." : "No stock transfers yet."}
             search={{ value: search, onChange: setSearch, placeholder: "Search transfer no, warehouse, notes…", scope: "server", totalRecords: filtered.length }}

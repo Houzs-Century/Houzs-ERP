@@ -61,6 +61,27 @@ message rather than a company-mismatch 404.
 | Desktop detail | `frontend/src/pages/scm-v2/PurchaseReturnDetailV2.tsx` |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseReturnNew.tsx` |
 
+### The desktop list has a right-click menu (2026-08-22)
+
+Open · Edit · Print, then **Confirm** on a DRAFT, then **Cancel Purchase
+Return** alone at the bottom in red. `purchaseReturnRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts`, shape per `document-conversion.md`
+§8a.
+
+**Nothing new happens in it.** Confirm calls the list's existing `doPost`,
+Cancel its existing `doCancel`.
+
+**Cancel is offered on MORE rows than the drawer ever showed it.** The drawer's
+action slot is one if/else chain, so a DRAFT renders Post and a POSTED renders
+Complete and neither ever renders Cancel — while `cancelPurchaseReturnHandler`
+accepts both and refuses only COMPLETED and an already-cancelled return (§4).
+The menu is a separate group, so it offers what the server actually allows.
+
+**Complete is deliberately absent.** It records the supplier's credit-note
+reference, which the drawer's Complete tab asks for and a right-click cannot.
+Only Confirm, Hold and Cancel are ever offered to a person
+(`document-status-vocabulary.md` §1b); Hold lands when it becomes a flag.
+
 **No dedicated mobile screen** — the generic `MobileModuleList` /
 `MobileModuleDetail` render it. The repo-wide "desktop and mobile change
 together" rule has no paired file to apply to here.
