@@ -398,7 +398,7 @@ because all-MYR is the overwhelming majority of documents in this system.
 | File | What it proves |
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
-| `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases) |
+| `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases). Its supabase stub is hand-rolled, so it must model `.schema()` — the JE-number prefix reads `public.companies` from a client pinned to `scm` (`docs/bugs/0522`), and a stub without it 500s the whole post. |
 | `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |

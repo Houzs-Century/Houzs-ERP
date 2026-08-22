@@ -149,6 +149,8 @@ Baseline tables from the 2990 dump; grown by:
   (§7): what is drawn and where, the net variance below the lines, the blind
   sheet's dropped columns, and the absence of anything that reads as money.
 - `backend/tests/companyScopeHardening.test.ts` — the cross-company post
+  (its hand-rolled supabase stub models `.schema()`: the JE-number prefix reads
+  `public.companies` from a `scm`-pinned client — `docs/bugs/0522`)
   refusals (pre-date this phase; still green).
 
 ## 6. See also

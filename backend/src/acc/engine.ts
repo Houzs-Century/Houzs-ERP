@@ -68,6 +68,7 @@ export type PostJournalErr = {
     | 'idempotency_read_failed'
     | 'je_insert_failed'
     | 'lines_insert_failed'
+    | 'je_prefix_failed'
     | 'post_failed';
   reason?: string;
 };
@@ -189,7 +190,21 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   // 5 — mint + insert, re-minting on a number collision (§2.12). Two
   // concurrent posts both read the same max; the loser's insert hits the
   // je_no unique index and the next attempt reads past the winner.
-  const prefix = await jePrefixForCompany(sb, companyId);
+  /* CONTAINED, not swallowed. jePrefixForCompany FAILS CLOSED by throwing —
+     correctly, because minting under the wrong company's prefix would collide
+     two ledgers' running numbers, and that is worse than not posting.
+     But an escaping throw is not the same as failing closed: it left the
+     document already POSTED, the ledger empty, and the operator staring at the
+     generic "Something went wrong" with nothing naming the cause. Turn it into
+     the structured refusal every other failure in this function returns, so the
+     caller logs a reason and the audit trail records that the AP/GL post did
+     not happen. See docs/bugs/0522. */
+  let prefix: string;
+  try {
+    prefix = await jePrefixForCompany(sb, companyId);
+  } catch (e) {
+    return { ok: false, status: 'je_prefix_failed', reason: e instanceof Error ? e.message : String(e) };
+  }
   const companyCol = companyId != null ? { company_id: companyId } : {};
   let je: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;

@@ -91,7 +91,11 @@ describe('StatePicker dropdown placement', () => {
     expect(list.style.top).toBe('132px'); // rect.bottom (128) + 4px gap
     expect(list.style.left).toBe('40px');
     expect(list.style.width).toBe('200px');
-    expect(list.style.bottom).toBe('');
+    /* 'auto', not '' — the unused edge must be WRITTEN. An absent property is
+       what let a panel's own class rule (`.suggestList { top: 100% }`) survive
+       and over-constrain the box to zero height; see docs/bugs/0521. This line
+       used to assert '' and was therefore pinning the defect. */
+    expect(list.style.bottom).toBe('auto');
   });
 
   test('flips above the input when there is not enough room below', () => {
@@ -100,7 +104,11 @@ describe('StatePicker dropdown placement', () => {
     fireEvent.focus(input());
 
     const list = panel();
-    expect(list.style.top).toBe('');
+    /* THE CASE THAT BROKE. Flipping up leaves `top` unused — and it must still
+       be written as 'auto'. Asserting '' here is what let the fabric picker's
+       class keep `top: 100%`, pinning both edges of a fixed element and
+       squeezing it to 2px on the bottom edge of the window (docs/bugs/0521). */
+    expect(list.style.top).toBe('auto');
     // Anchored by its bottom edge so it grows upward: innerHeight - rect.top + gap.
     expect(list.style.bottom).toBe(`${window.innerHeight - 700 + 4}px`);
   });

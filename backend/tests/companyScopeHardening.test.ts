@@ -85,6 +85,13 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
       from: (t: string) => new FakeQuery((tables[t] ||= []), t, log),
+      /* `.schema('public')` — the real client returns one scoped to that schema.
+         These stubs model ONE table namespace, so it returns the stub itself.
+         Needed because jePrefixForCompany reads `public.companies` while the SCM
+         client is pinned to `scm`; without it the stub throws
+         `sb.schema is not a function` and the handler 500s. See docs/bugs/0522. */
+      schema(_s: string) { return this; },
+
       // The entity-audit pre-flight probe. Reports writable so the handlers get
       // past it to the statement under test; without it every one of them 409s
       // on an unreachable audit sink and the scope assertions never run.
