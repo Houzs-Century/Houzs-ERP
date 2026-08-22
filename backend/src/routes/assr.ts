@@ -775,7 +775,10 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
             SUM(CASE
                   WHEN h.target_days IS NOT NULL AND h.target_days > 0
                    AND (julianday('now') - julianday(h.entered_at)) / h.target_days >= 1
-                  THEN 1 ELSE 0 END) AS breached
+                  THEN 1 ELSE 0 END) AS breached,
+            -- Supplier stage split (Nico 2026-08-22): how many of the bucket sit on the
+            -- RETURN leg, so the funnel card can read "X pickup · Y return" for chasing.
+            SUM(CASE WHEN COALESCE(c.sub_status, '') = 'pending_supplier_return' THEN 1 ELSE 0 END) AS sub_return
        FROM assr_cases c
        LEFT JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
@@ -784,7 +787,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       GROUP BY c.stage`
     )
       .bind(...visC.binds)
-      .all<{ stage: string; total: number; breached: number }>(),
+      .all<{ stage: string; total: number; breached: number; sub_return: number }>(),
 
     // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
     c.env.DB.prepare(
