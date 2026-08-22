@@ -770,6 +770,21 @@ inside the window. Both pass 460px as their PREFERRED cap. Do not re-hand-roll
 "Add N" bar off the bottom of the screen
 (`docs/bugs/0504-every-portalled-dropdown-opened-downward-and-ran-off-the-bot.md`).
 
+`anchoredPanelStyle` writes **both** `top` and `bottom`, with `'auto'` for the
+edge the chosen placement does not use. That is load-bearing, not tidiness: a
+placement supplies only ONE of the two, and React OMITS a style property set to
+`undefined`, so the panel would keep whatever `top` its own class rule carries.
+Both `SoLineCard.module.css` and `SalesOrderDetail.module.css` define
+`.suggestList { position: absolute; top: 100%; left: 0; right: 0 }` for the
+non-portalled layout, and against a `position: fixed` element `top: 100%` is the
+whole viewport height — pinning both edges and squeezing the list to the height
+of its own borders. That is what made the fabric picker look like a dropdown
+that never opened: it was open, 2px tall, on the bottom edge of the window
+(`docs/bugs/0521`). Two call sites had already hand-patched `right: 'auto'` for
+the same class's `right: 0`; neutralising the edges in the shared module covers
+every consumer instead. A test that asserts the unused edge is ABSENT is pinning
+the defect — assert `'auto'`.
+
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
 per category are the shared `so-variant-rule`; Save is blocked when any line is

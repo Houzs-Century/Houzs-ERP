@@ -257,3 +257,53 @@ describe('useAnchoredPanel', () => {
     expect(removed).toContain('resize');
   });
 });
+
+/* ── anchoredPanelStyle must neutralise BOTH edges ─────────────────────────
+ *
+ * Measured on production 2026-08-22, the Sales Order fabric picker. The panel
+ * flipped up, so `pos.top` was undefined; `top: undefined` is OMITTED by React,
+ * and the list's own class (`position:absolute; top:100%; left:0; right:0`)
+ * kept its `top: 100%`. Against a fixed element that resolves to the full
+ * viewport height, so the box carried BOTH a top and a bottom:
+ *
+ *   816 (top) - 816 (viewport) - 376 (bottom) = -376  ->  height clamped to 0
+ *
+ * The list rendered with all 18 rows in it, parked on the bottom edge of the
+ * window at 2px tall — its own borders. It read as "the dropdown never opens".
+ *
+ * The assertion is on the property being PRESENT and 'auto', not merely absent:
+ * absent is exactly the state that let the class win. */
+describe('anchoredPanelStyle — the unused edge is auto, never omitted', () => {
+  test('flipped up: bottom is the number, top is auto', () => {
+    const st = anchoredPanelStyle({ left: 295, width: 286, bottom: 376, maxHeight: 432 });
+    expect(st.bottom).toBe(376);
+    expect(st.top).toBe('auto');
+    expect('top' in st).toBe(true);
+  });
+
+  test('dropped down: top is the number, bottom is auto', () => {
+    const st = anchoredPanelStyle({ left: 295, width: 286, top: 472, maxHeight: 432 });
+    expect(st.top).toBe(472);
+    expect(st.bottom).toBe('auto');
+    expect('bottom' in st).toBe(true);
+  });
+
+  test('never leaves either edge undefined, for any placement the measurer emits', () => {
+    const rect = { top: 444, bottom: 472, left: 295, width: 286 };
+    for (const viewport of [816, 600, 400, 300, 1200]) {
+      const st = anchoredPanelStyle(measureAnchoredPanel(rect, viewport, 432));
+      expect(st.top).toBeDefined();
+      expect(st.bottom).toBeDefined();
+    }
+  });
+
+  test('the exact production case is no longer over-constrained', () => {
+    /* Input at y=444..472 in an 816px viewport: 344px below, 444px above, so
+       the measurer flips up. With both edges written, only `bottom` is a
+       number — the box has one anchor and grows to its content. */
+    const pos = measureAnchoredPanel({ top: 444, bottom: 472, left: 295, width: 286 }, 816, 460);
+    const st = anchoredPanelStyle(pos);
+    expect(st.top).toBe('auto');
+    expect(typeof st.bottom).toBe('number');
+  });
+});
