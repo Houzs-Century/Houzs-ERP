@@ -69,6 +69,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/u
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
+import { makeCloseAction } from "./use-close-action";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -1174,19 +1175,9 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
-  /* Its own handler rather than setSoStatus, because the WORDS are the point:
-     "Close remaining" is one menu entry away from Cancel and the two do opposite
-     things to the money. See row-menus.ts. */
-  const doCloseSo = async (r: SoRow) => {
-    if (!(await askConfirm({
-      title: `Stop chasing the rest of ${r.doc_no}?`,
-      body: "The order stays, and everything already delivered and invoiced still counts. What has not shipped will no longer be chased, and no new delivery order can be raised from it. This is not a cancellation.",
-      confirmLabel: "Close remaining",
-    }))) return;
-    updateStatus.mutate({ docNo: r.doc_no, status: "CLOSED", expectedStatus: r.status }, {
-      onError: (e) => notify({ title: "Not closed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
-    });
-  };
+  /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
+     Cancel and they do opposite things to the money. Both live in ./use-close-action. */
+  const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
   const doCancelSo = async (r: SoRow) => {
     if (!(await askConfirm({
       title: `Cancel ${r.doc_no}?`,
