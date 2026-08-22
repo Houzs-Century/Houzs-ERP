@@ -55,3 +55,22 @@ export const statusFor = (
     label: s || "—",
     bucket: "open",
   };
+
+/* May this delivery order still be cancelled, as far as a LIST ROW can tell?
+   The two statuses `PATCH /:id/status` will never accept a cancel on: CANCELLED
+   is refused outright (`do_cancelled_final`) and INVOICED is the billed end of
+   the line.
+
+   THIS IS ONLY HALF THE ROUTE'S ANSWER, and the half a row can see. The other
+   refusal is `doHasDownstream` (backend/src/scm/lib/downstream-lock.ts), which
+   blocks a cancel once a live Sales Invoice or Delivery Return points at the
+   DO — a server-side fact no list row carries. That one reaches the operator as
+   the mutation's error notice instead. See row-menus.ts.
+
+   Null-safe by SIGNATURE, like the shared do-shipped-states predicates: the
+   list's rows are a hand-written cast over an `any` payload, so a missing
+   column must never reach `.toUpperCase()`. */
+export const doCancellableStatus = (status: string | null | undefined): boolean => {
+  const s = String(status ?? "").toUpperCase();
+  return s !== "CANCELLED" && s !== "INVOICED";
+};

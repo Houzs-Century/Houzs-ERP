@@ -11,9 +11,10 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { statusFor, type StatusTab } from "./do-list-status";
+import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
 import { deliveryOrderRowMenu } from "./row-menus";
-import { doCountsAsInvoiceable } from "../../vendor/shared/do-shipped-states";
+import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -776,6 +777,7 @@ export function MfgDeliveryOrdersListV2() {
   const queryClient = useQueryClient();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
+  const askConfirm = useConfirm();
   const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
@@ -951,14 +953,32 @@ export function MfgDeliveryOrdersListV2() {
     );
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
-  /* The invoiceable predicate is the SHARED one, not a status list typed here:
-     doCountsAsInvoiceable is the system's only definition, and it already
-     carries the owner's 2026-08-20 ruling that a LOADED delivery may be
-     invoiced (「不要拦 —— 人自己知道」). */
+  const doConvertToDr = (r: DoRow) => navigate(convertToLink('doToDr', r.id));
+  /* Cancel REVERSES STOCK, so it asks first — the same in-app confirm the Sales
+     Order list's cancel uses, and the same endpoint the detail page posts. */
+  const doCancelDo = async (r: DoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.do_number}?`,
+      body: "Stock allocated to this delivery order is released back to the Sales Order, and a cancelled delivery order cannot be reactivated — raise a new one to deliver again.",
+      confirmLabel: "Cancel Delivery Order",
+      danger: true,
+    }))) return;
+    updateStatus.mutate({ id: r.id, status: "CANCELLED" });
+  };
+  /* Every predicate here is a SHARED one, not a status list typed at this call
+     site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
+     LOADED delivery may be invoiced (「不要拦 —— 人自己知道」);
+     doCountsAsDelivered is the same rule the server's returnable-DO picker
+     applies (do-line-remaining.ts) — goods still on the lorry never left, so
+     nothing can come back; doAdvanceStep supplies the one DRAFT rung. */
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
-    transferToSi: doConvertToSi,
+    transferToSi: doConvertToSi, transferToDr: doConvertToDr,
+    confirm: doAdvance, cancel: doCancelDo,
     canInvoice: (r) => canWriteDo && doCountsAsInvoiceable(r.status),
+    canReturn: (r) => canWriteDo && doCountsAsDelivered(r.status),
+    canConfirm: (r) => canWriteDo && doAdvanceStep(r.status) !== null,
+    canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
   });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
      never succeed: PATCH /:id/status refuses every transition out of CANCELLED

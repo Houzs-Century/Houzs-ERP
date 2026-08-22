@@ -58,7 +58,7 @@ across (§4).
 | 4 | **PO → GRN** | yes | **yes, fully** | **many PO lines; bulk from the PO list** | PO detail, PO list drawer, and PO list **bulk bar** — the only fully-working CT in the system | **none** |
 | 5 | **GRN → PI** | yes | yes | lines, **ONE GRN** (PI carries a single `grn_id` FK) | GRN detail + GRN list "Convert to PI" (**now scoped** — §4a) | **none** |
 | 6 | **GRN → PR** | **no** | yes | — | GRN detail + list "Convert to PR" — the param mismatch that opened it blank is **fixed** (§4a); there is still no `/from-grn` picker page | **S** |
-| 7 | **DO → Delivery Return** | yes | **no** | lines across many DOs | — | **S** |
+| 7 | **DO → Delivery Return** | yes | **yes** | lines across many DOs | DO list **row menu** "Transfer to Delivery Return" (one DO, scoped — §4a, §8a). Added 2026-08-22 on the owner's ask; the picker had existed and read no parameter until then | **none** |
 | 8 | **Consignment Order → Consignment Note** | yes | yes (whole-order only) | lines across many COs | CO list row menu + CO detail "Create Consignment Note" — prefills the WHOLE order, no line picking | **S** |
 | 9 | **CN → Consignment Return** | yes | yes | lines across many CNs | CN detail "Create Consignment Return" | **none** |
 | 10 | **PC Order → PC Receive** | yes | **no** | yes | — (deliberately dropped, see §5) | **S** |
@@ -68,12 +68,13 @@ across (§4).
 
 ### What the grid says, plainly
 
-- **FOUR pairs now have a complete, working "Convert to"**: PO → GRN, DO → SI,
-  GRN → PI and SO → DO. It was ONE when this guide was written; the other three
-  were repaired the same day (§4a). Everything else is *missing* the button
-  rather than having a broken one.
-- **Three pairs have no "Convert to" at all**: DO → Delivery Return, PC Order →
-  PC Receive, PC Receive → PC Return.
+- **FIVE pairs now have a complete, working "Convert to"**: PO → GRN, DO → SI,
+  GRN → PI, SO → DO and — since 2026-08-22 — DO → Delivery Return. It was ONE
+  when this guide was written; three were repaired the same day (§4a) and the
+  fifth arrived with the Delivery Order row menu (§8a). Everything else is
+  *missing* the button rather than having a broken one.
+- **Two pairs have no "Convert to" at all**: PC Order → PC Receive, PC Receive →
+  PC Return.
 - **One pair has no "Convert from"**: GRN → PR (there is no
   `/scm/purchase-returns/from-grn` picker page).
 - **One pair does not exist in either direction**: Quotation → Sales Order.
@@ -461,7 +462,7 @@ row that does not qualify never renders a stray separator.
 | list | transfer | status | cancel |
 |---|---|---|---|
 | Sales Order | Delivery Order | Confirm · In Production · Shipped · Invoiced · On Hold · Reopen | yes |
-| Delivery Order | Sales Invoice | **none** | **none** |
+| Delivery Order | Sales Invoice · Delivery Return | Confirm (DRAFT only) | yes |
 | Purchase Order | Goods Received | — | yes |
 | GRN | Purchase Invoice · Purchase Return | Confirm (post) | yes |
 | Sales Invoice | — (SO → SI does not exist, §4a) | Record payment | **none** |
@@ -473,14 +474,46 @@ read zero. **`READY_TO_SHIP` and `DELIVERED` are deliberately absent** — both 
 written by the machine, and a button whose effect a background sweep silently
 undoes is worse than no button.
 
-**The Delivery Order gets no status entries** because it is the one document
-where a status move has a STOCK consequence: the first entry into a shipped
-state writes the inventory OUT.
+**The Delivery Order gained Cancel, a Delivery Return and Confirm on
+2026-08-22 (owner ruling).** His words, looking at this menu: 「DO 这一边没有问
+题，可是为什么没有 Cancel 呢？By right 每一个 Transaction Record 应该都可以右键
+（Right click）Move to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and 「我的
+DO 也应该有右键 Transfer to Delivery Return，对吧？」
 
-**No cancel on the Delivery Order or the Sales Invoice** — a recorded gap, not a
-decision. Neither list has a cancel handler; cancelling lives on their detail
-pages, and both reverse something (stock, revenue) that deserves the
-confirmation copy those pages carry.
+The paragraph this replaces said the DO deliberately offered neither, and its
+argument was **the missing confirmation, not the entry**: cancelling a DO
+reverses stock, and the list had no confirmation copy. So the entry ships WITH
+one — `MfgDeliveryOrdersListV2`'s `doCancelDo` goes through `useConfirm` before
+it writes, the same shape the Sales Order list's `doCancelSo` uses, and it posts
+the DETAIL PAGE'S endpoint (`PATCH /delivery-orders-mfg/:id/status`, status
+`CANCELLED`). No new capability; the menu offers the page's.
+
+**What `canCancel` can and cannot see, said plainly.** The route refuses a
+cancel on two grounds: the DO is already `CANCELLED` (`do_cancelled_final` —
+un-cancelling would leave the stock add-back standing while the re-deduct
+no-ops), and the DO has a live Sales Invoice or Delivery Return hanging off it
+(`doHasDownstream`, `backend/src/scm/lib/downstream-lock.ts`). Only the first is
+visible in a list row, so the second reaches the operator as the mutation's
+error notice rather than as a missing entry. A refusal somebody reads beats a
+capability that silently is not there.
+
+**Only ONE status entry, and it is the DRAFT rung.** `Confirm` is
+`doAdvanceStep`'s single step (DRAFT → DISPATCHED) — the handler the list
+drawer already had. The rest of the ladder stays off the menu because the DO is
+the document where a status move has a STOCK consequence: the first entry into a
+shipped state writes the inventory OUT, and `DELIVERED` belongs to the driver's
+Proof-of-Delivery screen, which closes it WITH a signature.
+
+**Transfer to Delivery Return needed the DESTINATION built too.**
+`/scm/delivery-returns/from-do` existed and read no scope parameter at all, so
+the entry would have opened every returnable delivery in the company. The pair
+is now `doToDr` in `CONVERT_LINKS` and the picker reads it with
+`readConvertScope`, pre-ticking the scoped note — the same contract §4a pins,
+and `convert-scope-pickers.test.tsx` now mounts this picker too.
+
+**No cancel on the Sales Invoice** — still a recorded gap, not a decision. That
+list has no cancel handler; cancelling lives on its detail page, and it reverses
+revenue.
 
 ---
 
@@ -719,19 +752,24 @@ differently.
 
 Both are listed here so nobody "finishes the job" later by renaming them.
 
-#### Six of the twenty have no button to relabel
+#### Five of the twenty have no button to relabel
 
 Named so the next person adds them with the right label; **this is feature work
 the owner has not commissioned, and Stage 1 did not build any of it.** From §2:
 
 | missing | which half |
 |---|---|
-| Delivery Order → Delivery Return | no "Transfer to" on the DO |
 | Purchase Consignment Order → Receive | no "Transfer to" on the order |
 | Purchase Consignment Receive → Return | no "Transfer to" on the receive |
 | Goods Received → Purchase Return | no "Transfer from" picker page (`/scm/purchase-returns/from-grn` does not exist) |
 | Sales Order → Purchase Order | no "Transfer to" on the SO list or SO detail — only PO-side `?edit=1` and the MRP page |
 | Sales Order → Delivery Order (bulk) | exists only on the Delivery Planning board, not on the SO list |
+
+**It was SIX until 2026-08-22.** *Delivery Order → Delivery Return* left this
+list that day — the owner commissioned it («我的 DO 也应该有右键 Transfer to
+Delivery Return，对吧？») and it shipped as a Delivery Order row-menu entry
+labelled by the rule, `transferToLabel('dr')`. It is the only row that has ever
+left; the other five are still uncommissioned.
 
 ### 9.7 Found while auditing — one fixed here, two doc corrections
 

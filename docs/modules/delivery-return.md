@@ -50,6 +50,16 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **This picker is SCOPED since 2026-08-22.** It reads `doToDr` through
+> `readConvertScope`, so the Delivery Order list's right-click "Transfer to
+> Delivery Return" opens on the note the operator came from — pre-ticked at each
+> line's full remaining — instead of on every returnable delivery in the
+> company. With no parameter it is still the full picker, which is what this
+> module's own "From Delivery Order" button wants. It read NO parameter at all
+> until that date, which is why the menu entry could not be added without
+> building the destination half. Contract and guard:
+> `docs/modules/document-conversion.md` §4a, §8a.
+
 > **The Salesperson picker names the person the source document already carries
 > (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
 > source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions

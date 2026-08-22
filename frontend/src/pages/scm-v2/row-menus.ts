@@ -98,30 +98,61 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
 }
 
 /* ── Delivery Order ─────────────────────────────────────────────────────────
-   No status entries: every DO status move is already a first-class control on
-   the row drawer and the detail page, and the DO is the one document where a
-   status move has a STOCK consequence — the first entry into a shipped state
-   writes the inventory OUT. Putting that behind a right-click, two pixels from
-   "Open", is not a convenience. */
+   THE OWNER'S ASK (2026-08-22), looking at this very menu: 「DO 这一边没有问题，
+   可是为什么没有 Cancel 呢？By right 每一个 Transaction Record 应该都可以右键
+   （Right click）Move to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and
+   「我的 DO 也应该有右键 Transfer to Delivery Return，对吧？」
+
+   SO CANCEL IS HERE NOW, and the paragraph it replaces said the opposite. That
+   text argued a stock-reversing action must not sit two pixels from "Open"
+   without the detail page's confirmation copy. The objection was to the MISSING
+   CONFIRMATION, not to the entry — so the entry ships WITH one: the list's
+   `cancel` handler goes through `askConfirm` before it writes, exactly like the
+   Sales Order list's, and it is the SAME endpoint the detail page posts
+   (`PATCH /delivery-orders-mfg/:id/status`, status CANCELLED). Nothing new
+   happens here; the capability is the page's, the menu only offers it.
+
+   `canCancel` is the LIST's to compute and it cannot be complete, which is
+   worth saying rather than hiding. The route refuses a cancel on two grounds:
+   a DO that is already CANCELLED (`do_cancelled_final` — un-cancelling would
+   leave the stock add-back standing), and a DO with a live Sales Invoice or
+   Delivery Return hanging off it (`doHasDownstream`). Only the FIRST is visible
+   in a list row. The second is a server-side fact no row carries, so that
+   refusal reaches the operator through the mutation's error path instead of by
+   the entry being absent — a refusal somebody reads, rather than a capability
+   that silently is not there.
+
+   NO OTHER STATUS ENTRIES. `Confirm` is the DRAFT rung and only that: it is
+   `doAdvanceStep`'s single step, the same one the detail page and the drawer
+   already offer. The rest of the ladder stays off this menu because the DO is
+   the one document where a status move has a STOCK consequence — the first
+   entry into a shipped state writes the inventory OUT — and DELIVERED belongs
+   to the driver's Proof-of-Delivery screen, which closes it WITH a signature. */
 export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (r: R) => void;
   transferToSi: (r: R) => void;
+  transferToDr: (r: R) => void;
+  confirm: (r: R) => void;
+  cancel: (r: R) => void;
   canInvoice: (r: R) => boolean;
+  canReturn: (r: R) => boolean;
+  canConfirm: (r: R) => boolean;
+  canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  /* NO CANCEL, and it is a recorded gap rather than a decision. The delivery
-     order list has no cancel handler today — cancelling one lives on the detail
-     page. This menu EXPOSES what the page already does; adding the capability
-     here would put a stock-reversing action behind a right-click without the
-     detail page's confirmation copy. */
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
       { label: "Print", onClick: () => h.print(r) },
     ],
-    [h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) }],
+    [
+      h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
+      h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
+    ],
+    [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
+    [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
   );
 }
 
