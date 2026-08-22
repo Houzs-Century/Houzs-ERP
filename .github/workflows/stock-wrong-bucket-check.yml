@@ -1,0 +1,56 @@
+name: Stock in the wrong bucket check (read-only)
+
+# How many document lines carry a category that DISAGREES with their own SKU,
+# and how much stock is therefore filed in a bucket nobody looks in?
+#
+# The owner, 2026-08-22, looking at HC-SO-2608-004: 「明明已经送达货物了，可是它
+# 却不是说 Ready」. The cause was that `item_group` is an INPUT TO THE STOCK
+# BUCKET, not a label — a sofa line that reaches the database with a blank group
+# files its goods under the unclassified key, where the sofa order looking for
+# them cannot see them. PR #2660 made the server resolve the category from the
+# SKU so it stops happening.
+#
+# #2660 DID NOT MOVE the goods already misfiled, and nobody has counted them.
+# This counts them, which is the input to deciding whether a repair script is
+# worth writing and what it would have to do.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only — it is a
+# question, not a gate. Own concurrency group so a diagnostic can never queue
+# behind or displace a release. COUNTS ONLY: this repository and its Actions
+# logs are public, so no document number, item code or value is printed.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: stock-wrong-bucket-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Count lines whose category disagrees with their SKU
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/check-stock-in-the-wrong-bucket.mjs
