@@ -27,6 +27,7 @@ import totpRoutes from "./routes/totp";
 import users from "./routes/users";
 import roles from "./routes/roles";
 import positions from "./routes/positions";
+import positionCapabilities from "./routes/position-capabilities";
 import departments from "./routes/departments";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
@@ -338,6 +339,7 @@ app.route("/api/totp", totpRoutes);
 app.route("/api/users", users);
 app.route("/api/roles", roles);
 app.route("/api/positions", positions);
+app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/departments", departments);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each

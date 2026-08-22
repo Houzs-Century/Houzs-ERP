@@ -7,6 +7,45 @@
 
 # Module: Team — Members & Invitations
 
+> ## 2026-08-22 — Team redesign (design handoff) + editable capability matrix
+>
+> The Team strip was rebuilt per the 2026-08 design handoff. New screens live in
+> `frontend/src/pages/team/` and mount as new `?tab=` values on the same
+> `/team` route (`frontend/src/pages/Team.tsx` shell):
+>
+> * `directory` → `frontend/src/pages/team/TeamDirectory.tsx` — the redesigned
+>   member home: department tree rail (Team = `users.division`), scoped roster
+>   table, dark bulk bar (dept / team / manager / position / resend / status).
+>   Derived data the schema does not carry: department LEAD is inferred from
+>   reporting lines (`teamShared.deriveDeptLead`), the EMP id is derived from
+>   the user id (`teamShared.empCode`, same formula as the scm.staff trigger).
+> * `orgchart2` → `TeamOrgChartV2.tsx` — company lanes + department pills;
+>   outsourced teams are excluded by owner ruling (`isOutsourced`).
+> * `departments2` → `TeamDepartmentsV2.tsx`, `mail2` → `TeamMailboxesV2.tsx`
+>   (Mail Center reskin with derived personal/department/orphaned types).
+> * `permissions` → `TeamRolesV2.tsx` — the EDITABLE position-capability
+>   matrix (owner 2026-08-22: "要界面可编辑"). Grants are rows in
+>   `position_capabilities` (PG mig 0322, D1 mirror 150); the catalogue + the
+>   fail-closed gate live in `backend/src/services/positionCapabilities.ts`;
+>   the API is `backend/src/routes/position-capabilities.ts`, mounted at
+>   `/api/position-capabilities` in `backend/src/index.ts` (GET rides
+>   `users.read`, PUT requires `roles.manage`, every change audited).
+>   Enforcement of the four keys (scm.do.load / .dispatch / .revert /
+>   scm.invoice.issue) arrives with the warehouse-line PR; until then the
+>   matrix is declared intent, and the screen's footer note says so.
+> * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
+>   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
+>   position set before send; company toggle chips).
+>
+> The CLASSIC tabs (`members` / `orgchart` / `departments` / `mail` / `roles`)
+> left the strip but stay URL-reachable during the transition; the sections
+> below describe that classic Members surface, which is unchanged. The mobile
+> menu rows and route mapping (`frontend/src/mobile/MobileApp.tsx`) follow the
+> new NAV_TABS destinations (`?tab=directory` / `?tab=departments2`, legacy
+> values still accepted) but still open the classic mobile modules
+> (`frontend/src/mobile/mobileMenuGates.test.ts` pins the exact gates) until
+> the handoff's mobile pass.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission

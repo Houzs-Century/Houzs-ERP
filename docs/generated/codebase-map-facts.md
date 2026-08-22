@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-141 route modules (42 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1057 endpoint registrations.
+142 route modules (43 in `backend/src/routes`, 99 in `backend/src/scm/routes`), 1059 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -43,6 +43,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 8 | 420 |
+| `backend/src/routes/position-capabilities.ts` | 2 | 98 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 109 | 5052 |
@@ -169,14 +170,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 319 | `0320_scm_purchase_invoice_status_on_hold.sql` (0320) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 149 | `150_position_capabilities.sql` (150) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 320 | `0321_pc_inventory_idempotency.sql` (0321) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1651 files, 615468 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1662 files, 619868 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -185,8 +186,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11890 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
+| `frontend/src/pages/Team.tsx` | 5680 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5626 |
-| `frontend/src/pages/Team.tsx` | 5607 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
 | `backend/src/routes/projects.ts` | 5052 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
@@ -363,7 +364,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/scm-v2` | 124 |
 | `frontend/src/pages/scm-v2/products` | 1 |
-| `frontend/src/pages/team` | 1 |
+| `frontend/src/pages/team` | 9 |
 
 ## 5. Mobile screen inventory
 
