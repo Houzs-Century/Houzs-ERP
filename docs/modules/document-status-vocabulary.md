@@ -132,6 +132,25 @@ five tables when the flag shipped — read-only probe
 2026-08-22. The legacy arm is dead code today and permanent anyway, because "no
 row has it" is a fact about one moment and the enum label is not.
 
+#### Where the hold's code lives
+
+One row per file, because the reason this guide exists is that the same question
+had answers in sixteen places. These are the homes; nothing else decides a hold.
+
+| file | what it owns |
+|---|---|
+| `backend/src/db/migrations-pg/0324_scm_hold_is_a_marker_not_a_status.sql` | the four columns on all five tables, plus the partial indexes the On Hold tabs read |
+| `backend/src/db/migrations-pg/0325_scm_so_payment_totals_view_carries_hold.sql` | the Sales Order list's view, taught the four columns — `CREATE OR REPLACE`, never DROP, so the GRANTs 0189 lost cannot be lost again |
+| `backend/src/scm/lib/document-hold.ts` | `isDocumentHeld` (flag OR legacy label), `HOLD_COLUMNS`, `HELD_OR_TERM`, and the request/patch shapes. The one place that knows a hold writes four columns and never `status` |
+| `backend/src/scm/lib/document-hold-route.ts` | the single `PATCH .../hold` handler behind all five documents |
+| `backend/src/scm/routes/document-hold-routes.ts` | mounts it, and records what each document's hold means, side by side |
+| `backend/src/scm/lib/source-document-gates.ts` | the four conversion gates that must read the marker: SO → DO, SO → PO, PO → GRN, GRN → PI. Moved here 2026-08-22 because all four had to change for the same reason at the same time |
+| `frontend/src/vendor/scm/components/HoldChip.tsx` | the Hold chip, `rowIsHeld`, and `StatusWithHold` — the status pill and the chip as one element, so a screen cannot render the pill alone |
+| `frontend/src/vendor/scm/lib/document-hold-queries.ts` | the one mutation. It never sends a status; that is the property to check if it is edited |
+| `frontend/src/pages/scm-v2/use-hold-action.ts` | the confirm wording, so all five screens promise the same thing |
+| `frontend/src/pages/scm-v2/row-menus.ts` | where Put On Hold / Take Off Hold is offered, on all five right-click menus |
+| `frontend/src/pages/scm-v2/do-list-status.ts` | the Delivery Order list's `on_hold` tab — the one tab on that screen that is not a status |
+
 #### Every place a hold DECIDES something
 
 A guard that asks *"may somebody ACT on this document"* must read the flag. A
