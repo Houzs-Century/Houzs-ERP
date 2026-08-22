@@ -123,70 +123,100 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
 }
 
 /* ── Delivery Order ─────────────────────────────────────────────────────────
-   THREE MANUAL STATUS MOVES LIVE HERE, AND THEY ARE A NAMED EXCEPTION to the
-   rule the Sales Order menu above states — a status a MACHINE derives is never
-   offered to a person (docs/modules/document-status-vocabulary.md §1b). Read
-   that section before touching this block: the exception is dated and recorded
-   there too, with what retires each entry.
+   THE OWNER'S ASK (2026-08-22), looking at this very menu: 「DO 这一边没有问题，
+   可是为什么没有 Cancel 呢？By right 每一个 Transaction Record 应该都可以右键
+   （Right click）Move to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and
+   「我的 DO 也应该有右键 Transfer to Delivery Return，对吧？」
 
-   WHY IT IS CONSISTENT WITH THE RULE RATHER THAN A HOLE IN IT. §1b decides
-   membership by asking whether a MACHINE derives the status from a fact. For
-   these three, TODAY, none does:
+   SO CANCEL IS HERE NOW, and the paragraph it replaces said the opposite. That
+   text argued a stock-reversing action must not sit two pixels from "Open"
+   without the detail page's confirmation copy. The objection was to the MISSING
+   CONFIRMATION, not to the entry — so the entry ships WITH one: the list's
+   `cancel` handler goes through `askConfirm` before it writes, exactly like the
+   Sales Order list's, and it is the SAME endpoint the detail page posts
+   (`PATCH /delivery-orders-mfg/:id/status`, status CANCELLED). Nothing new
+   happens here; the capability is the page's, the menu only offers it.
+
+   `canCancel` is the LIST's to compute and it cannot be complete, which is
+   worth saying rather than hiding. The route refuses a cancel on two grounds:
+   a DO that is already CANCELLED (`do_cancelled_final` — un-cancelling would
+   leave the stock add-back standing), and a DO with a live Sales Invoice or
+   Delivery Return hanging off it (`doHasDownstream`). Only the FIRST is visible
+   in a list row. The second is a server-side fact no row carries, so that
+   refusal reaches the operator through the mutation's error path instead of by
+   the entry being absent — a refusal somebody reads, rather than a capability
+   that silently is not there.
+
+   `Confirm` is the DRAFT rung and only that: it is `doAdvanceStep`'s single
+   step, the same one the detail page and the drawer already offer.
+
+   AND THREE MANUAL STATUS MOVES — Mark Shipped / In Transit / Delivered — which
+   are a NAMED, DATED EXCEPTION to the rule the Sales Order menu above states: a
+   status a MACHINE derives is never offered to a person
+   (docs/modules/document-status-vocabulary.md §1b). Read that section before
+   touching this block; the exception is recorded there too, with what retires
+   each entry.
+
+   THE SENTENCE THIS REPLACES SAID THE REST OF THE LADDER STAYS OFF THIS MENU,
+   "because the DO is the one document where a status move has a STOCK
+   consequence". That was true and has stopped being true. Since 2026-08-22 the
+   inventory OUT fires on the FIRST entry into a shipped state, and that state is
+   Confirm (LOADED) — the owner moved it there. Every status these three entries
+   can reach is already past Confirm, so `deductInventoryForDo` finds this
+   delivery order's own OUT rows and returns without writing. The objection was
+   to a stock-MOVING action behind a right-click; these cannot move stock.
+
+   WHY THEY SATISFY §1b RATHER THAN WAIVING IT. That section decides membership
+   by asking whether a MACHINE derives the status from a fact. For these three,
+   TODAY, none does:
 
      Shipped     (DISPATCHED)  the storekeeper QR scan that will write it does
                                not exist. The DO print's existing QR lands on
                                DoLoadScan, which writes LOADED (Confirmed).
      In transit  (IN_TRANSIT)  the driver trip flow (MobileDeliveryPlanning) is
-                               its only writer and has never written a row — zero
-                               delivery orders have ever held this status.
+                               its only writer and has never written a row — no
+                               delivery order has ever held this status.
      Delivered   (DELIVERED)   the driver's Proof-of-Delivery screen (MobilePOD)
-                               DOES write it — the one machine of the three — but
+                               DOES write it, the one machine of the three — but
                                asked directly whether drivers use that app, the
-                               owner answered 「没有」. So the manual entry is the
+                               owner answered 「没有」. The manual entry is the
                                stopgap for a machine that exists and is unused.
 
    A status no machine writes is a decision a person makes, which is the same
    test that keeps Hold and Cancel on the Sales Order menu. Each entry retires
    itself the day its machine goes into use.
 
-   AND THEY CANNOT MOVE STOCK, which is what makes a right-click acceptable on
-   the one document where a status move normally can. The inventory OUT fires on
-   the FIRST entry into a shipped state, and since 2026-08-22 that is Confirm
-   (LOADED). Every status these entries can reach is already past Confirm, so
-   deductInventoryForDo finds this DO's own OUT rows and returns without writing.
-
-   That is also why they are withheld from a DRAFT: on a draft they WOULD be the
-   hop that deducts, and that belongs behind the Confirm control with its own
-   words, not two pixels from "Open". They are withheld from a CANCELLED delivery
-   order because the server refuses every transition out of it
-   (`do_cancelled_final`), so the entry could only ever produce a 409. */
+   There is deliberately no `Mark Invoiced`: nothing in this codebase writes
+   `delivery_orders.status = 'INVOICED'`, so the label would mean "somebody
+   clicked it", not "this was billed". */
 export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (r: R) => void;
   transferToSi: (r: R) => void;
+  transferToDr: (r: R) => void;
+  confirm: (r: R) => void;
   setStatus: (r: R, status: string) => void;
+  cancel: (r: R) => void;
   canInvoice: (r: R) => boolean;
-  /* The caller's write permission. A read-only user gets no status entries at
-     all rather than three that fail at the server — same reason `canDeliver`
+  canReturn: (r: R) => boolean;
+  canConfirm: (r: R) => boolean;
+  canCancel: (r: R) => boolean;
+  /* The caller's write permission. A read-only user gets no manual status entry
+     at all rather than three that fail at the server — same reason `canDeliver`
      exists on the Sales Order menu above. */
   canSetStatus: boolean;
 }): (r: R) => RowMenuItem[] {
-  /* NO CANCEL, and it is a recorded gap rather than a decision. The delivery
-     order list has no cancel handler today — cancelling one lives on the detail
-     page. This menu EXPOSES what the page already does; adding the capability
-     here would put a stock-reversing action behind a right-click without the
-     detail page's confirmation copy. */
   return (r) => {
     const s = norm(r.status);
     /* Confirmed or later, from the SHARED set rather than a list typed here — a
        fourth hand-written copy of the delivery ladder is the exact shape
-       check-duplicated-decisions hunts, and it caught this one. DO_STOCK_OUT_STATES
-       is also the RIGHT question: these entries are offered precisely where the
-       stock has already gone out, which is what makes them unable to move it.
-       DRAFT and CANCELLED are excluded by not being members, and so is any status
-       this file does not recognise — naming a step for an unknown state is the
-       COMPLETED mistake, and offering nothing is the cheap answer. */
+       check-duplicated-decisions hunts, and it caught this one when it was one.
+       DO_STOCK_OUT_STATES is also the RIGHT question: these entries are offered
+       precisely where the stock has already gone out, which is what makes them
+       unable to move it. DRAFT, CANCELLED and any status this file does not
+       recognise fall out by not being members — naming a step for an unknown
+       state is the COMPLETED mistake, and offering nothing is the cheap answer. */
     const canMark = h.canSetStatus && (DO_STOCK_OUT_STATES as readonly string[]).includes(s);
     return buildRowMenu(
       [
@@ -194,14 +224,19 @@ export function deliveryOrderRowMenu<R extends StatusRow>(h: {
         { label: "Edit", onClick: () => h.edit(r) },
         { label: "Print", onClick: () => h.print(r) },
       ],
-      [h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) }],
       [
+        h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
+        h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
+      ],
+      [
+        h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
         /* The status the row already carries is left out: re-writing it is a
            no-op the operator would read as a real choice. */
         canMark && s !== "DISPATCHED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "DISPATCHED") },
         canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
         canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
       ],
+      [h.canCancel(r) && dangerItem("Cancel Delivery Order", () => h.cancel(r))],
     );
   };
 }
@@ -284,5 +319,171 @@ export function salesInvoiceRowMenu<R extends StatusRow>(h: {
       { label: "Print", onClick: () => h.print(r) },
     ],
     [h.canPay(r) && { label: "Record payment", onClick: () => h.recordPayment(r) }],
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   THE OTHER FIVE LISTS (owner, 2026-08-22)
+
+   His words: 「为什么我的 Purchase Invoice 是没有的呢？」, 「By right 每一个
+   Transaction Record 应该都可以右键（Right click）Move to Cancel，或者在 Draft
+   那边右键 Confirm 之类的。」 and 「只要有 Cancel / On Hold 状态的，全部都可以右键
+   Cancel 或 On Hold。」
+
+   Five lists above, five below, and the shape is the same one. The five below
+   are the documents at the END of their chains, which is why every one of them
+   has an EMPTY transfer group: `CONVERT_LINKS` in `lib/convertScope.tsx` holds
+   six pairs and none of them starts at a Purchase Invoice, a Purchase Return, a
+   Delivery Return, a Stock Transfer or a Stock Take. `buildRowMenu` drops the
+   empty group, so the separator it would have needed never renders.
+
+   ONLY CONFIRM AND CANCEL ARE OFFERED. A status a MACHINE decides is never in
+   this menu — the Delivery Return's Inspected and Refunded, the Purchase
+   Return's Complete and the Purchase Invoice's Mark Paid all stay on the row
+   drawer where they already live, beside the numbers that justify them. That is
+   the same judgement `salesOrderRowMenu` records above for READY_TO_SHIP and
+   DELIVERED, applied to the rest of the system.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Purchase Invoice ───────────────────────────────────────────────────────
+   The list he right-clicked and got Chrome's menu.
+
+   CANCEL WAS ALREADY BUILT AND WIRED TO NOTHING. `useCancelPurchaseInvoice()`
+   was called in the list and its result never used — the page held the whole
+   capability and offered the operator no way to reach it. `noUnusedLocals` is
+   false on the frontend tsconfig, so nothing said a word.
+
+   The server refuses a cancel once any money has been paid
+   (`cancelPurchaseInvoiceHandler`: PAID or `paid_sen > 0` → 409), so `canCancel`
+   has to know that too — an entry the server will refuse is a menu that lies. */
+export function purchaseInvoiceRowMenu<R extends StatusRow>(h: {
+  open: (r: R) => void;
+  edit: (r: R) => void;
+  print: (r: R) => void;
+  confirm: (r: R) => void;
+  cancel: (r: R) => void;
+  canConfirm: (r: R) => boolean;
+  canCancel: (r: R) => boolean;
+}): (r: R) => RowMenuItem[] {
+  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  return (r) => buildRowMenu(
+    [
+      { label: "Open", onClick: () => h.open(r) },
+      { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Print", onClick: () => h.print(r) },
+    ],
+    [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
+    [h.canCancel(r) && dangerItem("Cancel Purchase Invoice", () => h.cancel(r))],
+  );
+}
+
+/* ── Purchase Return ────────────────────────────────────────────────────────
+   The one of the five that needed nothing new: Post, Complete and Cancel are
+   all handlers the list already had on its drawer.
+
+   COMPLETE IS DELIBERATELY ABSENT. It records the supplier's credit note — a
+   money statement that wants the reference field the drawer's Complete tab
+   asks for, and a right-click cannot ask for it. */
+export function purchaseReturnRowMenu<R extends StatusRow>(h: {
+  open: (r: R) => void;
+  edit: (r: R) => void;
+  print: (r: R) => void;
+  confirm: (r: R) => void;
+  cancel: (r: R) => void;
+  canConfirm: (r: R) => boolean;
+  canCancel: (r: R) => boolean;
+}): (r: R) => RowMenuItem[] {
+  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  return (r) => buildRowMenu(
+    [
+      { label: "Open", onClick: () => h.open(r) },
+      { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Print", onClick: () => h.print(r) },
+    ],
+    [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
+    [h.canCancel(r) && dangerItem("Cancel Purchase Return", () => h.cancel(r))],
+  );
+}
+
+/* ── Delivery Return ────────────────────────────────────────────────────────
+   NO CONFIRM, and it is not an omission. A Delivery Return has no draft step:
+   it is RECEIVED the moment it is created and the stock is already back in, so
+   there is no "make this real" transition for a person to perform. Its states
+   are Received, Inspected, Refunded, Credit noted, Rejected, Cancelled —
+   `document-status-vocabulary.md` has no Confirmed row for this document
+   because there is nothing to put in it.
+
+   CANCEL IS FINAL HERE, which is why `canCancel` excludes an already-cancelled
+   row rather than relying on the server: un-cancelling is refused outright
+   (`patchDeliveryReturnStatusHandler` — the cancel's stock drain would be left
+   in place), so a second Cancel is a dead entry, not a no-op. */
+export function deliveryReturnRowMenu<R extends StatusRow>(h: {
+  open: (r: R) => void;
+  edit: (r: R) => void;
+  print: (r: R) => void;
+  cancel: (r: R) => void;
+  canCancel: (r: R) => boolean;
+}): (r: R) => RowMenuItem[] {
+  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  return (r) => buildRowMenu(
+    [
+      { label: "Open", onClick: () => h.open(r) },
+      { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Print", onClick: () => h.print(r) },
+    ],
+    [h.canCancel(r) && dangerItem("Cancel Delivery Return", () => h.cancel(r))],
+  );
+}
+
+/* ── Stock Transfer ─────────────────────────────────────────────────────────
+   OPEN ONLY, then Cancel. There is no Edit and no Print because there is
+   nothing to call: `StockTransferDetail.tsx` is read-only ("no edits post-0078")
+   and neither the list nor the detail page has ever had a print handler. An
+   entry pointing at a route that does not exist is worse than a shorter menu.
+
+   NO CONFIRM: a transfer is POSTED at the moment it is created — atomic, as the
+   list's own header comment says — so the confirm step it would name has
+   already happened by the time the row exists.
+
+   Cancel was the same dead handler as the Purchase Invoice's: `doCancel` was
+   written, complete with its confirmation, and called from nowhere. */
+export function stockTransferRowMenu<R extends StatusRow>(h: {
+  open: (r: R) => void;
+  cancel: (r: R) => void;
+  canCancel: (r: R) => boolean;
+}): (r: R) => RowMenuItem[] {
+  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  return (r) => buildRowMenu(
+    [{ label: "Open", onClick: () => h.open(r) }],
+    [h.canCancel(r) && dangerItem("Cancel Stock Transfer", () => h.cancel(r))],
+  );
+}
+
+/* ── Stock Take ─────────────────────────────────────────────────────────────
+   Open and Cancel, for the same reasons as the Stock Transfer: no edit route,
+   no print handler, and a `doCancel` that existed and was reachable from
+   nothing.
+
+   NO CONFIRM, and this one IS a judgement rather than an absence. Posting a
+   stock take books an ADJUSTMENT movement per non-zero-variance line, and the
+   detail page's confirmation shows the operator exactly what he is about to
+   book — counted, untouched, variance lines, net variance — before he agrees.
+   The list row carries none of those numbers. A right-click Confirm here would
+   move stock on a summary the operator cannot see, so posting stays on the
+   detail page. Cancel is offered because it does the opposite: an OPEN take has
+   written no movement, so cancelling one changes no stock at all.
+
+   The server agrees on that boundary — `/stock-takes/:id/cancel` accepts OPEN
+   only, and undoing a POSTED take is a different route (`/reverse`) with its own
+   words. `canCancel` therefore means OPEN, not "not already cancelled". */
+export function stockTakeRowMenu<R extends StatusRow>(h: {
+  open: (r: R) => void;
+  cancel: (r: R) => void;
+  canCancel: (r: R) => boolean;
+}): (r: R) => RowMenuItem[] {
+  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  return (r) => buildRowMenu(
+    [{ label: "Open", onClick: () => h.open(r) }],
+    [h.canCancel(r) && dangerItem("Cancel Stock Take", () => h.cancel(r))],
   );
 }

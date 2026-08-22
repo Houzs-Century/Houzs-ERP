@@ -73,6 +73,7 @@ hard to check.
 | `announcements.md` | not verified | — | — |
 | `autocount-writeback.md` | not verified | — | — |
 | `combo-pricing.md` | not verified | — | — |
+| `consignment-alignment.md` | not verified | — | NEW guide, 2026-08-22 — a PROPOSAL, not a description of shipped behaviour, so most of it is not the kind of claim this ledger verifies. What IS verifiable and was read out of the tree: the status column TYPE of each of the six consignment documents (each reuses its mirror document's own enum), which code path writes each status today, and which sales-side derivation engines do NOT reference the consignment tables. What is explicitly NOT established: the LIVE enum labels and every row count — the read-only census (`backend/scripts/check-consignment-status-census.mjs`) had not been dispatched when the guide was written, and the guide says so in §2.4. Verify it against a census run, not against this file. |
 | `delivery-order.md` | not verified | — | — |
 | `document-status-vocabulary.md` | not verified | — | — |
 | `delivery-rate-card.md` | not verified | — | — |

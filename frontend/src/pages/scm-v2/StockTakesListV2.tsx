@@ -30,6 +30,7 @@ import { cn } from "../../lib/utils";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { stockTakeRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
 
@@ -214,6 +215,18 @@ export function StockTakesListV2() {
     }
   };
 
+  /* Right-click (owner 2026-08-22). Cancel is the handler directly above, which
+     until now was written and called from nowhere. OPEN only, because that is
+     the only transition this route accepts — undoing a POSTED take is
+     /stock-takes/:id/reverse, a different action with different words, and it
+     stays on the detail page. Posting stays there too: the confirmation shows
+     the variance about to be booked, and the row carries no such number. */
+  const takeContextMenu = stockTakeRowMenu<StockTakeRow>({
+    open: goDetail,
+    cancel: doCancel,
+    canCancel: (r) => r.status.toUpperCase() === "OPEN",
+  });
+
   const columns: Column<StockTakeRow>[] = [
     {
       key: "take_no",
@@ -381,6 +394,7 @@ export function StockTakesListV2() {
             columns={columns}
             getRowKey={(r) => r.id}
             onRowClick={goDetail}
+            contextMenu={takeContextMenu}
             exportName="stock-takes"
             emptyLabel={filtersActive ? "No takes match — try Reset layout." : "No stock takes yet."}
             search={{ value: search, onChange: setSearch, placeholder: "Search take, warehouse, scope, notes…", scope: "server", totalRecords: filtered.length }}
