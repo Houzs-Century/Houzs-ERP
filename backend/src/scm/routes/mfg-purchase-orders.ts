@@ -1238,11 +1238,8 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
-  /* The category is the SKU's, resolved server-side — see lib/sku-category.ts
-     for why a blank group sends the receipt's stock to the unclassified bucket
-     (docs/bugs/0514). */
+  // The group is the SKU's — lib/sku-category.ts says why (docs/bugs/0514).
   const skuCategoryByCode = await resolveSkuCategories(supabase, items, activeCompanyId(c) ?? null);
-
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
@@ -1258,6 +1255,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     // PR #97 — line total honours per-line discount when computed up front
     // (matches the AutoCount "Total" column in the new full-page form).
     const lineTotal = Math.max(0, qty * unit - discountSen);
+    const itemGroup = lineItemGroup(skuCategoryByCode, it); // SKU wins; description2 uses the SAME value
     subtotal += lineTotal;
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
@@ -1281,15 +1279,10 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
          them (server-owned, like the SO route). */
-      item_group:   lineItemGroup(skuCategoryByCode, it),
+      item_group:   itemGroup,
       variants:     (it.variants as unknown) ?? null,
       description:  (it.description as string | undefined) ?? null,
-      /* From the RESOLVED group, so the printed Description 2 and the stock
-         key can never describe different things. */
-      description2: buildVariantSummary(
-        String(lineItemGroup(skuCategoryByCode, it) ?? ''),
-        (it.variants as Record<string, unknown> | null) ?? null,
-      ) || null,
+      description2: buildVariantSummary(String(itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Commander 2026-05-29 (BUG 1) — persist the source SO line (migration
          0098) so deleting this PO line can release po_qty_picked back to the
          From-SO picker. NULL for manually-added lines. */
