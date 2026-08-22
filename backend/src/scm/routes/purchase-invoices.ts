@@ -974,7 +974,7 @@ purchaseInvoices.post('/', async (c) => {
    on create now run exactly once here:
      · recomputeGrnInvoiced  — consume the source GRN lines (drop them out of the
        outstanding picker) — the SAME chokepoint POST/ runs for a non-DRAFT PI.
-     · postPiAccounting       — post Dr Inventory 1200 / Cr Payables 2000 (AP/GL).
+     · postPiAccounting       — post Dr INVENTORY / Cr AP (roles, acc/rules.ts).
      · recostForPi            — push the billed price down the lots → DO → SI.
    Idempotent + back-compat: a PI already POSTED (e.g. created non-DRAFT) echoes
    back without re-running the transition, but still ENSURES its AP/GL entry —
@@ -1133,7 +1133,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   // rows drop out of the outstanding picker. The line ids were read before the
   // flip, for the cap check above — one read, both uses.
   await recomputeGrnInvoiced(sb, draftGrnItemIds);
-  // Post the AP/GL entry (Dr Inventory 1200 / Cr Payables 2000). Best-effort —
+  // Post the AP/GL entry (Dr INVENTORY / Cr AP, by role). Best-effort —
   // idempotent + a post failure never un-confirms the PI.
   const postRes = await postPiAccounting(sb, curRow.invoice_number);
   if (!postRes.ok) {
@@ -1719,7 +1719,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   /* A receipt carried over from AutoCount is invoiced by the migrated-invoice
      converter, never here. Three things go wrong if this path takes it: the
      invoice would be numbered PI-YYMM-NNNN instead of HC-<AutoCount's number>
-     (the owner's standing rule), it would post Dr 1200 / Cr 2000 for a payable
+     (the owner's standing rule), it would post Dr INVENTORY / Cr AP for a payable
      AutoCount already booked, and it would enqueue a gr_to_pi transfer that
      duplicates the invoice in the live account book. It would also consume the
      GRN line's invoiceable quantity, so the mistake could not be corrected
