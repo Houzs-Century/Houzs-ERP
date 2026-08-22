@@ -921,10 +921,8 @@ export async function recomputePoReceived(
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
       // Checked for the same reason as the received_qty writes above: unchecked,
       // the PO stays RECEIVED (or SUBMITTED) under a clean-looking recount.
-      /* ON_HOLD joins CANCELLED here (2026-08-21). This recount re-derives a
-         PO's status from its lines, so without the exclusion the next GRN post
-         would silently overwrite a hold somebody had just applied — a status
-         that vanishes by itself is worse than one that was never offered. */
+      /* ON_HOLD joins CANCELLED (2026-08-21): this recount re-derives a PO's
+         status, so without it the next GRN post would erase a hold by itself. */
       const { error: poErr } = await sb.from('purchase_orders')
         .update(patch).eq('id', poId).not('status', 'in', '("CANCELLED","ON_HOLD")');
       if (poErr) {
