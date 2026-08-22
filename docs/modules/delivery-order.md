@@ -560,6 +560,36 @@ a read-only user gets no status entries at all.
 this codebase writes `delivery_orders.status = 'INVOICED'`, so the label means
 "somebody clicked it", not "this was billed".
 
+### A HELD delivery order can still be confirmed, and its stock still ships
+
+**FINDING, 2026-08-22 — reported, not fixed here.** #2661 turned Hold into a
+marker on `scm.delivery_orders` (mig 0324: `on_hold`, `hold_reason`, `held_at`,
+`held_by`). Since this change makes entering `LOADED` write the inventory OUT,
+the obvious question is whether a hold stops that. **It does not.**
+
+- **The server does not look.** `PATCH /:id/status` is 284 lines and contains
+  ZERO references to `on_hold` / `isDocumentHeld` / `held`, and its scoped load
+  selects `status, so_doc_no` — the hold column is not even in the projection.
+  By #2661's own rule ("the hold column is SELECTED, never inferred; an
+  unselected column reads `undefined`, which is not held, which is the permissive
+  answer"), this is precisely the silently-open-gate shape that header warns
+  about.
+- **The gates that DO read a hold answer a different question.**
+  `lib/source-document-gates.ts` covers SO→DO, SO→PO, PO→GRN and GRN→PI — may
+  this document be the SOURCE of a downstream one. A held Sales Order cannot
+  raise a delivery order. But once the delivery order EXISTS, holding it gates
+  nothing on the delivery order itself.
+- **The block is client-side only.** The list menu ANDs `!rowIsHeld(r)` into
+  `canConfirm`, `canInvoice`, `canReturn` and (since this change)
+  `canSetStatus`, so a held row is not OFFERED a confirm. Any other caller — the
+  phone, an integration, a stale bundle — is not refused.
+
+**No gate is built here, deliberately.** Whether a hold should block the confirm
+is a business decision (it would make Hold a hard stop on stock rather than a
+marker, which is the opposite of what 「我们的hold是给我们知道一个 order hold这的」
+asks for), and it belongs to whoever owns the hold work. It is written down so
+the next reader does not have to re-derive it.
+
 ### FOLLOW-UP — the consignment note has the same shape and was NOT changed
 
 `backend/src/scm/routes/consignment-notes.ts` spreads the same
