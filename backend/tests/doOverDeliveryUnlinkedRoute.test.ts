@@ -1,5 +1,7 @@
-// The over-delivery guard at the DRAFT->shipped CONFIRM chokepoint, exercised
-// through the real route handler — not just the pure invariant.
+// The over-delivery guard at the CONFIRM chokepoint (DRAFT -> LOADED since
+// 2026-08-22), exercised through the real route handler — not just the pure
+// invariant. That hop is where the inventory OUT fires, so it is the last
+// moment a delivery can be refused before its stock leaves.
 //
 // doOverDelivery.test.ts pins findOverDeliveredSoItems (the LINKED half) and
 // do-over-delivery.test.ts pins findOverDeliveredUnlinkedItems (the pure guard).
@@ -84,11 +86,17 @@ function harness(tables: Record<string, Row[]>) {
   return app;
 }
 
+/* CONFIRM IS DRAFT -> LOADED SINCE 2026-08-22, and this helper had to move with
+   it. The office Confirm button used to write DISPATCHED; the owner moved the
+   stock deduction to the confirm step, so LOADED is both what Confirm writes and
+   the hop the over-delivery guard now defends. Sending DISPATCHED here would
+   still pass — DRAFT -> DISPATCHED remains a legal pre-ship -> shipped hop — but
+   it would be testing a transition no screen performs. */
 const confirm = (app: Hono, id: string) =>
   app.request(`/delivery-orders/${id}/status`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status: 'DISPATCHED' }),
+    body: JSON.stringify({ status: 'LOADED' }),
   });
 
 async function overDeliveryRefusal(res: Response): Promise<{ error?: string; conflicts?: string[] } | null> {
@@ -166,28 +174,29 @@ describe('DO status PATCH — unlinked over-delivery guard (route-level)', () =>
 });
 
 /*
- * A LOADED delivery order can be DISPATCHED.
+ * A delivery order is not blocked by ITSELF at the confirm gate.
  *
- * `DO_PRESHIP_STATES` is {DRAFT, LOADED} — "no stock has left our hands yet" —
- * and the confirm gate admits both. But every engine that sums what a Sales
- * Order has already been delivered skipped only CANCELLED and DRAFT, so a
- * LOADED DO counted its OWN lines as delivered. The gate then compared this
- * DO's qty against a remaining figure that had already subtracted it, and
- * refused whenever 2 x own_qty > ordered_qty — which is every full delivery.
+ * THE ORIGINAL BUG, and it was real: `DO_PRESHIP_STATES` was {DRAFT, LOADED},
+ * the confirm gate admitted both, but every engine that sums what a Sales Order
+ * has already been delivered skipped only CANCELLED and DRAFT — so a LOADED DO
+ * counted its OWN lines as delivered. The gate compared this DO's qty against a
+ * remaining figure that had already subtracted it and refused whenever
+ * 2 x own_qty > ordered_qty, which is every full delivery. Goods on the lorry,
+ * confirm returns 409; the OUT never fires, stock on hand reads too high, MRP
+ * does not reorder, and the operator's way out is cancel-and-re-raise — the
+ * exact path that minted the DO-005 duplicate this file's first case refuses.
  *
- * Goods on the lorry, confirm returns 409. And because the inventory OUT only
- * fires on ENTRY to a shipped state, the units never leave the books: stock on
- * hand reads too high, MRP does not reorder, and the same units can be promised
- * twice. The operator's natural workaround is cancel-and-re-raise, which is the
- * exact path that minted the DO-005 duplicate delivery this file's first case
- * exists to refuse.
- *
- * `unbilled-deliveries.ts` is the tell: it consumes the same engine and had to
- * add LOADED to its own exclusion list by hand.
+ * WHAT CHANGED 2026-08-22, and why these cases now start from DRAFT. The owner
+ * moved the deduction to the confirm step, so LOADED is a SHIPPED state and the
+ * chokepoint these cases defend is DRAFT -> LOADED, not LOADED -> DISPATCHED.
+ * The self-refusal cannot recur at that hop for a structural reason rather than
+ * a lucky one: a DRAFT is excluded from the delivered sum, so the document being
+ * confirmed is never inside the total it is measured against. The scenarios are
+ * kept, with the subject document moved to the status the gate now runs on.
  */
-describe('DO status PATCH — a LOADED delivery order is not blocked by itself', () => {
-  test('REGRESSION: a LOADED DO delivering exactly what was ordered SHIPS', async () => {
-    // SO-4 orders 2 of NTYR. One LOADED DO carries both, linked. Nothing else
+describe('DO status PATCH — a delivery order is not blocked by itself', () => {
+  test('REGRESSION: a DO delivering exactly what was ordered CONFIRMS', async () => {
+    // SO-4 orders 2 of NTYR. One DRAFT DO carries both, linked. Nothing else
     // has shipped, so this is an ordinary full delivery.
     const tables: Record<string, Row[]> = {
       mfg_sales_orders: [{ doc_no: 'SO-4', debtor_code: 'D4', debtor_name: 'Cust4' }],
@@ -195,16 +204,16 @@ describe('DO status PATCH — a LOADED delivery order is not blocked by itself',
         { id: 'so-item-4', doc_no: 'SO-4', item_code: 'NTYR', item_group: null, qty: 2, cancelled: false },
       ],
       delivery_orders: [
-        { id: 'do-loaded', do_number: 'DO-LOADED', company_id: CO, status: 'LOADED', so_doc_no: 'SO-4' },
+        { id: 'do-loaded', do_number: 'DO-LOADED', company_id: CO, status: 'DRAFT', so_doc_no: 'SO-4' },
       ],
       delivery_order_items: [
-        { id: 'doi-loaded', delivery_order_id: 'do-loaded', so_item_id: 'so-item-4', item_code: 'NTYR', qty: 2, parent: { status: 'LOADED' } },
+        { id: 'doi-loaded', delivery_order_id: 'do-loaded', so_item_id: 'so-item-4', item_code: 'NTYR', qty: 2, parent: { status: 'DRAFT' } },
       ],
       delivery_return_items: [],
     };
     const refusal = await overDeliveryRefusal(await confirm(harness(tables), 'do-loaded'));
     expect(refusal).toBeNull();
-    expect(tables.delivery_orders.find((d) => d.id === 'do-loaded')?.status).toBe('DISPATCHED');
+    expect(tables.delivery_orders.find((d) => d.id === 'do-loaded')?.status).toBe('LOADED');
   });
 
   test('REGRESSION: the same, with UNLINKED lines — the header-attributed reading', async () => {
@@ -214,10 +223,10 @@ describe('DO status PATCH — a LOADED delivery order is not blocked by itself',
         { id: 'so-item-5', doc_no: 'SO-5', item_code: 'MATT', item_group: null, qty: 3, cancelled: false },
       ],
       delivery_orders: [
-        { id: 'do-loaded-u', do_number: 'DO-LOADED-U', company_id: CO, status: 'LOADED', so_doc_no: 'SO-5' },
+        { id: 'do-loaded-u', do_number: 'DO-LOADED-U', company_id: CO, status: 'DRAFT', so_doc_no: 'SO-5' },
       ],
       delivery_order_items: [
-        { id: 'doi-loaded-u', delivery_order_id: 'do-loaded-u', so_item_id: null, item_code: 'MATT', qty: 3, parent: { status: 'LOADED' } },
+        { id: 'doi-loaded-u', delivery_order_id: 'do-loaded-u', so_item_id: null, item_code: 'MATT', qty: 3, parent: { status: 'DRAFT' } },
       ],
       delivery_return_items: [],
     };
@@ -225,9 +234,9 @@ describe('DO status PATCH — a LOADED delivery order is not blocked by itself',
     expect(refusal).toBeNull();
   });
 
-  test('a LOADED DO that really WOULD over-deliver is still refused', async () => {
+  test('a DO that really WOULD over-deliver is still refused at Confirm', async () => {
     // The guard must lose its blind spot, not its teeth: SO-6 orders 2, a
-    // DISPATCHED DO already shipped both, and the LOADED one carries 2 more.
+    // DISPATCHED DO already shipped both, and the DRAFT one carries 2 more.
     const tables: Record<string, Row[]> = {
       mfg_sales_orders: [{ doc_no: 'SO-6', debtor_code: 'D6', debtor_name: 'Cust6' }],
       mfg_sales_order_items: [
@@ -235,16 +244,16 @@ describe('DO status PATCH — a LOADED delivery order is not blocked by itself',
       ],
       delivery_orders: [
         { id: 'do-6-first', do_number: 'DO-6A', company_id: CO, status: 'DISPATCHED', so_doc_no: 'SO-6' },
-        { id: 'do-6-loaded', do_number: 'DO-6B', company_id: CO, status: 'LOADED', so_doc_no: 'SO-6' },
+        { id: 'do-6-loaded', do_number: 'DO-6B', company_id: CO, status: 'DRAFT', so_doc_no: 'SO-6' },
       ],
       delivery_order_items: [
         { id: 'doi-6-first', delivery_order_id: 'do-6-first', so_item_id: 'so-item-6', item_code: 'NTYR', qty: 2, parent: { status: 'DISPATCHED' } },
-        { id: 'doi-6-loaded', delivery_order_id: 'do-6-loaded', so_item_id: 'so-item-6', item_code: 'NTYR', qty: 2, parent: { status: 'LOADED' } },
+        { id: 'doi-6-loaded', delivery_order_id: 'do-6-loaded', so_item_id: 'so-item-6', item_code: 'NTYR', qty: 2, parent: { status: 'DRAFT' } },
       ],
       delivery_return_items: [],
     };
     const refusal = await overDeliveryRefusal(await confirm(harness(tables), 'do-6-loaded'));
     expect(refusal).not.toBeNull();
-    expect(tables.delivery_orders.find((d) => d.id === 'do-6-loaded')?.status).toBe('LOADED');
+    expect(tables.delivery_orders.find((d) => d.id === 'do-6-loaded')?.status).toBe('DRAFT');
   });
 });

@@ -512,8 +512,10 @@ export function MobileConvertWizard({
 
       if (target === "do") {
         /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
-           `status: (body.asDraft === true) ? 'DRAFT' : 'DISPATCHED'`, and the
-           same flag gates the write half (deductInventoryForDo +
+           `status: (body.asDraft === true) ? 'DRAFT' : 'LOADED'` (it landed
+           DISPATCHED until 2026-08-22; raising a DO IS the confirm, so it now
+           lands on Confirmed — the stock timing is unchanged), and the same
+           flag gates the write half (deductInventoryForDo +
            syncSoDeliveredFromDo + the customer email). OMITTING the field is
            not a neutral default, it is "ship it now" — a tap in a driveway
            emptied the shelf, advanced the SO to delivered and emailed the

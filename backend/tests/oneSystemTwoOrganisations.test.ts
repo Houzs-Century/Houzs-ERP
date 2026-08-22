@@ -101,20 +101,28 @@ describe("the DO→Sales-Invoice transfer is offered from ONE declaration", () =
      because nothing has left the building. The owner ruled otherwise on
      2026-08-19 (#2485) — every CONFIRMED delivery may be invoiced — and the
      server had never refused one, so the stricter reading was this repo's
-     opinion, not the business's. A LOADED delivery is therefore NOT shipped (no
-     inventory OUT has been written; the ledger must not think otherwise) and IS
-     invoiceable. Folding the two sets into one would have to break one of those
-     two facts, which is why they are two constants. */
-  test("LOADED is not a shipped state, but it IS invoiceable", () => {
+     opinion, not the business's.
+
+     AND ON 2026-08-22 THE STOCK HALF MOVED TOO. The owner put the inventory OUT
+     on the confirm step, so LOADED IS a shipped state now: 「once confirmed就代表
+     出货了 就是直接扣库存」. The two constants agree about LOADED for the first
+     time, and they are still two constants — the difference between them is
+     INVOICED, and folding them would tell the ledger an INVOICED delivery's
+     stock never left. */
+  test("LOADED is a shipped state, and it is invoiceable", () => {
     expect(DO_SHIPPED_STATES).toContain("DISPATCHED");
     expect(DO_SHIPPED_STATES).toContain("IN_TRANSIT");
-    expect(DO_SHIPPED_STATES).not.toContain("LOADED");
+    expect(DO_SHIPPED_STATES).toContain("LOADED");
+    // DRAFT is out of both: a draft has not shipped and cannot be invoiced.
     expect(DO_SHIPPED_STATES).not.toContain("DRAFT");
-    // The stock question and the money question, on the same status, disagreeing
-    // on purpose. DRAFT and CANCELLED are out of both.
     expect(SI_TRANSFERABLE_DO_STATES).toContain("LOADED");
     expect(SI_TRANSFERABLE_DO_STATES).not.toContain("DRAFT");
     expect(SI_TRANSFERABLE_DO_STATES).not.toContain("CANCELLED");
+    /* The two are still separate declarations, and this is what proves it:
+       INVOICED is a shipped state (its stock left) and is NOT a source you may
+       raise a further invoice from. */
+    expect(DO_SHIPPED_STATES).toContain("INVOICED");
+    expect(SI_TRANSFERABLE_DO_STATES).not.toContain("INVOICED");
   });
 
   /* The list drawer's two buttons must not be mutually exclusive again. The bug

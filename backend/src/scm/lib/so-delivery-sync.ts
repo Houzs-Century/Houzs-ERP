@@ -125,9 +125,15 @@ export async function syncSoDeliveredFromDo(
       // LEAK GUARD (PRE-SHIP): a DO that has not shipped must never count
       // toward SO delivery coverage (else it could auto-advance the SO to
       // DELIVERED or stamp lines READY without any stock leaving). That is
-      // DRAFT *and* LOADED — this list named only DRAFT until 2026-08-20. The
-      // literal is built from DO_NOT_DELIVERED_STATES, so it cannot drift from
-      // the JS predicate the coverage engine uses.
+      // DRAFT and CANCELLED. It named only DRAFT until 2026-08-20, then DRAFT
+      // *and* LOADED; on 2026-08-22 LOADED left again because the owner moved
+      // the stock-out to the confirm step, so a Confirmed delivery HAS shipped
+      // and must count. The literal is built from DO_NOT_DELIVERED_STATES, so it
+      // cannot drift from the JS predicate the coverage engine uses — which is
+      // why that ruling re-computed this site rather than leaving it behind.
+      // The HOLD is deliberately not read here (mig 0324): a held delivery's
+      // goods have still left, and freezing its counts is exactly what #2661
+      // avoided by leaving this site status-only.
       const { data: doItemsRaw } = await sb
         .from('delivery_order_items')
         .select('id, so_item_id, qty, delivery_orders!inner(status)')

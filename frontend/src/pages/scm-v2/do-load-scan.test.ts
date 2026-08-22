@@ -3,9 +3,17 @@
 // 2026-08-21, owner: the warehouse confirms loading by scanning the paper that
 // travels with the goods. The QR is armed by an EXPLICIT `loadScanId` (never a
 // generic id) because the Consignment Note print reuses the DO renderer and a
-// CN must never grow a control that flips a DELIVERY ORDER's status. Loading
-// moves NO stock — the OUT fires on DISPATCHED — and the landing page's only
-// write is the ordinary status PATCH to LOADED.
+// CN must never grow a control that flips a DELIVERY ORDER's status. The landing
+// page's only write is the ordinary status PATCH to LOADED.
+//
+// SCANNING NOW MOVES STOCK, SINCE 2026-08-22. This file used to assert
+// "loading moves NO stock — the OUT fires on DISPATCHED", and that premise is
+// gone: the owner put the inventory OUT on the confirm step, LOADED joined
+// DO_SHIPPED_STATES, and the PATCH this page sends is what deducts. What is
+// still true, and is the property worth pinning, is that the PAGE does not move
+// stock ITSELF — it writes one status and the server owns the ledger. The
+// operator-facing sentence is pinned too, because the person reading it is
+// standing at the dock deciding whether to press the button.
 //
 // Structural pins; the page itself needs a session + live API.
 import { describe, it, expect } from 'vitest';
@@ -44,10 +52,25 @@ describe('the landing page', () => {
     expect(writes.length).toBe(1);
   });
 
-  it('moves no stock and says so to the operator', () => {
-    // Prose may SAY "inventory"; the page must never CALL anything that moves it.
-    expect(PAGE).not.toMatch(/deductInventory|writeMovements|resyncInventory/);
-    expect(PAGE).toContain('Stock leaves the warehouse when the');
+  it('never touches the ledger itself — the server owns the stock write', () => {
+    /* Prose may SAY "inventory"; the page must never CALL anything that moves
+       it. The old assertion ran the regex over the WHOLE FILE and so was
+       satisfied only while no comment mentioned the deduction — it would have
+       failed on an honest comment and passed on a call hidden behind a rename.
+       Stripping comments first is what the sentence above always meant. */
+    const code = PAGE
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(code).not.toMatch(/deductInventory|writeMovements|resyncInventory/);
+  });
+
+  it('tells the operator that confirming takes the goods out of stock', () => {
+    /* The copy is a pin, not decoration. It said the opposite until 2026-08-22
+       ("Stock leaves the warehouse when the dispatcher sends the truck ... not
+       now"), and a sentence that survives the behaviour it describes is how a
+       storekeeper comes to trust a thing that is not true. */
+    expect(PAGE).toContain('takes the goods out of warehouse stock');
+    expect(PAGE).not.toContain('Stock leaves the warehouse when the');
   });
 
   it('is routed at /scm/do-load behind the delivery guard', () => {

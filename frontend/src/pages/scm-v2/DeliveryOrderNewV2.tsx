@@ -914,11 +914,12 @@ export function DeliveryOrderNewV2() {
     setAsDraft(draft);
     createDo.mutate(
       /* asDraft is the ONLY field the create route reads to park a DO
-         (delivery-orders-mfg.ts:2473 — `body.asDraft === true ? 'DRAFT' :
-         'DISPATCHED'`); the `status` below is ignored by it. Sending only
-         `status` shipped the DO: stock deducted and the SO synced delivered,
-         while the flash said "Saved as draft". The unrouted V1 page had this
-         right (DeliveryOrderNew.tsx:294) and this one never got it. */
+         (`body.asDraft === true ? 'DRAFT' : 'LOADED'`); the `status` below is
+         ignored by it. Sending only `status` shipped the DO: stock deducted and
+         the SO synced delivered, while the flash said "Saved as draft". The
+         unrouted V1 page had this right (DeliveryOrderNew.tsx:294) and this one
+         never got it. The `status` value here has always been inert; since
+         2026-08-22 the server independently agrees with what it asks for. */
       { ...buildBody(), idempotencyKey: idemKey, asDraft: draft || undefined, status: draft ? "DRAFT" : "LOADED" },
       {
         onSuccess: async (res) => {

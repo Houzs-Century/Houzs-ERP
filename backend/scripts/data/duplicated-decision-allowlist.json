@@ -432,8 +432,8 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
-      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0."
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/shared/do-shipped-states.ts frontend/src/vendor/shared/do-shipped-states.ts",
+      "why": "THE DO SHIPPED STATES, now with ONE home and a vendored twin. backend/src/scm/shared/do-shipped-states.ts is the named home; frontend/src/vendor/shared/do-shipped-states.ts is a byte-identical copy because the browser cannot import from backend/src. The inline re-type inside DeliveryOrderDetailV2.tsx that this entry used to record is GONE — it imports the declaration now (line 87), which is exactly the follow-up the previous wording asked for. Refereed since this PR by frontend/src/vendor/shared/do-shipped-states.canonical.test.ts, which byte-compares the two files. It was NOT refereed before: check-shared-mirrors classed the pair TESTED on a text heuristic satisfied by an unrelated do-next-step test, so corrupting the twin left --strict at 0 DIVERGED and exit 0. LOADED joined the set on 2026-08-22 (owner: confirming a delivery order is what takes the stock out), so this entry's KEY changed with the values; the vendored-twin reason it records did not."
     },
     {
       "check": "D1",
@@ -1139,6 +1139,26 @@
       "check": "D1",
       "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD|backend/src/scm/lib/source-document-gates.ts backend/src/scm/shared/so-deliverable-states.ts frontend/src/vendor/shared/so-deliverable-states.ts",
       "why": "THE SO SOURCE THRESHOLD — which sales order a downstream document may be built from. ONE question, two spellings plus a vendored twin, PINNED rather than collapsed. The DELIVERY arm moved out of routes/delivery-orders-mfg.ts into shared/so-deliverable-states.ts on 2026-08-21 because it had ALSO been hand-written in the SO list as an allow-list of ONE value ('confirmed'), so the Transfer button vanished on READY_TO_SHIP — a status the stock allocator writes by itself the moment the goods land. The frontend copy is a byte-identical VENDORED TWIN refereed by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts, not a second decision. SO_UNORDERABLE_STATUSES (refuses a PO) asks the same question as soCanRaiseDo (refuses a DO) and the two are held EQUAL by backend/tests/duplicatedDecisionPins.test.ts PIN 2: a threshold one write path enforces and the other does not means a document type can be built from an order the other refuses. MOVED AGAIN 2026-08-22 — SO_UNORDERABLE_STATUSES left routes/mfg-purchase-orders.ts for lib/source-document-gates.ts, which now holds all three source-document gates side by side (SO->DO, SO->PO, PO->GRN). The reason was mig 0324, which turned the HOLD into a marker column beside the status: all three gates could previously see a hold FOR FREE because it lived in the `status` column they already read, and two of them said so in their own migration headers. Moving them together makes the next hold-shaped question one edit instead of three. CLOSED JOINED ALL THREE ON 2026-08-22, and one reason covers all of them: close means STOP CHASING THE REMAINDER — the customer took 7 of the 10, or the supplier cannot supply the last 3, and the delivered part STANDS while the document is NOT voided (owner, asked whether that case happens here: 「有的」). If the remainder is not coming, nothing more ships against the order and nothing more is bought for it. CLOSED is NOT CANCELLED, which voids the whole document; definition and guard in backend/src/scm/lib/so-lifecycle-guards.ts. COMMISSION_EXCLUDED_STATUSES used to be a fourth home of this same membership and no longer is, because CLOSED is deliberately absent from it — the part that went out was really sold. That near-miss is recorded separately in this file. See docs/bugs/0504-transfer-to-delivery-order-vanished-the-moment-stock-arrived.md, docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md and docs/bugs/0517-a-short-shipped-sales-order-had-nowhere-to-stop-only-a-cance.md"
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "THE DO SHIPPED STATES against the CONSIGNMENT NOTE's rendered status flow, differing by CANCELLED. One is the stock-out write trigger, the other is the ladder a detail screen draws; a cancelled note is a rung you can see and never a state whose entry deducts stock. Consignment is owned separately and is deliberately NOT changed here — see the delivery-order module guide's follow-up note. Pair appeared 2026-08-22 when LOADED joined the shipped set and the two lists came within one member of each other."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "TWO QUESTIONS ABOUT ONE LADDER, both declared in do-shipped-states.ts and differing by exactly INVOICED: DO_SHIPPED_STATES asks whether the stock has left, SI_TRANSFERABLE_DO_STATES asks whether a Sales Invoice may be raised. That file's own header states at length why folding them would be the expensive kind of tidy — dropping INVOICED from the shipped set would tell the ledger an INVOICED delivery's stock never left. Pair appeared 2026-08-22 when LOADED joined the shipped set."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "THE WHOLE VOCABULARY against the STOCK-MOVING SUBSET of it, differing by DRAFT and CANCELLED. DO_STATUSES is every legal scm.do_status label and is BUILT from DO_SHIPPED_STATES in the same file, so these cannot drift: one is literally derived from the other. Pair appeared 2026-08-22 when LOADED joined the shipped set."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,RETURNED,SIGNED ~ DELIVERED,DISPATCHED,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "A RENDERED STATUS MAP against the stock-out write trigger, differing by CANCELLED and RETURNED. A pill map covers every status a row can arrive in, including two the deduction never fires on; it is how a status is displayed, not a second answer to which ones move stock. Same reasoning as the sibling rendering entries above. Pair appeared 2026-08-22 when LOADED joined the shipped set."
     }
   ]
 }
