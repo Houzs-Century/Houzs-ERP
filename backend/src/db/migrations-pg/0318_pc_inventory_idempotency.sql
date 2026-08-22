@@ -37,6 +37,15 @@
 --   rows and is a pure no-op. Idempotent: rows already stamped keep their seq
 --   (correction_seq IS NULL predicate), and both CREATEs are IF NOT EXISTS.
 --
+-- REVERSAL: DROP INDEX IF EXISTS scm.uq_inv_mov_pc_receive_source;
+--           DROP INDEX IF EXISTS scm.uq_inv_mov_pc_return_source;
+--           UPDATE scm.inventory_movements SET correction_seq = NULL
+--             WHERE source_doc_type IN ('PC_RECEIVE','PC_RETURN')
+--               AND correction_seq IS NOT NULL;
+--           Complete: the stamping UPDATE below is the only writer of
+--           correction_seq on PC rows, deletes nothing and moves no
+--           quantities, so that predicate re-identifies exactly what it wrote.
+--
 -- HOUZS CONVENTIONS — schema-qualified (scm.*), search_path pinned, no inner
 -- BEGIN/COMMIT (pg-migrate owns the transaction), idempotent throughout.
 -- ----------------------------------------------------------------------------
