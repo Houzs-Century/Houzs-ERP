@@ -8,7 +8,7 @@ import {
 } from "../services/positionCapabilities";
 
 /* The editable Roles & Permissions matrix (owner 2026-08-22: "要界面可编辑").
- * Grants live in position_capabilities (PG mig 0318 / D1 150); the catalogue
+ * Grants live in position_capabilities (PG mig 0322 / D1 150); the catalogue
  * of valid keys is code (services/positionCapabilities.ts). Page/menu access
  * is NOT edited here — that stays in positionPolicy.
  *

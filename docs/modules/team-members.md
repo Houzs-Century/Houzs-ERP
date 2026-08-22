@@ -25,7 +25,7 @@
 >   (Mail Center reskin with derived personal/department/orphaned types).
 > * `permissions` → `TeamRolesV2.tsx` — the EDITABLE position-capability
 >   matrix (owner 2026-08-22: "要界面可编辑"). Grants are rows in
->   `position_capabilities` (PG mig 0318, D1 mirror 150); the catalogue + the
+>   `position_capabilities` (PG mig 0322, D1 mirror 150); the catalogue + the
 >   fail-closed gate live in `backend/src/services/positionCapabilities.ts`;
 >   the API is `backend/src/routes/position-capabilities.ts`, mounted at
 >   `/api/position-capabilities` in `backend/src/index.ts` (GET rides

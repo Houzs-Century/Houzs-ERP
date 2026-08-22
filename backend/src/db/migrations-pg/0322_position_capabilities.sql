@@ -1,4 +1,4 @@
--- 0318_position_capabilities — editable per-position operational capabilities.
+-- 0322_position_capabilities — editable per-position operational capabilities.
 --
 -- REVERSAL: DROP TABLE public.position_capabilities; — additive table, no
 -- other object references it, and nothing reads it before the warehouse-line

@@ -1,4 +1,4 @@
--- 150_position_capabilities — D1 test mirror of migrations-pg/0318.
+-- 150_position_capabilities — D1 test mirror of migrations-pg/0322.
 -- Editable per-position operational capabilities (the Roles & Permissions
 -- matrix). Presence of a row = granted. See the PG migration for the full
 -- rationale + the owner's 2026-08-22 seed ruling.

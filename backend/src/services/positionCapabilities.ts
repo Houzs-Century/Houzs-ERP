@@ -6,7 +6,7 @@
 // EDITABLE in the UI. Page/menu access stays code-defined in positionPolicy
 // (the 2026-07-18 architecture is untouched); this module carries the OTHER
 // axis — "which operational verbs may this POSITION perform". Grants are rows
-// in `position_capabilities` (PG mig 0318 / D1 mirror 150); the catalogue of
+// in `position_capabilities` (PG mig 0322 / D1 mirror 150); the catalogue of
 // valid keys lives HERE, in code, so a typo in the editor can never mint a
 // phantom capability.
 //
