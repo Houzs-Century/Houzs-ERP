@@ -19,9 +19,20 @@ describe("buildRowMenu", () => {
   });
 
   test("a group emptied by its own predicates is the same as an absent one", () => {
-    const draft = false;
-    expect(labels(buildRowMenu([it("Open")], [draft && it("Transfer")], [it("Cancel")])))
-      .toEqual(["Open", "—", "Cancel"]);
+    /* From a function, not a literal `false`: a literal is dead code the linter
+       is right to flag, and the thing under test is a RUNTIME predicate — the
+       row-does-not-qualify case every menu in row-menus.ts is built on. */
+    const canTransfer = (status: string) => status !== "DRAFT";
+    expect(labels(buildRowMenu(
+      [it("Open")],
+      [canTransfer("DRAFT") && it("Transfer")],
+      [it("Cancel")],
+    ))).toEqual(["Open", "—", "Cancel"]);
+    expect(labels(buildRowMenu(
+      [it("Open")],
+      [canTransfer("CONFIRMED") && it("Transfer")],
+      [it("Cancel")],
+    ))).toEqual(["Open", "—", "Transfer", "—", "Cancel"]);
   });
 
   test("never starts with a divider", () => {

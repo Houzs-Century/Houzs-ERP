@@ -1012,8 +1012,8 @@ export function PurchaseOrdersListV2() {
   const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r),
-    canReceive: (r) => ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(String(r.status ?? "").toUpperCase()),
-    canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(String(r.status ?? "").toUpperCase()),
+    canReceive: (r) => ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
+    canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
   });
   const doCancel = (r: PoHeaderRow) => {
     if (window.confirm(`Cancel PO ${r.po_number}? This can only be undone if no GRN has been raised.`)) {

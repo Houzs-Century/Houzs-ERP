@@ -66,5 +66,13 @@ const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neu
   completed: { tone: "success", label: "Completed" },
 };
 
-export const statusFor = (s: string): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
-  STATUS_TONE[s?.toLowerCase() ?? ""] ?? { tone: "neutral", label: s || "—" };
+/* The parameter is NULLABLE, and the guards inside are why. It was typed
+   `string` while the row column it reads is `status?: string | null`, so the
+   `?.` and the `??` looked redundant to the compiler and to the linter while
+   being the only thing standing between a null row and a crash. Widening the
+   type is the honest fix — deleting the guards to satisfy the rule would have
+   removed the protection and kept the bug. */
+export const statusFor = (
+  s: string | null | undefined,
+): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
+  STATUS_TONE[(s ?? "").toLowerCase()] ?? { tone: "neutral", label: s || "—" };

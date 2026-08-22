@@ -45,8 +45,10 @@ const STATUS_TONE: Record<
   cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
 };
 
+/* Nullable for the same reason its Sales Order twin is: the column it reads is
+   `status?: string | null`, and the `|| ""` inside is load-bearing. */
 export const statusFor = (
-  s: string
+  s: string | null | undefined,
 ): { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab } =>
   STATUS_TONE[(s || "").toLowerCase()] ?? {
     tone: "neutral",

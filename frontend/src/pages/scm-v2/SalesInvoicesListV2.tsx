@@ -1034,7 +1034,7 @@ export function SalesInvoicesListV2() {
   const siContextMenu = salesInvoiceRowMenu<SiRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     recordPayment: (r) => goRecordPayment(r),
-    canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(String(r.status ?? "").toUpperCase()),
+    canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
   });
   const doMarkPaid = (r: SiRow) =>
     updateStatus.mutate(

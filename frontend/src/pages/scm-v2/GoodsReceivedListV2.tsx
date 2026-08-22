@@ -704,9 +704,9 @@ export function GoodsReceivedListV2() {
     open: goFullPage, edit: goEdit, print: goPrint,
     transferToPi: goConvertToPi, transferToPr: goConvertToPr,
     post: (r) => doPost(r), cancel: (r) => doCancel(r),
-    canBill: (r) => String(r.status ?? "").toUpperCase() === "POSTED",
-    canPost: (r) => String(r.status ?? "").toUpperCase() === "DRAFT",
-    canCancel: (r) => String(r.status ?? "").toUpperCase() !== "CANCELLED",
+    canBill: (r) => r.status.toUpperCase() === "POSTED",
+    canPost: (r) => r.status.toUpperCase() === "DRAFT",
+    canCancel: (r) => r.status.toUpperCase() !== "CANCELLED",
   });
   const doPost = (r: GrnRow) => {
     if (window.confirm(`Post GRN ${r.grn_number}? Inventory will be received into the warehouse.`)) {
