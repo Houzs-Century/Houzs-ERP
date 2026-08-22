@@ -11,9 +11,10 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { statusFor, type StatusTab } from "./do-list-status";
+import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
 import { deliveryOrderRowMenu } from "./row-menus";
-import { doCountsAsInvoiceable } from "../../vendor/shared/do-shipped-states";
+import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -779,6 +780,7 @@ export function MfgDeliveryOrdersListV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const holdAction = useHoldAction("do");
+  const askConfirm = useConfirm();
   const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
@@ -954,21 +956,41 @@ export function MfgDeliveryOrdersListV2() {
     );
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
-  /* The invoiceable predicate is the SHARED one, not a status list typed here:
-     doCountsAsInvoiceable is the system's only definition, and it already
-     carries the owner's 2026-08-20 ruling that a LOADED delivery may be
-     invoiced (「不要拦 —— 人自己知道」). */
-  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
-     The prompt wording and the write live in ./use-hold-action.ts. */
+  const doConvertToDr = (r: DoRow) => navigate(convertToLink('doToDr', r.id));
+  /* Cancel REVERSES STOCK, so it asks first — the same in-app confirm the Sales
+     Order list's cancel uses, and the same endpoint the detail page posts. */
+  const doCancelDo = async (r: DoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.do_number}?`,
+      body: "Stock allocated to this delivery order is released back to the Sales Order, and a cancelled delivery order cannot be reactivated — raise a new one to deliver again.",
+      confirmLabel: "Cancel Delivery Order",
+      danger: true,
+    }))) return;
+    updateStatus.mutate({ id: r.id, status: "CANCELLED" });
+  };
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
+     prompt wording and the write live in ./use-hold-action.ts. */
   const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
+  /* Every predicate here is a SHARED one, not a status list typed at this call
+     site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
+     LOADED delivery may be invoiced (「不要拦 —— 人自己知道」);
+     doCountsAsDelivered is the same rule the server's returnable-DO picker
+     applies (do-line-remaining.ts) — goods still on the lorry never left, so
+     nothing can come back; doAdvanceStep supplies the one DRAFT rung.
+
+     THE HOLD IS A SECOND AXIS, ANDed with them rather than folded into any of
+     them (mig 0324). Those predicates answer "where has this delivery got to";
+     the marker answers "did somebody stop it". A held DO may not be invoiced or
+     returned and may not be advanced — but the shared predicates stay untouched,
+     because a held delivery's stage is still its real stage. */
   const doContextMenu = deliveryOrderRowMenu<DoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
-    transferToSi: doConvertToSi, setHold: setDoHold,
-    /* A HELD DO IS NOT INVOICEABLE. `doCountsAsInvoiceable` is the shared
-       predicate and stays untouched — it answers a question about the delivery
-       STAGE, and the hold is a separate axis now, so the two are ANDed here
-       rather than folded into one list. */
+    transferToSi: doConvertToSi, transferToDr: doConvertToDr,
+    confirm: doAdvance, cancel: doCancelDo, setHold: setDoHold,
     canInvoice: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsInvoiceable(r.status),
+    canReturn: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsDelivered(r.status),
+    canConfirm: (r) => canWriteDo && !rowIsHeld(r) && doAdvanceStep(r.status) !== null,
+    canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
   });
   /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
      never succeed: PATCH /:id/status refuses every transition out of CANCELLED

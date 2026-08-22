@@ -50,6 +50,7 @@ import {
   useEnrichedPiListRows,
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
+  usePostPurchaseInvoice,
   useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -58,6 +59,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { purchaseInvoiceRowMenu } from "./row-menus";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
@@ -639,6 +641,7 @@ export function PurchaseInvoicesListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPi = useCancelPurchaseInvoice();
+  const postPi = usePostPurchaseInvoice();
   const recordPayment = useRecordPiPayment();
 
   // Server already filtered + sorted this page — render verbatim. The four
@@ -820,6 +823,57 @@ export function PurchaseInvoicesListV2() {
       recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
     }
   };
+
+  /* CONFIRM + CANCEL, from the right-click menu (owner 2026-08-22).
+
+     Cancel needed no new endpoint and no new hook: `useCancelPurchaseInvoice()`
+     was already called on this page and its result was used by nothing, so the
+     capability sat here unreachable. Confirm calls the same `/:id/post` route
+     the detail page's own Post button calls.
+
+     Both carry an onError, because a refusal that reaches nobody reads to the
+     operator as "the menu did nothing" — the exact bug class
+     `check-silent-mutations.mjs` exists to stop. */
+  const doConfirm = (r: PiRow) => {
+    if (!window.confirm(`Confirm invoice ${r.invoice_number}? Inventory and Payables will be updated.`)) return;
+    postPi.mutate(r.id, {
+      onSuccess: () => setSelected(null),
+      onError: (e) =>
+        notify({
+          title: `Couldn't confirm ${r.invoice_number}`,
+          body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
+          tone: "error",
+        }),
+    });
+  };
+  const doCancelPi = (r: PiRow) => {
+    if (!window.confirm(`Cancel invoice ${r.invoice_number}? Any posted amount will be reversed via a contra JE.`)) return;
+    cancelPi.mutate(r.id, {
+      onSuccess: () => setSelected(null),
+      onError: (e) =>
+        notify({
+          title: `Couldn't cancel ${r.invoice_number}`,
+          body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
+          tone: "error",
+        }),
+    });
+  };
+  /* The server refuses a cancel once ANY money has been paid against the
+     invoice (PAID, or paid_sen > 0 -> 409), so the menu must not offer it
+     there. Mark paid and Record payment stay on the drawer, beside the
+     outstanding figure that justifies them. */
+  const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: goPrint,
+    confirm: doConfirm,
+    cancel: doCancelPi,
+    canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
+    canCancel: (r) => {
+      const st = (r.status || "").toUpperCase();
+      return st !== "CANCELLED" && st !== "PAID" && paidOf(r) === 0;
+    },
+  });
 
   const columns: Column<PiRow>[] = [
     {
@@ -1140,6 +1194,7 @@ export function PurchaseInvoicesListV2() {
                   isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
                 }
                 onRowClick={(r) => setSelected(r)}
+                contextMenu={piContextMenu}
                 expandable={{
                   render: (r) => <PiLinesExpansion id={r.id} />,
                   rowKey: (r) => r.id,

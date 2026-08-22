@@ -142,6 +142,54 @@ Desktop routes: `frontend/src/App.tsx:654-657`, behind
 `<ScmGuard area="scm.sales.delivery" allowSales>` for list + detail (read), and
 without `allowSales` for new / from-so.
 
+### The list's right-click menu (owner ruling, 2026-08-22)
+
+His words, looking at this list's menu: 「DO 这一边没有问题，可是为什么没有
+Cancel 呢？By right 每一个 Transaction Record 应该都可以右键（Right click）Move
+to Cancel，或者在 Draft 那边右键 Confirm 之类的」 and 「我的 DO 也应该有右键
+Transfer to Delivery Return，对吧？」
+
+The menu is built by `deliveryOrderRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts` and wired in
+`MfgDeliveryOrdersListV2.tsx`. It offers five things, and every one of them
+calls a handler this page or its drawer already had:
+
+The list's own status vocabulary — the tab buckets, the pill tones, and
+`doCancellableStatus` — lives beside it in
+`frontend/src/pages/scm-v2/do-list-status.ts`, lifted out because the list file
+sits at its size ceiling.
+
+| entry | shown when | what it does |
+|---|---|---|
+| Open · Edit · Print | always | navigation only |
+| Transfer to Sales Invoice | `doCountsAsInvoiceable(status)` | `convertToLink('doToSi', id)` |
+| Transfer to Delivery Return | `doCountsAsDelivered(status)` | `convertToLink('doToDr', id)` |
+| Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `DISPATCHED` |
+| Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | in-app confirm, then `PATCH /:id/status` → `CANCELLED` |
+
+Everything above additionally requires `canWriteDo`
+(`canOperateDeliveryOrders`).
+
+**Cancel asks first because it reverses stock.** `doCancelDo` goes through
+`useConfirm` — the same shape the Sales Order list uses — and posts the DETAIL
+page's endpoint, not a new one. What the list CANNOT see is the route's second
+refusal: `doHasDownstream` blocks a cancel once a live Sales Invoice or Delivery
+Return points at this DO, and no list row carries that fact. That refusal
+therefore arrives as the mutation's error notice
+(`useUpdateMfgDeliveryOrderStatus`'s `onError`) rather than as a missing entry.
+
+**Which returnable statuses.** `doCountsAsDelivered` is the SHARED predicate,
+the same one `resolveCandidateDoIds(…, 'delivered')` applies server-side
+(`backend/src/scm/lib/do-line-remaining.ts`): DRAFT, LOADED and CANCELLED are
+out — goods still on the lorry never left, so nothing can come back. The menu
+cannot advertise a delivery the picker would then not list.
+
+**Only ONE status entry.** The rest of the ladder stays off this menu: the DO is
+the one document where a status move writes inventory OUT, and `DELIVERED`
+belongs to the driver's Proof-of-Delivery screen, which closes it with a
+signature. `Reopen` is absent for a harder reason — see "Who moves the DO status"
+below; every transition out of `CANCELLED` is refused.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/delivery-order-queries.ts`
 

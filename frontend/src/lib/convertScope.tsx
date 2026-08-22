@@ -49,6 +49,7 @@ export const CONVERT_LINKS = {
   grnToPr:  { path: '/scm/purchase-returns/new',       param: 'grnId'   },
   poToPr:   { path: '/scm/purchase-returns/new',       param: 'poId'    },
   doToSi:   { path: '/scm/sales-invoices/from-do',     param: 'doId'    },
+  doToDr:   { path: '/scm/delivery-returns/from-do',   param: 'doId'    },
   soToDo:   { path: '/scm/delivery-orders/from-so',    param: 'soDocNo' },
 } as const;
 
