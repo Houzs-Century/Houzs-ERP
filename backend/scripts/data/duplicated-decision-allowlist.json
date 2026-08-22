@@ -1121,6 +1121,11 @@
       "why": "TWO DIFFERENT QUESTIONS that share three words. MAIN_CATS asks which categories are MAIN PRODUCTS — a business rule about what blocks a sale from shipping, and accessories are deliberately not in it. TONE_BY_BUCKET asks which COLOUR each display group gets, and it needs a fourth member for exactly the reason the first one does not have it: everything that is NOT a main product still has to be drawn, so OTHER is the catch-all. Merging them would make a colour table decide what blocks a shipment. The extra member is the difference between a rule and a palette, and it is the whole point of both. See frontend/src/lib/brandingTone.ts and docs/modules/document-status-vocabulary.md."
     },
     {
+      "check": "D1",
+      "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/pages/team/TeamRolesV2.tsx",
+      "why": "THE POSITION 4-LEVEL ACCESS VOCABULARY on both sides of the wire. The backend home is POSITION_ACCESS_LEVELS (pageAccess.ts) and every stored value is validated against it; the matrix screen cannot import server code, so its click-cycle order restates the same four levels. The wire contract (PUT /api/position-capabilities/:id/pages rejects anything else) is the referee, pinned by backend/tests/positionPageOverrides.test.ts."
+    },
+    {
       "check": "D2",
       "key": "CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP ~ CANCELLED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
       "why": "THE SALES ORDER TAB VOCABULARY VERSUS ITS TRANSITION VOCABULARY, differing by SHIPPED. Two different questions, not one rule with two homes. SO_STATUSES answers 'may a row be moved to this status' and SHIPPED is still legal and still WRITTEN by so-delivery-sync when a delivery order is raised. SO_STATUS_BUCKETS answers 'which tab shows this row', and SHIPPED has no tab of its own because the owner folded it into Delivered on 2026-08-22. A status that is written but has no tab of its own is exactly what folding IS; making the two sets equal would either delete a status the system still writes or re-add a tab he removed."
