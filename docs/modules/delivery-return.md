@@ -235,7 +235,7 @@ unchanged and was already correct: it copies the source DO line's row.
 
 This stops NEW rows only; existing lines are not repaired (that needs the
 read-only probe's count first — PR #2671). Trace:
-`docs/bugs/0523-the-delivery-order-let-the-client-decide-which-stock-bucket.md`.
+`docs/bugs/0524-the-delivery-order-let-the-client-decide-which-stock-bucket.md`.
 
 The resync is called **best-effort** after item writes (`try { … } catch {}`), so
 an inventory hiccup does not fail the line edit. That is deliberate, and it means

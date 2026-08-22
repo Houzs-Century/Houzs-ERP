@@ -48,7 +48,7 @@ describe('source-cost — the company predicate is required, not optional', () =
       /* TIGHTENED 2026-08-23. This used to count `activeCompanyId(c) ?? null)`
          over the WHOLE file as a proxy for "every call passed the company" — so
          any unrelated helper that also takes the active company inflated the
-         count and failed the pin (resolveItemGroups, docs/bugs/0523, did exactly
+         count and failed the pin (resolveItemGroups, docs/bugs/0524, did exactly
          that). Read the company argument out of each call's OWN argument list
          instead: narrower, and it now fails for the reason it claims to. */
       const scoped = src

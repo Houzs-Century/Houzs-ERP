@@ -726,7 +726,7 @@ consignmentNotes.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0523.
+  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0524.
      `item_group` is not a label, it is the input to the stock bucket
      (shared/variant-key.ts): the OUT that sends the goods to the showroom floor is keyed from the group
      STORED on the line, so a client that sends a blank or wrong one picks the
@@ -915,7 +915,7 @@ consignmentNotes.post('/:id/items', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* SKU wins, decided once — docs/bugs/0523. Same rule as the create path: the
+  /* SKU wins, decided once — docs/bugs/0524. Same rule as the create path: the
      stored group is what the stock movement is keyed from. */
   it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
 
@@ -976,7 +976,7 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* SKU wins on the EDIT half too — docs/bugs/0523. An edit that names a group,
+  /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
      or re-points the code, decides which bucket this line's stock resync moves;
      the group stored is the SKU's. Every reader below takes
      `it.itemGroup ?? prev.item_group`, so one assignment settles the stored

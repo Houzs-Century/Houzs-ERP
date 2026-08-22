@@ -68,7 +68,7 @@ describe('attributesTheGroupWillIgnore — the contradiction', () => {
   });
 });
 
-/* ── resolveItemGroups — the OUTBOUND rewrite (docs/bugs/0523) ────────────────
+/* ── resolveItemGroups — the OUTBOUND rewrite (docs/bugs/0524) ────────────────
    The inbound helpers above hand a route a lookup it calls where it writes. A
    delivery order reads the group in three places (stock check, commitment
    planner, stored row) and the stored one is what the OUT movement is keyed

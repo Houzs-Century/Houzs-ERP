@@ -863,7 +863,7 @@ on each). Their convert-from-source paths copy DB rows and were left alone.
 **This stops NEW rows only.** Document lines already carrying a category that
 disagrees with their SKU are not repaired here — that is a write-shaped job that
 needs the read-only probe's count first (PR #2671). Trace:
-`docs/bugs/0523-the-delivery-order-let-the-client-decide-which-stock-bucket.md`,
+`docs/bugs/0524-the-delivery-order-let-the-client-decide-which-stock-bucket.md`,
 and the inbound half at
 `docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
 

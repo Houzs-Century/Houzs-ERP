@@ -1,5 +1,5 @@
 /* The OUTBOUND half of docs/bugs/0514 — a delivery order must not let the
- * client decide which stock bucket it checks and ships from (docs/bugs/0523).
+ * client decide which stock bucket it checks and ships from (docs/bugs/0524).
  *
  * `item_group` is not a label. `computeVariantKey(item_group, variants)`
  * composes a bedframe's fabric / gap / divan / leg into the stock key ONLY when

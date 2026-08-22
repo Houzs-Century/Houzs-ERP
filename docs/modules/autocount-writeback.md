@@ -317,7 +317,7 @@ ERP cannot reach now fails automatically, with nobody having to remember.
 The DO add-line case anchored on `deliveryOrdersMfg.post('/:id/items',` and read
 forward to the handler's own tail. When that handler became a named export
 (`addDeliveryOrderItemHandler`, so the outbound-category suite could drive it —
-`docs/bugs/0523-…`), the registration became a ONE-LINE call BELOW the body: the
+`docs/bugs/0524-…`), the registration became a ONE-LINE call BELOW the body: the
 start anchor still matched, the end anchor was now behind it, and the pin failed
 on a handler whose `queueAcDoEdit` had not moved an inch. It is repointed at the
 `export const` line. Prefer the declaration for any handler that is, or might

@@ -2,7 +2,7 @@
    do-item-row — one `delivery_order_items` insert row from a request line.
 
    Moved out of routes/delivery-orders-mfg.ts (which is over its size ceiling)
-   when the outbound category fix landed — docs/bugs/0523. Two things it buys
+   when the outbound category fix landed — docs/bugs/0524. Two things it buys
    beyond the line count: the row shape can be asserted directly by a test
    without standing up the whole route, and the contract below has somewhere to
    live where it is read before the row is built rather than after.

@@ -95,7 +95,7 @@ PATCH（只在这次请求有带 `itemGroup` 或 `itemCode` 时）三条路径�
 
 **只挡新的行，不修旧的。** 已经存在、类别跟 SKU 不一致的行不在这个 PR 里处理，
 要先等只读普查（PR #2671）数出来有多少张。追溯：
-`docs/bugs/0523-the-delivery-order-let-the-client-decide-which-stock-bucket.md`。
+`docs/bugs/0524-the-delivery-order-let-the-client-decide-which-stock-bucket.md`。
 
 ## 1. 这六张单到底是什么，各自对到销售链的哪一张
 

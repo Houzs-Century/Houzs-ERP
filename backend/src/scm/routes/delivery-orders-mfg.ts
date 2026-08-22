@@ -3243,7 +3243,7 @@ deliveryOrdersMfg.post('/', async (c) => {
   {
     const linked = await fillMissingSoItemIds(sb, (body.soDocNo as string | null) ?? null, items);
     if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
-    /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0523.
+    /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0524.
        `item_group` is not a label, it is the input to the stock bucket
        (shared/variant-key.ts), so a client that sends a blank or wrong one
        chooses which bucket this delivery checks AND deducts from. Rewritten
@@ -4574,7 +4574,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
     if (!claimed.ok) return c.json({ error: claimed.error, message: claimed.message }, 500);
     const linked = await fillMissingSoItemIds(sb, h.so_doc_no, [it], claimed.ids);
     if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
-    /* SKU wins, decided once — docs/bugs/0523. Same reasoning as the create
+    /* SKU wins, decided once — docs/bugs/0524. Same reasoning as the create
        path: the stock check below, the commitment planner and buildItemRow all
        read this one object. */
     it = (await resolveItemGroups(sb, [linked.items[0] as typeof it], activeCompanyId(c) ?? null))[0]!;
@@ -4797,7 +4797,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* SKU wins on the EDIT half too — docs/bugs/0523. An edit that names a group,
+  /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
      or re-points the code, decides the bucket resyncInventoryForDo will move
      this line's stock in and out of; the group stored is the SKU's. Every
      reader below takes `it.itemGroup ?? prev.item_group`, so one assignment
