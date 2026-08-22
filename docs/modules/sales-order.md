@@ -3584,3 +3584,21 @@ refusal above — moved from three hand-written copies into `notifySaveProblems`
 "is this an aggregated gate failure, and if so, this popup". What is deliberately
 NOT shared is each surface's own fallback: this page's inline banner and the
 mobile wizard's own wording both survive.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print now prints the whole chain (2026-08-23).** Right-
+clicking a row offers `Print` for the order itself, `Print Delivery Order <no>`
+for each delivery it shipped on, and `Print Sales Invoice <no>` for each invoice
+raised against it — **without leaving the list**. It replaces a Print that
+navigated to `?print=1`, which could only ever reach the row's own document.
+
+The list payload gained `do_refs` and `si_refs` for it: the two enrichment
+selects at `routes/mfg-sales-orders.ts` were already reading `delivery_orders`
+and `sales_invoices` by `so_doc_no` for `has_children` and the DO No. column, so
+each gained one column (`id`) and **no extra round trip**. `do_nos` is unchanged
+— it feeds a DISPLAY column that must still list a delivery carrying no id,
+while a print entry needs an address. `lib/downstream-doc-refs.ts` and
+`lib/so-delivery-order-nos.ts` hold that split; the full rule, the per-list
+enumeration and the one-to-many cap are in
+`document-conversion.md` §8b.

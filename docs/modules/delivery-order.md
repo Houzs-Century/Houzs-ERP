@@ -1441,3 +1441,16 @@ to raise it a second time into a book that already holds it. It never blocks.
 
 Full reasoning, and the per-field table of what each conversion used to drop:
 `docs/modules/autocount-writeback.md` §7c5.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A DO row offers
+`Print` for itself and `Print Sales Order <no>` for the order behind it, in
+place — no navigation.
+
+**Its two DOWNSTREAM entries are a recorded gap, not an omission.**
+`invoiced_si_nos` and `return_nos` are document NUMBERS with no id, and a PDF is
+fetched by address (`GET /delivery-orders-mfg/:id` is `.eq('id', id)`), so an
+entry built from one would 404. The fix is one column on two selects already in
+flight in `routes/delivery-orders-mfg.ts`, and it is not in that change because
+the file is over its size ceiling — `document-conversion.md` §8b sizes it.

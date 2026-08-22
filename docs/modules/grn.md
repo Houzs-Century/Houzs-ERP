@@ -967,3 +967,12 @@ to raise it a second time into a book that already holds it. It never blocks.
 
 Full reasoning, and the per-field table of what each conversion used to drop:
 `docs/modules/autocount-writeback.md` §7c5.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A GRN row offers
+`Print`, `Print Purchase Order <no>` and `Print Sales Order <no>` for each order
+its supply is bound to — in place, no navigation. The row already carries
+`purchase_order` and `assigned_sos`, so no payload change was required; an
+`assigned_sos` entry whose `source` is `'mrp'` builds no entry.
+`document-conversion.md` §8b has the rule.

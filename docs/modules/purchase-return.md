@@ -275,3 +275,10 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link
   hole"
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A PR row offers
+`Print`, `Print Purchase Order <no>` and `Print Goods Received <no>` in place —
+the row already carries `purchase_order` and `grn`, so no payload change was
+required. `document-conversion.md` §8b has the rule.

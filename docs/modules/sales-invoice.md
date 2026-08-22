@@ -629,3 +629,11 @@ to raise it a second time into a book that already holds it. It never blocks.
 
 Full reasoning, and the per-field table of what each conversion used to drop:
 `docs/modules/autocount-writeback.md` §7c5.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** An SI row offers
+`Print`, `Print Sales Order <no>` and `Print Delivery Order <no>` in place — the
+row already carries `so_doc_no` and `delivery_order_id` + `do_number`, so no
+extra read is needed and no payload change was required. `document-conversion.md`
+§8b has the rule and the per-list enumeration.

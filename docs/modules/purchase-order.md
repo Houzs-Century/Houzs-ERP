@@ -1084,3 +1084,16 @@ names no supplier and resolves to the ERP's own code.
 Surfaced on `frontend/src/pages/scm-v2/PurchaseOrderNew.tsx`, before the
 navigation so the page change cannot swallow it. `PurchaseOrderFromSo.tsx` is
 NOT wired yet and still saves in silence.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A PO row offers
+`Print`, `Print Sales Order <no>` for each order its supply is BOUND to, and
+`Print Goods Received <no>` for each GRN it was received into — in place, no
+navigation. The row already carries `assigned_sos` and `transfer_to_grns`, so no
+payload change was required.
+
+Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
+builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
+neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
+no address. `document-conversion.md` §8b has both.
