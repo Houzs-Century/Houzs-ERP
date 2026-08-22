@@ -43,10 +43,10 @@ structure as [`sales-order.md`](./sales-order.md).
 
 | Surface | File | Notes |
 |---|---|---|
-| Desktop "Scan Order" modal | `frontend/src/vendor/scm/components/ScanOrderModal.tsx` (833 lines) | multi-order batch: N slips in one session, one `/enqueue` per order |
-| Mobile Scan screen | `frontend/src/mobile/MobileScan.tsx` (1,278 lines) | the primary surface — the rep photographs the slip in the showroom |
+| Desktop "Scan Order" modal | `frontend/src/vendor/scm/components/ScanOrderModal.tsx` (840 lines) | multi-order batch: N slips in one session, one `/enqueue` per order |
+| Mobile Scan screen | `frontend/src/mobile/MobileScan.tsx` (1,467 lines) | the primary surface — the rep photographs the slip in the showroom |
 | Shared job helper | `frontend/src/vendor/scm/lib/scan-jobs.ts` | the `ScanJob` shape, the camel/snake dual-read normaliser, the time predicates |
-| Shared prefill reconciler | `frontend/src/vendor/scm/lib/scan-prefill.ts` (297 lines) | `reconcileScanPrefill()` — pure function, no hooks, no fetch |
+| Shared prefill reconciler | `frontend/src/vendor/scm/lib/scan-prefill.ts` (321 lines) | `reconcileScanPrefill()` — pure function, no hooks, no fetch |
 | Job cards on the SO list | `frontend/src/mobile/MobileSalesOrders.tsx` | re-exports through `MobileScan` |
 
 Both shells now take the **same** path: `POST /scan-so/enqueue` per order, then
@@ -233,7 +233,7 @@ distiller. The rename made all of this legible; it changed none of it.
 
 ## 3. Backend — the background pipeline
 
-`backend/src/scm/routes/scan-so.ts` (4,815 lines). Model `claude-sonnet-4-6`
+`backend/src/scm/routes/scan-so.ts` (4,865 lines). Model `claude-sonnet-4-6`
 (`:101`), endpoint `https://api.anthropic.com/v1/messages` (`:102`), retried on
 429/500/502/503/529 with backoff (`anthropicFetchWithRetry`, `:113-120`).
 `ANTHROPIC_API_KEY` is **optional** on the Env — absent, `/extract` returns

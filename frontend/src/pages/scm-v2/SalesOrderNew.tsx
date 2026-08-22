@@ -63,6 +63,9 @@ import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
+import {
+  cohortIsResolved, isInSalespersonCohort, cohortStaffIds,
+} from '../../vendor/scm/lib/salesperson-cohort';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
@@ -942,35 +945,34 @@ export const SalesOrderNew = () => {
      to see themselves as the default). Filter falls open when the queries
      haven't produced a set yet — we don't want to hide every option while
      loading. */
-  const filteredStaffList = useMemo(() => {
-    const haveIds = !!salespersonAllowedUserIds && salespersonAllowedUserIds.size > 0;
-    const haveEmails = !!salespersonAllowedEmails && salespersonAllowedEmails.size > 0;
-    if (!haveIds && !haveEmails) return staffList;
-    const selfEmail = (currentUser?.email ?? '').trim().toLowerCase();
-    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
-    return staffList.filter((s) => {
-      if (s.id === salespersonId) return true;
-      if (selfUserId != null && s.userId != null && Number(s.userId) === selfUserId) return true;
-      if (selfEmail && (s.email ?? '').trim().toLowerCase() === selfEmail) return true;
-      if (haveIds && s.userId != null && salespersonAllowedUserIds!.has(Number(s.userId))) return true;
-      return haveEmails && salespersonAllowedEmails!.has((s.email ?? '').trim().toLowerCase());
-    });
-  }, [staffList, salespersonAllowedEmails, salespersonAllowedUserIds, salespersonId, currentUser?.email, currentUser?.id]);
+  const cohortInput = useMemo(() => ({
+    allowedUserIds: salespersonAllowedUserIds,
+    allowedEmails: salespersonAllowedEmails,
+    selfUserId: currentUser?.id,
+    selfEmail: currentUser?.email,
+    keepStaffId: salespersonId,
+  }), [salespersonAllowedUserIds, salespersonAllowedEmails, currentUser?.id, currentUser?.email, salespersonId]);
 
-  /* Same Sales+Management filter, projected to staff IDs — piped into
-     PaymentsTable so the "Collected By" dropdown mirrors the salesperson
-     picker's roster. Null = don't restrict (loading / no dept data). */
-  const paymentsCollectedByAllowedIds = useMemo(() => {
-    if (!salespersonAllowedEmails || salespersonAllowedEmails.size === 0) return null;
-    const selfEmail = (currentUser?.email ?? '').trim().toLowerCase();
-    const set = new Set<string>();
-    for (const s of staffList) {
-      const em = (s.email ?? '').trim().toLowerCase();
-      if (em && salespersonAllowedEmails.has(em)) set.add(s.id);
-      if (em && selfEmail && em === selfEmail) set.add(s.id);
-    }
-    return set;
-  }, [staffList, salespersonAllowedEmails, currentUser?.email]);
+  const filteredStaffList = useMemo(
+    () => (cohortIsResolved(cohortInput)
+      ? staffList.filter((s) => isInSalespersonCohort(s, cohortInput))
+      : staffList),
+    [staffList, cohortInput],
+  );
+
+  /* The SAME cohort, projected to staff IDs — piped into PaymentsTable so the
+     "Collected By" dropdown really does mirror the salesperson picker. It used
+     to be a SECOND, hand-written rule that matched on EMAIL ONLY, and email is
+     not a key that exists on this data (18 of 140 staff rows carry one; 98 of
+     the 102 active rows do not — the very measurement two memos above). Worse,
+     it bailed to `null` — NO RESTRICTION — whenever the email set was empty,
+     so the field recording WHO TOOK THE MONEY was the one that fell open while
+     the salesperson picker went on narrowing correctly. Null now means only
+     "neither key has resolved yet". See vendor/scm/lib/salesperson-cohort.ts. */
+  const paymentsCollectedByAllowedIds = useMemo(
+    () => cohortStaffIds(staffList, cohortInput),
+    [staffList, cohortInput],
+  );
 
   /* Owner 2026-06-23 — the Salesperson must NEVER be blank for whoever creates
      the order: the creator IS the salesperson.

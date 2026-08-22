@@ -40,7 +40,7 @@ keeps its 320px width floor, which overrides the anchor's own width.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop list + detail | `frontend/src/pages/ServiceCases.tsx` | **8,032 lines** — list, calendar, create panel, detail panel, workflow card, stage accordion all in one file. Exports `ServiceCases` and `ServiceCaseDetail`. Do not open whole. |
+| Desktop list + detail | `frontend/src/pages/ServiceCases.tsx` | **8,816 lines** — list, calendar, create panel, detail panel, workflow card, stage accordion all in one file. Exports `ServiceCases` and `ServiceCaseDetail`. Do not open whole. |
 | Desktop "my cases" | `frontend/src/pages/MyCases.tsx` | Assignee-scoped card view (`MyCases`, `MyCaseDetail`). |
 | Desktop sub-views | `ServiceMetrics.tsx`, `ServiceSettings.tsx`, `ServiceLeadTimePortal.tsx` | Imported by `ServiceCases.tsx:79-81`. |
 | Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | Tabbed detail (Overview / Stage / Info / Timeline) + `NewCaseSheet`. |
@@ -334,7 +334,7 @@ Mobile uses TanStack directly:
 
 ## 2. API surface
 
-All under `backend/src/routes/assr.ts` (3,097 lines, ~50 endpoints). This table
+All under `backend/src/routes/assr.ts` (3,323 lines, ~50 endpoints). This table
 is the ones that matter; the full machine-checked gate list is
 `docs/generated/route-capability-matrix.csv` (filter `/api/assr`).
 
@@ -368,7 +368,7 @@ Token-gated companions (no session): `/api/track` (customer verify),
 ## 3. Backend
 
 `backend/src/routes/assr.ts` is a thin gate + shape layer; the logic is in
-`backend/src/services/assr.ts` (1,929 lines).
+`backend/src/services/assr.ts` (2,266 lines).
 
 ### List (`assr.ts:807-835` → `services/assr.ts:1553-1727`)
 

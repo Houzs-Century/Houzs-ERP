@@ -69,7 +69,7 @@ also why the row-level scoping in §5 is doing the real work.
 | PATCH | `/:id` | Update an OPEN quote's cart in place |
 | PATCH | `/:id/cancel` | Retire a quote (§4) |
 
-Handler file: `backend/src/scm/routes/quotes.ts` (~300 lines — small enough to
+Handler file: `backend/src/scm/routes/quotes.ts` (~321 lines — small enough to
 read whole).
 
 `POST /` mints the id server-side as `QU-XXXXXXXX` (TEXT PK, no DB default,

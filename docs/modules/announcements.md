@@ -276,7 +276,7 @@ see §6.
 
 ## 3. Backend
 
-`backend/src/routes/announcements.ts` (1,355 lines).
+`backend/src/routes/announcements.ts` (1,421 lines).
 
 ### Read path — two cohorts, one company gate
 

@@ -274,6 +274,17 @@ jobs:
       # prose) is printed and never fails a PR.
       - run: node scripts/check-docs-drift.mjs --strict
 
+      # The blind spot check-docs-drift NAMES and leaves open, forty lines above:
+      # "it resolves paths, not numbers, so a doc whose file exists and whose
+      # count is wrong reads as clean." Measured 2026-08-22: of the 17 line
+      # counts docs/modules quotes next to the file they describe, SIXTEEN were
+      # wrong — Projects.tsx documented at 12,404 lines against a real 15,017.
+      # Those numbers are the reason a guide says "do not open whole"; a count
+      # 2,600 lines light reads as a measurement and is a memory. Only
+      # docs/modules is checked: docs/bugs and the COEs are DATED RECORDS whose
+      # numbers are correct AS OF that day and must not be rewritten.
+      - run: node scripts/check-doc-line-counts.mjs
+
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written
       # directory-walking test (owner 2026-08-18: 「名词的统一」).

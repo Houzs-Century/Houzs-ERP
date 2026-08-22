@@ -29,7 +29,7 @@ module IS and the traps found while working in it, not every line of it.
 | Layer | Where |
 |---|---|
 | Inbound webhook + routing | `backend/src/routes/mail-inbound.ts` |
-| Threads, messages, compose, reply | `backend/src/routes/mail-center.ts` (~2100 lines) |
+| Threads, messages, compose, reply | `backend/src/routes/mail-center.ts` (~2284 lines) |
 | Outbound send + durable queue | `backend/src/services/email.ts` |
 | Screens | `frontend/src/pages/MailCenter/` — `Inbox.tsx`, `Thread.tsx`, `Compose.tsx` |
 | Mobile | `frontend/src/mobile/MobileMailCenter.tsx` |

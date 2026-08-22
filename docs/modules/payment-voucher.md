@@ -159,7 +159,7 @@ facts an operator has to be able to see.
 
 ## 3. Backend
 
-`backend/src/scm/routes/payment-vouchers.ts` (~950 lines). Shared libs it owns or
+`backend/src/scm/routes/payment-vouchers.ts` (~1102 lines). Shared libs it owns or
 leans on:
 
 | Lib | Role |

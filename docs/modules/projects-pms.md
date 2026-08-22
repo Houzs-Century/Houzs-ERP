@@ -36,7 +36,7 @@ from a Sales Order back to the fair it was written at. Same structure as
 > `project_finance_lines`, not sen — this module predates the SCM clone's
 > integer-minor-unit rule. Dates are text, displayed DD/MM/YYYY.
 
-> `frontend/src/pages/Projects.tsx` is **12,404 lines**. Do not open it whole.
+> `frontend/src/pages/Projects.tsx` is **15,017 lines**. Do not open it whole.
 > §1 maps it so you can grep to a range.
 
 ---
@@ -258,7 +258,7 @@ Mounted at `/api/projects` (`backend/src/index.ts:257`), `/api/projects-print`
 (`:281`), `/api/events` (`:256`), `/api/notifications` (`:254`).
 `app.use("/api/projects/*", inboxBustAfterWrite)` at `index.ts:235`.
 
-`backend/src/routes/projects.ts` is 4,094 lines and registers ~90 routes. The
+`backend/src/routes/projects.ts` is 5,052 lines and registers ~90 routes. The
 exhaustive machine-generated inventory (method, path, auth boundary, company
 boundary, gate, source line) is
 [`docs/generated/route-capability-matrix.csv`](../generated/route-capability-matrix.csv)

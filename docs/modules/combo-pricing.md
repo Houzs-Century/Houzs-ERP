@@ -58,7 +58,7 @@ row id.
 
 ## 3. Endpoints
 
-`backend/src/scm/routes/sofa-combos.ts` (694 lines). Registered:
+`backend/src/scm/routes/sofa-combos.ts` (795 lines). Registered:
 
 | method | path | notes |
 |---|---|---|

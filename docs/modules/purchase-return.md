@@ -96,7 +96,7 @@ One guard, `scm.procurement.pr`, over the whole router — read and write.
 | PATCH | `/:id/items/:itemId` | Update a line — 200 `{ ok, movementErrors? }` (§4a) |
 | DELETE | `/:id/items/:itemId` | Remove a line — 200 `{ ok, movementErrors? }` (§4a) |
 
-Handler file: `backend/src/scm/routes/purchase-returns.ts` (~1,400 lines — use
+Handler file: `backend/src/scm/routes/purchase-returns.ts` (~1,816 lines — use
 `docs/generated/route-locator.md` to jump to a handler instead of reading it
 whole).
 

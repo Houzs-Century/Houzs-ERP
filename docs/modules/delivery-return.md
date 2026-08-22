@@ -100,7 +100,7 @@ by exactly that one status; see `docs/bugs/0480` before collapsing them.
 | DELETE | `/:id/items/:itemId` | Remove a line |
 | PATCH | `/:id/status` | Status transition, incl. CANCEL (`patchDeliveryReturnStatusHandler`) |
 
-Handler file: `backend/src/scm/routes/delivery-returns.ts` (~1,600 lines — grep
+Handler file: `backend/src/scm/routes/delivery-returns.ts` (~1,823 lines — grep
 `docs/generated/route-locator.md` for a path and jump to the line rather than
 reading it whole).
 
