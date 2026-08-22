@@ -325,7 +325,7 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
 });
 
 /* ── postPiAccounting (extracted 2026-06-01) — idempotent PI → GL post ──────
-   Writes Dr Inventory (1200) / Cr Payables (2000) for the PI total. Shared by
+   Writes Dr INVENTORY / Cr AP for the PI total, by ROLE. Shared by
    the manual POST /post/pi route AND resyncPiAccounting (void+repost on a
    post-issue line edit). Mirrors postSiRevenue: keyed on an ACTIVE (non-reversed)
    PI JE, so a reversed original never blocks a fresh re-post. */
@@ -348,7 +348,7 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
 
   /* MIGRATED PAPERWORK POSTS NO JOURNAL (migration 0280). This invoice mirrors
      one AutoCount already raised, and AutoCount already booked the payable
-     behind it. Posting Dr 1200 / Cr 2000 here would count the same money in two
+     behind it. Posting Dr INVENTORY / Cr AP here would count the same money in two
      books. The guard lives in this function rather than at its call sites so
      every caller — the confirm handler, resyncPiAccounting, any future one — is
      covered by construction. */
@@ -456,7 +456,7 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
 /* ════════════════════════════════════════════════════════════════════════
    PI accounting reversal (bug #5) — mirror of reverseSiRevenue
    ────────────────────────────────────────────────────────────────────────
-   PI posting writes Dr Inventory (1200) / Cr Payables (2000). On PI cancel we
+   PI posting writes Dr INVENTORY / Cr AP (by role). On PI cancel we
    must trace that back ("取消 PI 要追溯回去") with a contra JE that nets the
    original to zero + flags the original `reversed = true`, so payables +
    inventory value stop being overstated. The balance views only count
@@ -825,10 +825,26 @@ accounting.get('/control-check', async (c) => {
           jeByDoc.delete(d.invoice_number);
           continue;
         }
-        /* PI posts on demand — a confirmed PI with no journal is NORMAL here,
-           not drift (the AP aging is the place that surfaces unposted PIs). */
-        if (!je) continue;
+        /* A confirmed PI with no active journal IS drift, and this arm used to
+           skip it — the AR arm four lines up reports the identical shape. The
+           skip carried two reasons and BOTH are false: a PI does not "post on
+           demand" (postPurchaseInvoiceHandler calls postPiAccounting on both of
+           its arms, so a confirm that reaches this state had its post FAIL), and
+           v_ap_aging is not "the place that surfaces unposted PIs" — that view
+           selects from purchase_invoices alone and never joins journal_entries,
+           so it has no notion of posted at all.
+
+           Found live 2026-08-22: HC-PI-2608-002 and -003 both confirmed with no
+           journal, AP CLEAN, while AR reported HC-SI-2608-002 for the same
+           thing. The one check built to catch it was the one that couldn't.
+
+           `docTotal > 0` mirrors AR: postPiAccounting refuses a zero total
+           (`zero_total`), so a zero-value invoice legitimately has no journal. */
         const docTotal = toMyrSen(Number(d.total_sen ?? 0), safeRate(d.exchange_rate));
+        if (!je) {
+          if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+          continue;
+        }
         if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total (MYR)' });
         jeByDoc.delete(d.invoice_number);
       }

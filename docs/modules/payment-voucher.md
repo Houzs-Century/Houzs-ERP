@@ -186,7 +186,7 @@ leans on:
 | `lib/doc-no.ts` | `nextPvNo` via `mintMonthlyDocNo`, and `nextJeNo`. Both claim from `scm.doc_number_counters` (mig 0316) with the live max only as a floor — a deleted document does NOT return its number, and gaps are permanent. |
 
 ### The GL entry (source_type `PV`)
-Dynamic legs, unlike the PI's fixed Dr 1200 / Cr 2000:
+Dynamic legs, unlike the PI's fixed Dr INVENTORY / Cr AP (resolved by role):
 ```
 Dr each line.debit_account_code   round(amount_sen * exchange_rate)   -- MYR
 Cr header.credit_account_code     = Σ of those rounded Dr legs          -- MYR

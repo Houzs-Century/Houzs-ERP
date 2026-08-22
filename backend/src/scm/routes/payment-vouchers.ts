@@ -12,7 +12,7 @@
 //
 // GL post (source_type 'PV', mirrors postPiAccounting's JE shape but with
 // DYNAMIC legs — the PV's debit accounts + chosen credit account, not the PI's
-// fixed Dr 1200 / Cr 2000):
+// fixed Dr INVENTORY / Cr AP):
 //   Dr each line.debit_account_code   round(amount_sen * exchange_rate)  (MYR)
 //   Cr header.credit_account_code      = Σ of those rounded Dr legs          (MYR)
 // The credit leg is the SUM of the rounded debit legs so the JE balances
