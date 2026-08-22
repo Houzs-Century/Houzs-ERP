@@ -341,10 +341,10 @@ const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'REC
    (only asDraft lands DRAFT), so the normal flow is unaffected. A purely manual
    PO line (no SO link) skips this entirely — a PO can be raised with no SO.
    Deny-list (not allow-list) so any legitimate forward status stays orderable.
-   This is the SAME threshold the DO side uses (SO_UNDELIVERABLE_STATUSES in
-   delivery-orders-mfg.ts) — ON_HOLD is blocked: a paused order should not be
-   ordered until it is taken off hold. */
-const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD']);
+   SAME threshold the DO side uses (SO_UNDELIVERABLE_STATUSES in shared/so-deliverable-states.ts), held
+   equal by tests/duplicatedDecisionPins.test.ts PIN 2. ON_HOLD: a paused order waits. CLOSED (2026-08-22):
+   the remainder is not coming, so nothing more is bought for it — the PO's OWN `CLOSED` is untouched here. */
+const SO_UNORDERABLE_STATUSES = new Set(['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED']);
 async function firstUnorderableSo(
   sb: any,
   soDocNos: Array<string | null | undefined>,

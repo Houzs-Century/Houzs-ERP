@@ -72,6 +72,20 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    version of this comment is the evidence that drawing the line anywhere short
    of "all of them" does not hold.
 
+   CLOSE REMAINING IS THE FOURTH, and it passes the same test (2026-08-22). No
+   machine can derive it: nothing in this system knows that a customer took 7 of
+   the 10 and does not want the rest, or that the supplier cannot supply it —
+   only the person on the phone knows, so there is nowhere else for it to come
+   from. The owner, asked whether that case happens here: 「有的」.
+
+   IT IS LABELLED "Close remaining", NOT "Close". "Close" reads as "finish", and
+   finishing is the opposite of what this does: a remainder is being ABANDONED.
+   It is also not Cancel, which sits two entries below it in red — Cancel voids
+   the whole document as if it never happened, Close keeps it and everything
+   already delivered against it. One word between them in a menu is not enough.
+   Offered only on a LIVE order: a draft has no remainder to give up on, and a
+   cancelled or already-closed one has nothing left to decide.
+
    WHY HOLD AND CANCEL ARE THE EXCEPTIONS. Neither is a step in the document's
    life — no machine derives them from anything, because they are DECISIONS a
    person makes about a document, and there is nowhere else for them to come
@@ -91,6 +105,7 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
   setStatus: (r: R, status: string) => void;
+  close: (r: R) => void;
   cancel: (r: R) => void;
   reopen: (r: R) => void;
   canDeliver: boolean;
@@ -99,7 +114,8 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
     const s = norm(r.status);
     const isDraft = s === "DRAFT";
     const isCancelled = s === "CANCELLED";
-    const live = !isDraft && !isCancelled;
+    const isClosed = s === "CLOSED";
+    const live = !isDraft && !isCancelled && !isClosed;
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },
@@ -114,6 +130,7 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },
         live && s !== "ON_HOLD" && { label: "Put On Hold", onClick: () => h.setStatus(r, "ON_HOLD") },
         s === "ON_HOLD" && { label: "Take Off Hold", onClick: () => h.setStatus(r, "CONFIRMED") },
+        live && { label: "Close remaining", onClick: () => h.close(r) },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
       [!isCancelled && dangerItem("Cancel Sales Order", () => h.cancel(r))],

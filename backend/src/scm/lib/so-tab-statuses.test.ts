@@ -34,6 +34,21 @@ describe("SO_TAB_STATUSES", () => {
     expect(SO_TAB_STATUSES.SHIPPED).toBeUndefined();
   });
 
+  /* CLOSED came BACK on 2026-08-22 with a meaning the retired one never had —
+     "stop chasing the remainder" — so it needs a tab of its own. It is not
+     folded into anything: an order whose remainder was abandoned is a different
+     fact from one that was delivered in full, and the person reading the list
+     is the one who has to tell them apart.
+
+     Asserted on the MAP and not only through `soStatusesForTab`, because the
+     unknown-tab fall-through answers `["CLOSED"]` for a tab that does not exist
+     — so the round-trip alone would pass on a tree with no Closed tab, and the
+     count the operator reads comes from the map, not from the fall-through. */
+  test("Closed is its own tab and covers only CLOSED", () => {
+    expect(SO_TAB_STATUSES.CLOSED).toEqual(["CLOSED"]);
+    expect(soStatusesForTab("CLOSED")).toEqual(["CLOSED"]);
+  });
+
   /* The wire sends `status.toUpperCase()` (sales-order-queries.ts), so the keys
      must be the values that actually arrive. */
   test("every key is upper case, matching what the client sends", () => {

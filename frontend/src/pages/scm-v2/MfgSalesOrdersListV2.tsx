@@ -1170,6 +1170,19 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
+  /* Its own handler rather than setSoStatus, because the WORDS are the point:
+     "Close remaining" is one menu entry away from Cancel and the two do opposite
+     things to the money. See row-menus.ts. */
+  const doCloseSo = async (r: SoRow) => {
+    if (!(await askConfirm({
+      title: `Stop chasing the rest of ${r.doc_no}?`,
+      body: "The order stays, and everything already delivered and invoiced still counts. What has not shipped will no longer be chased, and no new delivery order can be raised from it. This is not a cancellation.",
+      confirmLabel: "Close remaining",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status: "CLOSED", expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Not closed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
   const doCancelSo = async (r: SoRow) => {
     if (!(await askConfirm({
       title: `Cancel ${r.doc_no}?`,
@@ -1183,7 +1196,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: goPrint,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, close: doCloseSo, cancel: doCancelSo, canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────

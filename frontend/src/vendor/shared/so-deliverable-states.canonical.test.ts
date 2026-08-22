@@ -21,8 +21,8 @@ describe('the two copies of this module are the same file', () => {
 
   /* A byte comparison passes for the wrong reason if either read came back
      empty, so prove the file is real and carries what it is imported for. */
-  test('the set is the three the server denies, and nothing else', () => {
-    expect([...SO_UNDELIVERABLE_STATUSES]).toEqual(['DRAFT', 'CANCELLED', 'ON_HOLD']);
+  test('the set is the four the server denies, and nothing else', () => {
+    expect([...SO_UNDELIVERABLE_STATUSES]).toEqual(['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED']);
   });
 });
 
@@ -36,12 +36,17 @@ describe('soCanRaiseDo', () => {
   });
 
   test.each([
-    'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED',
+    'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED',
   ])('%s is deliverable', (status) => {
     expect(soCanRaiseDo(status)).toBe(true);
   });
 
-  test.each(['DRAFT', 'CANCELLED', 'ON_HOLD'])('%s is NOT deliverable', (status) => {
+  /* CLOSED JOINED THE DENY-LIST on 2026-08-22 and it follows from the meaning
+     rather than from a preference: closing an order says the remainder is not
+     coming, so there is nothing left to raise a delivery for. It reads as a
+     forward status and would otherwise have sailed through the deny-list, which
+     is the one way a deny-list can be wrong. */
+  test.each(['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED'])('%s is NOT deliverable', (status) => {
     expect(soCanRaiseDo(status)).toBe(false);
   });
 

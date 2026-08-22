@@ -27,7 +27,53 @@
    BACKWARD jump; every forward move, idempotent no-op, ON_HOLD pause/resume and
    known regression is allowed. */
 
-/* ── CLOSED IS RETIRED (owner ruling, 2026-08-21) ────────────────────────────
+/* ── CLOSED IS BACK, AS A DIFFERENT STATUS (2026-08-22) ──────────────────────
+   THE RETIREMENT BELOW WAS CORRECT AND IS NOT BEING UNDONE. What it removed was
+   a vague lifecycle STEP that sat after Invoiced and that nobody used — proven
+   empty at the time, and read the block below for that evidence rather than
+   taking this sentence for it. What comes back is a different thing wearing the
+   same enum label, and it earns its place by answering a question the old one
+   never asked.
+
+   THE MEANING, AND IT IS THE ONLY MEANING IT MAY HAVE:
+
+       Close = STOP CHASING THE REMAINDER.
+       The document STAYS. What was already delivered and invoiced STANDS.
+
+   The case, put to the owner on 2026-08-22 — a customer orders 10 and takes 7,
+   or the supplier cannot supply the last 3 — and asked whether it happens here:
+   「有的」. The three that never shipped stop being chased; the seven were really
+   sold, so the order must not be voided.
+
+   IT IS NOT CANCEL, and the two are one keystroke apart in a right-click menu:
+
+       CANCEL   voids the WHOLE document as if it never happened. Final; the
+                deposit becomes customer credit; AutoCount cannot un-cancel it.
+       CLOSE    keeps the document and everything already delivered against it,
+                and gives up only on what is left.
+
+   WHERE IT SITS IN THE RANK TABLE: NOWHERE, DELIBERATELY. Closing is reachable
+   from wherever the order had got to — most closed orders never reach INVOICED
+   at all — so a rank would state something false, that CLOSED comes after
+   INVOICED. It is UNRANKED, the way CANCELLED and ON_HOLD are.
+
+   AND THAT IS EXACTLY THE SHAPE THAT DUG THE ON_HOLD HOLE, so read the arms
+   below before copying them. "Unranked" was written there as an unconditional
+   `return null` on BOTH edges, which made the status a laundry — a two-step
+   route to a move the rank table refuses. CLOSED is unranked on the way IN only:
+   the way OUT is refused outright, because a decision to stop chasing a
+   remainder is not something the next screen un-decides. CANCELLED gets the same
+   asymmetry, just enforced one layer up in the route's cancel-final guard.
+
+   NOTHING AUTOMATIC EVER WRITES IT. No machine can know that a remainder has
+   been given up on; only the person talking to the customer or the supplier
+   knows. It is manual-only, on purpose, and there is no sweep to add later. */
+
+/* ── CLOSED WAS RETIRED (owner ruling, 2026-08-21) ───────────────────────────
+   Kept because it is the evidence for the paragraph above, not a contradiction
+   of it. The status this removed was the vague lifecycle step; the status the
+   block above restores is the short-shipment decision.
+
    He wrote the lifecycle he actually runs and CLOSED is not in it:
      Draft → Confirm → In Production → Ready to Ship → Shipped → Delivered
        → Invoice → On Hold → Cancel
@@ -44,7 +90,9 @@
    HERE is what actually matters: this set is both the manual PATCH whitelist
    and the source the status TABS are generated from (mfg-sales-orders.ts builds
    statusCounts by walking it), so nothing offers CLOSED and the route now
-   refuses it with `invalid_status`.
+   refuses it with `invalid_status`. (That last sentence described the tree
+   between 2026-08-21 and 2026-08-22. The route accepts it again, for the
+   meaning at the top of this file.)
 
    TWO PLACES IT DELIBERATELY STAYS, and taking it out of either would be a bug:
      · SO_TERMINAL_STATES (shared/so-terminal-states.ts) — a legacy CLOSED row
@@ -55,7 +103,7 @@
        fell through to printing its raw slug on the customer portal. */
 export const SO_STATUSES = new Set([
   'DRAFT', 'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED',
-  'DELIVERED', 'INVOICED', 'CANCELLED', 'ON_HOLD',
+  'DELIVERED', 'INVOICED', 'CANCELLED', 'ON_HOLD', 'CLOSED',
 ]);
 export const SO_STATUS_RANK: Record<string, number> = {
   DRAFT: 0, CONFIRMED: 1, IN_PRODUCTION: 2, READY_TO_SHIP: 3,
@@ -87,6 +135,27 @@ export function soStatusTransitionError(
   if (!from || !SO_STATUSES.has(from)) return null;              // status-blind → allow
   if (from === to) return null;                                  // idempotent no-op
   if (to === 'CANCELLED' || from === 'CANCELLED') return null;   // cancel guards own this
+  /* Close / do not un-close. CLOSED is UNRANKED for the reason at the top of
+     this file — an order is closed from wherever it had got to — so it is
+     enterable from every live status and the rank table has nothing to say.
+     The way OUT is a different question and it gets a different answer: closing
+     is a decision that the remainder is not coming, and the next screen does not
+     un-decide it. Left as an unconditional `return null` on both edges it would
+     be the ON_HOLD laundry again — CLOSED>ON_HOLD>DRAFT is the rank table's
+     refused move in two steps, and DRAFT is what unlocks the cascading DELETE.
+     CANCELLED gets the same asymmetry; its half is enforced one layer up, by the
+     route's cancel-final guard, which is why the line above can short-circuit
+     both edges and this one cannot. Cancel stays reachable from CLOSED (that
+     line runs first): if it turns out nothing stands, the cancel guards own
+     that call, not this table. */
+  if (to === 'CLOSED') return null;                              // closable from anywhere live
+  if (from === 'CLOSED') {
+    return {
+      error: 'illegal_status_transition',
+      reason: 'This order was closed — the outstanding balance is no longer being chased. Raise a new sales order for anything still to be supplied, or cancel this one.',
+      code: 409,
+    };
+  }
   /* Pause / resume. ON_HOLD is deliberately UNRANKED — an order can be paused
      from anywhere and resumed to wherever the operator needs it, and the rank
      table has nothing useful to say about that.
