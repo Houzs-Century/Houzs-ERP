@@ -72,7 +72,7 @@ const why = (e) => {
 };
 
 let sectionsMeasured = 0;
-const TOTAL_SECTIONS = 3;
+const TOTAL_SECTIONS = 4;  // 1 keys, 1b unjudgeable, 2 stranded stock, 3 no-batch sofa
 
 /* The document line tables that feed a stock movement, with the column that
    holds the category. Kept explicit rather than derived: this list is the
@@ -151,6 +151,43 @@ async function main() {
     }
   }
   if (perTable.some((x) => !x.unreadable)) sectionsMeasured++;
+  note("");
+
+  /* ── 1b. THE BLIND SPOT OF SECTION 1, GIVEN A SIZE ───────────────────────
+     Section 1 INNER JOINs mfg_products, so a line whose item_code has no
+     product row is not measured — it is silently dropped, and a silently
+     dropped row is indistinguishable from a clean one in the total above.
+     That is the exact shape 0511/0512 were written about.
+
+     These lines cannot be judged: with no master category there is nothing to
+     compare the stored group against. But they cannot be judged in EITHER
+     direction, so they are reported as their own number rather than folded
+     into "0 affected". A line with no product row is a different defect from a
+     line with the wrong group, and counting them together would overstate one
+     and hide the other. */
+  note("── 第一类的盲点，给它一个数字 ──");
+  note("   料号在产品主档找不到的行 —— 判不了，所以另外数，不混进上面。");
+  note("");
+  let blindMeasured = false;
+  for (const t of LINE_TABLES) {
+    try {
+      const [r] = await sql`
+        SELECT COUNT(*) AS n
+          FROM scm.${sql(t.table)} i
+          LEFT JOIN scm.mfg_products p
+            ON p.code = i.item_code
+           AND (${CO}::int IS NULL OR p.company_id = ${CO}::int)
+         WHERE p.code IS NULL
+           AND i.item_code IS NOT NULL
+           AND (${CO}::int IS NULL OR i.company_id = ${CO}::int)
+      `;
+      note(`   ${pad(t.label, 26)}${rpad(r.n, 9)} 行判不了`);
+      blindMeasured = true;
+    } catch (e) {
+      note(`   ${pad(t.label, 26)}读不到 — ${why(e).slice(0, 90)}`);
+    }
+  }
+  if (blindMeasured) sectionsMeasured++;
   note("");
 
   /* ── 2. THE MONEY ────────────────────────────────────────────────────────
