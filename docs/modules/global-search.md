@@ -182,3 +182,22 @@ positive must cost a conversation, never a deploy.
 - `docs/CODEBASE-MAP.md` §6 — Sales Report ("Fair Report") and the other
   easy-to-miss subsystems, several of which are search sources
 - `backend/src/scm/lib/postgrest-search.ts` — `escapeForOr`
+
+## 7. What an operator's search term is allowed to contain
+
+A PostgREST `.or()` filter uses `,` to separate conditions and `()` to group
+them, so a term carrying any of `,(){}` cannot be interpolated raw. `escapeForOr`
+replaces each of them with `_`, the LIKE single-character wildcard.
+
+**It used to DELETE them, and that made a whole class of SKU unfindable.**
+Deleting works when the character sits at an END of the term; delete one from
+the MIDDLE and the term is no longer a substring of the stored value, so it
+matches nothing. Measured on production 2026-08-22: `2376-1A` found 6 products,
+`2376-1A(RHF)` found **0** — and that SKU exists. `(LHF)` / `(RHF)` is how this
+catalogue spells a left- or right-hand facing piece, so it was every
+parenthesised sofa code in every list that searches. See `docs/bugs/0519`.
+
+The trade `_` carries, and the exact fix that was NOT taken (PostgREST's
+double-quoted value, which needs all 43 call sites to stop building `%${s}%`
+themselves), are written at the top of the module rather than here — that is
+where someone changing the function will be looking.
