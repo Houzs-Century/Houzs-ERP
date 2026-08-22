@@ -1,5 +1,10 @@
 -- 0318_position_capabilities — editable per-position operational capabilities.
 --
+-- REVERSAL: DROP TABLE public.position_capabilities; — additive table, no
+-- other object references it, and nothing reads it before the warehouse-line
+-- PR wires enforcement, so the drop leaves no dangling reader. The seed rows
+-- live only in this table.
+--
 -- 白话（老板版）。8-22 拍板：Roles & Permissions 屏要「界面可编辑」。页面/菜单级
 -- 的进入权仍由代码里的 positionPolicy 决定（7-18 架构不变），这张表管的是另一根
 -- 轴 —— 「这个职位可以做哪些关键动作」：仓库装车(置 LOADED)、发车(Dispatch，扣
