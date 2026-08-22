@@ -257,9 +257,12 @@ describe("every one of the five menus, on every status that document has", () =>
     }
   });
 
-  /* THE OWNER'S 2026-08-22 ASK, as a ratchet: 「right click全部也要有可以print
-     SI DO 之类的」 — and, asked whether he meant this document or the ones made
-     from it, 「不是就是print PDF 啊 print documentation」. Every document in the
+  /* A RATCHET on printability. This block used to open by quoting two owner
+     rulings; neither is in any message he sent in the session that produced the
+     change (see row-menus.ts), so the quotes are gone and the ratchet stays —
+     what it locks is a fact about the code, which needs no citation.
+
+     Every document in the
      system can be printed now; the Stock Transfer and the Stock Take were the
      last two that could not. Asserted over EVERY status of every list so a
      later predicate cannot quietly take Print away from one state. */

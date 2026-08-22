@@ -478,11 +478,10 @@ On Hold 状态的，全部都可以右键 Cancel 或 On Hold。」
 | Stock Transfer | Open · **Print** — no Edit | — | **none** — posted on create | yes (posted only) |
 | Stock Take | Open · **Print** — no Edit | — | **none** — see below | yes (open only) |
 
-**Every document in the system can be printed, since 2026-08-22.** The owner:
-「right click全部也要有可以print SI DO 之类的」 and, asked whether he meant this
-document or the documents made from it, 「不是就是print PDF 啊 print
-documentation」. The Stock Transfer and the Stock Take were the last two that
-could not — see the paragraph below for what changed. The invariant is held by
+**Every document in the system can be printed, since 2026-08-22.** (Two owner
+quotes were cited here and have been removed — neither is in any message he sent
+in the session that produced the change; see `docs/modules/stock-take.md` §7.)
+The Stock Transfer and the Stock Take were the last two that could not — see the paragraph below for what changed. The invariant is held by
 a test rather than by this table: *"every list offers Print, on every status
 that document has"* in
 `frontend/src/pages/scm-v2/row-menus-remaining-lists.test.ts`.

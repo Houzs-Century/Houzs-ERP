@@ -103,16 +103,20 @@ before it.
 
 ## 4. The transfer prints (2026-08-22)
 
-**Owner:** 「right click全部也要有可以print SI DO 之类的」 and, asked whether he
-meant this document or the ones made from it, 「不是就是print PDF 啊 print
-documentation」. Until this date the Stock Transfer and the Stock Take were the
-only two documents in the system that could not be printed at all.
+> **PROVENANCE, corrected 2026-08-23.** This section opened by quoting two owner
+> rulings. Neither appears in any message he sent in the session that produced
+> the change — they came from the agent's brief, not from him. This repo is
+> PUBLIC, so a fabricated ruling is a false record of what he decided. The
+> change itself is unaffected and stands on the fact below.
+
+Until this date the Stock Transfer and the Stock Take were the only two
+documents in the system that could not be printed at all.
 
 | Where | What |
 |-------|------|
 | Generator | `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` — `renderStockTransferInto` + `generateStockTransferPdf`. |
 | Entry points | The detail page's **Print PDF** button, and the list's right-click **Print**, which navigates to the detail page with `?print=1`. |
-| Dialog | `PrintPreviewModal` — every printable document opens it (owner 2026-08-06: 「全部打印的时候都需要有这个」). **Never `window.print()`**: `index.css`'s `@media print` block hides `body *`, so printing the page directly yields a blank sheet. |
+| Dialog | `PrintPreviewModal` — every printable document opens it (a 2026-08-06 owner quote was cited here and removed for the same reason). **Never `window.print()`**: `index.css`'s `@media print` block hides `body *`, so printing the page directly yields a blank sheet. |
 | Test | `frontend/src/vendor/scm/lib/stock-movement-pdf.test.ts`. |
 
 **The warehouse pair is the document,** so FROM and TO get their own band under

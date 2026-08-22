@@ -89,8 +89,9 @@ export const StockTransferDetail = () => {
   const status: StockTransferStatus | undefined = detail.data?.transfer.status;
   const isPosted = status === 'POSTED';
 
-  /* Print (owner 2026-08-22: 「不是就是print PDF 啊 print documentation」). This
-     document had no print handler at all until now, on any surface.
+  /* Print. This document had no print handler at all until now, on any
+     surface. (A fabricated owner quote was attached here and has been removed —
+     see row-menus.ts for the provenance note.)
 
      The SERVER rows, not the LineDraft state above: the draft drops
      `variant_key`, and which bucket moved is exactly what a warehouse hand-off

@@ -1,8 +1,11 @@
 // Stock Take PDF — the count sheet, and the variance sheet it becomes.
 //
-// Owner, 2026-08-22: 「right click全部也要有可以print SI DO 之类的」 / 「不是就是
-// print PDF 啊 print documentation」. The Stock Take and the Stock Transfer were
-// the only two documents in the system with no print handler on any surface.
+// The Stock Take and the Stock Transfer were the only two documents in the
+// system with no print handler on any surface.
+//
+// Two owner quotes were cited here and have been removed: neither appears in any
+// message he sent in the session that produced this file. See
+// pages/scm-v2/row-menus.ts for the full provenance note.
 //
 // Same unified layout as the other nine generators: real letterhead, the shared
 // info block, the shared table look, the footer (doc no · portal · page n of m)

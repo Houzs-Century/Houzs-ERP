@@ -529,9 +529,16 @@ export function deliveryReturnRowMenu<R extends StatusRow>(h: {
    OPEN and PRINT, then Cancel. Still no Edit: `StockTransferDetail.tsx` is
    read-only ("no edits post-0078"), so there is no `?edit=1` route to point at.
 
-   PRINT ARRIVED 2026-08-22, on the owner's ask 「right click全部也要有可以print
-   SI DO 之类的」 — and, when asked whether he meant this document or the
-   documents made from it, 「不是就是print PDF 啊 print documentation」. This
+   PRINT ARRIVED 2026-08-22. PROVENANCE, corrected 2026-08-23. This used to cite two owner quotes
+   (「right click全部也要有可以print SI DO 之类的」 and 「不是就是print PDF 啊
+   print documentation」). NEITHER appears in any message the owner sent in the
+   session that produced this change — they came from the agent's brief, not
+   from him, and this repo is PUBLIC, so a fabricated ruling is a false record
+   of what he decided. The CHANGE stands on its own and is unchanged: the Stock
+   Transfer and the Stock Take were the last two documents in the system with no
+   print handler on any surface. The CITATION did not, so it is gone.
+
+   This
    paragraph used to say Print was absent because "neither the list nor the
    detail page has ever had a print handler", which was true and was the gap,
    not the reason. `vendor/scm/lib/stock-transfer-pdf.ts` is the handler now,

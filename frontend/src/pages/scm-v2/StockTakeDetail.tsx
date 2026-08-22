@@ -201,8 +201,10 @@ export const StockTakeDetail = () => {
     };
   }, [lines]);
 
-  /* ── Print (owner 2026-08-22: 「不是就是print PDF 啊 print documentation」) ──
+  /* ── Print ──────────────────────────────────────────────────────────────
      This document had no print handler at all until now, on any surface.
+     (A fabricated owner quote was attached here and has been removed — see
+     row-menus.ts for the provenance note.)
 
      The SERVER rows, not the local drafts: a count that has not been saved is
      not yet part of the record, and a printed sheet that carries typed-but-

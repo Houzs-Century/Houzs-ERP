@@ -1,10 +1,12 @@
 // Stock Transfer PDF — the warehouse hand-off sheet.
 //
-// Owner, 2026-08-22: 「right click全部也要有可以print SI DO 之类的」 and, asked
-// whether he meant the document or its downstream documents, 「不是就是print PDF
-// 啊 print documentation」. The Stock Transfer and the Stock Take were the only
-// two documents in the system that could not be printed at all — neither had
-// ever had a print handler, on any surface.
+// The Stock Transfer and the Stock Take were the only two documents in the
+// system that could not be printed at all — neither had ever had a print
+// handler, on any surface.
+//
+// Two owner quotes were cited here and have been removed: neither appears in any
+// message he sent in the session that produced this file. See
+// pages/scm-v2/row-menus.ts for the full provenance note.
 //
 // Same unified layout as SO / PO / DO / SI / GRN / DR: real letterhead, the
 // shared info block, the shared table look, the same footer (doc no · portal ·
