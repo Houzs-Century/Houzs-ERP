@@ -30,8 +30,9 @@ import {
   useUpdateMfgDeliveryOrderStatus,
 } from '../../vendor/scm/lib/delivery-order-queries';
 import { PageHeader } from '../../components/Layout';
+import { DO_STOCK_OUT_STATES } from '../../vendor/shared/do-shipped-states';
 
-const SHIPPED = new Set(['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED']);
+const SHIPPED = new Set<string>(DO_STOCK_OUT_STATES);
 
 export const DoLoadScan = () => {
   const [params] = useSearchParams();
@@ -42,7 +43,7 @@ export const DoLoadScan = () => {
   const doRow = detailQ.data?.deliveryOrder as
     | { id: string; do_number: string; debtor_name: string | null; status: string | null; city: string | null; state: string | null }
     | undefined;
-  const lineCount = detailQ.data?.items?.length ?? 0;
+  const lineCount = detailQ.data?.items.length ?? 0;
   const status = (doRow?.status ?? '').toUpperCase();
   const justLoaded = updateStatus.isSuccess;
 
@@ -50,7 +51,7 @@ export const DoLoadScan = () => {
     if (!id) return { tone: 'warn' as const, title: 'No delivery order in this link', body: 'The QR did not carry a delivery order. Re-print the DO and scan the code on the new copy.' };
     if (detailQ.isLoading) return null;
     if (detailQ.isError || !doRow) return { tone: 'warn' as const, title: 'Delivery order not found', body: 'This link does not match a delivery order in the company you are signed into. Check the company switcher, or re-print the DO.' };
-    if (justLoaded || status === 'LOADED') return { tone: 'ok' as const, title: `${doRow.do_number} is loaded`, body: justLoaded ? 'Loading confirmed — the dispatcher can send the truck.' : 'Loading was already confirmed. Nothing more to do here.' };
+    if (justLoaded || status === 'LOADED') return { tone: 'ok' as const, title: `${doRow.do_number} is loaded`, body: justLoaded ? 'Loading confirmed — the dispatcher can send the truck.' : 'Loading was already confirmed on this delivery order — a repeat scan writes nothing new.' };
     if (SHIPPED.has(status)) return { tone: 'info' as const, title: `${doRow.do_number} has already been dispatched`, body: 'The goods left the warehouse when this order was dispatched — there is no loading step left to confirm.' };
     if (status === 'CANCELLED') return { tone: 'warn' as const, title: `${doRow.do_number} is cancelled`, body: 'A cancelled delivery order is not loaded. Check with the dispatcher before putting anything on the truck.' };
     return null; // DRAFT → show the action
