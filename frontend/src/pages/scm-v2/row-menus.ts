@@ -243,7 +243,8 @@ export function salesOrderRowMenu<R extends StatusRow>(h: {
    any kind and the STOCK objection above never reached it. The three entries
    above answer "where has this delivery got to"; the marker answers "did
    somebody stop it". They are ANDed, never folded together — and every entry
-   here that #2661 gated on `!rowIsHeld` stays gated, these three included. */export function deliveryOrderRowMenu<R extends StatusRow>(h: {
+   here that #2661 gated on `!rowIsHeld` stays gated, these three included. */
+export function deliveryOrderRowMenu<R extends StatusRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (r: R) => void;
