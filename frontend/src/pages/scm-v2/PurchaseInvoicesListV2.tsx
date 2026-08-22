@@ -59,10 +59,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type PiRow = {
+type PiRow = HoldFields & {
   id: string;
   invoice_number: string;
   status: string;
@@ -257,7 +258,7 @@ function CardsGrid({ rows, onOpen }: { rows: PiRow[]; onOpen: (r: PiRow) => void
               <span className="font-mono text-[12.5px] font-semibold text-ink">
                 {r.invoice_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {supplierNameOf(r)}
@@ -928,7 +929,8 @@ export function PurchaseInvoicesListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {

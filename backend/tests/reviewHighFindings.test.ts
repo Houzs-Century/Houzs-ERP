@@ -181,12 +181,28 @@ describe("F16 — ON_HOLD is not a route back to DRAFT", () => {
      offers is not "untouched", it is a move to an unknown target, and
      `invalid_status` is the correct answer. The assertion below is the same
      one, over the statuses that still exist. */
-  test("ordinary pause and resume are untouched", () => {
+  /* CLOSED left this list on 2026-08-21; ON_HOLD left the TARGET half of it on
+     2026-08-22, when the hold stopped being a status at all (mig 0324, owner:
+     the hold is a MARKER telling people an order is paused). The assertion is
+     SPLIT rather than deleted, because the two halves now mean opposite things
+     and collapsing them would hide which one changed:
+
+       · resuming OUT of a legacy ON_HOLD row is still allowed, and must be —
+         Postgres cannot drop the enum label, so such a row needs a way out;
+       · moving INTO ON_HOLD is now refused, because writing it is what
+         destroyed the order's progress. */
+  test("a legacy held row can still be resumed to any live status", () => {
     for (const to of ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED"]) {
       expect(soStatusTransitionError("ON_HOLD", to)).toBeNull();
     }
+  });
+
+  test("ON_HOLD can no longer be WRITTEN as a status, from anywhere", () => {
     for (const from of ["DRAFT", "CONFIRMED", "IN_PRODUCTION", "DELIVERED", "INVOICED"]) {
-      expect(soStatusTransitionError(from, "ON_HOLD")).toBeNull();
+      const err = soStatusTransitionError(from, "ON_HOLD");
+      expect(err).not.toBeNull();
+      expect(err!.error).toBe("hold_is_not_a_status");
+      expect(err!.code).toBe(409);
     }
   });
 });

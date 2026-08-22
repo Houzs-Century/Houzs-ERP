@@ -134,7 +134,43 @@ unwinds the SI first.
 | `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
 | `CLOSED` | done | `PATCH /:docNo/status` | **nothing** | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
 | `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
-| `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
+| `ON_HOLD` | **RETIRED as a status, 2026-08-22 (mig 0324)** | **nothing** | — | A hold is a MARKER now, not a step — see §0a below. `PATCH /:docNo/status` refuses this target with `hold_is_not_a_status` (409); it is still accepted as a `from`, so a legacy row can leave. The label stays in `scm.mfg_so_status` for ever (no `DROP VALUE`) and every pill map keeps rendering it. |
+
+### §0a. A HOLD is a MARKER beside the status, not a step in the order's life
+
+**The owner, 2026-08-22:** 「我们的hold是给我们知道一个 order hold这的」 — the hold
+is there so people KNOW an order is paused. 「take off hold也要看」.
+
+`scm.mfg_sales_orders` carries `on_hold` / `hold_reason` / `held_at` / `held_by`
+(mig 0324), and the Sales Order LIST reads them through the payment-totals view,
+which had to be taught the four columns separately (mig 0325 — the view
+enumerates its columns, so a base-table column it does not name is invisible to
+the list).
+
+**`status` is never written by a hold, in either direction.** Put On Hold and
+Take Off Hold both go to `PATCH /:docNo/hold` with `{ onHold, reason }`. So an
+`IN_PRODUCTION` order that is held is still `IN_PRODUCTION`, and taking the hold
+off restores nothing because nothing was lost.
+
+**What it replaced.** `Put On Hold` used to write `status = 'ON_HOLD'`, which
+OVERWROTE the progress — and no `previous_status` column exists anywhere in
+`scm`, so `Take Off Hold` sent every released order to `CONFIRMED` regardless of
+where it had been. Trace:
+`docs/bugs/0516-putting-an-order-on-hold-destroyed-its-progress-and-taking-i.md`.
+
+**On screen:** the real status pill AND a Hold chip, never one instead of the
+other (`frontend/src/vendor/scm/components/HoldChip.tsx`). The list's **On Hold**
+tab filters on the flag and deliberately OVERLAPS the status tabs; `other =
+all − known` is still computed from the status walk alone, so the sum-to-All
+invariant is untouched.
+
+**What a hold blocks on the SO:** raising a Delivery Order
+(`soCanRaiseDo(status, onHold)`), raising a Purchase Order from its lines
+(`firstUnorderableSo`), commission (`soEarnsCommission(status, onHold)`), the
+`/mine` board, customer LTV, sales analysis, the POS revenue cards and the
+order-fulfilment agent. What it does NOT block is the machine re-deriving the
+status from a fact — `so-delivery-sync` still advances a held order to DELIVERED
+when its delivery completes, because that write can no longer erase the hold.
 
 **The transition rule, exactly.** `soStatusTransitionError` rejects only two
 things: an unknown target (`invalid_status`, 400) and a backward jump that is not

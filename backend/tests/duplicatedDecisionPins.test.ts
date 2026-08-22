@@ -51,9 +51,9 @@
 import { describe, expect, test } from "vitest";
 
 import poRouterSrc from "../src/scm/routes/mfg-purchase-orders.ts?raw";
+import sourceGatesSrc from "../src/scm/lib/source-document-gates.ts?raw";
 import poBucketsSrc from "../src/scm/lib/po-status-buckets.ts?raw";
 import soDeliverableSrc from "../src/scm/shared/so-deliverable-states.ts?raw";
-import grnRouterSrc from "../src/scm/routes/grns.ts?raw";
 import inventoryRouterSrc from "../src/scm/routes/inventory.ts?raw";
 import procurementLearningSrc from "../src/services/agents/procurement-learning.ts?raw";
 import soRouterSrc from "../src/scm/routes/mfg-sales-orders.ts?raw";
@@ -161,7 +161,12 @@ describe("SO 'done' has three live answers and the count must not change", () =>
 // PIN 2 — THE TWO THRESHOLD FAMILIES.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("the SO threshold: a PO and a DO refuse the same orders", () => {
-  const unorderable = oneSet(poRouterSrc, "SO_UNORDERABLE_STATUSES", "mfg-purchase-orders.ts");
+  /* MOVED 2026-08-22 out of mfg-purchase-orders.ts into lib/source-document-gates.ts,
+     beside the DO threshold it has to agree with and the PO-receivable one below.
+     All three had to learn to read the mig-0324 hold MARKER, because the hold left
+     the `status` column every one of them was already reading. The pin follows the
+     set to its new home rather than being deleted with the old one. */
+  const unorderable = oneSet(sourceGatesSrc, "SO_UNORDERABLE_STATUSES", "lib/source-document-gates.ts");
   /* MOVED 2026-08-21 out of delivery-orders-mfg.ts into shared/so-deliverable-states.ts,
      because the same rule was ALSO hand-written in the SO list as an allow-list of one
      value and the Transfer button vanished on READY_TO_SHIP. This pin follows the set to
@@ -187,8 +192,12 @@ describe("the PO receivable threshold: four spellings, one membership", () => {
      the repo can see these four copies. That is exactly why the pin exists. */
   const expected = ["PARTIALLY_RECEIVED", "SUBMITTED"];
 
-  test("grns.ts RECEIVABLE_PO_STATUSES", () => {
-    expect(oneSet(grnRouterSrc, "RECEIVABLE_PO_STATUSES", "grns.ts")).toEqual(expected);
+  /* MOVED 2026-08-22 out of grns.ts into lib/source-document-gates.ts with the
+     predicate that reads it, which had to start consulting the mig-0324 hold
+     MARKER: mig 0318 called this block free "and cannot be forgotten", and it
+     was free only while a hold OVERWROTE the status. */
+  test("lib/source-document-gates.ts RECEIVABLE_PO_STATUSES", () => {
+    expect(oneSet(sourceGatesSrc, "RECEIVABLE_PO_STATUSES", "lib/source-document-gates.ts")).toEqual(expected);
   });
 
   test("inventory.ts PO_LIVE", () => {

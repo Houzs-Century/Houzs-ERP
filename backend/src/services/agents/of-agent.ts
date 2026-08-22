@@ -31,6 +31,9 @@ const PIPELINE = "('CONFIRMED','IN_PRODUCTION','READY_TO_SHIP')";
 
 interface SoRow {
   doc_no: string; status: string;
+  /** Migration 0324 — the hold MARKER. A held order keeps its real status, so
+   *  the PIPELINE status filter below can no longer exclude one by itself. */
+  on_hold?: boolean | null;
   debtor_name?: string | null; email?: string | null; address1?: string | null;
   postcode?: string | null; customer_delivery_date?: string | null;
   local_total_sen?: number | null; paid_sen?: number | null;
@@ -59,7 +62,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
 
   const soRes = await db
     .prepare(
-      `SELECT doc_no, status, debtor_name, email, address1, postcode,
+      `SELECT doc_no, status, on_hold, debtor_name, email, address1, postcode,
               customer_delivery_date, local_total_sen, paid_sen
          FROM scm.mfg_sales_orders WHERE status IN ${PIPELINE} LIMIT 1000`,
     )
@@ -102,6 +105,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
     });
     const input: FulfilmentInput = {
       status: so.status,
+      onHold: so.on_hold ?? null,
       isMainReady: readiness.isMainReady,
       isFullyReady: readiness.isFullyReady,
       releaseDecision: gate.decision,

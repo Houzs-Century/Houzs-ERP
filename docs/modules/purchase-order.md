@@ -756,20 +756,34 @@ lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
 
+> **THE HOLD IS A MARKER NOW, NOT A STATUS — 2026-08-22, mig 0324.** Owner:
+> 「我们的hold是给我们知道一个 order hold这的」. `scm.purchase_orders` carries
+> `on_hold` / `hold_reason` / `held_at` / `held_by`, and `PATCH /:id/hold` is the
+> control — **the PO's first working hold of any kind**, because the status added
+> on 2026-08-21 had no writer anywhere in `frontend/src`. A held
+> `PARTIALLY_RECEIVED` order is still partially received; the list shows the real
+> pill plus a Hold chip, and the **On Hold** tab reads the flag.
+>
+> **THE FREE BLOCK STOPPED BEING FREE, and this is the paragraph to read before
+> touching the receive path.** The note below said a held PO was excluded from
+> `RECEIVABLE_PO_STATUSES` "without a line of new code". That was true only while
+> the hold OVERWROTE the status. A held PO now reads `SUBMITTED` and sails
+> through an allow-list of `SUBMITTED / PARTIALLY_RECEIVED` — so the predicate is
+> now `isReceivablePo(po)` in `grns.ts`, which reads the marker off the ROW.
+> Getting this wrong writes stock IN against a purchase order somebody
+> deliberately stopped.
+>
+> **`recomputePoReceived` deliberately did NOT gain a flag term.** It excluded
+> `ON_HOLD` only because re-deriving the status would have erased a hold living
+> in that column. It cannot any more, and freezing a held PO's received counts
+> would be the same lossiness the marker removes. It keeps the `ON_HOLD` literal
+> for a LEGACY row, whose hold is in the status column and nowhere else.
+
 > **`ON_HOLD` added 2026-08-21 (mig 0318, owner: 「PO 加 hold」).** The purchase
 > side never had a reversible stop — only `CANCELLED`, which is final and which
-> the ERP pushes to AutoCount where it cannot be un-cancelled.
->
-> **What it blocks, and where the block lives.** A held PO is **not receivable**:
-> `RECEIVABLE_PO_STATUSES` in `grns.ts` is an ALLOW-list of
-> `SUBMITTED / PARTIALLY_RECEIVED`, so ON_HOLD is excluded without a line of new
-> code. Worth knowing when the next status is added: an allow-list gives you the
-> block for free and a deny-list does not.
->
-> **What had to be written.** `recomputePoReceived` re-derives a PO's status from
-> its lines on every GRN post, so it would have overwritten the hold. ON_HOLD now
-> joins CANCELLED in that exclusion. A status that vanishes by itself is worse
-> than one that was never offered.
+> the ERP pushes to AutoCount where it cannot be un-cancelled. The LABEL stays in
+> `scm.po_status` for ever (Postgres has no `DROP VALUE`) and every pill map
+> keeps rendering it; nothing writes it.
 >
 > **Three display maps move with it**, two of them on the detail page:
 > `status-pill.ts`'s PO map, `PurchaseOrderDetailV2`'s `STAGE_LABEL`, and that

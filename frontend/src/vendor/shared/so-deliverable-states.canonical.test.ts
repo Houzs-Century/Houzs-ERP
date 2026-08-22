@@ -32,24 +32,40 @@ describe('soCanRaiseDo', () => {
      button away by itself. It was excluded, for weeks, by an allow-list of one
      in the Sales Order list's row drawer. */
   test('READY_TO_SHIP can raise a Delivery Order', () => {
-    expect(soCanRaiseDo('READY_TO_SHIP')).toBe(true);
+    expect(soCanRaiseDo('READY_TO_SHIP', false)).toBe(true);
   });
 
   test.each([
     'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED',
   ])('%s is deliverable', (status) => {
-    expect(soCanRaiseDo(status)).toBe(true);
+    expect(soCanRaiseDo(status, false)).toBe(true);
   });
 
   test.each(['DRAFT', 'CANCELLED', 'ON_HOLD'])('%s is NOT deliverable', (status) => {
-    expect(soCanRaiseDo(status)).toBe(false);
+    expect(soCanRaiseDo(status, false)).toBe(false);
+  });
+
+  /* THE MARKER, mig 0324. A hold no longer overwrites the status, so every one
+     of these rows reads as a live, deliverable status — and must still be
+     refused. Before the flag the first of these cases could not exist: holding
+     an IN_PRODUCTION order destroyed the IN_PRODUCTION. */
+  test.each([
+    'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED',
+  ])('%s with the hold marker on it is NOT deliverable', (status) => {
+    expect(soCanRaiseDo(status, true)).toBe(false);
+  });
+
+  /* An unreadable marker is not a hold. The caller that cannot see the column
+     is the one that must not over-block — same posture as a blank status. */
+  test('a null marker does not block a deliverable status', () => {
+    expect(soCanRaiseDo('CONFIRMED', null)).toBe(true);
   });
 
   /* The list payload has been observed handing back "Draft" / "draft" / "DRAFT"
      for the same row — the CTA it feeds normalised case for exactly that
      reason, and a predicate that did not would re-open the hole. */
   test.each(['draft', 'Draft', 'dRaFt', ' DRAFT '])('case and space do not admit %p', (status) => {
-    expect(soCanRaiseDo(status.trim())).toBe(false);
+    expect(soCanRaiseDo(status.trim(), false)).toBe(false);
   });
 
   /* Never OVER-BLOCK on an absence. The server makes the same choice
@@ -58,6 +74,6 @@ describe('soCanRaiseDo', () => {
      the server then refuses in plain language beats hiding something it would
      have taken. */
   test.each([null, undefined, ''])('an unreadable status (%p) still offers the action', (status) => {
-    expect(soCanRaiseDo(status)).toBe(true);
+    expect(soCanRaiseDo(status, false)).toBe(true);
   });
 });
