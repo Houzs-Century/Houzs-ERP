@@ -925,7 +925,7 @@ inventory.get('/breakdown/:itemCode', async (c) => {
       return {
         warehouse_id: b.warehouse_id,
         warehouse_code: w?.code ?? null,
-        warehouse_name: w?.name ?? null,
+        warehouse_name: warehouseLabel(w ?? null),
         is_consignment: !!w?.is_consignment,
         variant_key: vk,
         item_code: itemCode,
@@ -1688,7 +1688,7 @@ inventory.get('/reservations', async (c) => {
       id: l.id,
       warehouse_id: l.warehouse_id,
       warehouse_code: w?.code ?? null,
-      warehouse_name: w?.name ?? null,
+      warehouse_name: warehouseLabel(w ?? null),
       item_code: l.item_code,
       product_name: l.product_name,
       variant_key: vk,

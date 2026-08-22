@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { isServiceLine } from '../shared';
+import { warehouseLabel } from './warehouse-label';
 
 export type StockLineRequest = {
   itemCode: string;
@@ -157,7 +158,12 @@ export async function checkStockAvailability(
       arr.push({
         warehouseId: r.warehouse_id,
         warehouseCode: wh?.code ?? null,
-        warehouseName: wh?.name ?? null,
+        /* THE CODE, via the one rule. Owner 2026-08-22: 「我要显示代码，我不要又
+           代码又名字」. This field is what the short-stock dialog prints, and it
+           used to print the NAME — so a receipt made into "KL WAREHOUSE" came
+           back as "not enough at BALAKONG WAREHOUSE" and read as a second,
+           unselectable warehouse. Same row, two vocabularies. */
+        warehouseName: warehouseLabel(wh ?? null),
         available: Number(r.qty ?? 0),
       });
       altByBucket.set(k, arr);
@@ -169,7 +175,8 @@ export async function checkStockAvailability(
     productName: b.product_name,
     variantKey: b.variant_key,
     warehouseId,
-    warehouseName: targetWh?.name ?? null,
+    /* The CODE — see the alternatives above. */
+    warehouseName: warehouseLabel(targetWh ?? null),
     needed: b.needed,
     available,
     short: b.needed - available,

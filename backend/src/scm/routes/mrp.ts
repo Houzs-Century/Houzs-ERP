@@ -88,6 +88,7 @@ import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
+import { warehouseLabel } from '../lib/warehouse-label';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
@@ -1153,7 +1154,7 @@ export async function computeMrp(
     skus.push({
       warehouseId: whId,
       warehouseCode: wh?.code ?? null,
-      warehouseName: wh?.name ?? null,
+      warehouseName: warehouseLabel(wh ?? null),
       itemCode: code,
       variantKey: bucket.vkey,
       variantLabel: vlabel || null,
@@ -1282,7 +1283,7 @@ export async function computeMrp(
         variantKey: variantKeyOf(d.item_group, v),
         warehouseId: whId,
         warehouseCode: wh?.code ?? null,
-        warehouseName: wh?.name ?? null,
+        warehouseName: warehouseLabel(wh ?? null),
         soItemId: d.id,
         soDocNo: d.doc_no,
         lineNo: d.line_no ?? null,
