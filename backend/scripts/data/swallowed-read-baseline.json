@@ -382,7 +382,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/sales-invoices.ts": {
-      "reads": 27,
+      "reads": 25,
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {

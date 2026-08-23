@@ -26,8 +26,16 @@ export async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   const soDocNos = [...new Set(list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
   const byDoc = new Map<string, { processing_date: string | null; customer_delivery_date: string | null }>();
   if (soDocNos.length > 0) {
-    const { data } = await sb.from('mfg_sales_orders')
+    const { data, error } = await sb.from('mfg_sales_orders')
       .select('doc_no, processing_date, customer_delivery_date').in('doc_no', soDocNos);
+    /* Bound and LOGGED rather than discarded. The rows still fall through to
+       null dates — these are display-only columns and a blip here must not 500
+       the invoice list — but "the read failed" and "the order has no dates" are
+       different facts, and until 2026-08-23 nothing could tell them apart. */
+    if (error) {
+      /* eslint-disable-next-line no-console */
+      console.error('[si-list-stamps] SO date read failed — rows show no processing/delivery date:', error.message);
+    }
     for (const s of ((data ?? []) as Array<{ doc_no: string | null; processing_date: string | null; customer_delivery_date: string | null }>)) {
       if (s.doc_no) byDoc.set(s.doc_no, { processing_date: s.processing_date ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
     }
@@ -49,7 +57,12 @@ export async function stampDoNumber(sb: any, rows: unknown): Promise<void> {
   const doIds = [...new Set(list.map((r) => r.delivery_order_id as string | null).filter((d): d is string => !!d))];
   const byId = new Map<string, string>();
   if (doIds.length > 0) {
-    const { data } = await sb.from('delivery_orders').select('id, do_number').in('id', doIds);
+    const { data, error } = await sb.from('delivery_orders').select('id, do_number').in('id', doIds);
+    // Same contract as the stamp above: fail SOFT, but never silently.
+    if (error) {
+      /* eslint-disable-next-line no-console */
+      console.error('[si-list-stamps] DO number read failed — rows show no source DO:', error.message);
+    }
     for (const d of ((data ?? []) as Array<{ id: string | null; do_number: string | null }>)) {
       if (d.id && d.do_number) byId.set(d.id, d.do_number);
     }
