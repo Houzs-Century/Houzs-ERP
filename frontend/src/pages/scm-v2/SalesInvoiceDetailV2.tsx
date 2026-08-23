@@ -215,21 +215,51 @@ const brandOf = (h: SiHeader): string => h.branding || "—";
 const totalOf = (h: SiHeader, items: SiItem[]): number =>
   h.total_sen || h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
-const outstandingOf = (h: SiHeader, items: SiItem[]): number =>
-  Math.max(0, totalOf(h, items) - (h.paid_sen ?? 0));
+/* The deposit taken on the SALES ORDER this invoice came from, served beside
+   paid_sen by GET /sales-invoices/:id (backend lib/si-order-deposit). It is NOT
+   folded into paid_sen anywhere: the two are different money, banked against
+   different documents, and the office reading this screen has to be able to see
+   which document took it. */
+type OrderDeposit = {
+  so_doc_no: string;
+  order_collected_sen: number;
+  applied_sen: number;
+  transactions: Array<{
+    id: string;
+    paid_at: string | null;
+    method: string | null;
+    amount_sen: number;
+    account_sheet: string | null;
+    note: string | null;
+  }>;
+};
+
+/* Everything settling this invoice: its own receipts PLUS the slice of the
+   order's deposit allocated to it. `depositSen` is a REQUIRED argument on both
+   helpers below, not an optional one — its absence changes the answer, so an
+   optional parameter would leave every caller that forgot it silently showing
+   the old, wrong figure with no compile error (CLAUDE.md, optional-param-noop). */
+const settledOf = (h: SiHeader, depositSen: number): number =>
+  (h.paid_sen ?? 0) + Math.max(0, depositSen);
+
+const outstandingOf = (h: SiHeader, items: SiItem[], depositSen: number): number =>
+  Math.max(0, totalOf(h, items) - settledOf(h, depositSen));
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
-const effectiveOf = (h: SiHeader, items: SiItem[]): Effective => {
+/* The pill and the Outstanding figure are computed from the SAME `settledOf`,
+   so they cannot disagree: an invoice covered by the order's deposit cannot
+   read "Outstanding 0" beside a "Sent · awaiting payment" pill. */
+const effectiveOf = (h: SiHeader, items: SiItem[], depositSen: number): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
-  if (s === "PAID" || outstandingOf(h, items) === 0) return "paid";
-  if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
+  if (s === "PAID" || outstandingOf(h, items, depositSen) === 0) return "paid";
+  if (s === "PARTIALLY_PAID" || settledOf(h, depositSen) > 0) return "partial";
   if (s === "OVERDUE") return "overdue";
   if (s === "DRAFT") return "draft";
   // Sent + anything else with no payment yet.
   const overdueDays = daysPast(h.due_date);
-  if (overdueDays > 0 && outstandingOf(h, items) > 0) return "overdue";
+  if (overdueDays > 0 && outstandingOf(h, items, depositSen) > 0) return "overdue";
   return "sent";
 };
 
@@ -438,15 +468,18 @@ function ActivityRow({
 function OutstandingHeroCard({
   header,
   items,
+  orderDeposit,
 }: {
   header: SiHeader;
   items: SiItem[];
+  orderDeposit: OrderDeposit | null;
 }) {
-  const eff = effectiveOf(header, items);
+  const depositSen = orderDeposit?.applied_sen ?? 0;
+  const eff = effectiveOf(header, items, depositSen);
   const t = EFFECTIVE_TONE[eff];
   const total = totalOf(header, items);
   const paid = header.paid_sen ?? 0;
-  const outstanding = outstandingOf(header, items);
+  const outstanding = outstandingOf(header, items, depositSen);
   const isPaid = outstanding === 0;
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -480,10 +513,19 @@ function OutstandingHeroCard({
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
         <HeroLine k="Invoice total" v={fmtMoney(total, header.currency)} />
         <HeroLine
-          k="Paid"
+          k={depositSen > 0 ? "Paid on this invoice" : "Paid"}
           v={fmtMoney(paid, header.currency)}
           tone={paid > 0 ? "success" : "muted"}
         />
+        {/* Named for the document that actually took the money — the office
+            reads this line to know it does not have to chase it. */}
+        {depositSen > 0 && (
+          <HeroLine
+            k={`Deposit on ${orderDeposit!.so_doc_no}`}
+            v={fmtMoney(depositSen, header.currency)}
+            tone="success"
+          />
+        )}
         <HeroLine
           k="Outstanding"
           v={fmtMoney(outstanding, header.currency)}
@@ -592,6 +634,19 @@ export function SalesInvoiceDetailV2() {
       ),
     [detail.data]
   );
+  /* The order's deposit, served alongside the invoice. `undefined` here is the
+     server saying it could not read the order (orderDepositUnavailable) — NOT
+     "there is no deposit", which is why the banner below exists: an invoice
+     whose order we cannot see must not quietly claim the customer owes
+     everything. That is the bug this whole screen change is about. */
+  const orderDeposit =
+    (detail.data as { orderDeposit?: OrderDeposit | null } | undefined)
+      ?.orderDeposit ?? null;
+  const orderDepositUnavailable = Boolean(
+    (detail.data as { orderDepositUnavailable?: boolean } | undefined)
+      ?.orderDepositUnavailable
+  );
+  const depositSen = orderDeposit?.applied_sen ?? 0;
 
   // Persisted SI payment row → the shared PaymentsTable draft shape.
   const apiToDraft = useCallback(
@@ -657,7 +712,7 @@ export function SalesInvoiceDetailV2() {
     { label: salesInvoice?.invoice_number ?? id ?? "Sales Invoice" },
   ]);
 
-  const eff = salesInvoice ? effectiveOf(salesInvoice, items) : null;
+  const eff = salesInvoice ? effectiveOf(salesInvoice, items, depositSen) : null;
   const stageLabel = salesInvoice
     ? STAGE_LABEL[(salesInvoice.status || "").toUpperCase()] ??
       salesInvoice.status
@@ -670,7 +725,7 @@ export function SalesInvoiceDetailV2() {
   );
 
   const total = salesInvoice ? totalOf(salesInvoice, items) : 0;
-  const outstanding = salesInvoice ? outstandingOf(salesInvoice, items) : 0;
+  const outstanding = salesInvoice ? outstandingOf(salesInvoice, items, depositSen) : 0;
   const paid = salesInvoice?.paid_sen ?? 0;
 
   const overdueDays = salesInvoice ? daysPast(salesInvoice.due_date) : -1;
@@ -1606,11 +1661,61 @@ export function SalesInvoiceDetailV2() {
                 )}
               </Section>
             </div>
+
+            {/* Collected on the ORDER — deliberately its own section rather than
+                extra rows in the table above. These receipts were banked against
+                the Sales Order, not this invoice, and merging the two lists would
+                lose exactly the fact the office needs: which document took the
+                money. Read-only here; it is edited on the order. */}
+            {orderDepositUnavailable && (
+              <div className="mt-4 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink" role="status">
+                We could not read the sales order behind this invoice, so any
+                deposit taken on the order is not counted in the figures above.
+                The outstanding amount shown may be too high. Please refresh.
+              </div>
+            )}
+            {orderDeposit && (
+              <Section title={`Collected on ${orderDeposit.so_doc_no}`}>
+                <p className="px-1 pb-2 text-[12.5px] text-ink-muted">
+                  Taken on the sales order, not on this invoice.{" "}
+                  <span className="font-semibold text-ink">
+                    {fmtMoney(orderDeposit.applied_sen, salesInvoice.currency)}
+                  </span>{" "}
+                  of it settles this invoice
+                  {orderDeposit.order_collected_sen > orderDeposit.applied_sen && (
+                    <>
+                      {" "}
+                      — the remaining{" "}
+                      {fmtMoney(
+                        orderDeposit.order_collected_sen - orderDeposit.applied_sen,
+                        salesInvoice.currency
+                      )}{" "}
+                      goes to the order&apos;s other invoices, earliest first
+                    </>
+                  )}
+                  .
+                </p>
+                <div className="divide-y divide-border">
+                  {orderDeposit.transactions.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between gap-3 px-1 py-2 text-[13px]">
+                      <span className="text-ink-muted">
+                        {fmtDate(t.paid_at)}
+                        {t.method ? ` · ${t.method}` : ""}
+                        {t.account_sheet ? ` · ${t.account_sheet}` : ""}
+                      </span>
+                      <span className="font-money font-semibold text-ink">
+                        {fmtMoney(t.amount_sen, salesInvoice.currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
           </DetailMain>
 
           <DetailAside>
             <div className="hidden lg:sticky lg:top-[124px] space-y-3 md:block">
-              <OutstandingHeroCard header={salesInvoice} items={items} />
+              <OutstandingHeroCard header={salesInvoice} items={items} orderDeposit={orderDeposit} />
 
               <AsideCard title="Key dates">
                 <KeyDateRow
@@ -1680,11 +1785,11 @@ export function SalesInvoiceDetailV2() {
               <AsideCard title="Recent activity">
                 <ActivityRow
                   title={`Invoice ${
-                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items)].label.toLowerCase()
+                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items, depositSen)].label.toLowerCase()
                   }`}
                   meta={fmtDate(salesInvoice.invoice_date)}
                   dot={
-                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items)].tone ===
+                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items, depositSen)].tone ===
                     "success"
                       ? "success"
                       : "primary"

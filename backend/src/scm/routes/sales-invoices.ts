@@ -47,6 +47,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
+import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -901,7 +902,25 @@ salesInvoices.get('/:id', async (c) => {
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ salesInvoice: h.data, items });
+  /* The deposit taken on the ORDER this invoice came from (lib/si-order-deposit).
+     Served BESIDE paid_sen, never folded into it: the two are different money
+     arriving on different documents, and the screen has to be able to say which
+     one took it. `orderDepositUnavailable` is the honest third answer — an
+     invoice whose order we could not read is not an invoice with no deposit, and
+     the screen must say so rather than quietly re-inventing the chase this
+     endpoint exists to stop. NOT finance-gated: this is what the customer paid,
+     the same class as total_sen / paid_sen, not cost or margin. */
+  const dep = await readOrderDepositForInvoice(sb, {
+    id,
+    so_doc_no: (h.data as { so_doc_no?: string | null }).so_doc_no ?? null,
+    company_id: (h.data as { company_id?: number | null }).company_id ?? activeCompanyId(c),
+  });
+  return c.json({
+    salesInvoice: h.data,
+    items,
+    orderDeposit: dep.ok ? dep.deposit : null,
+    orderDepositUnavailable: !dep.ok,
+  });
 });
 
 // ── Create ──────────────────────────────────────────────────────────────
@@ -2052,56 +2071,8 @@ const paymentCreateSchema = z.object({
   note:               z.string().optional().nullable(),
 });
 
-/* Roll the SI paid_sen + status (PARTIALLY_PAID / PAID) from the persisted
-   payments ledger. Mirrors the DO ledger; never moves a CANCELLED invoice.
-   Fails CLOSED and never throws — same contract as recomputeTotals above. */
-async function recomputePaid(sb: any, salesInvoiceId: string) {
-  const { data: pays, error: paysErr } = await sb.from('sales_invoice_payments')
-    .select('amount_sen').eq('sales_invoice_id', salesInvoiceId);
-  /* A failed READ is not an unpaid invoice. `?? []` folded a transient blip into
-     paid = 0, which does not merely understate paid_sen — it drives the status
-     ladder below, so a fully PAID invoice silently reverted to SENT and re-entered
-     the AR chase. An invoice that genuinely has no payments resolves error === null
-     with data === [], and MUST still fall through to write paid = 0. */
-  if (paysErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[si-recompute-paid] payments read failed — paid/status left unchanged:', salesInvoiceId, paysErr.message);
-    return;
-  }
-  const paid = (pays ?? []).reduce((s: number, p: { amount_sen: number }) => s + Number(p.amount_sen ?? 0), 0);
-  const { data: cur, error: curErr } = await sb.from('sales_invoices').select('total_sen, status').eq('id', salesInvoiceId).maybeSingle();
-  /* Distinct from `!cur` below: that is a genuinely missing invoice (error null,
-     data null). This is "we could not find out", and the status ladder must not
-     run on a total_sen we never read. */
-  if (curErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[si-recompute-paid] header read failed — paid/status left unchanged:', salesInvoiceId, curErr.message);
-    return;
-  }
-  if (!cur) return;
-  const c0 = cur as { total_sen: number; status: string };
-  const updates: Record<string, unknown> = { paid_sen: paid, updated_at: new Date().toISOString() };
-  /* LEAK GUARD (DRAFT) — never auto-advance a DRAFT invoice's status off the
-     payments rollup. A DRAFT stays DRAFT until it is explicitly confirmed; the
-     `else` branch below would otherwise silently flip it to SENT on a line edit.
-     CANCELLED is likewise frozen. */
-  if (c0.status !== 'CANCELLED' && c0.status !== 'DRAFT') {
-    if (paid >= c0.total_sen && c0.total_sen > 0) {
-      updates.status = 'PAID';
-      updates.paid_at = new Date().toISOString();
-    } else if (paid > 0) {
-      updates.status = 'PARTIALLY_PAID';
-    } else {
-      updates.status = 'SENT';
-    }
-  }
-  const { error: updErr } = await sb.from('sales_invoices').update(updates).eq('id', salesInvoiceId);
-  if (updErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[si-recompute-paid] paid/status update failed — left STALE:', salesInvoiceId, updErr.message);
-  }
-}
-
+/* recomputePaid moved to lib/si-order-deposit.ts — the ORDER-side payment
+   writer has to run the same roll, and this file is over its size ceiling. */
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const postSalesInvoicePaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');

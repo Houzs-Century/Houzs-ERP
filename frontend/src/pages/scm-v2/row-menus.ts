@@ -500,11 +500,19 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   edit: (r: R) => void;
   print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
+  setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
   canConfirm: (r: R) => boolean;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  // Hold follows: ON_HOLD is being converted from a status into a flag.
+  /* HOLD ARRIVED LATE, and the note that stood here is why it is worth saying so:
+     it read "Hold follows: ON_HOLD is being converted from a status into a flag."
+     True when this menu was written — the flag work was in flight — and nobody
+     came back. Meanwhile mig 0324 mounted `PATCH /purchase-invoices/:id/hold`
+     and the list kept its **On Hold tab**, so the screen offered a tab for a
+     state the product had no way to reach. That is the same fault #2661 was
+     written to remove from the PO and the GRN, reintroduced on the one document
+     whose menu did not exist yet when that change ran. */
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -512,6 +520,7 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
       ...printEntries(purchaseInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
+    holdEntries(r, h.setHold),
     [h.canCancel(r) && dangerItem("Cancel Purchase Invoice", () => h.cancel(r))],
   );
 }
