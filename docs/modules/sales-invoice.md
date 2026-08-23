@@ -637,3 +637,29 @@ Full reasoning, and the per-field table of what each conversion used to drop:
 row already carries `so_doc_no` and `delivery_order_id` + `do_number`, so no
 extra read is needed and no payload change was required. `document-conversion.md`
 §8b has the rule and the per-list enumeration.
+
+## The source Delivery Order's NUMBER, not its uuid
+
+`sales_invoices` stores its parent delivery order only as `delivery_order_id`, a
+uuid — **there is no `do_number` column on the invoice**. The readable number is
+stamped on at read time by `stampDoNumber` in `backend/src/scm/routes/sales-invoices.ts`,
+which batches one lookup against `delivery_orders` and writes `r.do_number`.
+
+**It is called on all three read paths** — both list paths and the detail path.
+The detail was missing until 2026-08-23 and its own comment said "Called on BOTH
+list paths", which was true and was the bug: the field simply was not served
+there.
+
+**The field is `do_number`.** `do_doc_no` is a real column on DELIVERY RETURNS
+and has never existed on a sales invoice; the detail page read that name and so
+always saw `undefined`. The list read `do_number` and was correct throughout, so
+the two screens disagreed about the same invoice.
+
+**No uuid slug fallback.** The detail page used to render
+`delivery_order_id.slice(0, 8)` when it had no number, justified as "so the field
+never renders blank". A dash is the better answer: a blank says we have nothing
+to show; an eight-character hex fragment in a field labelled "Transfer From (DO)"
+says something FALSE in the exact shape of the true answer, and cost the owner a
+question about whether his own document chain was linked at all.
+
+See `docs/bugs/0525-the-invoice-showed-its-delivery-order-as-a-uuid-fragment.md`.
