@@ -372,6 +372,37 @@ treats it as no deposit, and the screen shows the UN-adjusted, LARGER figure —
 today's behaviour, and the only direction a statement of what is owed may be
 wrong in.
 
+#### The Outstanding Dashboard's SI card (2026-08-23)
+
+`GET /outstanding/summary` gives every module one PostgREST aggregate over its
+`v_*_outstanding` view. For SI that sums `outstanding_sen` — `total_sen -
+paid_sen` — so the card sat above a row list that already subtracted the order
+deposit and disagreed with it, and the card was the bigger number
+(`docs/bugs/0529-the-outstanding-card-was-bigger-than-the-table-under-it.md`).
+
+**`si` alone** now takes the paginate-and-reduce path the endpoint's own header
+already offered as the correct-but-slower fallback, and applies the deposit per
+row (`backend/src/scm/lib/si-outstanding-summary.ts`). The other six modules
+keep their single aggregate. No view and no grant is touched — 0189 is why.
+
+| property | what it does |
+|---|---|
+| the aggregate is the FLOOR | the SQL number is computed first and kept; the scan only ever refines it DOWNWARD, so the figure is never smaller than the truth |
+| `SI_SUMMARY_ROW_CAP` = 4,000 | past that the aggregate stands with `deposit_applied: false` and a note. The cap limits what is READ, never what is COUNTED — a summary that quietly stops counting is worse than one that is too big |
+| a failed read | answers `unavailable: true`, not a zeroed module. On this page a `0` reads as "nothing outstanding" |
+| an unresolved order | keeps its LARGER figure, is still counted, and flips `deposit_applied` to false with the count in the note |
+| `?snapshot=1` | reads `scm.mv_ar_aging`, which has the same blindness. The MV is NOT rewritten; the response marks its SI figure `deposit_applied: false` instead |
+
+The card renders "at most RM x outstanding" whenever `deposit_applied` is false,
+and a dash plus "Could not read" when `unavailable` is set.
+
+**Cost.** At most `4 scan pages + 3 reads per batch of <=200 distinct orders` =
+**<=64 subrequests** for this module, against 7 for the whole summary before.
+How many outstanding invoices a busy tenant carries is **UNKNOWN** here and is
+not guessed; `GET /outstanding/si` already pages the same row set with no cap,
+and the Outstanding page issues it the moment anyone opens the SI tab, so this
+is not a new class of cost.
+
 The frontend has ONE reader, `frontend/src/vendor/scm/lib/si-outstanding.ts`
 (`siOutstandingSen` / `siDepositAppliedSen` / `siSettledSen`), replacing six
 copies of `Math.max(0, total - paid)`. Its test file reads each surface's SOURCE
@@ -383,8 +414,8 @@ invisible to any test of the rule.
 | surface | why |
 |---|---|
 | `scm.v_si_outstanding`, `scm.mv_ar_aging` | recreating a view is a NEW object with an empty ACL — the 0189 incident that took the SO list down for every user. The split is also a per-order rule no SQL column can express. `/outstanding/si` adjusts the served row instead |
-| `GET /outstanding/summary` | it is a SQL `SUM(outstanding_sen)` over that view (plus a matview fast path). Netting the deposit needs per-row allocation, which defeats the aggregate. It OVER-states; the `/scm/outstanding` SI tab's rows are now net of the deposit and its module card is not |
-| `collection-agent.ts`, `document-agent.ts` (`UNPAID_SI`, AR-aging buckets) | raw SQL `si.total_sen - si.paid_sen`, some of it bucketed aggregates. Over-states, so it proposes chasing too much — the right follow-up, not a safe drive-by |
+| `GET /outstanding/summary` | **FIXED 2026-08-23** — see the section below. |
+| `collection-agent.ts` (`:112`), `document-agent.ts` (`UNPAID_SI` `:494`, the PAID-but-short detector `:652`, the AR-aging buckets `:901-912`) | raw SQL `si.total_sen - si.paid_sen`, some of it bucketed aggregates. **Still wrong as of 2026-08-23** and NOT reached by the summary fix below: they over-state, so they propose chasing too much. Fixing them means restructuring those SQL aggregates, whose cost is not measurable from here |
 | customer-credit auto-apply (`sales-invoices.ts` `remainingDueSen`, `customer-credits.ts`) | a credit is REAL money movement against this invoice. Applying less of it because the order holds a deposit would strand the customer's credit. Left on `total − paid_sen` on purpose |
 
 

@@ -107,12 +107,23 @@ export const Outstanding = () => {
                 <span>{m.label}</span>
               </div>
               <div style={{ fontSize: 'var(--fs-22)', fontWeight: 900, marginTop: 4 }}>
-                {s?.count ?? 0}
+                {s?.unavailable ? '—' : (s?.count ?? 0)}
               </div>
-              {!!s?.total_outstanding_sen && s.total_outstanding_sen > 0 && (
-                <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}>
-                  {fmtRm(s.total_outstanding_sen)} outstanding
+              {s?.unavailable ? (
+                <div style={{ fontSize: 'var(--fs-11)', opacity: 0.85, marginTop: 2, color: 'var(--c-err, #b4453a)' }}
+                     title={s.deposit_note ?? undefined}>
+                  Could not read
                 </div>
+              ) : (
+                !!s?.total_outstanding_sen && s.total_outstanding_sen > 0 && (
+                  <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}
+                       title={s.deposit_note ?? undefined}>
+                    {/* "at most" is not hedging — when deposit_applied is false the
+                        figure counts every invoice but subtracts no order deposit,
+                        so it is a ceiling and the reader is entitled to know. */}
+                    {s.deposit_applied === false ? 'at most ' : ''}{fmtRm(s.total_outstanding_sen)} outstanding
+                  </div>
+                )
               )}
             </button>
           );
