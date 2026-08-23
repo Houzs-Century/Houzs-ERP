@@ -1714,21 +1714,10 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalSen is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
-  /* ERP -> AutoCount. A RECEIPT THAT HAS A PARENT IS SENT AS ONE.
-     Corrected 2026-08-23 — owner: 「为什么这些 sync 不到」. This block used to
-     record EVERY receipt raised here as parentless, including the ones the
-     desktop conversion screen produced, on the reasoning that AcSyncService
-     resolves source lines from AutoCount's own outstanding predicate and would
-     therefore transfer the PO's outstanding lines rather than the quantities
-     actually typed. That was true only of a payload with NO DtlKeys. The ERP
-     names the subset it took — readConvertSourceKeys, called inside
-     enqueueConvert, returns the keys when it can name EVERY line, and refuses
-     otherwise — which is exactly how /from-po-items sends the same shape.
-     Measured cost of the old behaviour, Houzs Century 2026-08-23: four
-     goods-received notes, every one of them showing "Goods received from a
-     purchase order" beside "There is no earlier document to carry across", and
-     no Send-again button, because a parentless row is not requeueable.
-     A receipt with NO linked line is still parentless and still says so. */
+  /* ERP -> AutoCount. A receipt whose LINES name a purchase order is sent as a
+     real po_to_gr; one that names none is still parentless. This used to record
+     every receipt raised here as parentless — see lib/convert-parent.ts and
+     docs/bugs/0524 for why that was wrong and what it cost. */
   const srcPoIds = await sourcePoIdsForGrn(sb, h.id);
   if (srcPoIds.length) {
     await enqueueConvert(sb, {

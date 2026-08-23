@@ -928,14 +928,9 @@ purchaseInvoices.post('/', async (c) => {
   await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
-  /* ERP -> AutoCount. AN INVOICE THAT HAS A PARENT IS SENT AS ONE.
-     Corrected 2026-08-23, the purchase-side half of the same fix as grns.ts:
-     this recorded EVERY invoice raised here as parentless, including the ones
-     the desktop "Bill a Goods-Received Note" screen produced. AutoCount does
-     build a Purchase Invoice only by transferring a GRN's lines — which is why
-     the fix is to SEND that transfer, naming the receipt lines this invoice
-     billed, exactly as /from-grn-items does. An invoice with no linked line is
-     still parentless and still says so. */
+  /* ERP -> AutoCount. An invoice whose LINES name a receipt is sent as a real
+     gr_to_pi; one that names none is still parentless. The purchase-side half
+     of the grns.ts fix — lib/convert-parent.ts, docs/bugs/0524. */
   const srcGrnIds = await sourceGrnIdsForPi(sb, h.id);
   if (srcGrnIds.length) {
     await enqueueConvert(sb, {
