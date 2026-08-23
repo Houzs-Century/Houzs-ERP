@@ -64,6 +64,7 @@ import {
   requeueOutboxRow,
   sendOutboxRowNow,
 } from '../lib/autocount-requeue';
+import { ancestorsMissingFromBook, newestOutboxRowFor, sendNowPeek } from '../lib/autocount-cascade';
 
 export const autocountOutbox = new Hono<{ Bindings: Env; Variables: Variables }>();
 autocountOutbox.use('*', supabaseAuth);
@@ -601,7 +602,33 @@ autocountOutbox.get('/', listAutocountOutboxHandler);
  * question and got an answer; only a call that could not be answered at all is a
  * non-200. The page renders both on the row that was pressed.
  */
-export const sendNowAutocountOutboxHandler = async (
+export /* THE ANCESTORS, SENT FIRST — shared by both buttons on purpose.
+   AutoCount builds a conversion only by carrying an earlier document into it,
+   so a child whose parent is not in the book cannot go. Left alone the row
+   WAITS, which is right for a background sweep and useless to a person: the
+   parent is failed at six of six attempts, so nothing re-sends it and the child
+   waits forever. Pressing either button is the moment to CAUSE the parent.
+   Owner 2026-08-23: 「按 SI 就 SO → DO → SI；按 GR 就 PO → GR」.
+   One helper, so "Send now" and "Send again" cannot come to differ about it. */
+async function sendAncestorsFirst(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + PostgREST client, both `any` throughout this file
+  c: any, sb: any, companyId: number, docType: string, docId: string | null,
+): Promise<Array<{ doc_type: string; doc_no: string; code: string }>> {
+  const out: Array<{ doc_type: string; doc_no: string; code: string }> = [];
+  for (const a of await ancestorsMissingFromBook(sb, docType, docId)) {
+    const row = await newestOutboxRowFor(sb, companyId, a.docNo);
+    if (!row) { out.push({ doc_type: a.docType, doc_no: a.docNo, code: 'no-outbox-row' }); continue; }
+    const rq = await requeueOutboxRow(sb, { rowId: row, companyId });
+    if (!acRequeueAccepted(rq.outcome) || !rq.newRowId) {
+      out.push({ doc_type: a.docType, doc_no: a.docNo, code: rq.outcome }); continue;
+    }
+    const st = await sendOutboxRowNow(c.env, sb, { rowId: rq.newRowId, companyId });
+    out.push({ doc_type: a.docType, doc_no: a.docNo, code: st.outcome });
+  }
+  return out;
+}
+
+const sendNowAutocountOutboxHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
 ) => {
   /* THE SAME KEYS AS SEND AGAIN, and deliberately not a new permission. Both
@@ -627,6 +654,11 @@ export const sendNowAutocountOutboxHandler = async (
   if (!rowId) return c.json({ error: 'invalid_row_id' }, 400);
 
   const sb = c.get('supabase');
+  /* Read the row's document BEFORE sending it, so the chain can go first. */
+  const peek = await sendNowPeek(sb, rowId, co.companyId);
+  const ancestors = peek
+    ? await sendAncestorsFirst(c, sb, co.companyId, peek.docType, peek.docId)
+    : [];
   const result = await sendOutboxRowNow(c.env, sb, { rowId, companyId: co.companyId });
 
   if (!acRequeueAccepted(result.outcome)) {
@@ -643,6 +675,12 @@ export const sendNowAutocountOutboxHandler = async (
     doc_no: result.docNo,
     op: result.op,
     new_row_id: null,
+    /* SAME TWO FIELDS THE RE-QUEUE BUTTON RETURNS, because both buttons now do
+       the same two things. `sent_now` is trivially true here — this handler IS
+       the immediate send — and it is stated anyway so one page renderer serves
+       both replies. */
+    sent_now: { attempted: true, code: result.outcome, detail: result.detail ?? null },
+    ancestors_sent: ancestors,
     /* WHAT THE ACCOUNT BOOK SAID, on the outcomes where it said something. A
        send-now that reached AutoCount and was refused carries the book's own
        words, and those are the whole diagnosis — the same standing as
@@ -695,6 +733,39 @@ export const requeueAutocountOutboxHandler = async (
     console.warn('[autocount-outbox] re-queue refused', result.outcome, result.docNo, result.detail);
   }
 
+  /* SEND NOW MEANS NOW. Owner 2026-08-23: 「按下去就是立刻送，不是排队」.
+     re-queue writes a fresh `pending` row and used to stop there — the five-
+     minute drain sent it, so pressing the button put the document into Waiting
+     and the operator watched a clock. sendOutboxRowNow already dispatches
+     synchronously, but it only accepts a row that is ALREADY pending, which a
+     failed row never is. Both halves existed; nothing joined them.
+     Best-effort on purpose: the re-queue SUCCEEDED whatever the send does, and
+     reporting it as a failure would lose the row the operator can retry. What
+     the send did is reported separately, in `sent_now`. */
+  let sentNow: { attempted: boolean; code?: string; detail?: string | null } = { attempted: false };
+  const ancestors: Array<{ doc_type: string; doc_no: string; code: string }> = [];
+  if (acRequeueAccepted(result.outcome) && result.newRowId) {
+    /* THE ANCESTORS FIRST, OUTERMOST FIRST. Owner 2026-08-23: 「按 SI 就
+       SO → DO → SI」. AutoCount builds a conversion only by carrying an earlier
+       document into it, so a child whose parent is not in the book cannot go —
+       and left alone it WAITS for a parent that nothing is re-sending. Pressing
+       the button is the moment to cause the parent instead of waiting for it.
+       Each ancestor goes through the SAME re-queue-then-send this row does, so
+       there is one code path and one set of refusals, not two. */
+    ancestors.push(...await sendAncestorsFirst(c, sb, co.companyId, result.docType ?? '', result.docId ?? null));
+
+    /* SEND NOW MEANS NOW. Owner: 「按下去就是立刻送，不是排队」. re-queue writes
+       a fresh `pending` row and used to stop there — the five-minute drain sent
+       it, so the button put the document into Waiting and the operator watched a
+       clock. sendOutboxRowNow already dispatches synchronously but only accepts
+       a row that is ALREADY pending, which a failed row never is. Both halves
+       existed; nothing joined them.
+       Best-effort on purpose: the re-queue SUCCEEDED whatever the send does, and
+       reporting it as a failure would lose the row the operator can retry. */
+    const send = await sendOutboxRowNow(c.env, sb, { rowId: result.newRowId, companyId: co.companyId });
+    sentNow = { attempted: true, code: send.outcome, detail: send.detail ?? null };
+  }
+
   const body = {
     accepted: acRequeueAccepted(result.outcome),
     code: result.outcome,
@@ -706,6 +777,12 @@ export const requeueAutocountOutboxHandler = async (
     /* The live attempt this created, so the page can point at it rather than
        asking the reader to go and find a new row in a list of two hundred. */
     new_row_id: result.newRowId,
+    /* What the immediate send did, kept apart from the re-queue's own verdict:
+       a document can be queued successfully and still be refused by the account
+       book one second later, and the operator needs to see both. */
+    sent_now: sentNow,
+    /* What the chain above it did, in the order they were sent. */
+    ancestors_sent: ancestors,
     reason: result.outcome === 'still-refused' ? result.detail : null,
   };
   if (result.outcome === 'row-not-found') return c.json(body, 404);
