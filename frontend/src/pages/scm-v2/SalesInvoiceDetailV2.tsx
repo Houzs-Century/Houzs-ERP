@@ -981,13 +981,10 @@ export function SalesInvoiceDetailV2() {
       )
       .finally(() => setSavingPayments(false));
   };
-  /* Mark paid RECORDS THE MONEY and writes NO status — markPaidPlan.ts holds
-     the trace and the four refusals. It seeds the SAME editor "Record payment"
-     opens with one row at the outstanding balance; Save posts it through
-     POST /:id/payments and `recomputeSiPaid` derives the status from the ledger.
-     It stops at the editor rather than committing because the METHOD is the
-     operator's: a guessed `cash` lands in the daily cash-up and leaves the
-     drawer short by the amount. */
+  /* Mark paid RECORDS THE MONEY and writes NO status; markPaidPlan.ts holds the
+     trace and the four refusals. It stops at the editor rather than committing
+     because the METHOD is the operator's — a guessed `cash` lands in the daily
+     cash-up and leaves the drawer short. */
   const doMarkPaid = () => {
     if (!salesInvoice) return;
     const plan = planMarkPaid({
@@ -1019,12 +1016,10 @@ export function SalesInvoiceDetailV2() {
     );
   };
 
-  /* The LIST's two payment entries land here (siPaymentIntent.ts owns the URL
-     contract AND the run-once/strip-the-param mechanics). They delegate instead
-     of acting because a receipt's amount must be decided where
-     `orderDepositUnavailable` is known — a list row cannot tell "the order
-     collected nothing" from "we could not read the order", and the second one
-     would book the deposit twice. */
+  /* The LIST's two payment entries land here (siPaymentIntent.ts). They delegate
+     because a receipt's amount must be decided where `orderDepositUnavailable`
+     is known: a list row cannot tell "the order collected nothing" from "we
+     could not read the order", and the second books the deposit twice. */
   useSiPaymentIntent({
     invoiceId: id ?? null,
     ready: paymentsQ.isSuccess,
