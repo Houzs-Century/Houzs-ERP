@@ -475,14 +475,20 @@ money that did not arrive:
 > nothing — which is why it could not have been recording a receipt. It is now
 > offered when there IS a balance and hidden when there is not.
 
-> **The LIST still hand-writes the status.**
-> `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx:1041` has its own
-> `doMarkPaid` sending `{ status: "paid" }`, with the same pre-fix visibility
-> rule. It is untouched ON PURPOSE: that screen's `outstandingOf` is
-> `total − paid` with **no deposit term** (`:215-216`), so the same fix there
-> would record the GROSS balance and book the order's deposit twice. It needs
-> the deposit-adjusted outstanding on the list first, or a navigation into this
-> screen's editor.
+> **The LIST delegates here rather than computing.** Its **Mark paid** and
+> **Record payment** both navigate to this screen carrying `?pay=balance` /
+> `?pay=open` (`frontend/src/pages/scm-v2/siPaymentIntent.ts`), and this screen
+> acts on the intent once and strips it. The list must NOT compute a receipt
+> itself: a list row carries only `so_deposit_applied_sen`, and
+> `siDepositAppliedSen` reads absent-or-null as 0 — so "the order collected
+> nothing" and "we could not read the order" are the same value there. That is
+> the safe default for a DISPLAYED figure and the dangerous one for cash.
+> `orderDepositUnavailable`, served only by `GET /:id`, is what tells them apart.
+>
+> The old link was `?tab=payments&record=1`, which **nothing read** — this page
+> calls `useSearchParams()` and never calls `.get()` — so Record payment from
+> the list opened the invoice and did nothing. The param lives in a shared
+> module now so the writer and the reader can be tested together.
 
 Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx`, which
 mounts the real page and asserts the operator's outcome; proved RED by deleting

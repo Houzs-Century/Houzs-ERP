@@ -74,22 +74,49 @@ and each one refuses rather than recording money that did not arrive:
 | CANCELLED | the payment routes answer `not_payable`; an action that can only 409 is not offered |
 | DRAFT | same, and a draft has posted no revenue yet |
 
-Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx` (8 tests),
+Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx` (15 tests),
 which mounts the real page and asserts what the operator gets. Proved RED on the
-unfixed behaviour by deleting each guard in turn — six deletions, every one red:
-restoring the status write (4 red), recording the gross total instead of the
-net outstanding (3 red), restoring `outstanding === 0` visibility (5 red), and
-dropping each of the three refusals (1-2 red each).
+unfixed behaviour by deleting each guard in turn — NINE deletions, every one
+red: restoring the status write (4 red), recording the gross total instead of the
+net outstanding (3 red), restoring `outstanding === 0` visibility (5 red),
+dropping each of the three refusals (1-2 red each), removing the intent consumer
+so the link goes dead again (2 red), making `pay=balance` fall through to a plain
+open (1 red), and leaving the intent in the URL after acting (1 red).
 
-**Still open — the LIST carries the same button and it was NOT fixed here.**
-`frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx:1041` has its own `doMarkPaid`
-sending `{ status: "paid" }` to the same endpoint, offered on the same
-`outstanding === 0` rule. It is left alone deliberately, not overlooked: that
-screen's `outstandingOf` is `total − paid` with **no deposit term** (`:215-216`),
-so giving it the same fix today would record the GROSS balance and book the
-customer's order deposit a second time — the one outcome this change exists to
-prevent. It needs the deposit-adjusted outstanding on the list first (in flight
-on a sibling branch), or a navigation into the detail screen's editor, where the
-figure is already correct. Owner's call, raised as an open question on the PR.
+That last one was NOT red at first. The assertion called `stripSiPaymentIntent`
+directly, so deleting the strip from the effect left it green — a test of the
+helper the effect was SUPPOSED to call, not of what the effect did. It now reads
+the router's own URL through a probe component, and it bites.
+
+**The LIST carried the same button, and it is fixed here too.**
+`frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` had its own `doMarkPaid`
+sending `{ status: "paid" }` to the same endpoint. It could not simply copy the
+detail page's fix: a list row carries only `so_deposit_applied_sen`, and
+`siDepositAppliedSen` reads absent-or-null as **0**, so "the order collected
+nothing" and "we could not read the order" are the same value there. That is the
+right default for a figure being DISPLAYED — over-stating what is owed sends
+someone to check — and the wrong one for a figure about to be booked as cash,
+where it would record the customer's deposit a second time. Only
+`GET /sales-invoices/:id` answers the difference, with `orderDepositUnavailable`.
+
+So the list DELEGATES: Mark paid now opens the detail screen's payment editor
+with the balance seeded, and the amount is computed on the screen that can tell
+the two apart. New module `frontend/src/pages/scm-v2/siPaymentIntent.ts` owns
+that URL contract.
+
+**A second, separate defect found while wiring it: the list's Record payment did
+nothing at all.** It navigated to `?tab=payments&record=1`, and nothing in the
+app has ever read `tab` or `record` on a sales invoice — `SalesInvoiceDetailV2`
+calls `useSearchParams()` and never calls `.get()` (verified on the merged tree:
+`grep -n "\bparams\b"` returns the declaration and nothing else). Pressing it
+opened the invoice and left the operator looking at a page that had not changed
+— the "the button does nothing" shape CLAUDE.md names as the worst kind. It is
+fixed by the same module, because the mechanism was one line away and leaving one
+of two adjacent payment buttons dead would have been the N-1 failure this repo
+keeps paying for. That is why the param is a shared module and not a string in
+two files: the writer and the reader are now testable together, which is exactly
+what the old one lacked. The Purchase Invoice pages use the same dead pattern
+(`PurchaseInvoiceDetailV2.tsx`, `PurchaseInvoicesListV2.tsx`) and are NOT touched
+here — different module, and no evidence gathered about them.
 
 **Ref.** `fix/mark-paid-records-the-money`, 2026-08-23.

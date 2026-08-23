@@ -90,6 +90,7 @@ import {
   canOfferMarkPaid,
   planMarkPaid,
 } from "./markPaidPlan";
+import { useSiPaymentIntent } from "./siPaymentIntent";
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
@@ -1017,6 +1018,19 @@ export function SalesInvoiceDetailV2() {
       })
     );
   };
+
+  /* The LIST's two payment entries land here (siPaymentIntent.ts owns the URL
+     contract AND the run-once/strip-the-param mechanics). They delegate instead
+     of acting because a receipt's amount must be decided where
+     `orderDepositUnavailable` is known — a list row cannot tell "the order
+     collected nothing" from "we could not read the order", and the second one
+     would book the deposit twice. */
+  useSiPaymentIntent({
+    invoiceId: id ?? null,
+    ready: paymentsQ.isSuccess,
+    onOpen: goRecordPayment,
+    onBalance: doMarkPaid,
+  });
 
   // ── SI line item columns — money-forward, 5 cols like SO detail ────────
   const lineColumns: Column<SiItem>[] = [

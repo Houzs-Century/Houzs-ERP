@@ -29,7 +29,7 @@
  * file imports.
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
 
@@ -101,6 +101,7 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
 vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => true, pageAccess: () => "full" }) }));
 
 import { SalesInvoiceDetailV2 } from "./SalesInvoiceDetailV2";
+import { readSiPaymentIntent, siPaymentIntentSearch, stripSiPaymentIntent } from "./siPaymentIntent";
 
 const ID = "11111111-2222-3333-4444-555555555555";
 
@@ -147,6 +148,7 @@ function setup(overrides: {
   paidSen?: number;
   deposit?: typeof orderDeposit | null;
   depositUnavailable?: boolean;
+  search?: string;
 } = {}) {
   detail.mockReturnValue(
     ok({
@@ -165,13 +167,27 @@ function setup(overrides: {
   updateHeader.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
 
   return render(
-    <MemoryRouter initialEntries={[`/scm/sales-invoices/${ID}`]}>
+    <MemoryRouter initialEntries={[`/scm/sales-invoices/${ID}${overrides.search ?? ""}`]}>
       <Routes>
-        <Route path="/scm/sales-invoices/:id" element={<SalesInvoiceDetailV2 />} />
+        <Route
+          path="/scm/sales-invoices/:id"
+          element={<><UrlProbe /><SalesInvoiceDetailV2 /></>}
+        />
       </Routes>
     </MemoryRouter>,
   );
 }
+
+/* The live URL, so "the intent is consumed" is asserted against what the router
+   actually holds — not against the helper the effect is SUPPOSED to call. An
+   earlier version of this file asserted only the helper, and deleting the strip
+   from the effect left it green. */
+function UrlProbe() {
+  const loc = useLocation();
+  return <span data-testid="url" data-search={loc.search} />;
+}
+
+const currentSearch = () => screen.getByTestId("url").getAttribute("data-search");
 
 const markPaidButton = () => screen.queryByRole("button", { name: /mark paid/i });
 const seededRows = () =>
@@ -266,5 +282,72 @@ describe("Mark paid is not offered where the receipt would be dishonest", () => 
   it("is hidden on a draft — the payment route answers not_payable", () => {
     setup({ status: "DRAFT" });
     expect(markPaidButton()).toBeNull();
+  });
+});
+
+/* The LIST's Mark paid used to send `{ status: "paid" }` from its own handler.
+ * It now navigates here instead, because a list row cannot tell "the order
+ * collected nothing" from "we could not read the order" — `siDepositAppliedSen`
+ * reads absent-or-null as 0, which is the SAFE direction for a figure on screen
+ * and the DANGEROUS one for a figure about to be booked as cash.
+ *
+ * These mount the detail page at exactly the URL the list builds — by calling
+ * the same `siPaymentIntentSearch` the list calls — so the link is proven to
+ * WORK, which is the assertion its predecessor never had: the list's old
+ * `?tab=payments&record=1` was read by nothing at all.
+ */
+describe("the list hands its payment entries to this screen", () => {
+  it("?pay=balance seeds the outstanding balance and still writes no status", async () => {
+    setup({ search: siPaymentIntentSearch("balance") });
+    await waitFor(() => expect(seededRows()).toContain(OUTSTANDING_SEN));
+    expect(seededRows()).not.toContain(TOTAL_SEN);
+    expect(updateStatusMutate).not.toHaveBeenCalled();
+  });
+
+  it("?pay=open opens the editor without seeding an amount", async () => {
+    setup({ search: siPaymentIntentSearch("open") });
+    await waitFor(() => expect(lastPaymentsTableProps.current?.locked).toBe(false));
+    expect(seededRows()).not.toContain(OUTSTANDING_SEN);
+    expect(updateStatusMutate).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary visit opens nothing", async () => {
+    setup();
+    await waitFor(() => expect(screen.queryByTestId("payments-table")).not.toBeNull());
+    expect(lastPaymentsTableProps.current?.locked).toBe(true);
+  });
+
+  /* THE DEAD PARAM, pinned as dead. `?tab=payments&record=1` is what the list's
+     Record payment used to navigate with, and nothing in the app ever read
+     `tab` or `record` on a sales invoice — the detail page calls
+     `useSearchParams()` and never calls `.get()`. It must never silently start
+     meaning something. */
+  it("the old ?tab=payments&record=1 is not an intent", async () => {
+    expect(readSiPaymentIntent("?tab=payments&record=1")).toBeNull();
+    setup({ search: "?tab=payments&record=1" });
+    await waitFor(() => expect(screen.queryByTestId("payments-table")).not.toBeNull());
+    expect(lastPaymentsTableProps.current?.locked).toBe(true);
+  });
+
+  /* Round trip: what the list WRITES is what this screen READS. One module owns
+     both ends precisely so this can be asserted. */
+  it("every intent the list can build is one this screen accepts", () => {
+    for (const intent of ["open", "balance"] as const) {
+      expect(readSiPaymentIntent(siPaymentIntentSearch(intent))).toBe(intent);
+    }
+  });
+
+  it("acting on the intent strips it from the URL, so a refresh does not re-seed a row", async () => {
+    setup({ search: siPaymentIntentSearch("balance") });
+    await waitFor(() => expect(seededRows()).toContain(OUTSTANDING_SEN));
+    /* Asserted on the ROUTER's URL, not on the helper: a refresh or a
+       back-button on a URL still carrying the intent would re-open the editor
+       and re-seed a payment row the operator may have decided against. */
+    await waitFor(() => expect(currentSearch()).toBe(""));
+    expect(readSiPaymentIntent(currentSearch() ?? "")).toBeNull();
+  });
+
+  it("stripping keeps every other param", () => {
+    expect(stripSiPaymentIntent("?q=abc&pay=balance")).toBe("?q=abc");
   });
 });
