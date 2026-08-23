@@ -693,6 +693,24 @@ purchaseInvoices.get('/:id/linked', async (c) => {
 /* Every refusal here releases the request's idempotency claim, so a corrected
    Save reaches the handler instead of replaying the first one — rule 1 of
    lib/pi-create-refusals.ts, which also draws the boundary this follows. */
+/** The goods-received notes a purchase invoice's lines actually billed, or []
+ *  when none did. Read from the LINES for the same reason grns.ts reads them:
+ *  it asks the question readConvertSourceKeys will answer, so the two cannot
+ *  disagree about whether this document has a parent. */
+async function sourceGrnIdsForPi(sb: any, piId: string): Promise<string[]> {
+  const { data: lines, error } = await sb.from('purchase_invoice_items')
+    .select('grn_item_id').eq('purchase_invoice_id', piId);
+  if (error || !lines) return [];
+  const itemIds = [...new Set((lines as Array<{ grn_item_id: string | null }>)
+    .map((l) => l.grn_item_id).filter((v): v is string => !!v))];
+  if (!itemIds.length) return [];
+  const { data: grnItems, error: gErr } = await sb.from('grn_items')
+    .select('grn_id').in('id', itemIds);
+  if (gErr || !grnItems) return [];
+  return [...new Set((grnItems as Array<{ grn_id: string | null }>)
+    .map((r) => r.grn_id).filter((v): v is string => !!v))];
+}
+
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
@@ -927,20 +945,36 @@ purchaseInvoices.post('/', async (c) => {
   await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
-     of the standalone Sales Invoice: AcSyncService has no /create-pi, because
-     AutoCount builds a Purchase Invoice only by transferring a GRN's lines. The
-     two real conversion routes are POST /from-grn and /from-grn-items; anything
-     that arrives here is an invoice the account book will never hold, and it is
-     recorded so it can be found. */
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'PI',
-    docNo: h.invoice_number,
-    docId: h.id,
-    missing: 'no source Goods Received Note to transfer from',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+  /* ERP -> AutoCount. AN INVOICE THAT HAS A PARENT IS SENT AS ONE.
+     Corrected 2026-08-23, the purchase-side half of the same fix as grns.ts:
+     this recorded EVERY invoice raised here as parentless, including the ones
+     the desktop "Bill a Goods-Received Note" screen produced. AutoCount does
+     build a Purchase Invoice only by transferring a GRN's lines — which is why
+     the fix is to SEND that transfer, naming the receipt lines this invoice
+     billed, exactly as /from-grn-items does. An invoice with no linked line is
+     still parentless and still says so. */
+  const srcGrnIds = await sourceGrnIdsForPi(sb, h.id);
+  if (srcGrnIds.length) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'gr_to_pi',
+      from: srcGrnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
+      docType: 'PI',
+      docNo: h.invoice_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordParentlessCreate(sb, {
+      companyId: activeCompanyId(c),
+      docType: 'PI',
+      docNo: h.invoice_number,
+      docId: h.id,
+      missing: 'no source Goods Received Note to transfer from',
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN
      line (recomputeGrnInvoiced) nor re-cost (recostForPi). Both move to the

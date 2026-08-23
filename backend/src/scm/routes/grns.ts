@@ -1713,27 +1713,43 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalSen is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
-     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
-     need not have a parent PO. AutoCount has no create for a GRN at all; it
-     builds one only by transferring a PO's lines. Even when a purchaseOrderId
-     IS supplied here, sending a conversion would be WRONG rather than merely
-     approximate: AcSyncService resolves the source lines from AutoCount's own
-     outstanding predicate (DtlKeys()), so the account book would receive the
-     PO's outstanding lines, not the quantities the receiver actually typed and
-     accepted on this form. That is a wrong value, and a wrong value is worse
-     than a blank — so the divergence is recorded instead of guessed.
-     The two real conversion routes are POST /from-pos and /from-po-items. */
+  /* ERP -> AutoCount. A RECEIPT THAT HAS A PARENT IS SENT AS ONE.
+     Corrected 2026-08-23 — owner: 「为什么这些 sync 不到」. This block used to
+     record EVERY receipt raised here as parentless, including the ones the
+     desktop conversion screen produced, on the reasoning that AcSyncService
+     resolves source lines from AutoCount's own outstanding predicate and would
+     therefore transfer the PO's outstanding lines rather than the quantities
+     actually typed. That was true only of a payload with NO DtlKeys. The ERP
+     names the subset it took — readConvertSourceKeys, called inside
+     enqueueConvert, returns the keys when it can name EVERY line, and refuses
+     otherwise — which is exactly how /from-po-items sends the same shape.
+     Measured cost of the old behaviour, Houzs Century 2026-08-23: four
+     goods-received notes, every one of them showing "Goods received from a
+     purchase order" beside "There is no earlier document to carry across", and
+     no Send-again button, because a parentless row is not requeueable.
+     A receipt with NO linked line is still parentless and still says so. */
+  const srcPoIds = await sourcePoIdsForGrn(sb, h.id);
+  if (srcPoIds.length) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'po_to_gr',
+      from: srcPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'grns', keyCol: 'id', key: h.id },
+      docType: 'GR',
+      docNo: h.grn_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
   await recordParentlessCreate(sb, {
     companyId: activeCompanyId(c),
     docType: 'GR',
     docNo: h.grn_number,
     docId: h.id,
-    missing: (body.purchaseOrderId as string | undefined)
-      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
-      : 'no source Purchase Order',
+    missing: 'no source Purchase Order',
     createdBy: c.get('houzsUser')?.id ?? null,
   });
+  }
 
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
@@ -2074,6 +2090,25 @@ export const postGrnHandler = async (c: any) => {
   return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined, recountError: res.recountError });
 };
 grns.patch('/:id/post', postGrnHandler);
+
+/** The purchase orders a receipt's lines actually came from, or [] when none
+ *  did. Read from the LINES, not from `body.purchaseOrderId`: the header field
+ *  is a hint the form may or may not carry, while the line link is what
+ *  readConvertSourceKeys will name — so this asks the same question the
+ *  conversion answers, and cannot disagree with it. */
+async function sourcePoIdsForGrn(sb: any, grnId: string): Promise<string[]> {
+  const { data: lines, error } = await sb.from('grn_items')
+    .select('purchase_order_item_id').eq('grn_id', grnId);
+  if (error || !lines) return [];
+  const itemIds = [...new Set((lines as Array<{ purchase_order_item_id: string | null }>)
+    .map((l) => l.purchase_order_item_id).filter((v): v is string => !!v))];
+  if (!itemIds.length) return [];
+  const { data: poItems, error: poErr } = await sb.from('purchase_order_items')
+    .select('purchase_order_id').in('id', itemIds);
+  if (poErr || !poItems) return [];
+  return [...new Set((poItems as Array<{ purchase_order_id: string | null }>)
+    .map((r) => r.purchase_order_id).filter((v): v is string => !!v))];
+}
 
 /* ── POST /from-po-items ────────────────────────────────────────────────
    Multi-select GRN creator. Body: { picks: [{ poItemId, qty }], notes?,
