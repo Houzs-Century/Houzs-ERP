@@ -69,6 +69,15 @@ Send now 也跟着回来了：这些行现在是 `pending`，失败会变 `faile
 用 `?raw` 读原始码，不用 `node:fs` —— 这是 Workers 专案，没有 node 型别，用 fs 会
 typecheck 红而测试绿。
 
+### 这是同一个 bug 的第三次
+
+**销售发票那一边 2026-08-17 就修过了。** `scm/lib/si-autocount-source.ts` 的档头写着：
+`POST /sales-invoices` 里那个无条件的 `recordParentlessCreate`「宣称了一个它从来没有
+查证过的事实，把每一张桌面版从送货单开出来的发票都归成 ERP-only」。
+
+**一模一样的句子，一模一样的修法** —— 只是当时只修了 SI，GRN 和 PI 被留在原地又跑了
+六天。这一支是把剩下两个补上。
+
 ### 这支**没有**修的
 
 **AutoCount 那台机器现在回 502。** 讯息是

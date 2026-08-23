@@ -367,6 +367,17 @@ fabric / seat / leg **only** for a sofa or bedframe group, so a line that reache
 PRODUCT CODE ALONE and the goods land in the unclassified bucket, where no sofa
 order can ever see them (`docs/bugs/0514-…`).
 
+**A receipt raised FROM a purchase order is now sent to AutoCount as one.**
+`POST /grns` used to record every receipt it created as parentless — including
+the ones the desktop "Transfer to Goods Received" screen produces, which is the
+normal way a receipt is raised, since the picker navigates to the New form and
+the New form posts here. It now asks `sourcePoIdsForGrn` (`lib/convert-parent.ts`)
+whether the LINES name a purchase order, and enqueues a real `po_to_gr` when they
+do. A receipt whose lines name none is still parentless and still says so. The
+parent comes from `grn_items.purchase_order_item_id`, never from the request's
+`purchaseOrderId` header hint — the line link is what `readConvertSourceKeys`
+names, so the two cannot disagree (`docs/bugs/0524`).
+
 Both hand-entry paths — `POST /grns` (the manual receipt) and
 `POST /grns/:id/items` (a line added afterwards) — used to store
 `it.itemGroup ?? null`, i.e. whatever the browser sent. They now resolve it from
