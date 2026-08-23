@@ -60,6 +60,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { purchaseInvoiceRowMenu } from "./row-menus";
+import { useHoldAction } from "./use-hold-action";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
@@ -864,11 +865,17 @@ export function PurchaseInvoicesListV2() {
      invoice (PAID, or paid_sen > 0 -> 409), so the menu must not offer it
      there. Mark paid and Record payment stay on the drawer, beside the
      outstanding figure that justifies them. */
+  /* Keyed by `id`: the route is `PATCH /purchase-invoices/:id/hold`. Only the
+     Sales Order's is keyed by document number (document-hold-routes.ts). */
+  const holdAction = useHoldAction("pi");
+  const setPiHold = (r: PiRow, onHold: boolean) => holdAction(r.id, r.invoice_number, onHold);
+
   const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
     open: goFullPage,
     edit: goEdit,
     print: printDocument,
     confirm: doConfirm,
+    setHold: setPiHold,
     cancel: doCancelPi,
     canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
     canCancel: (r) => {

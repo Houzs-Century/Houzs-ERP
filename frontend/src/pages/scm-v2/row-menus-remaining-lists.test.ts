@@ -46,6 +46,45 @@ const R = (o: { status?: string | null } = {}): Row =>
 const noop = () => {};
 
 /* ── Purchase Invoice ─────────────────────────────────────────────────────── */
+/* THE GAP THIS PINS. When this menu was written the hold was still a STATUS
+   being converted into a flag, so it carried the note "Hold follows" and no
+   entry. Migration 0324 then mounted `PATCH /purchase-invoices/:id/hold` and the
+   list kept its **On Hold tab** — a tab for a state nothing could reach, which
+   is the exact fault #2661 removed from the PO and the GRN. Nobody came back.
+
+   RED on the unfixed tree: neither entry was in the menu at all. */
+describe("the purchase invoice can actually be held", () => {
+  test("a live invoice is offered Put On Hold", () => {
+    expect(labels(piMenu()(R({ status: "POSTED" })))).toContain("Put On Hold");
+  });
+
+  test("a held invoice is offered Take Off Hold, and not a second Put On Hold", () => {
+    const held = { ...R({ status: "POSTED" }), on_hold: true } as Row;
+    const l = labels(piMenu()(held));
+    expect(l).toContain("Take Off Hold");
+    expect(l).not.toContain("Put On Hold");
+  });
+
+  test("the two are never offered together", () => {
+    for (const on_hold of [true, false]) {
+      const l = labels(piMenu()({ ...R({ status: "POSTED" }), on_hold } as Row));
+      expect(l.filter((x) => x === "Put On Hold" || x === "Take Off Hold")).toHaveLength(1);
+    }
+  });
+
+  test("hold sits above Cancel — destructive stays last", () => {
+    const l = labels(piMenu()(R({ status: "POSTED" })));
+    expect(l.indexOf("Put On Hold")).toBeLessThan(l.indexOf("Cancel Purchase Invoice"));
+  });
+
+  test("the handler receives the row and the direction", () => {
+    const seen: Array<[string, boolean]> = [];
+    const m = piMenu({ setHold: (r, onHold) => seen.push([r.invoice_number, onHold]) })(R({ status: "POSTED" }));
+    m.find((x) => x.label === "Put On Hold")!.onClick();
+    expect(seen).toEqual([["PI-0001", true]]);
+  });
+});
+
 
 const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]> = {}) =>
   purchaseInvoiceRowMenu<Row>({
@@ -53,6 +92,7 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
     edit: noop,
     print: noop,
     confirm: noop,
+    setHold: noop,
     cancel: noop,
     canConfirm: (r) => (r.status ?? "").toUpperCase() === "DRAFT",
     canCancel: (r) => !["CANCELLED", "PAID"].includes((r.status ?? "").toUpperCase()),
@@ -62,24 +102,27 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
 describe("purchaseInvoiceRowMenu", () => {
   test("a DRAFT offers Confirm, and Cancel below it", () => {
     expect(labels(piMenu()(R({ status: "DRAFT" })))).toEqual([
-      "Open", "Edit", "Print", "—", "Confirm", "—", "Cancel Purchase Invoice",
+      "Open", "Edit", "Print", "—", "Confirm", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
     ]);
   });
 
   test("a confirmed invoice is not offered Confirm a second time", () => {
     expect(labels(piMenu()(R({ status: "POSTED" })))).toEqual([
-      "Open", "Edit", "Print", "—", "Cancel Purchase Invoice",
+      "Open", "Edit", "Print", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
     ]);
   });
 
   /* The server refuses a cancel once any money has been paid, so offering it
      would be a menu entry whose only possible outcome is a 409. */
   test("a PAID invoice cannot be cancelled from the menu", () => {
-    expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Print"]);
+    /* Hold survives: a hold is a MARKER, not a step, and marking a paid invoice
+       paused is a legitimate thing to want (document-hold-route.ts deliberately
+       does not gate on status). Only the CANCEL goes. */
+    expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Print", "—", "Put On Hold"]);
   });
 
   test("a cancelled invoice is not offered a second cancel", () => {
-    expect(labels(piMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print"]);
+    expect(labels(piMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print", "—", "Put On Hold"]);
   });
 
   test("Confirm calls the page's confirm handler with the row it was opened on", () => {

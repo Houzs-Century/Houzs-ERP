@@ -1953,3 +1953,16 @@ to raise it a second time into a book that already holds it. It never blocks.
 
 Full reasoning, and the per-field table of what each conversion used to drop:
 `docs/modules/autocount-writeback.md` §7c5.
+
+### The Purchase Invoice's hold arrived late (2026-08-23)
+
+Its row menu carried `// Hold follows` from the day it was written — the five
+bare lists got their menus and the hold-as-a-flag change were built in parallel
+and deliberately kept apart. The flag landed, `PATCH /purchase-invoices/:id/hold`
+was mounted, the four lists that already had menus were wired, and this one was
+not, because its menu did not exist yet when that change ran. Its **On Hold tab**
+kept rendering the whole time.
+
+`setHold` is a REQUIRED parameter on `purchaseInvoiceRowMenu`, so the next
+document to grow a menu cannot repeat it silently — the compiler names the call
+site. See `docs/bugs/0525-the-purchase-invoice-had-an-on-hold-tab-and-no-way-to-reach.md`.
