@@ -15,9 +15,9 @@ and an entry needs a document number.
 | `create_po` | `/create-po` | yes | mfg-purchase-orders.ts x3 | no |
 | `so_to_do` | `/so-to-do` | yes | delivery-orders-mfg.ts x2 | **yes** — DO-011260, HC-DO-2608-001, HC-DO-2608-002 (2026-08-17) |
 | `so_to_po` | `/so-to-po` | yes | _not queued — the drain calls it inline_ | **yes** — PO-009968, HC-PO-2608-001 (2026-08-17) |
-| `po_to_gr` | `/po-to-gr` | yes | grns.ts x2 | **yes** — HC-GR-2608-001 (2026-08-17) |
+| `po_to_gr` | `/po-to-gr` | yes | grns.ts x3 | **yes** — HC-GR-2608-001 (2026-08-17) |
 | `do_to_iv` | `/do-to-iv` | yes | sales-invoices.ts x1, lib/si-autocount-source.ts x2 | **yes** — HC-SI-2608-001 (2026-08-17) |
-| `gr_to_pi` | `/gr-to-pi` | yes | purchase-invoices.ts x2 | **yes** — HC-PI-2608-001 (2026-08-17) |
+| `gr_to_pi` | `/gr-to-pi` | yes | purchase-invoices.ts x3 | **yes** — HC-PI-2608-001 (2026-08-17) |
 | `cancel` | `/cancel` | yes | delivery-orders-mfg.ts x1, grns.ts x1, mfg-purchase-orders.ts x1, mfg-sales-orders.ts x1, purchase-invoices.ts x1, sales-invoices.ts x1 | **yes** — DO-011260, PO-009968 (2026-08-17) |
 | `edit` | `/edit` | yes | delivery-orders-mfg.ts x5, grns.ts x4, mfg-purchase-orders.ts x7, mfg-sales-orders.ts x13, po-amendments.ts x1, purchase-invoices.ts x5, sales-invoices.ts x6, so-amendments.ts x1, so-handover.ts x1, lib/ac-grn-outbox.ts x2, lib/so-payment-row.ts x1 | no |
 | `ensure_masters` | `/ensure-masters` | yes | _not queued — the drain calls it inline_ | no |

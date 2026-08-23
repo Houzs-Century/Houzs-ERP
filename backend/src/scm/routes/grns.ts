@@ -13,6 +13,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourcePoIdsForGrn } from '../lib/convert-parent';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
 import { buildGrnCancelReversals } from '../lib/grn-cancel-reversal';
 import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
@@ -1713,27 +1714,19 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalSen is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
-     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
-     need not have a parent PO. AutoCount has no create for a GRN at all; it
-     builds one only by transferring a PO's lines. Even when a purchaseOrderId
-     IS supplied here, sending a conversion would be WRONG rather than merely
-     approximate: AcSyncService resolves the source lines from AutoCount's own
-     outstanding predicate (DtlKeys()), so the account book would receive the
-     PO's outstanding lines, not the quantities the receiver actually typed and
-     accepted on this form. That is a wrong value, and a wrong value is worse
-     than a blank — so the divergence is recorded instead of guessed.
-     The two real conversion routes are POST /from-pos and /from-po-items. */
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docNo: h.grn_number,
-    docId: h.id,
-    missing: (body.purchaseOrderId as string | undefined)
-      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
-      : 'no source Purchase Order',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+  /* ERP -> AutoCount. A receipt whose LINES name a purchase order is sent as a
+     real po_to_gr; one that names none is still parentless. This used to record
+     every receipt raised here as parentless — see lib/convert-parent.ts and
+     docs/bugs/0524 for why that was wrong and what it cost. */
+  const srcPoIds = await sourcePoIdsForGrn(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'GR' as const, docNo: h.grn_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
+  if (srcPoIds.length) {
+    await enqueueConvert(sb, { ...acBase, op: 'po_to_gr',
+      from: srcPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'grns', keyCol: 'id', key: h.id } });
+  } else {
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Purchase Order' });
+  }
 
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
