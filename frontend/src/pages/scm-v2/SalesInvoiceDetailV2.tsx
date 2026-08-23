@@ -109,7 +109,7 @@ type SiHeader = {
   invoice_number: string;
   so_doc_no: string | null;
   delivery_order_id: string | null;
-  do_doc_no?: string | null;
+  do_number?: string | null;
   status: SiStatus;
   invoice_date: string;
   due_date: string | null;
@@ -200,15 +200,12 @@ const refOf = (h: SiHeader): string =>
 
 const soOf = (h: SiHeader): string => h.so_doc_no || "—";
 
-// The SI header carries a delivery_order_id (UUID) plus an optional do_doc_no
-// display string served by the enriched endpoint. Prefer the doc no for the
-// header meta line; fall back to a short id slug so the field never renders
-// blank when the SI genuinely has a DO parent.
-const doOf = (h: SiHeader): string => {
-  if (h.do_doc_no) return h.do_doc_no;
-  if (h.delivery_order_id) return h.delivery_order_id.slice(0, 8);
-  return "—";
-};
+/* `do_number` is stamped on by the server (stampDoNumber) and is the field the
+   SI LIST already reads. This page read `do_doc_no` — a DELIVERY-RETURN column
+   that never existed here — and fell through to `delivery_order_id.slice(0,8)`,
+   printing a uuid fragment where a document number belongs. A dash is the
+   honest answer: it says we have nothing, not something false. docs/bugs/0525. */
+const doOf = (h: SiHeader): string => h.do_number || "—";
 
 const brandOf = (h: SiHeader): string => h.branding || "—";
 
