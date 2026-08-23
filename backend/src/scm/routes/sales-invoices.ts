@@ -680,9 +680,8 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
 
 /* Convert-from column (display-only, audit R8): the SI header stores the source
    Delivery Order only as a UUID (delivery_order_id) — there is no do_doc_no
-   column — so the list can't show a readable "From DO" without this resolve.
-   One batched read keyed by the ids, mutates rows in place, same style as
-   stampSoDates. Called on BOTH list paths. */
+   column — so no screen can show a readable "From DO" without this resolve.
+   One batched read, mutates rows in place. Both list paths AND the detail. */
 async function stampDoNumber(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
@@ -899,6 +898,7 @@ salesInvoices.get('/:id', async (c) => {
       it.source_adj = (trace?.adjQty ?? 0) > 0;
     }
   }
+  await stampDoNumber(sb, [h.data]);  // else the page prints a uuid — docs/bugs/0526
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
