@@ -898,7 +898,7 @@ salesInvoices.get('/:id', async (c) => {
       it.source_adj = (trace?.adjQty ?? 0) > 0;
     }
   }
-  await stampDoNumber(sb, [h.data]);  // else the page prints a uuid — docs/bugs/0525
+  await stampDoNumber(sb, [h.data]);  // else the page prints a uuid — docs/bugs/0526
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);

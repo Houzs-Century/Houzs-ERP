@@ -708,4 +708,4 @@ to show; an eight-character hex fragment in a field labelled "Transfer From (DO)
 says something FALSE in the exact shape of the true answer, and cost the owner a
 question about whether his own document chain was linked at all.
 
-See `docs/bugs/0525-the-invoice-showed-its-delivery-order-as-a-uuid-fragment.md`.
+See `docs/bugs/0526-the-invoice-showed-its-delivery-order-as-a-uuid-fragment.md`.

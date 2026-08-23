@@ -204,7 +204,7 @@ const soOf = (h: SiHeader): string => h.so_doc_no || "—";
    SI LIST already reads. This page read `do_doc_no` — a DELIVERY-RETURN column
    that never existed here — and fell through to `delivery_order_id.slice(0,8)`,
    printing a uuid fragment where a document number belongs. A dash is the
-   honest answer: it says we have nothing, not something false. docs/bugs/0525. */
+   honest answer: it says we have nothing, not something false. docs/bugs/0526. */
 const doOf = (h: SiHeader): string => h.do_number || "—";
 
 const brandOf = (h: SiHeader): string => h.branding || "—";
