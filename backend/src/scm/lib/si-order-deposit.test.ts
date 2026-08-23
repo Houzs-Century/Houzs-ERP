@@ -19,6 +19,7 @@ import {
   readOrderDepositForInvoice,
   recomputeSiPaid,
   type AllocatableInvoice,
+  type OrderDepositForInvoice,
 } from './si-order-deposit';
 
 const inv = (o: Partial<AllocatableInvoice> & { id: string }): AllocatableInvoice => ({
@@ -216,7 +217,7 @@ describe('the invoice sees what the order collected', () => {
     const store = reportedChain();
     const r = await readOrderDepositForInvoice(fakeSb(store), { id: 'si-1', so_doc_no: 'HC-SO-2608-006', company_id: 1 });
     expect(r.ok).toBe(true);
-    const dep = (r as { ok: true; deposit: NonNullable<Awaited<ReturnType<typeof readOrderDepositForInvoice>> extends { deposit: infer D } ? D : never> }).deposit;
+    const dep = (r as { ok: true; deposit: OrderDepositForInvoice | null }).deposit;
     expect(dep).not.toBeNull();
     expect(dep!.applied_sen).toBe(200_000);
     expect(dep!.order_collected_sen).toBe(200_000);

@@ -35,6 +35,7 @@ import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
@@ -927,20 +928,18 @@ purchaseInvoices.post('/', async (c) => {
   await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
-     of the standalone Sales Invoice: AcSyncService has no /create-pi, because
-     AutoCount builds a Purchase Invoice only by transferring a GRN's lines. The
-     two real conversion routes are POST /from-grn and /from-grn-items; anything
-     that arrives here is an invoice the account book will never hold, and it is
-     recorded so it can be found. */
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'PI',
-    docNo: h.invoice_number,
-    docId: h.id,
-    missing: 'no source Goods Received Note to transfer from',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+  /* ERP -> AutoCount. An invoice whose LINES name a receipt is sent as a real
+     gr_to_pi; one that names none is still parentless. The purchase-side half
+     of the grns.ts fix — lib/convert-parent.ts, docs/bugs/0524. */
+  const srcGrnIds = await sourceGrnIdsForPi(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'PI' as const, docNo: h.invoice_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
+  if (srcGrnIds.length) {
+    await enqueueConvert(sb, { ...acBase, op: 'gr_to_pi',
+      from: srcGrnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'purchase_invoices', keyCol: 'id', key: h.id } });
+  } else {
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Goods Received Note to transfer from' });
+  }
 
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN
      line (recomputeGrnInvoiced) nor re-cost (recostForPi). Both move to the
