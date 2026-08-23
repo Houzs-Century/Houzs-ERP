@@ -29,7 +29,7 @@ only document in it that leaves the building as a customer's own copy.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
-| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. |
+| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. |
 | Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
@@ -371,7 +371,7 @@ Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
 | `DRAFT` | create with the draft flag | manual |
 | `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
 | `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete — on THIS invoice or on its source Sales Order |
-| `PAID` | `recomputePaid` only | **automatic**, same two triggers |
+| `PAID` | `recomputePaid` only | **automatic**, same two triggers. The status PATCH still ACCEPTS `PAID` and no caller in this repo sends it any more — see *Mark paid records a receipt* below |
 | `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does. Since 2026-08-17 it is at least VISIBLE if one arrives: it sits in the `sent` filter bucket, where it was in none | — |
 | `CANCELLED` | the status PATCH handler | manual |
 
@@ -390,6 +390,47 @@ before recording payments` (`not_payable`).
 > for both SI and PI. **No backend path writes it and it is in no enum** — it is a
 > dead label. The live pill relabelings that DO fire are `SENT` → "Issued",
 > `SUBMITTED` / `POSTED` → "Confirmed", `DISPATCHED` → "Shipped".
+
+### Mark paid records a RECEIPT, never a status (2026-08-23)
+
+**What it did until this date.** The button PATCHed `/:id/status` with
+`{ status: 'PAID' }` and wrote no payment. That left `status = 'PAID'` beside
+`paid_sen = 0` on one document, and the derivation above then reverted it the
+next time anything touched that invoice's money. Full trace:
+`docs/bugs/0527-mark-paid-on-a-sales-invoice-recorded-no-payment-status-said.md`.
+
+**What it does now.** It seeds the same payments editor **Record payment** opens
+with one row pre-filled at the outstanding balance, and commits on Save through
+`POST /:id/payments`. Nothing about the status is written by the client at all —
+`recomputeSiPaid` derives it, exactly as it does for a hand-entered receipt, so
+the GL posting, the overpay/credit reconciliation and the AutoCount enqueue all
+happen once and on one path.
+
+| Question | Answer |
+|---|---|
+| How much? | the invoice's outstanding **net of the source order's deposit** — the same `outstandingOf(header, items, depositSen)` the Outstanding hero prints. A MYR 4,400 invoice whose order collected MYR 2,000 records **2,400** |
+| Why net? | the order's deposit is read THROUGH, never copied, because both ledgers post Dr cash/bank and Cr AR and `acc/daily-close.ts` sums both for one day's takings. Recording the gross total would debit cash twice |
+| Which method? | the OPERATOR's. There is no honest default — a silent `cash` lands in the daily cash-up and leaves the drawer short — so the button stops at the editor and Save is the commit point |
+| When is it offered? | only when it can write an honest receipt. `canOfferMarkPaid` in `frontend/src/pages/scm-v2/markPaidPlan.ts` |
+
+`markPaidPlan.ts` refuses four ways, and every refusal is a refusal to record
+money that did not arrive:
+
+| Refusal | Why |
+|---|---|
+| `nothing_outstanding` | a zero-value receipt is not a payment. The button is HIDDEN rather than shown-and-refusing |
+| `deposit_unknown` | `orderDepositUnavailable` — the server could not read the source order, so the outstanding on screen fell back to the full total and is too high by the whole deposit |
+| `not_payable` (CANCELLED) | `POST /:id/payments` and `PATCH /:id/payment` both 409 it; an entry that can only 409 is not offered |
+| `not_payable` (DRAFT) | same, and a draft has posted no revenue yet |
+
+> **The visibility rule INVERTED.** It was `outstanding === 0` from #311 until
+> this change, so the button was only ever reachable on an invoice that owed
+> nothing — which is why it could not have been recording a receipt. It is now
+> offered when there IS a balance and hidden when there is not.
+
+Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx`, which
+mounts the real page and asserts the operator's outcome; proved RED by deleting
+each of the six guards in turn.
 
 ### THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE (owner ruling, 2026-08-20)
 

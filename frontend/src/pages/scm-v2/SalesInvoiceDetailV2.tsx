@@ -77,8 +77,14 @@ import {
   PaymentsTable,
   labelToApi,
   draftMethodFields,
+  newPaymentDraft,
   type PaymentDraft,
 } from "../../vendor/scm/components/PaymentsTable";
+import {
+  MARK_PAID_REFUSAL_MESSAGE,
+  canOfferMarkPaid,
+  planMarkPaid,
+} from "./markPaidPlan";
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
@@ -959,27 +965,42 @@ export function SalesInvoiceDetailV2() {
       )
       .finally(() => setSavingPayments(false));
   };
-  const doMarkPaid = async () => {
+  /* Mark paid RECORDS THE MONEY and writes NO status — markPaidPlan.ts holds
+     the trace and the four refusals. It seeds the SAME editor "Record payment"
+     opens with one row at the outstanding balance; Save posts it through
+     POST /:id/payments and `recomputeSiPaid` derives the status from the ledger.
+     It stops at the editor rather than committing because the METHOD is the
+     operator's: a guessed `cash` lands in the daily cash-up and leaves the
+     drawer short by the amount. */
+  const doMarkPaid = () => {
     if (!salesInvoice) return;
-    if (
-      await askConfirm({
-        title: `Mark ${salesInvoice.invoice_number} as paid?`,
-        body: "Sets the invoice status to Paid.",
-        confirmLabel: "Mark paid",
-      })
-    ) {
-      updateStatus.mutate(
-        { id: salesInvoice.id, status: "PAID" },
-        {
-          onError: (e) =>
-            notify({
-              title: "Couldn't mark this invoice as paid",
-              body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
-              tone: "error",
-            }),
-        },
-      );
+    const plan = planMarkPaid({
+      status: salesInvoice.status,
+      outstandingSen: outstanding,
+      depositUnavailable: orderDepositUnavailable,
+    });
+    if (!plan.ok) {
+      // Fire-and-forget: the dialog's own OK button closes it (NotifyDialog).
+      void notify({
+        title: "Nothing to record",
+        body: MARK_PAID_REFUSAL_MESSAGE[plan.reason],
+        tone: "error",
+      });
+      return;
     }
+    paymentEditBaselineIds.current = new Set(persistedDrafts.map((draft) => draft.uid));
+    setPaymentDrafts([
+      ...persistedDrafts,
+      ...paymentRetryDrafts,
+      { ...newPaymentDraft(), amountSen: plan.amountSen },
+    ]);
+    setEditingPayments(true);
+    requestAnimationFrame(() =>
+      paymentsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    );
   };
 
   // ── SI line item columns — money-forward, 5 cols like SO detail ────────
@@ -1122,7 +1143,14 @@ export function SalesInvoiceDetailV2() {
   // A DRAFT SI is not payable (the server 409s any payment) until Confirm issues
   // it — so payment actions are hidden until it leaves DRAFT.
   const canRecordPayment = !isTerminal && !isDraft && outstanding > 0;
-  const canMarkPaid = !isTerminal && !isDraft && outstanding === 0;
+  /* WAS `outstanding === 0` — offered ONLY where there was no money to record,
+     which is why it could not have been recording any. Same rule `doMarkPaid`
+     re-checks on click, so a stale screen refuses rather than books. */
+  const canMarkPaid = canOfferMarkPaid({
+    status: salesInvoice.status,
+    outstandingSen: outstanding,
+    depositUnavailable: orderDepositUnavailable,
+  });
 
   return (
     <div className="pb-24 md:pb-0">
