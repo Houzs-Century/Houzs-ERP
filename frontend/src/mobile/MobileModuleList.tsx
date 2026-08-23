@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { lineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../auth/AuthContext";
@@ -288,12 +289,11 @@ const mrpState = (r: any): string => {
   return "In stock";
 };
 
-/** Invoice balance = total − paid, floored at 0, in centi. */
-const balanceSen = (r: any): number => {
-  const total = Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0);
-  const paid = Number(pick(r, "paidSen", "paid_sen") ?? 0);
-  return Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(paid) ? paid : 0));
-};
+/** Invoice balance in sen. SI nets off its order's deposit; a PI row has no such key. */
+const balanceSen = (r: any): number => siOutstandingSen(
+  Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0),
+  Number(pick(r, "paidSen", "paid_sen") ?? 0),
+  siDepositAppliedSen({ so_deposit_applied_sen: pick(r, "soDepositAppliedSen", "so_deposit_applied_sen") as number | null }));
 
 /** Numeric-aware locale compare, mirroring the prototype's localeCompare with
  *  { numeric: true }. Used to keep sort keys terse in the configs. */

@@ -13,6 +13,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { salesInvoiceRowMenu } from "./row-menus";
+import {
+  siDepositAppliedSen,
+  siOutstandingSen,
+} from "../../vendor/scm/lib/si-outstanding";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
@@ -122,6 +126,11 @@ type SiRow = {
   local_total_sen: number;
   total_sen: number;
   paid_sen: number;
+  /* The slice of the source Sales Order's deposit that settles this invoice,
+     stamped by the list endpoint (backend lib/si-list-stamps). `null` means the
+     server could not read the order — read as 0, which shows the LARGER
+     outstanding. Kept apart from paid_sen: different money, different document. */
+  so_deposit_applied_sen?: number | null;
   status: string;
   currency: string;
   line_count?: number;
@@ -212,9 +221,13 @@ const statusFor = (
     bucket: "sent",
   };
 
-// Derived outstanding (Total − Paid). Guards against negative from over-payment.
+/* Derived outstanding: Total − (Paid on this invoice + the source ORDER's
+   deposit). The deposit term is why this delegates to the shared rule instead
+   of subtracting inline — the detail page, the mobile list, the PDF and the
+   Outstanding ledger all have to answer the same number, and until 2026-08-23
+   they answered six different ones (vendor/scm/lib/si-outstanding.ts). */
 const outstandingOf = (r: SiRow): number =>
-  Math.max(0, (r.total_sen || r.local_total_sen || 0) - (r.paid_sen || 0));
+  siOutstandingSen(r.total_sen || r.local_total_sen || 0, r.paid_sen || 0, siDepositAppliedSen(r));
 
 // ─── Split-menu dropdown ────────────────────────────────────────────────────
 
@@ -366,7 +379,7 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  Outstanding
+                  Outstanding{siDepositAppliedSen(r) > 0 ? " · after SO deposit" : ""}
                 </div>
                 <div
                   className={cn(
@@ -444,7 +457,8 @@ function DetailDrawer({
 
   const totalSen = row?.total_sen ?? row?.local_total_sen ?? 0;
   const paidSen = row?.paid_sen ?? 0;
-  const outstanding = Math.max(0, totalSen - paidSen);
+  const depositSen = siDepositAppliedSen(row);
+  const outstanding = siOutstandingSen(totalSen, paidSen, depositSen);
 
   return (
     <ResizableDetailDrawer
@@ -606,7 +620,21 @@ function DetailDrawer({
                   are 6%-inclusive in Malaysia so we don't split them out. */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
                 <TotalRow k="Invoice total" v={fmtRm(totalSen)} strong />
-                <TotalRow k="Paid" v={fmtRm(paidSen)} tone="success" />
+                <TotalRow
+                  k={depositSen > 0 ? "Paid on this invoice" : "Paid"}
+                  v={fmtRm(paidSen)}
+                  tone="success"
+                />
+                {/* Named for the document that took it, exactly as the detail
+                    page does — netting it silently into Paid would lose the one
+                    fact the office needs. */}
+                {depositSen > 0 && (
+                  <TotalRow
+                    k={`Deposit on ${row.so_doc_no ?? "the order"}`}
+                    v={fmtRm(depositSen)}
+                    tone="success"
+                  />
+                )}
                 <TotalRow
                   k="Outstanding"
                   v={outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
@@ -896,7 +924,10 @@ export function SalesInvoicesListV2() {
       const paid = r.paid_sen ?? 0;
       revenueSen += t;
       paidSen += paid;
-      outstandingSen += Math.max(0, t - paid);
+      /* The KPI sums the SAME per-row figure the Outstanding column renders, so
+         the card and the table cannot disagree — which is the whole reason this
+         block sums the rows on screen rather than asking the server. */
+      outstandingSen += siOutstandingSen(t, paid, siDepositAppliedSen(r));
     }
     return { revenueSen, outstandingSen, paidSen };
   }, [visible.rows]);
@@ -1218,19 +1249,35 @@ export function SalesInvoicesListV2() {
       label: "Outstanding",
       width: "128px",
       align: "right",
-      // Derived (Total − Paid) — not a backend-sortable column.
+      // Derived (Total − Paid − the order's deposit) — not backend-sortable.
       disableSort: true,
       getValue: (r) => outstandingOf(r),
       render: (r) => {
         const outstanding = outstandingOf(r);
+        const dep = siDepositAppliedSen(r);
+        /* A smaller number with no explanation invites "why is this 2,400 when
+           the invoice is 4,400" — so when a deposit is in play the cell SAYS
+           so. The marker carries the amount and the order it was taken on, the
+           same distinction the detail page draws, rather than silently netting
+           the two kinds of money into one figure. */
         return (
           <span
             className={cn(
-              "font-money text-[13px] font-semibold",
+              "inline-flex items-center gap-1 font-money text-[13px] font-semibold",
               outstanding > 0 ? "text-err" : "text-synced"
             )}
+            title={
+              dep > 0
+                ? `${fmtRm(dep)} was collected on ${r.so_doc_no ?? "the sales order"} and settles this invoice.`
+                : undefined
+            }
           >
             {outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
+            {dep > 0 && (
+              <span className="rounded-sm bg-surface-2 px-1 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
+                dep
+              </span>
+            )}
           </span>
         );
       },
@@ -1289,6 +1336,28 @@ export function SalesInvoicesListV2() {
           <Badge tone={brandTone(b)} variant="soft" size="xs">
             {b}
           </Badge>
+        );
+      },
+    },
+    {
+      /* Off by default: most invoices have no order deposit, and a column of
+         dashes is noise. On when finance wants to reconcile the "dep" marker
+         above against an amount. Exports with the CSV like any other column. */
+      key: "so_deposit",
+      label: "SO deposit",
+      width: "120px",
+      align: "right",
+      defaultHidden: true,
+      disableSort: true,
+      getValue: (r) => siDepositAppliedSen(r),
+      render: (r) => {
+        const dep = siDepositAppliedSen(r);
+        return dep > 0 ? (
+          <span className="font-money text-[13px] text-synced" title={r.so_doc_no ?? undefined}>
+            {fmtRm(dep)}
+          </span>
+        ) : (
+          <span className="text-[12.5px] text-ink-muted">—</span>
         );
       },
     },

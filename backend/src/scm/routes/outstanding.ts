@@ -31,7 +31,8 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import type { Env, Variables } from "../env";
 import { paginateAll } from "../lib/paginate-all";
-import { scopeToCompany } from "../lib/companyScope";
+import { scopeToCompany, activeCompanyId } from "../lib/companyScope";
+import { stampOrderDeposit } from "../lib/si-list-stamps";
 import { reduceAgingSnapshot, type AgingMvRow } from "../lib/ar-aging";
 
 export const outstanding = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -84,6 +85,27 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
         return c.json({ rows: [] });
       }
       return c.json({ error: "load_failed", reason: error.message }, 500);
+    }
+    /* The SI rows carry `outstanding_sen` straight off the view, which is
+       `total_sen - paid_sen` and therefore blind to a deposit taken on the
+       SOURCE SALES ORDER — the same blindness the invoice list had until
+       2026-08-23 (docs/bugs/0526-*). Adjusted HERE rather than in the view:
+       recreating a view is a NEW object with an empty ACL, which is how 0189
+       took the Sales Order list down for every user (CLAUDE.md, *Release
+       discipline*), and the allocation is a per-order rule no SQL column can
+       express anyway. The stamp is the SAME function the invoice list uses, so
+       the two screens cannot drift.
+
+       `so_deposit_applied_sen === null` means the stamp could not read the
+       orders; the row then keeps the view's larger figure, which is the only
+       direction this page may be wrong in. */
+    if (slug === 'si') {
+      const rows = (data ?? []) as Array<Record<string, unknown>>;
+      await stampOrderDeposit(sb, rows, activeCompanyId(c) ?? null);
+      for (const r of rows) {
+        const dep = Number(r.so_deposit_applied_sen ?? 0);
+        if (dep > 0) r.outstanding_sen = Math.max(0, Number(r.outstanding_sen ?? 0) - dep);
+      }
     }
     return c.json({ rows: data ?? [] });
   });

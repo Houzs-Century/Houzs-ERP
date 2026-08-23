@@ -358,3 +358,109 @@ export async function recomputeSiPaidForOrder(sb: any, soDocNo: string, companyI
     await recomputeSiPaid(sb, r.id);
   }
 }
+
+/**
+ * Stamp `so_deposit_applied_sen` onto a PAGE of Sales Invoice list rows.
+ *
+ * WHY THE LIST NEEDS THIS AT ALL. The detail screen reading the deposit while
+ * the LIST did not is worse than neither reading it: the two screens then
+ * disagree about the same invoice, and the list is the one the office actually
+ * scans to decide who to chase. Measured on production 2026-08-23 after the
+ * detail-only fix shipped — detail 2,400, list 4,400, on `HC-SI-2608-004`.
+ *
+ * THE ROWS ON THE PAGE ARE NOT THE POPULATION. The split depends on the
+ * SIBLING invoices of each order, and a sibling can sit on another page or be
+ * filtered out of this one. So the sibling read is keyed by `so_doc_no`, not by
+ * the page's ids, and the allocation is computed over the order's WHOLE set
+ * before the page's rows take their slice out of it. A page-local allocation
+ * would hand the same money to two different pages.
+ *
+ * THREE batched reads per page regardless of page size, in the style of
+ * `stampSoDates` / `stampDoNumber` (routes/sales-invoices.ts) — the rule itself
+ * is not reimplemented here, it is `allocateOrderDeposit` above, so the list and
+ * the detail cannot drift apart.
+ *
+ * DEGRADATION IS DELIBERATE AND ONE-DIRECTIONAL. On a read failure the field is
+ * stamped `null`, which every consumer reads as "no deposit known" and renders
+ * the UN-adjusted, LARGER outstanding — today's behaviour, and the direction
+ * that can only over-state what is owed. It is logged rather than swallowed,
+ * which is more than the two stamps beside it do.
+ */
+export async function stampOrderDeposit(
+  sb: any,
+  rows: unknown,
+  companyId: number | null,
+): Promise<void> {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const list = rows as Array<Record<string, unknown>>;
+  for (const r of list) r.so_deposit_applied_sen = null;
+  if (companyId == null) return;
+
+  const soDocNos = [...new Set(
+    list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d),
+  )];
+  if (soDocNos.length === 0) {
+    for (const r of list) r.so_deposit_applied_sen = 0;
+    return;
+  }
+
+  const [sos, pays, sibs] = await Promise.all([
+    sb.from('mfg_sales_orders')
+      .select('doc_no, total_revenue_sen, deposit_sen')
+      .in('doc_no', soDocNos).eq('company_id', companyId),
+    sb.from('mfg_sales_order_payments')
+      .select('so_doc_no, amount_sen, is_deposit').in('so_doc_no', soDocNos),
+    sb.from('sales_invoices')
+      .select(`so_doc_no, ${SIBLING_COLS}`)
+      .in('so_doc_no', soDocNos).eq('company_id', companyId),
+  ]);
+  if (sos.error || pays.error || sibs.error) {
+    /* eslint-disable-next-line no-console */
+    console.error('[si-order-deposit] list stamp failed — rows keep the un-adjusted outstanding:',
+      sos.error?.message ?? pays.error?.message ?? sibs.error?.message);
+    return;
+  }
+
+  const ledgerByDoc = new Map<string, { sum: number; hasDeposit: boolean }>();
+  for (const p of (pays.data ?? []) as Array<{ so_doc_no: string; amount_sen: number; is_deposit?: boolean | null }>) {
+    const cur = ledgerByDoc.get(p.so_doc_no) ?? { sum: 0, hasDeposit: false };
+    cur.sum += Number(p.amount_sen ?? 0);
+    if (p.is_deposit === true) cur.hasDeposit = true;
+    ledgerByDoc.set(p.so_doc_no, cur);
+  }
+
+  const invoicesByDoc = new Map<string, AllocatableInvoice[]>();
+  for (const r of (sibs.data ?? []) as Array<Record<string, unknown>>) {
+    const doc = (r.so_doc_no as string | null) ?? '';
+    if (!doc) continue;
+    const bucket = invoicesByDoc.get(doc) ?? [];
+    bucket.push({
+      id: String(r.id),
+      invoiceNumber: String(r.invoice_number ?? ''),
+      invoiceDate: (r.invoice_date as string | null) ?? null,
+      status: String(r.status ?? ''),
+      totalSen: Number(r.total_sen ?? 0),
+      ownPaidSen: Number(r.paid_sen ?? 0),
+    });
+    invoicesByDoc.set(doc, bucket);
+  }
+
+  const applied = new Map<string, number>();
+  for (const so of (sos.data ?? []) as Array<Record<string, unknown>>) {
+    const doc = (so.doc_no as string | null) ?? '';
+    if (!doc) continue;
+    const led = ledgerByDoc.get(doc) ?? { sum: 0, hasDeposit: false };
+    const collected = soPaidSen(soPaidInputsOf(so, led.sum, led.hasDeposit));
+    for (const [id, take] of allocateOrderDeposit(collected, invoicesByDoc.get(doc) ?? [])) {
+      applied.set(id, take);
+    }
+  }
+
+  for (const r of list) {
+    /* A row whose order is not in `sos` (no so_doc_no, or an order this company
+       cannot see) resolves to 0 — it has no deposit to apply, which is a real
+       answer, not a failed read. The failed-read case returned above with the
+       field still null. */
+    r.so_deposit_applied_sen = applied.get(String(r.id)) ?? 0;
+  }
+}

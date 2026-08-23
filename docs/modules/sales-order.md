@@ -2693,7 +2693,9 @@ the full total outstanding — the office chased money already in the drawer
 
 **Nothing is copied and nothing extra is posted.** The invoice side READS THROUGH
 to this ledger; the rule and the reasoning live in
-`docs/modules/sales-invoice.md`, *The deposit taken on the SALES ORDER*. What
+`docs/modules/sales-invoice.md`, *The deposit taken on the SALES ORDER*, and
+since 2026-08-23 EVERY invoice surface reads it through one served field,
+`so_deposit_applied_sen` (same guide, *ONE field name, on every surface*). What
 changes on the ORDER side is one hook: every writer of this ledger now re-rolls
 the statuses of the invoices raised off the order, so the invoice list cannot
 fall behind.

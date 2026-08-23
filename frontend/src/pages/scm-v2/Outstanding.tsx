@@ -214,6 +214,12 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
     { key: 'debtor_name',    label: 'Customer' },
     { key: 'total_sen',    label: 'Total', kind: 'money' },
     { key: 'paid_sen',     label: 'Paid', kind: 'money' },
+    /* The deposit taken on the source Sales Order. `outstanding_sen` on these
+       rows is ALREADY net of it (the /outstanding/si handler subtracts it —
+       the view scm.v_si_outstanding cannot, the split is a per-order rule), so
+       this column is what makes the smaller Outstanding readable instead of
+       mysterious. */
+    { key: 'so_deposit_applied_sen', label: 'SO deposit', kind: 'money' },
     { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
     { key: 'status',         label: 'Status' },
   ],
