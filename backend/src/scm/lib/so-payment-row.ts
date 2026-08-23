@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
-import { postSoPayment } from '../../acc/payments';
+import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { recomputeSiPaidForOrder } from './si-order-deposit';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -192,5 +193,41 @@ export async function recordSoPaymentRow(
     console.error('[acc] SO payment not booked:', (data as { id?: string }).id, booked.status, booked.reason);
   }
 
+  /* The invoices raised off this order settle partly out of THIS money
+     (lib/si-order-deposit), so their status has to be re-rolled here. Without
+     it the invoice DETAIL would read correctly the moment you opened it while
+     the invoice LIST — which reads the persisted status — kept telling the
+     office to chase a customer who had just paid. Queued from the CORE for the
+     same reason the AutoCount enqueue above is: scan-so.ts books receipts
+     through here with no request context. Best-effort; a failure leaves a stale
+     status the next roll self-heals. */
+  await recomputeSiPaidForOrder(sb, p.docNo, companyId);
+
   return { payment: data as Record<string, unknown>, errorMessage: null };
+}
+
+/**
+ * Everything that must happen AFTER an order's payment row is deleted.
+ *
+ * Here rather than in the route for this module's standing reason: a rule
+ * written into `DELETE /:docNo/payments/:id` covers the payments a human
+ * deleted and nothing else. Both halves are best-effort — the operator's delete
+ * has already committed and neither a ledger nor a status roll may turn it into
+ * a 500 they would retry.
+ */
+export async function afterSoPaymentRemoved(
+  sb: any,
+  p: { paymentId: string; docNo: string; companyId: number | null },
+): Promise<void> {
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry. A row that never booked no-ops. */
+  const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo);
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
+  }
+  /* The deposit just shrank, so an invoice it was settling may owe money again.
+     This is the direction that matters: an invoice left reading PAID after the
+     payment behind it was reversed tells the office to collect nothing. */
+  await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
 }
