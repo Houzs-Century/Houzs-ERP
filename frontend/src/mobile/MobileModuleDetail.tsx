@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
@@ -399,12 +400,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const totalSen = Number(h.total_sen ?? h.local_total_sen ?? 0);
-      const paidSen = Number(h.paid_sen ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
+      const depositSen = siDepositAppliedSen(h); // own stat, never folded into Paid
+      const bal = siOutstandingSen(Number(h.total_sen ?? h.local_total_sen ?? 0), Number(h.paid_sen ?? 0), depositSen);
       return [
         ["Total", money(h.total_sen ?? h.local_total_sen), "var(--ink)"],
         ["Paid", money(h.paid_sen), "#2f8a5b"],
+        ...(depositSen > 0 ? [["SO deposit", money(depositSen), "#2f8a5b"] as [string, string, string]] : []),
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -1173,7 +1174,8 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
   const notify = useNotify();
   const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
   const paid = Number(header?.paid_sen ?? 0);
-  const balance = Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(paid) ? paid : 0));
+  // Gated on `kind`, not on the key being absent: this pre-fills an amount to COLLECT.
+  const balance = siOutstandingSen(total, paid, kind === "si" ? siDepositAppliedSen(header) : 0);
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
   const [method, setMethod] = useState("cash");

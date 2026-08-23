@@ -28,12 +28,12 @@ only document in it that leaves the building as a customer's own copy.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
+| Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). Outstanding column / cards / drawer / KPI are all net of the source order's deposit, via `vendor/scm/lib/si-outstanding.ts`; a `dep` marker on the cell and an off-by-default **SO deposit** column say why the figure is smaller. **Mark paid** here opens the detail screen's payment editor rather than writing a status — see the section below. |
 | Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. |
 | Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
-| Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is computed client-side as `total − paid`, floored at 0 (`balanceCenti`, `:287-291`). |
+| Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is `balanceSen`, which since 2026-08-23 also subtracts the source order's deposit through `vendor/scm/lib/si-outstanding.ts`. Shared with purchase invoices, whose rows carry no such key, so PI is untouched. |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:275`; status actions `:498-511`. |
 | Mobile convert (DO→SI) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "si"` (`:73`). |
 
@@ -341,6 +341,53 @@ or `null`) and `orderDepositUnavailable` — the honest third answer for an invo
 whose order could not be read, which the screen surfaces as a warning rather than
 silently reporting a bigger outstanding.
 
+#### ONE field name, on every surface — `so_deposit_applied_sen`
+
+*Added 2026-08-23, the day after the rule shipped detail-only.* The detail page
+knowing this and the LIST not knowing it was worse than neither knowing: the two
+screens then disagreed about the same invoice, and the list is the one the office
+scans to decide who to chase (measured on production: detail 2,400, list 4,400,
+list KPI 10,200 — `docs/bugs/0527-the-invoice-list-still-chased-money-the-order-had-collected.md`).
+
+`stampOrderDeposit` (`scm/lib/si-order-deposit.ts`, re-exported from
+`scm/lib/si-list-stamps.ts`) stamps the scalar onto a PAGE of rows in **three
+batched reads**, whatever the page size — the style `stampSoDates` and
+`stampDoNumber` set. It is called by:
+
+| endpoint | what it feeds |
+|---|---|
+| `GET /sales-invoices` (both the legacy and the paginated path) | the desktop list + KPI + cards + drawer + CSV, and the mobile list |
+| `GET /sales-invoices/:id` | the detail header (beside the richer `orderDeposit` object) and, through it, the invoice PDF |
+| `GET /outstanding/si` (`backend/src/scm/routes/outstanding.ts`) | the `/scm/outstanding` SI tab — the handler subtracts the slice from the row's `outstanding_sen` |
+| `GET /reports/sales-invoice-detail-listing` (`backend/src/scm/routes/reports.ts`) | the SI Detail Listing `balance_sen`, resolved once per invoice rather than once per line — that join returns one row per LINE, so stamping per row would re-read the same orders dozens of times. `DetailListingShell`'s Outstanding tile and its `?outstanding=1` filter both read `balance_sen`, so they follow. |
+
+**The page is not the population.** The split depends on an invoice's SIBLINGS,
+which can sit on another page or be filtered out of this one, so the sibling read
+is keyed by `so_doc_no` and the allocation runs over the order's whole set before
+the page's rows take their slice. A page-local allocation would hand the same
+money to two pages.
+
+**`null` is not zero.** A failed stamp leaves the field `null`, every reader
+treats it as no deposit, and the screen shows the UN-adjusted, LARGER figure —
+today's behaviour, and the only direction a statement of what is owed may be
+wrong in.
+
+The frontend has ONE reader, `frontend/src/vendor/scm/lib/si-outstanding.ts`
+(`siOutstandingSen` / `siDepositAppliedSen` / `siSettledSen`), replacing six
+copies of `Math.max(0, total - paid)`. Its test file reads each surface's SOURCE
+and asserts the call is there, because a screen that never calls the rule is
+invisible to any test of the rule.
+
+**Deliberately NOT adjusted, and why:**
+
+| surface | why |
+|---|---|
+| `scm.v_si_outstanding`, `scm.mv_ar_aging` | recreating a view is a NEW object with an empty ACL — the 0189 incident that took the SO list down for every user. The split is also a per-order rule no SQL column can express. `/outstanding/si` adjusts the served row instead |
+| `GET /outstanding/summary` | it is a SQL `SUM(outstanding_sen)` over that view (plus a matview fast path). Netting the deposit needs per-row allocation, which defeats the aggregate. It OVER-states; the `/scm/outstanding` SI tab's rows are now net of the deposit and its module card is not |
+| `collection-agent.ts`, `document-agent.ts` (`UNPAID_SI`, AR-aging buckets) | raw SQL `si.total_sen - si.paid_sen`, some of it bucketed aggregates. Over-states, so it proposes chasing too much — the right follow-up, not a safe drive-by |
+| customer-credit auto-apply (`sales-invoices.ts` `remainingDueSen`, `customer-credits.ts`) | a credit is REAL money movement against this invoice. Applying less of it because the order holds a deposit would strand the customer's credit. Left on `total − paid_sen` on purpose |
+
+
 `recomputeSiPaidForOrder` re-rolls every invoice on an order whenever that
 order's payments change (add / edit / delete), so the invoice LIST — which reads
 the persisted `status` — cannot fall behind the detail screen.
@@ -397,7 +444,7 @@ before recording payments` (`not_payable`).
 `{ status: 'PAID' }` and wrote no payment. That left `status = 'PAID'` beside
 `paid_sen = 0` on one document, and the derivation above then reverted it the
 next time anything touched that invoice's money. Full trace:
-`docs/bugs/0527-mark-paid-on-a-sales-invoice-recorded-no-payment-status-said.md`.
+`docs/bugs/0528-mark-paid-on-a-sales-invoice-recorded-no-payment-status-said.md`.
 
 **What it does now.** It seeds the same payments editor **Record payment** opens
 with one row pre-filled at the outstanding balance, and commits on Save through

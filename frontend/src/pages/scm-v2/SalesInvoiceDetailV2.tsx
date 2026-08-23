@@ -34,6 +34,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { siSettledSen, siOutstandingSen } from "../../vendor/scm/lib/si-outstanding";
 import {
   ArrowLeft,
   History,
@@ -248,12 +249,22 @@ type OrderDeposit = {
    order's deposit allocated to it. `depositSen` is a REQUIRED argument on both
    helpers below, not an optional one — its absence changes the answer, so an
    optional parameter would leave every caller that forgot it silently showing
-   the old, wrong figure with no compile error (CLAUDE.md, optional-param-noop). */
+   the old, wrong figure with no compile error (CLAUDE.md, optional-param-noop).
+
+   The arithmetic itself is the SHARED rule (vendor/scm/lib/si-outstanding.ts),
+   not a local copy: this page held the only deposit-aware formula in the app
+   for one day, and the list, the cards, the mobile card and the customer's PDF
+   all disagreed with it. `totalOf` stays local because only this screen has the
+   line items to fall back on. */
+/* ONE site reads the column, so the runtime guard on a hand-typed payload lives
+   in one place instead of once per formula. */
+const paidOf = (h: SiHeader): number => h.paid_sen ?? 0;
+
 const settledOf = (h: SiHeader, depositSen: number): number =>
-  (h.paid_sen ?? 0) + Math.max(0, depositSen);
+  siSettledSen(paidOf(h), depositSen);
 
 const outstandingOf = (h: SiHeader, items: SiItem[], depositSen: number): number =>
-  Math.max(0, totalOf(h, items) - settledOf(h, depositSen));
+  siOutstandingSen(totalOf(h, items), paidOf(h), depositSen);
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";

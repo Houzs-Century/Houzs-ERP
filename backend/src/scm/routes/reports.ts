@@ -41,7 +41,8 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
-import { scopeToCompany } from '../lib/companyScope';
+import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
+import { stampOrderDeposit } from '../lib/si-list-stamps';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -472,6 +473,29 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
+  /* The deposit taken on the source SALES ORDER settles part of this invoice
+     (scm/lib/si-order-deposit). Resolved ONCE per distinct invoice — the join
+     above returns one row per LINE, so stamping per row would re-read the same
+     orders dozens of times — then subtracted from `balance_sen` below. Same
+     function the invoice list uses, so the report and the screen cannot drift.
+     A failed stamp leaves the slice at 0 and the balance UN-adjusted, which is
+     the only direction a report of what is owed may be wrong in. */
+  const depositByInvoice = new Map<string, number>();
+  {
+    const stubs: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+    for (const r of (data ?? []) as unknown as AnyRow[]) {
+      const raw = r.sales_invoices as AnyRow | AnyRow[] | null;
+      const h: AnyRow = Array.isArray(raw) ? ((raw[0] as AnyRow) ?? {}) : ((raw as AnyRow) ?? {});
+      const id = h.id == null ? '' : String(h.id);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      stubs.push({ id, so_doc_no: (h.so_doc_no as string | null) ?? null });
+    }
+    await stampOrderDeposit(sb, stubs, activeCompanyId(c) ?? null);
+    for (const st of stubs) depositByInvoice.set(String(st.id), Number(st.so_deposit_applied_sen ?? 0));
+  }
+
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
       // Capture header totals before flatten — line items have their own
@@ -496,7 +520,9 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       flat.header_paid_sen     = headerPaid;
       flat.header_discount_sen = headerDiscount;
       flat.header_tax_sen      = headerTax;
-      flat.balance_sen = Math.max(headerTotal - headerPaid, 0);
+      const headerDeposit = depositByInvoice.get(String(headerObj.id ?? '')) ?? 0;
+      flat.so_deposit_applied_sen = headerDeposit;
+      flat.balance_sen = Math.max(headerTotal - headerPaid - headerDeposit, 0);
       return flat;
     })
     .filter((r) => {
