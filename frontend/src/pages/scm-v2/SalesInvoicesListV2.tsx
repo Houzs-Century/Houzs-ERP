@@ -12,6 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { siPaymentIntentSearch } from "./siPaymentIntent";
 import { salesInvoiceRowMenu } from "./row-menus";
 import {
   siDepositAppliedSen,
@@ -1069,24 +1070,24 @@ export function SalesInvoicesListV2() {
     recordPayment: (r) => goRecordPayment(r),
     canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
   });
-  const doMarkPaid = (r: SiRow) =>
-    updateStatus.mutate(
-      { id: r.id, status: "paid" },
-      {
-        onSuccess: () => setSelected(null),
-        /* The sibling Reopen below always had an onError; Mark paid never did,
-           so a rejected write left the row unchanged and silent — and "paid" is
-           the one status nobody re-checks. */
-        onError: (e) =>
-          notify({
-            title: `Couldn't mark ${r.invoice_number} as paid`,
-            body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
-            tone: "error",
-          }),
-      }
-    );
+  /* Mark paid used to `updateStatus.mutate({ status: "paid" })` from here —
+     a hand-written status and no receipt, so the invoice read as settled with
+     nothing banked and the server's own rollup reverted it on the next touch
+     (docs/bugs/0528-…). It now opens the DETAIL screen's payment editor with the
+     balance seeded, because the amount has to be computed where
+     `orderDepositUnavailable` is known: a list row carries only
+     `so_deposit_applied_sen`, which reads absent-or-null as 0, so an order this
+     screen could not resolve would show the FULL total and book the customer's
+     deposit a second time. */
+  const goMarkPaid = (r: SiRow) => {
+    setSelected(null);
+    navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("balance")}`);
+  };
+  /* WAS `?tab=payments&record=1`, and nothing anywhere read `tab` or `record`
+     on a sales invoice — the detail page calls `useSearchParams()` and never
+     calls `.get()`. So this button opened the invoice and did nothing. */
   const goRecordPayment = (r: SiRow) =>
-    navigate(`/scm/sales-invoices/${r.id}?tab=payments&record=1`);
+    navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("open")}`);
   // Reopen a cancelled invoice → SENT (2990 SalesInvoicesList "Reopen Invoice"
   // parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SiRow) => {
@@ -1939,7 +1940,7 @@ export function SalesInvoicesListV2() {
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(salesInvoicePrintChain(selected).own)}
-        onMarkPaid={() => selected && doMarkPaid(selected)}
+        onMarkPaid={() => selected && goMarkPaid(selected)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canWrite={canWriteSi}

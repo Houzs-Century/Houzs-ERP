@@ -11,9 +11,13 @@
 //     is the number finance reads first when opening an SI.
 //   · Status flow = payment lifecycle (Sent → Partially paid → Paid /
 //     Overdue, plus Cancelled). Mirrors SI listing V2.
-//   · Header CTA switches by payment state:
-//       Record payment — DRAFT / SENT / PARTIALLY_PAID + balance > 0
-//       Mark paid      — DRAFT / SENT / PARTIALLY_PAID + balance == 0
+//   · Header CTA by payment state. BOTH record money; neither writes a
+//     status (the server derives it from the payments ledger):
+//       Record payment — payable + balance > 0, opens an empty ledger row
+//       Mark paid      — payable + balance > 0 + the order's deposit is
+//                        readable; opens ONE row pre-filled at the balance
+//                        (markPaidPlan.ts). Was `balance == 0` until
+//                        2026-08-23, when it wrote a status and no payment.
 //   · Line-items get the SO detail's 5-column layout back — Item · Qty ·
 //     Unit price · Disc · Amount — with the FOC badge on zero-price
 //     lines. An SI without money is a design bug, not a valid state.
@@ -78,8 +82,15 @@ import {
   PaymentsTable,
   labelToApi,
   draftMethodFields,
+  newPaymentDraft,
   type PaymentDraft,
 } from "../../vendor/scm/components/PaymentsTable";
+import {
+  MARK_PAID_REFUSAL_MESSAGE,
+  canOfferMarkPaid,
+  planMarkPaid,
+} from "./markPaidPlan";
+import { useSiPaymentIntent } from "./siPaymentIntent";
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
@@ -970,28 +981,51 @@ export function SalesInvoiceDetailV2() {
       )
       .finally(() => setSavingPayments(false));
   };
-  const doMarkPaid = async () => {
+  /* Mark paid RECORDS THE MONEY and writes NO status; markPaidPlan.ts holds the
+     trace and the four refusals. It stops at the editor rather than committing
+     because the METHOD is the operator's — a guessed `cash` lands in the daily
+     cash-up and leaves the drawer short. */
+  const doMarkPaid = () => {
     if (!salesInvoice) return;
-    if (
-      await askConfirm({
-        title: `Mark ${salesInvoice.invoice_number} as paid?`,
-        body: "Sets the invoice status to Paid.",
-        confirmLabel: "Mark paid",
-      })
-    ) {
-      updateStatus.mutate(
-        { id: salesInvoice.id, status: "PAID" },
-        {
-          onError: (e) =>
-            notify({
-              title: "Couldn't mark this invoice as paid",
-              body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
-              tone: "error",
-            }),
-        },
-      );
+    const plan = planMarkPaid({
+      status: salesInvoice.status,
+      outstandingSen: outstanding,
+      depositUnavailable: orderDepositUnavailable,
+    });
+    if (!plan.ok) {
+      // Fire-and-forget: the dialog's own OK button closes it (NotifyDialog).
+      void notify({
+        title: "Nothing to record",
+        body: MARK_PAID_REFUSAL_MESSAGE[plan.reason],
+        tone: "error",
+      });
+      return;
     }
+    paymentEditBaselineIds.current = new Set(persistedDrafts.map((draft) => draft.uid));
+    setPaymentDrafts([
+      ...persistedDrafts,
+      ...paymentRetryDrafts,
+      { ...newPaymentDraft(), amountSen: plan.amountSen },
+    ]);
+    setEditingPayments(true);
+    requestAnimationFrame(() =>
+      paymentsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    );
   };
+
+  /* The LIST's two payment entries land here (siPaymentIntent.ts). They delegate
+     because a receipt's amount must be decided where `orderDepositUnavailable`
+     is known: a list row cannot tell "the order collected nothing" from "we
+     could not read the order", and the second books the deposit twice. */
+  useSiPaymentIntent({
+    invoiceId: id ?? null,
+    ready: paymentsQ.isSuccess,
+    onOpen: goRecordPayment,
+    onBalance: doMarkPaid,
+  });
 
   // ── SI line item columns — money-forward, 5 cols like SO detail ────────
   const lineColumns: Column<SiItem>[] = [
@@ -1133,7 +1167,14 @@ export function SalesInvoiceDetailV2() {
   // A DRAFT SI is not payable (the server 409s any payment) until Confirm issues
   // it — so payment actions are hidden until it leaves DRAFT.
   const canRecordPayment = !isTerminal && !isDraft && outstanding > 0;
-  const canMarkPaid = !isTerminal && !isDraft && outstanding === 0;
+  /* WAS `outstanding === 0` — offered ONLY where there was no money to record,
+     which is why it could not have been recording any. Same rule `doMarkPaid`
+     re-checks on click, so a stale screen refuses rather than books. */
+  const canMarkPaid = canOfferMarkPaid({
+    status: salesInvoice.status,
+    outstandingSen: outstanding,
+    depositUnavailable: orderDepositUnavailable,
+  });
 
   return (
     <div className="pb-24 md:pb-0">
