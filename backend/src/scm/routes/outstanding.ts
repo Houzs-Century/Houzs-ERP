@@ -33,6 +33,9 @@ import type { Env, Variables } from "../env";
 import { paginateAll } from "../lib/paginate-all";
 import { scopeToCompany, activeCompanyId } from "../lib/companyScope";
 import { stampOrderDeposit } from "../lib/si-list-stamps";
+import {
+  summariseSiOutstanding, unavailableSiSummary, SI_SUMMARY_COLS,
+} from "../lib/si-outstanding-summary";
 import { reduceAgingSnapshot, type AgingMvRow } from "../lib/ar-aging";
 
 export const outstanding = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -179,8 +182,20 @@ outstanding.get("/summary", async (c) => {
       mvQ = scopeToCompany(mvQ, c); // same REQUIRED-half predicate as the live path
       const { data, error } = await mvQ;
       if (!error) {
+        const snap = reduceAgingSnapshot((data ?? []) as AgingMvRow[]);
+        /* The materialized view sums the SI view's `total_sen - paid_sen`, so
+           this rollup is blind to order deposits exactly as the live aggregate
+           was. The MV is NOT rewritten to fix it — see the file header on why a
+           view is not touched here — so the snapshot SAYS its SI figure is a
+           ceiling instead of quietly presenting it as the same number the live
+           path now returns. */
+        const si = snap.si as unknown as Record<string, unknown> | undefined;
+        if (si) {
+          si.deposit_applied = false;
+          si.deposit_note = 'Nightly snapshot: deposits taken on the sales orders are not subtracted, so this figure may be too high. Reload without ?snapshot=1 for the live figure.';
+        }
         return c.json({
-          summary: reduceAgingSnapshot((data ?? []) as AgingMvRow[]),
+          summary: snap,
           snapshot: true,
           refreshed_at: (meta.data?.refreshed_at as string | null) ?? null,
         });
@@ -191,7 +206,14 @@ outstanding.get("/summary", async (c) => {
 
   const summary: Record<
     string,
-    { count: number; total_sen?: number; total_outstanding_sen?: number }
+    {
+      count: number; total_sen?: number; total_outstanding_sen?: number;
+      /* SI only. `deposit_applied: false` means the figure does NOT subtract the
+         deposits taken on the source sales orders and is therefore a CEILING,
+         never an under-statement; `unavailable` means nothing could be read and
+         the numbers must not be printed at all. */
+      deposit_applied?: boolean; deposit_note?: string | null; unavailable?: true;
+    }
   > = {};
 
   // Shared filter set — IDENTICAL to the individual endpoints' outstanding path:
@@ -213,6 +235,39 @@ outstanding.get("/summary", async (c) => {
   for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
     const agg = SUMMARY_AGG[slug];
     let done = false;
+    /* SI is the one module whose outstanding figure is not a column. Its SQL
+       aggregate sums the view's `total_sen - paid_sen`, which cannot see a
+       deposit taken on the source ORDER, so the card sat above a row list that
+       already subtracted one and disagreed with it (#2684). The aggregate is
+       still computed — it is the ceiling this refines DOWNWARD, and the answer
+       it produces says whenever it could not (lib/si-outstanding-summary).
+       Every other module keeps the one-request aggregate: the rule does not
+       apply to them and there is no reason to make them pay for it. */
+    if (slug === "si") {
+      const aggRow = agg
+        ? await applyFilters(
+            sb.from(view).select(`cnt:${agg.pkCol}.count(),amt:${agg.amtCol}.sum(),outs:${agg.outCol}.sum()`),
+            slug, dateCol,
+          )
+        : { data: null, error: { message: "no aggregate configured" } };
+      const r0 = ((aggRow.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
+      const aggregate = aggRow.error
+        ? null
+        : { count: Number(r0.cnt ?? 0), total_sen: Number(r0.amt ?? 0), total_outstanding_sen: Number(r0.outs ?? 0) };
+      try {
+        summary[slug] = await summariseSiOutstanding(
+          sb,
+          (pFrom, pTo) => applyFilters(sb.from(view).select(SI_SUMMARY_COLS), slug, dateCol).range(pFrom, pTo),
+          activeCompanyId(c) ?? null,
+          aggregate,
+        );
+      } catch (e) {
+        /* A throw here is a missing view or a broken client. It must not become
+           a zeroed module: on this page a 0 reads as "nothing outstanding". */
+        summary[slug] = unavailableSiSummary(e instanceof Error ? e.message : String(e));
+      }
+      continue;
+    }
 
     if (agg) {
       // PostgREST aggregate: PK.count() = row count, plus the module's SUM
