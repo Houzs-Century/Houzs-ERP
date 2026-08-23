@@ -428,6 +428,15 @@ money that did not arrive:
 > nothing — which is why it could not have been recording a receipt. It is now
 > offered when there IS a balance and hidden when there is not.
 
+> **The LIST still hand-writes the status.**
+> `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx:1041` has its own
+> `doMarkPaid` sending `{ status: "paid" }`, with the same pre-fix visibility
+> rule. It is untouched ON PURPOSE: that screen's `outstandingOf` is
+> `total − paid` with **no deposit term** (`:215-216`), so the same fix there
+> would record the GROSS balance and book the order's deposit twice. It needs
+> the deposit-adjusted outstanding on the list first, or a navigation into this
+> screen's editor.
+
 Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx`, which
 mounts the real page and asserts the operator's outcome; proved RED by deleting
 each of the six guards in turn.

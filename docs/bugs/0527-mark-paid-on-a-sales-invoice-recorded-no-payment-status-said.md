@@ -81,4 +81,15 @@ restoring the status write (4 red), recording the gross total instead of the
 net outstanding (3 red), restoring `outstanding === 0` visibility (5 red), and
 dropping each of the three refusals (1-2 red each).
 
+**Still open — the LIST carries the same button and it was NOT fixed here.**
+`frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx:1041` has its own `doMarkPaid`
+sending `{ status: "paid" }` to the same endpoint, offered on the same
+`outstanding === 0` rule. It is left alone deliberately, not overlooked: that
+screen's `outstandingOf` is `total − paid` with **no deposit term** (`:215-216`),
+so giving it the same fix today would record the GROSS balance and book the
+customer's order deposit a second time — the one outcome this change exists to
+prevent. It needs the deposit-adjusted outstanding on the list first (in flight
+on a sibling branch), or a navigation into the detail screen's editor, where the
+figure is already correct. Owner's call, raised as an open question on the PR.
+
 **Ref.** `fix/mark-paid-records-the-money`, 2026-08-23.

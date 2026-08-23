@@ -11,9 +11,13 @@
 //     is the number finance reads first when opening an SI.
 //   · Status flow = payment lifecycle (Sent → Partially paid → Paid /
 //     Overdue, plus Cancelled). Mirrors SI listing V2.
-//   · Header CTA switches by payment state:
-//       Record payment — DRAFT / SENT / PARTIALLY_PAID + balance > 0
-//       Mark paid      — DRAFT / SENT / PARTIALLY_PAID + balance == 0
+//   · Header CTA by payment state. BOTH record money; neither writes a
+//     status (the server derives it from the payments ledger):
+//       Record payment — payable + balance > 0, opens an empty ledger row
+//       Mark paid      — payable + balance > 0 + the order's deposit is
+//                        readable; opens ONE row pre-filled at the balance
+//                        (markPaidPlan.ts). Was `balance == 0` until
+//                        2026-08-23, when it wrote a status and no payment.
 //   · Line-items get the SO detail's 5-column layout back — Item · Qty ·
 //     Unit price · Disc · Amount — with the FOC badge on zero-price
 //     lines. An SI without money is a design bug, not a valid state.
