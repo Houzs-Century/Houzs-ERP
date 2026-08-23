@@ -932,26 +932,13 @@ purchaseInvoices.post('/', async (c) => {
      gr_to_pi; one that names none is still parentless. The purchase-side half
      of the grns.ts fix — lib/convert-parent.ts, docs/bugs/0524. */
   const srcGrnIds = await sourceGrnIdsForPi(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'PI' as const, docNo: h.invoice_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
   if (srcGrnIds.length) {
-    await enqueueConvert(sb, {
-      companyId: activeCompanyId(c),
-      op: 'gr_to_pi',
+    await enqueueConvert(sb, { ...acBase, op: 'gr_to_pi',
       from: srcGrnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id' as const, key: id })),
-      to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
-      docType: 'PI',
-      docNo: h.invoice_number,
-      docId: h.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
+      to: { table: 'purchase_invoices', keyCol: 'id', key: h.id } });
   } else {
-    await recordParentlessCreate(sb, {
-      companyId: activeCompanyId(c),
-      docType: 'PI',
-      docNo: h.invoice_number,
-      docId: h.id,
-      missing: 'no source Goods Received Note to transfer from',
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Goods Received Note to transfer from' });
   }
 
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN

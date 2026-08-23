@@ -1719,26 +1719,13 @@ grns.post('/', async (c) => {
      every receipt raised here as parentless — see lib/convert-parent.ts and
      docs/bugs/0524 for why that was wrong and what it cost. */
   const srcPoIds = await sourcePoIdsForGrn(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'GR' as const, docNo: h.grn_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
   if (srcPoIds.length) {
-    await enqueueConvert(sb, {
-      companyId: activeCompanyId(c),
-      op: 'po_to_gr',
+    await enqueueConvert(sb, { ...acBase, op: 'po_to_gr',
       from: srcPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id' as const, key: id })),
-      to: { table: 'grns', keyCol: 'id', key: h.id },
-      docType: 'GR',
-      docNo: h.grn_number,
-      docId: h.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
+      to: { table: 'grns', keyCol: 'id', key: h.id } });
   } else {
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docNo: h.grn_number,
-    docId: h.id,
-    missing: 'no source Purchase Order',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Purchase Order' });
   }
 
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
