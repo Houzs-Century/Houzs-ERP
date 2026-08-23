@@ -35,6 +35,7 @@ import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
@@ -693,24 +694,6 @@ purchaseInvoices.get('/:id/linked', async (c) => {
 /* Every refusal here releases the request's idempotency claim, so a corrected
    Save reaches the handler instead of replaying the first one — rule 1 of
    lib/pi-create-refusals.ts, which also draws the boundary this follows. */
-/** The goods-received notes a purchase invoice's lines actually billed, or []
- *  when none did. Read from the LINES for the same reason grns.ts reads them:
- *  it asks the question readConvertSourceKeys will answer, so the two cannot
- *  disagree about whether this document has a parent. */
-async function sourceGrnIdsForPi(sb: any, piId: string): Promise<string[]> {
-  const { data: lines, error } = await sb.from('purchase_invoice_items')
-    .select('grn_item_id').eq('purchase_invoice_id', piId);
-  if (error || !lines) return [];
-  const itemIds = [...new Set((lines as Array<{ grn_item_id: string | null }>)
-    .map((l) => l.grn_item_id).filter((v): v is string => !!v))];
-  if (!itemIds.length) return [];
-  const { data: grnItems, error: gErr } = await sb.from('grn_items')
-    .select('grn_id').in('id', itemIds);
-  if (gErr || !grnItems) return [];
-  return [...new Set((grnItems as Array<{ grn_id: string | null }>)
-    .map((r) => r.grn_id).filter((v): v is string => !!v))];
-}
-
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }

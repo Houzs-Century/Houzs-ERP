@@ -13,6 +13,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourcePoIdsForGrn } from '../lib/convert-parent';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
 import { buildGrnCancelReversals } from '../lib/grn-cancel-reversal';
 import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
@@ -2090,25 +2091,6 @@ export const postGrnHandler = async (c: any) => {
   return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined, recountError: res.recountError });
 };
 grns.patch('/:id/post', postGrnHandler);
-
-/** The purchase orders a receipt's lines actually came from, or [] when none
- *  did. Read from the LINES, not from `body.purchaseOrderId`: the header field
- *  is a hint the form may or may not carry, while the line link is what
- *  readConvertSourceKeys will name — so this asks the same question the
- *  conversion answers, and cannot disagree with it. */
-async function sourcePoIdsForGrn(sb: any, grnId: string): Promise<string[]> {
-  const { data: lines, error } = await sb.from('grn_items')
-    .select('purchase_order_item_id').eq('grn_id', grnId);
-  if (error || !lines) return [];
-  const itemIds = [...new Set((lines as Array<{ purchase_order_item_id: string | null }>)
-    .map((l) => l.purchase_order_item_id).filter((v): v is string => !!v))];
-  if (!itemIds.length) return [];
-  const { data: poItems, error: poErr } = await sb.from('purchase_order_items')
-    .select('purchase_order_id').in('id', itemIds);
-  if (poErr || !poItems) return [];
-  return [...new Set((poItems as Array<{ purchase_order_id: string | null }>)
-    .map((r) => r.purchase_order_id).filter((v): v is string => !!v))];
-}
 
 /* ── POST /from-po-items ────────────────────────────────────────────────
    Multi-select GRN creator. Body: { picks: [{ poItemId, qty }], notes?,

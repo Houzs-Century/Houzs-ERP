@@ -33,6 +33,7 @@ import { describe, expect, it } from 'vitest';
    the same way. */
 import grnsSrc from './grns.ts?raw';
 import piSrc from './purchase-invoices.ts?raw';
+import parentSrc from '../lib/convert-parent.ts?raw';
 
 const src = (f: string) => (f === 'grns.ts' ? grnsSrc : piSrc);
 /* Returns '' when either anchor is absent, and NEVER throws at module scope.
@@ -63,10 +64,12 @@ describe('POST /grns — a receipt raised from a purchase order is SENT', () => 
   it('names the source from the LINES, never from the header hint', () => {
     /* body.purchaseOrderId is a field the form may or may not carry;
        grn_items.purchase_order_item_id is what the conversion will name. */
-    const helper = between(src('grns.ts'), 'async function sourcePoIdsForGrn', '\n}\n');
-    expect(helper, 'sourcePoIdsForGrn is missing').not.toBe('');
-    expect(helper).toContain('purchase_order_item_id');
-    expect(helper).not.toContain('body.purchaseOrderId');
+    /* Assert on the CODE, not the prose: the module's own header explains WHY
+       purchaseOrderId is not used, so a raw substring check fails on the
+       explanation. Comments stripped first, or the test measures the comment. */
+    const code = parentSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).toContain('purchase_order_item_id');
+    expect(code).not.toContain('purchaseOrderId');
   });
 });
 
@@ -84,8 +87,7 @@ describe('POST /purchase-invoices — an invoice billing a receipt is SENT', () 
   });
 
   it('names the source from the LINES', () => {
-    const helper = between(src('purchase-invoices.ts'), 'async function sourceGrnIdsForPi', '\n}\n');
-    expect(helper, 'sourceGrnIdsForPi is missing').not.toBe('');
-    expect(helper).toContain('grn_item_id');
+    expect(parentSrc).toContain('grn_item_id');
+    expect(parentSrc).toContain('sourceGrnIdsForPi');
   });
 });
