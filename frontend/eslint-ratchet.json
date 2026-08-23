@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 530,
     "@typescript-eslint/no-floating-promises": 784,
-    "@typescript-eslint/no-unnecessary-condition": 1768,
+    "@typescript-eslint/no-unnecessary-condition": 1767,
     "no-restricted-syntax": 133
   },
   "files": {
@@ -772,7 +772,7 @@
       "no-restricted-syntax": 5
     },
     "src/pages/scm-v2/SalesInvoiceDetailV2.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 8,
+      "@typescript-eslint/no-unnecessary-condition": 7,
       "no-restricted-syntax": 2
     },
     "src/pages/scm-v2/SalesInvoiceFromDo.tsx": {

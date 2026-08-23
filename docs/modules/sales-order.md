@@ -2683,6 +2683,32 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
   for salespersons on both surfaces.
 
+### A payment on the ORDER now settles the INVOICES raised off it (2026-08-23)
+
+Until this date the money stopped here. `scm.mfg_sales_order_payments` and
+`scm.sales_invoice_payments` were two ledgers with no link, so an order carrying
+a MYR 2,000 deposit produced an invoice reading "No payments recorded yet" with
+the full total outstanding — the office chased money already in the drawer
+(`docs/bugs/0525-payments-taken-on-the-sales-order-never-reached-the-sales-in.md`).
+
+**Nothing is copied and nothing extra is posted.** The invoice side READS THROUGH
+to this ledger; the rule and the reasoning live in
+`docs/modules/sales-invoice.md`, *The deposit taken on the SALES ORDER*. What
+changes on the ORDER side is one hook: every writer of this ledger now re-rolls
+the statuses of the invoices raised off the order, so the invoice list cannot
+fall behind.
+
+| Writer | Where | Re-rolls the invoices |
+|---|---|---|
+| `POST /:docNo/payments` and `scan-so.ts`'s receipt booking | `recordSoPaymentRow` (`scm/lib/so-payment-row.ts`) | yes — from the shared CORE, so both writers get it |
+| `PATCH /:docNo/payments/:id` | the route (it has no shared core) | yes |
+| `DELETE /:docNo/payments/:id` | `afterSoPaymentRemoved` (`scm/lib/so-payment-row.ts`) | yes — a reversed deposit must put the invoice back on the chase list |
+| the two deposit inserts on SO CREATE | `mfg-sales-orders.ts` | no, and correctly: no invoice exists for the order yet |
+
+Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
+beside them — a failure never fails the operator's save, and the next roll
+self-heals.
+
 ### Payment methods: THREE choosable, FOUR protected — and one list feeds every picker
 
 Every payment dropdown on both surfaces renders from **`scm.so_dropdown_options`**
@@ -3135,7 +3161,7 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 |-------|------|
 | `scm.mfg_sales_orders` | SO header (doc_no PK-ish, status, salesperson_id, totals in sen, so_date, delivery_state, amended_delivery_date, company_id) |
 | `scm.mfg_sales_order_items` | SO lines (item_group, stock_status, variants, warehouse_id) |
-| `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type) |
+| `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type). Also READ by `scm/lib/si-order-deposit.ts` — the deposit here settles the Sales Invoices raised off the order |
 | VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_sen` + `balance_sen_live` (Σ over payments) — the list reads this |
 
 Indexes that matter here:

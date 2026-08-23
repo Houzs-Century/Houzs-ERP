@@ -29,7 +29,7 @@ only document in it that leaves the building as a customer's own copy.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
-| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments. Status flags computed at `:991-998`. |
+| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. |
 | Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
@@ -291,14 +291,59 @@ exported handlers against a fake PostgREST client and asserts BOTH directions pl
 "nothing was written" — a refusal that still inserted would pass a status-only
 check.
 
-### `recomputePaid` (`:1730-1775`) — read this before touching payments
+### `recomputePaid` — read this before touching payments
+
+It no longer lives in this router. Since 2026-08-23 it is
+`recomputeSiPaid` in `backend/src/scm/lib/si-order-deposit.ts`, re-exported into
+`sales-invoices.ts` under its old name; it moved because the SALES ORDER's
+payment writer has to run the same roll (see the section below).
 
 Fails **closed**: a failed payments read or header read aborts with a log rather
-than writing `paid = 0` (`:1738-1752`). The comment records why — folding a
-transient blip into 0 does not merely understate `paid_sen`, it drives the
-status ladder, so a fully PAID invoice silently reverted to SENT and re-entered
-the AR chase. DRAFT and CANCELLED are frozen out of the ladder entirely
-(`:1760`).
+than writing `paid = 0`. The comment records why — folding a transient blip into
+0 does not merely understate `paid_sen`, it drives the status ladder, so a fully
+PAID invoice silently reverted to SENT and re-entered the AR chase. DRAFT and
+CANCELLED are frozen out of the ladder entirely. A failed read of the ORDER's
+deposit is the third case and behaves the same way: `paid_sen` is still written
+(that read succeeded), and the STATUS is left exactly as it was rather than
+guessed at zero.
+
+### The deposit taken on the SALES ORDER (2026-08-23)
+
+Money can arrive on either of two ledgers — `scm.mfg_sales_order_payments`
+(keyed by `so_doc_no`) or `scm.sales_invoice_payments` (keyed by
+`sales_invoice_id`) — and until this date nothing applied one to the other. An
+order holding a MYR 2,000 deposit produced an invoice reading
+"No payments recorded yet" with the full total outstanding
+(`docs/bugs/0525-payments-taken-on-the-sales-order-never-reached-the-sales-in.md`).
+
+**It READS THROUGH; it does not copy rows.** Copying would double-post: an order
+payment books SOPAY and an invoice payment books SIPAY, both through
+`customerPaymentLines` (`backend/src/acc/rules.ts`), which is Dr cash/bank and
+**Cr AR** — so a copied row would debit cash twice and relieve the same
+receivable twice, and `acc/daily-close.ts`'s `systemTakings` sums BOTH tables for
+one day's cash-up. Nothing in this change posts, journals or writes back to
+AutoCount.
+
+`backend/src/scm/lib/si-order-deposit.ts` owns the rule:
+
+| Question | Answer |
+|---|---|
+| What has the order collected? | `soPaidSen` from `scm/shared/so-outstanding.ts` — the SO's own rule, imported not re-derived, so it carries the LEGACY header `deposit_sen` on an AutoCount-migrated order too |
+| One order, several invoices? | earliest first, consume until exhausted, spill to the next (owner 2026-08-23:「先扣第一张，扣完再溢到下一张」) |
+| Ordering key | `invoice_date` then `invoice_number` — a total order. NOT `created_at`, which two invoices converted in one action can tie on |
+| Which invoices absorb? | every status except **CANCELLED** and **DRAFT**, both of which the payment routes already refuse (`not_payable`) |
+| How much does one absorb? | `min(what is left of the order's money, its own total less its own paid_sen)` |
+| Does `paid_sen` change meaning? | **No.** It is still receipts banked against THIS invoice. The deposit is added to the STATUS decision only, and served to the screen as its own field |
+
+`GET /:id` therefore returns two more keys beside `salesInvoice` and `items`:
+`orderDeposit` (`{ so_doc_no, order_collected_sen, applied_sen, transactions[] }`,
+or `null`) and `orderDepositUnavailable` — the honest third answer for an invoice
+whose order could not be read, which the screen surfaces as a warning rather than
+silently reporting a bigger outstanding.
+
+`recomputeSiPaidForOrder` re-rolls every invoice on an order whenever that
+order's payments change (add / edit / delete), so the invoice LIST — which reads
+the persisted `status` — cannot fall behind the detail screen.
 
 ### Status canonicalisation
 
@@ -325,8 +370,8 @@ Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
 |---|---|---|
 | `DRAFT` | create with the draft flag | manual |
 | `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
-| `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete |
-| `PAID` | `recomputePaid` only | **automatic** |
+| `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete — on THIS invoice or on its source Sales Order |
+| `PAID` | `recomputePaid` only | **automatic**, same two triggers |
 | `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does. Since 2026-08-17 it is at least VISIBLE if one arrives: it sits in the `sent` filter bucket, where it was in none | — |
 | `CANCELLED` | the status PATCH handler | manual |
 
@@ -396,6 +441,7 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 | `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen`, **`paid_sen`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
 | `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`. |
 | `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_sen` over this table. |
+| `scm.mfg_sales_order_payments` | READ ONLY from here. The deposit taken on the source Sales Order, applied to this invoice by `scm/lib/si-order-deposit.ts`. No row is ever copied into `sales_invoice_payments` — see *The deposit taken on the SALES ORDER* above. |
 | `scm.customer_credits` | Overpay / cancelled-invoice credit. Written by `applyCustomerCreditToSi`, `creditFromCancelledSi`, `reverseCancelledSiCredit`, `reconcileSiOverpay` (`backend/src/scm/lib/customer-credits.ts`). |
 | `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_sen`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
 | `scm.delivery_orders` / `scm.delivery_order_items` | Upstream. The DO's `has_children` lock counts non-cancelled SIs. |
@@ -537,7 +583,7 @@ Everything is integer sen.
 | `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
 | `unit_cost_sen`, `line_cost_sen`, `line_margin_sen` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
 | `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen` | header | Derived by `recomputeTotals` (`:264`); `total_sen` is what the GL posts. |
-| `paid_sen` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
+| `paid_sen` | header | Derived by `recomputePaid` from `sales_invoice_payments` — receipts on THIS invoice only. The source order's deposit is deliberately NOT added here (the GL, `scm.v_si_outstanding` and the AutoCount write-back all read this column); it reaches the screen and the status ladder separately. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
 | per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_sen`, `local_total_sen` and `paid_sen` are NOT gated — everyone sees what is owed. |
 | `amount_sen` | `sales_invoice_payments` | The ledger rows `paid_sen` sums. |
 

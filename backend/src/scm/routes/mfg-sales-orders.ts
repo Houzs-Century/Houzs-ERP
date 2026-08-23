@@ -45,8 +45,8 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, type SoPaymentRowInput } from '../lib/so-payment-row';
-import { reverseSoPayment } from '../../acc/payments';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
@@ -11120,6 +11120,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      costs one queued edit, while deciding here which fields matter would put a
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
+  // An edited amount also moves what the invoices off this order have settled.
+  await recomputeSiPaidForOrder(sb, docNo, co.companyId);
 
   const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
@@ -11209,14 +11211,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
   }
 
-  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
-     deleted payment's ledger entry. A row that never booked no-ops; a failure
-     is logged, never blocks the delete the operator already made. */
-  const unbooked = await reverseSoPayment(sb, id, docNo);
-  if (!unbooked.ok) {
-    /* eslint-disable-next-line no-console */
-    console.error('[acc] SO payment reversal failed:', id, unbooked.status, unbooked.reason);
-  }
+  // Void the ledger entry AND re-roll the invoices this deposit was settling
+  // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
+  await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
