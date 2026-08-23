@@ -358,8 +358,8 @@ batched reads**, whatever the page size — the style `stampSoDates` and
 |---|---|
 | `GET /sales-invoices` (both the legacy and the paginated path) | the desktop list + KPI + cards + drawer + CSV, and the mobile list |
 | `GET /sales-invoices/:id` | the detail header (beside the richer `orderDeposit` object) and, through it, the invoice PDF |
-| `GET /outstanding/si` (`scm/routes/outstanding.ts`) | the `/scm/outstanding` SI tab — the handler subtracts the slice from the row's `outstanding_sen` |
-| `GET /reports/sales-invoice-detail-listing` (`scm/routes/reports.ts`) | the SI Detail Listing `balance_sen`, resolved once per invoice rather than once per line |
+| `GET /outstanding/si` (`backend/src/scm/routes/outstanding.ts`) | the `/scm/outstanding` SI tab — the handler subtracts the slice from the row's `outstanding_sen` |
+| `GET /reports/sales-invoice-detail-listing` (`backend/src/scm/routes/reports.ts`) | the SI Detail Listing `balance_sen`, resolved once per invoice rather than once per line — that join returns one row per LINE, so stamping per row would re-read the same orders dozens of times. `DetailListingShell`'s Outstanding tile and its `?outstanding=1` filter both read `balance_sen`, so they follow. |
 
 **The page is not the population.** The split depends on an invoice's SIBLINGS,
 which can sit on another page or be filtered out of this one, so the sibling read
