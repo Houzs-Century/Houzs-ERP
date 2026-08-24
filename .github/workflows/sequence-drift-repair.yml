@@ -1,0 +1,54 @@
+name: Repair sequence drift
+
+# The WRITE half of sequence-drift-check.yml. Advances any identity sequence
+# that has fallen behind its table, which is what unblocks New Project when it
+# starts failing with a generic "Something went wrong".
+#
+# Defaults to PLAN: running it with nothing filled in reports what it would do
+# and writes nothing. Applying requires typing the confirm phrase, so a stray
+# click cannot write to production.
+#
+# Safe to re-run: setval is computed from max(id) at the moment it runs, only
+# ever moves a sequence forward, and touches no table row.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan = report only (default). apply = write the setvals."
+        type: choice
+        required: true
+        default: plan
+        options:
+          - plan
+          - apply
+      confirm:
+        description: "Type repair-sequences to allow apply. Ignored when mode=plan."
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: sequence-drift-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-sequence-drift.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
