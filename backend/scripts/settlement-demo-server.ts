@@ -30,6 +30,7 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from '../src/scm/routes/accounting-bank';
+import { payoutUpload, payoutList } from '../src/scm/routes/accounting-payouts';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
 const CO = 1;
@@ -206,6 +207,8 @@ const seed = () => ({
   acc_bank_statements: [] as Row[],
   acc_bank_statement_lines: [] as Row[],
   acc_bank_statement_matches: [] as Row[],
+  acc_settlement_payouts: [] as Row[],
+  acc_settlement_payout_batches: [] as Row[],
   acc_settlement_batches: [] as Row[],
   acc_settlement_rows: [] as Row[],
   acc_settlement_matches: [] as Row[],
@@ -299,9 +302,11 @@ const client = () => fakeSb(
     { table: 'acc_settlement_batches', column: 'file_hash', name: 'acc_settlement_batch_once' },
     { table: 'acc_bank_statements', column: 'file_hash', name: 'acc_bank_stmt_once' },
     { table: 'acc_bank_statement_matches', column: 'je_no', name: 'acc_bank_je_once' },
+    { table: 'acc_settlement_payouts', column: 'file_hash', name: 'acc_settlement_payout_once' },
   ],
   ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts',
-    'acc_bank_statements', 'acc_bank_statement_lines', 'acc_bank_statement_matches'],
+    'acc_bank_statements', 'acc_bank_statement_lines', 'acc_bank_statement_matches',
+    'acc_settlement_payouts', 'acc_settlement_payout_batches'],
 );
 
 /* PATCH /setup writes to the two real tables; the view is derived, so refresh
@@ -365,6 +370,9 @@ app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);
 app.get(`${R}/in-transit`, settlementInTransit as never);
+/* The acquirer's own payment advice — 几份 excel 对一份 pdf. */
+app.post(`${R}/payouts`, payoutUpload as never);
+app.get(`${R}/payouts`, payoutList as never);
 
 /* Layer 4 — the bank's own statement, on the same real handlers. */
 const B = '/api/scm/accounting/bank';

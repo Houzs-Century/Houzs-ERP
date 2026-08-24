@@ -43,6 +43,7 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
+import { payoutUpload, payoutList } from './accounting-payouts';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -96,6 +97,10 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
+/* The acquirer's own payment advice — Public Bank's IBG, which says which
+   reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
+accounting.post('/settlement/payouts', payoutUpload);
+accounting.get('/settlement/payouts', payoutList);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.
