@@ -3182,6 +3182,19 @@ node against postgres.js and cannot import TypeScript. The mirror is refereed by
 `backend/src/scm/lib/autocountOutboxStatus.canonical.test.ts`, which compares
 values AND behaviour and fails on any drift.
 
+**A STOPPED HOST IS ITS OWN KIND (2026-08-23).** When `AcSyncService` was not
+running, the tunnel answered instead and the ERP stored Cloudflare's own body —
+`error code: 502` — as the reason. `JSON.parse` fails on that string, so the raw
+body became the message, and the page rendered it under the masters heading:
+"masters not opened". Four documents were reported as an AutoCount MASTER-DATA
+problem when the account book had never been asked anything.
+
+`callAcService` now recognises a gateway status with a non-JSON body and says
+"the AutoCount host did not answer (HTTP N) — the request never reached it",
+and the taxonomy carries the kind so the page files it under the host rather
+than under masters. **The remedy is a different building**: nothing about the
+item map or the account book changes the answer while the service is stopped.
+
 **Edit the TypeScript module, then the mirror.** A second opinion about what
 `refused, nothing sent (MissingLocationError)` means is exactly how an operator
 was once sent to backfill DtlKeys for an item-map problem (#2094).
