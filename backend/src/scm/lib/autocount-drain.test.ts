@@ -5,6 +5,7 @@
 // one the module already has: everything here is about DISPATCH — resolving a
 // parent, ensuring masters, what a refusal does to attempts, and what gets
 // stamped on the row — and nothing about what a route decides to ENQUEUE.
+import { AC_DEBTOR_CODE } from '../../services/autocount-writeback';
 import { describe, expect, test, beforeEach, vi } from 'vitest';
 import { dispatchOne, MAX_ATTEMPTS, type AcOutboxRow } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
@@ -407,4 +408,56 @@ describe('the drain', () => {
     expect(after.attempts ?? 0).toBe(0);
     expect(after.last_error).toContain('1 of 2 source document(s)');
   });
+
+/* ---------------------------------------------------------------------------
+   THE CUSTOMER ON A ROW COMPOSED BEFORE #2340.
+
+   HC-DO-2608-003 failed on production with the contentless "Invalid transfer
+   item.", and five sales invoices behind it waited on a parent that could never
+   arrive. AcSyncService.cs:988 names the cause: the target had no DebtorCode
+   when the transfer ran, and AddPartialTransferDetail reports a debtor-less
+   target as an invalid ITEM rather than as a missing account.
+
+   The enqueue has supplied it since #2340. The drain replays a stored payload
+   and never recomposes, so rows queued before that line still went out bare.
+   ------------------------------------------------------------------------ */
+describe('a sales conversion always names the customer, however old the row is', () => {
+  const goSalesConversion = async (body: Record<string, unknown>) => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' }],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    });
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return jsonRes(200, { ok: true, docNo: 'DO-000045' });
+    }) as never;
+    const outcome = await dispatchOne(env as never, sb as never, row({
+      op: 'so_to_do',
+      doc_type: 'DO',
+      payload: {
+        body,
+        fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+        writeback: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      },
+    }), fetchImpl);
+    return { outcome, sent };
+  };
+
+  test('a payload stored with no DebtorCode has one by the time it is sent', async () => {
+    const { outcome, sent } = await goSalesConversion({});
+    expect(outcome).toBe('sent');
+    /* The whole point: the bytes that LEAVE carry the account. Asserting on the
+       stored payload instead would pass on a drain that changed nothing. */
+    expect(sent[0].DebtorCode).toBe(AC_DEBTOR_CODE);
+  });
+
+  test('a payload that already names one is left exactly as it was stored', async () => {
+    /* The backfill is a repair for old rows, not an override. A row composed
+       after #2340 must go out byte-for-byte as it was composed. */
+    const { sent } = await goSalesConversion({ DebtorCode: '300-C099' });
+    expect(sent[0].DebtorCode).toBe('300-C099');
+  });
+});
 });
