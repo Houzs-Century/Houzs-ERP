@@ -6,6 +6,7 @@ import {
   soStockLocationError,
   soRequiredFieldErrors,
   soRequiredFieldsMessage,
+  soProceedingAddressErrors,
   LOCATION_REQUIRED_COMPANY_CODES,
   type SoRequiredFieldsInput,
 } from "./so-form-validate";
@@ -237,11 +238,77 @@ describe("soRequiredFieldErrors — one message, not one-at-a-time", () => {
 
 describe("soRequiredFieldsMessage", () => {
   it("names the single field directly", () => {
-    expect(soRequiredFieldsMessage(["Phone number"])).toEqual({ title: "Phone number is required." });
+    expect(soRequiredFieldsMessage(["Phone number"], [])).toEqual({ title: "Phone number is required." });
   });
   it("lists them all together when several are missing", () => {
-    const m = soRequiredFieldsMessage(["Customer name", "Venue"]);
+    const m = soRequiredFieldsMessage(["Customer name", "Venue"], []);
     expect(m.title).toContain("Fill in the required fields");
     expect(m.body).toBe("Still missing: Customer name, Venue.");
+  });
+
+  /* ONE PRESS, ONE LIST. Owner 2026-08-23: 「create salesorder 要两次？」 —
+     Venue and Delivery State came back on the first press, address line 1 and
+     postcode on the second, because the address group sat behind a `return`.
+     Its condition is only "a Processing Date was entered", which is known on the
+     first press, so it belongs in the same list. */
+  it("merges the proceeding-address list into the SAME message", () => {
+    const m = soRequiredFieldsMessage(["Venue"], ["address line 1", "postcode"]);
+    expect(m.body).toContain("Venue");
+    expect(m.body).toContain("address line 1");
+    expect(m.body).toContain("postcode");
+  });
+
+  it("says WHY the address fields are required, so they do not read as arbitrary", () => {
+    const m = soRequiredFieldsMessage(["Venue"], ["postcode"]);
+    expect(m.body).toContain("Processing Date");
+  });
+
+  it("leads with the reason when ONLY the address half is missing", () => {
+    const m = soRequiredFieldsMessage([], ["address line 1"]);
+    expect(m.title).toContain("Processing Date");
+  });
+
+  /* Deliberately NOT the bare "postcode is required." — that sentence gives an
+     operator no way to know a postcode became required when they set a
+     Processing Date. The reason is the useful half. */
+  it("a lone proceeding field keeps its reason instead of the bare shortcut", () => {
+    const m = soRequiredFieldsMessage([], ["postcode"]);
+    expect(m.title).toContain("Processing Date");
+    expect(m.body).toContain("postcode");
+  });
+});
+
+describe("soProceedingAddressErrors", () => {
+  const filled = {
+    processingDate: "2026-09-01",
+    customerName: "Lim",
+    fillAddressLater: false,
+    address1: "12 Jalan Ujian",
+    postcode: "47810",
+    deliveryDate: "2026-09-05",
+  };
+
+  it("asks for nothing when the order is not proceeding", () => {
+    expect(soProceedingAddressErrors({ ...filled, processingDate: "", address1: "", postcode: "" })).toEqual([]);
+  });
+
+  it("asks for nothing when everything is filled", () => {
+    expect(soProceedingAddressErrors(filled)).toEqual([]);
+  });
+
+  it("collects EVERY missing one at once, not the first", () => {
+    const got = soProceedingAddressErrors({ ...filled, address1: "", postcode: "", deliveryDate: "" });
+    expect(got).toEqual(["address line 1", "postcode", "delivery date"]);
+  });
+
+  /* Ticking it BLANKS the address out of the payload, so a typed address that
+     is about to be discarded still counts as missing. */
+  it("counts the address as missing when 'fill in later' is ticked, even if typed", () => {
+    const got = soProceedingAddressErrors({ ...filled, fillAddressLater: true });
+    expect(got).toEqual(["address line 1", "postcode"]);
+  });
+
+  it("a whitespace-only processing date is not a proceeding order", () => {
+    expect(soProceedingAddressErrors({ ...filled, processingDate: "   ", address1: "" })).toEqual([]);
   });
 });

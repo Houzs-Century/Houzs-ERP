@@ -1788,6 +1788,16 @@ guard. One caller, below.
 > header and the Create CTA ("Save draft SO") say which outcome the operator is
 > about to get. Pinned in `so-form-validate.test.ts`.
 
+**ONE PRESS, ONE LIST (2026-08-23).** Owner: 「开单要按两次」. The required-field
+check and the proceeding-address check were two passes with a `return` between
+them, so a form missing one of each named only the first — the operator fixed
+it, pressed again, and was told about the second. `soProceedingAddressErrors`
+now collects the address complaints and `soRequiredFieldsMessage(missing,
+proceeding)` takes BOTH lists, so one press yields the whole list. The
+lone-proceeding-field case keeps its own reason rather than being folded into
+the generic sentence — the two tests that disagreed about it were right about
+the reason and the CODE was what was wrong. Pinned in `so-form-validate.test.ts`.
+
 **Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
 Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
 **Repair 2990 doc references**) stamps `warehouse_id` on the lines the read

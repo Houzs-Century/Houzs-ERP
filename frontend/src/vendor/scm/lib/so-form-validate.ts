@@ -272,13 +272,73 @@ export function soRequiredFieldErrors(i: SoRequiredFieldsInput): string[] {
   return missing;
 }
 
-/** Render the collected missing-field labels as ONE dialog/toast error. */
-export function soRequiredFieldsMessage(missing: string[]): SoFormError {
-  if (missing.length === 1) {
-    return { title: `${missing[0]} is required.` };
+/** What a PROCEEDING order needs on top of the always-required set.
+ *
+ * WHY IT IS HERE AND NOT LEFT TO THE CALLER. Its condition — "a Processing Date
+ * was entered" — is known at the moment the button is pressed, exactly like
+ * every field above it. So it is NOT one of the sequential guards that can only
+ * be judged after an earlier choice; it only READ like one because it sat in a
+ * second `if` further down the handler, and the first `if` returned before
+ * reaching it.
+ *
+ * The cost of that, live: Venue and Delivery State on the first press, address
+ * line 1 and postcode on the second. Owner 2026-08-23: 「create salesorder 要两
+ * 次？」 — and 2026-08-20 already, 「为什么要慢慢爆呢」, which is when the
+ * always-required set became one pass. This is the half that was left.
+ *
+ * Every parameter is REQUIRED, none optional: each one DECIDES whether a label
+ * appears, and an optional one would let a caller silently keep the old
+ * behaviour (CLAUDE.md's optional-param-noop rule).
+ */
+export interface SoProceedingAddressInput {
+  /** Empty = the order is not proceeding, and none of this applies. */
+  processingDate: string;
+  customerName: string;
+  /** Ticked BLANKS the address out of the payload, so it counts as missing. */
+  fillAddressLater: boolean;
+  address1: string;
+  postcode: string;
+  deliveryDate: string;
+}
+
+export function soProceedingAddressErrors(i: SoProceedingAddressInput): string[] {
+  if (!i.processingDate.trim()) return [];
+  const missing: string[] = [];
+  if (!i.customerName.trim()) missing.push("customer name");
+  if (i.fillAddressLater || !i.address1.trim()) missing.push("address line 1");
+  if (i.fillAddressLater || !i.postcode.trim()) missing.push("postcode");
+  if (!i.deliveryDate.trim()) missing.push("delivery date");
+  return missing;
+}
+
+/** Render BOTH collected lists as ONE dialog/toast error.
+ *
+ *  Both arguments are required. Passing the proceeding list separately rather
+ *  than concatenating it keeps its EXPLANATION — a Processing Date is what makes
+ *  those fields required, and an operator who is not told that reads them as
+ *  arbitrary.
+ */
+export function soRequiredFieldsMessage(missing: string[], proceeding: string[]): SoFormError {
+  const all = [...missing, ...proceeding];
+  /* The bare "X is required." shortcut is for the ALWAYS-required fields only.
+     A lone proceeding field must keep its reason: "postcode is required" does
+     not tell an operator that a postcode became required the moment they set a
+     Processing Date, and they have no way to work that out. */
+  if (all.length === 1 && proceeding.length === 0) {
+    return { title: `${all[0]} is required.` };
+  }
+  const body = `Still missing: ${all.join(", ")}.`;
+  /* Only the proceeding half is missing — lead with the reason it is required. */
+  if (missing.length === 0) {
+    return {
+      title: "A Processing Date means this order is proceeding, so it needs a delivery address.",
+      body,
+    };
   }
   return {
     title: "Fill in the required fields before creating this order.",
-    body: `Still missing: ${missing.join(", ")}.`,
+    body: proceeding.length > 0
+      ? `${body}\n\nThe address fields are required because a Processing Date is set — this order is proceeding.`
+      : body,
   };
 }
