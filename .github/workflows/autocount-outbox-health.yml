@@ -8,14 +8,35 @@ name: AutoCount write-back queue — health (read-only)
 # book — the exact divergence the mechanism exists to prevent. This makes that
 # visible to a human on demand.
 #
-# Manual trigger only. A production DB read on a schedule turns a real question
-# into CI noise nobody reads, which is the standing rule in CLAUDE.md — and it
-# would fire on every quiet day while the write-back is still switched off.
-# When the sync is live and this needs to become an ALARM rather than a report,
-# that is a different mechanism (somewhere a human actually looks), not a cron
-# on this workflow.
+# THIS USED TO BE MANUAL-ONLY, and the paragraph that said so is kept here
+# because it is the reason the schedule below is shaped the way it is:
+#
+#   "Manual trigger only. A production DB read on a schedule turns a real
+#    question into CI noise nobody reads, which is the standing rule in
+#    CLAUDE.md — and it would fire on every quiet day while the write-back is
+#    still switched off. When the sync is live and this needs to become an ALARM
+#    rather than a report, that is a different mechanism (somewhere a human
+#    actually looks), not a cron on this workflow."
+#
+# Both conditions changed. The write-back went live 2026-08-13, and on
+# 2026-08-21 the shop-floor service stopped answering: 13 documents piled up
+# over two days and the owner found out by noticing they were missing from the
+# account book. Nothing was watching. Owner 2026-08-24, asked whether this can
+# happen again: 「ok」to closing it.
+#
+# THE NOISE OBJECTION IS ANSWERED RATHER THAN OVERRULED. The scheduled run
+# passes SILENTLY when the queue is healthy — ALARM=1 makes the script exit
+# non-zero ONLY for a document that is stuck, so a quiet day sends no mail and
+# nobody reads anything. The failure e-mail GitHub sends the owner is the
+# "somewhere a human actually looks" the old paragraph asked for; it quotes the
+# ::error:: line, which names the document and what to do about it.
+#
+# 01:00 UTC = 09:00 in Kuala Lumpur, so a night-time outage is on screen before
+# the first document of the day is raised.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *"
 
 # Deliberately NOT in the deploy concurrency group: this touches nothing and
 # must never queue behind — or displace — a release.
@@ -41,6 +62,10 @@ jobs:
       - run: npm ci
       - run: node scripts/check-autocount-outbox-health.mjs
         env:
+          # ALARM only on the schedule. A person who pressed Run workflow is
+          # already looking at the report and does not need the run marked
+          # failed to be told what it plainly says.
+          ALARM: ${{ github.event_name == 'schedule' && '1' || '0' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
