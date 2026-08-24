@@ -1796,6 +1796,18 @@ export async function dispatchOne(
      about which row the service happened to read. Best-effort, like its twin —
      on any doubt `readConvertCreditor` returns null, the body goes unchanged and
      the service's own fallback is what answers. Guide §7c3. */
+  /* THE CUSTOMER ON A SALES CONVERSION — the replay problem a third time, and
+     the one that was costing documents. HC-DO-2608-003 failed with the
+     contentless "Invalid transfer item." and five invoices waited behind it;
+     AcSyncService.cs:988 names the cause, a target with no DebtorCode, which
+     AddPartialTransferDetail reports as an invalid ITEM and not as a missing
+     account. enqueueConvert has supplied it since #2340 and the drain replays,
+     so every row queued before that line still goes out bare.
+     Cheapest of the three and the only one that cannot fail: the purchase twins
+     read a document to learn the account, the debtor is a constant here. The
+     guard leaves a row composed after #2340 exactly as it was stored. */
+  if ((SALES_CONVERSION as ReadonlySet<string>).has(row.op) && !body.DebtorCode) body.DebtorCode = AC_DEBTOR_CODE;
+
   const creditorSource = payload.fromDoc ?? payload.fromDocs?.[0];
   if (PURCHASE_CONVERSION.has(row.op) && !body.CreditorCode && creditorSource) {
     /* THE FIRST SOURCE ANSWERS FOR A MERGE, and it is not an arbitrary pick:

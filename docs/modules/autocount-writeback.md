@@ -1127,6 +1127,25 @@ document's supplier. `dispatchOne` backfills the creditor at drain for rows
 queued before the change, exactly as §7c3a does for `so_to_po` — the drain
 replays a stored payload and never recomposes.
 
+**THE SALES HALF OF THAT BACKFILL WAS MISSING, AND IT COST DOCUMENTS**
+(2026-08-24). D15 closed the ENQUEUE for all four conversions but gave the drain
+only the purchase backfill. A sales conversion queued before #2340 therefore
+still went out with no `DebtorCode` — and `HC-DO-2608-003` did, failing on
+production with the contentless `Invalid transfer item.` while five sales
+invoices behind it waited on a parent that could never arrive.
+
+**The message names the wrong thing and `AcSyncService.cs:988` says so:**
+`AddPartialTransferDetail` reports a target with no debtor as an invalid ITEM,
+not as a missing account — which sends whoever reads it to look at the lines.
+`FullTransfer` names it properly; the sales side does not use it (§7f).
+
+`dispatchOne` now backfills the debtor too. It is the cheapest of the three and
+the only one that cannot fail: the purchase twins read a document to learn the
+account, but `AC_DEBTOR_CODE` is a constant, so there is nothing to read and no
+best-effort to fall back from. The `!body.DebtorCode` guard leaves a row composed
+after #2340 byte-for-byte as it was stored — this repairs old rows, it does not
+override new ones.
+
 **The purchase half was open on two grounds and BOTH were wrong.** They are
 written out here because each was recorded as a fact and neither was checked:
 
