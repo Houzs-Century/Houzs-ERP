@@ -111,6 +111,7 @@ const SAMPLES = [
   { name: 'MBB-one-swipe-two-orders.csv', label: '一次刷卡还两张单（两张 SO 同一个 approval code → 自动对上）' },
   { name: 'wrong-file.csv', label: '传错的档案（应该被指名拒绝）' },
   { name: 'BANK-MBB-Aug.csv', label: '银行月结单（第二页 Bank statement 用；MBB 真实格式）' },
+  { name: 'BANK-PBB-Jun.csv', label: '银行月结单：PBB 那笔 RM 11,814.44 进帐（配 advice 的最后一步）' },
 ];
 
 const Harness = () => {
