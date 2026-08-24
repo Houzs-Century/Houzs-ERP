@@ -41,7 +41,7 @@ const MBB: Row = {
 const GHL: Row = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' } };
 
 const soPayment = (over: Row = {}): Row => ({
-  id: 'p1', so_doc_no: 'SO-2608-001', paid_at: '2026-08-01T10:00:00', amount_centi: 100000,
+  id: 'p1', so_doc_no: 'SO-2608-001', paid_at: '2026-08-01T10:00:00', amount_sen: 100000,
   approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB', company_id: CO, ...over,
 });
 
@@ -562,7 +562,7 @@ describe('the batch detail and the watchlists', () => {
   });
 
   test('the detail view shows the piles and recomputes candidates for the open lines', async () => {
-    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p2', so_doc_no: 'SO-2608-002', amount_centi: 77700, approval_code: null })] });
+    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p2', so_doc_no: 'SO-2608-002', amount_sen: 77700, approval_code: null })] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
 
     const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
@@ -579,7 +579,7 @@ describe('the batch detail and the watchlists', () => {
     /* p3 is a fortnight before the statement period: too old to be a candidate
        for any of its lines, so it stays on watchlist 1 while the statement's
        second line — money with no sale behind it — stays on watchlist 2. */
-    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_centi: 5000, approval_code: 'B2' })] });
+    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_sen: 5000, approval_code: 'B2' })] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
 
     const body = await (await app.request('/settlement/watchlist?from=2026-07-01&to=2026-08-16')).json() as {

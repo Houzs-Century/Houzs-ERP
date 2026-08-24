@@ -52,7 +52,7 @@ export type AcquirerRow = {
 };
 
 /** One acquirer as this company uses it: global config joined to the company's
-    own accounts (the scm.acc_acquirers view built by migration 0301). */
+    own accounts (the scm.acc_acquirers view built by migration 0326). */
 export async function loadAcquirer(
   sb: any,
   companyId: number,
@@ -125,15 +125,19 @@ export async function loadPaymentCandidates(
     .map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
   const customerOf = new Map<string, string>();
   if (soDocs.length > 0) {
-    const { data } = await sb.from('mfg_sales_orders')
+    const { data, error } = await sb.from('mfg_sales_orders')
       .select('doc_no, customer_name').eq('company_id', companyId).in('doc_no', soDocs);
+    /* Failed is not "nameless": a blank customer column across the whole
+       screen reads as data, so the read fails like its siblings above. */
+    if (error) return { ok: false, reason: `SO customers: ${error.message}` };
     for (const r of (data ?? []) as Array<{ doc_no: string; customer_name: string | null }>) {
       if (r.customer_name) customerOf.set(`SO:${r.doc_no}`, r.customer_name);
     }
   }
   if (siIds.length > 0) {
-    const { data } = await sb.from('sales_invoices')
+    const { data, error } = await sb.from('sales_invoices')
       .select('id, invoice_number, debtor_name').eq('company_id', companyId).in('id', siIds);
+    if (error) return { ok: false, reason: `SI customers: ${error.message}` };
     for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null }>) {
       if (r.debtor_name) customerOf.set(`SI:${r.id}`, r.debtor_name);
       if (r.invoice_number) customerOf.set(`SI#:${r.id}`, r.invoice_number);

@@ -262,10 +262,22 @@ const ReconcileTab = () => {
       {/* 1. The reports that still need decisions. */}
       <section className="space-y-2">
         <b>Merchant reports still to reconcile</b>
-        {open.length === 0 && !batches.isLoading && (
-          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-            Nothing to reconcile — every merchant report you have uploaded is done.
-          </div>
+        {/* Two different empty states, and only one of them may claim anything:
+            "every report is done" is spoken over reports that were READ and
+            counted; zero reports read gets a sentence about what was looked
+            for, because an absence is never evidence (owner 2026-08-17). A
+            failed read renders neither. */}
+        {batches.data && open.length === 0 && (
+          all.length === 0 ? (
+            <div style={softText}>
+              No merchant report has been uploaded yet — upload one above and its lines are matched
+              against what the ERP recorded.
+            </div>
+          ) : (
+            <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+              Nothing to reconcile — every merchant report you have uploaded is done.
+            </div>
+          )
         )}
         {/* The same one press as the upload summary, because the list outlives
             that screen: reload the page, come back tomorrow, and the reports

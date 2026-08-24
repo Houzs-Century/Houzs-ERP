@@ -40,7 +40,7 @@ const harness = (tables: Record<string, Row[]>) => {
 };
 
 const pay = (id: string, docNo: string, paidAt: string, sen: number): Row =>
-  ({ id, so_doc_no: docNo, paid_at: paidAt, amount_centi: sen, method: 'merchant', company_id: CO });
+  ({ id, so_doc_no: docNo, paid_at: paidAt, amount_sen: sen, method: 'merchant', company_id: CO });
 
 const je = (docNo: string, entryDate: string): Row =>
   ({ id: `je-${docNo}`, je_no: `JE-${docNo}`, company_id: CO, source_type: 'SOPAY',

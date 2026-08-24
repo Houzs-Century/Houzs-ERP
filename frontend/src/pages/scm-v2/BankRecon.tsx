@@ -32,6 +32,7 @@ import {
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
 import { PayoutAdviceTab } from './PayoutAdviceTab';
+import { DateField } from '../../vendor/scm/components/DateField';
 import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
@@ -125,7 +126,12 @@ const WaitingForMoney = () => {
       </div>
 
       {batches.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-      {!batches.isLoading && owed.length === 0 && !showSettled && (
+      {/* Spoken only over statements that were READ and summed: the list came
+          back, at least one reconciled statement is in it, and every one of
+          them reached zero outstanding. An empty or failed read renders
+          nothing — an absence is never evidence (owner 2026-08-17, the
+          empty-state rule). */}
+      {batches.data && ready.length > 0 && owed.length === 0 && !showSettled && (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
           Every merchant statement you have reconciled has been paid in full.
         </div>
@@ -348,8 +354,8 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
       {!done && openLines === 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <label htmlFor={`recv-${batchId}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
-          <input id={`recv-${batchId}`} type="date" value={on} aria-label="Money arrived in the bank on"
-            onChange={(e) => setOn(e.target.value)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+          <DateField id={`recv-${batchId}`} value={on} aria-label="Money arrived in the bank on"
+            onChange={(iso) => setOn(iso)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
           <input id={`amt-${batchId}`} value={amount} aria-label="Amount of this credit"
             onChange={(e) => setAmount(e.target.value)}
             placeholder={`Amount (blank = ${fmt(outstanding)})`}

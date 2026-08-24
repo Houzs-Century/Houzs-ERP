@@ -135,7 +135,9 @@ describe('the statements waiting for money', () => {
 
     const post = screen.getByText('Money received') as HTMLButtonElement;
     expect(post.disabled).toBe(true);            // no date, nothing to post
-    fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026-08-19' } });
+    /* Typed the way the operator types it — DateField reads dd/mm/yyyy and
+       hands the parent ISO. */
+    fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '19/08/2026' } });
     fireEvent.click(screen.getByText('Money received'));
     /* Amount blank = the rest of it; nobody retypes a number the statement
        already knows. */

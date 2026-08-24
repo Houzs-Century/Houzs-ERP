@@ -31,7 +31,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
-import { matchStatement, recordedNotArrived, type PaymentCandidate } from '../../acc/settlement-match';
+import { matchStatement, recordedNotArrived, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt,
@@ -169,7 +169,7 @@ export const settlementSetupSave = guard(async (c) => {
    an instruction, not an authorisation.
 
    Nothing new is stored. Which merchants a company uses and where their money
-   lands is `scm.acc_company_acquirers` (migration 0301, one row per company per
+   lands is `scm.acc_company_acquirers` (migration 0326, one row per company per
    merchant); which banks a company has is `scm.accounts.is_active` on its money
    accounts — the chart is already maintained centrally (migration 0297: one
    AutoCount-style chart for every company), which is his own answer to where
@@ -694,8 +694,14 @@ export const settlementBatchDetail = guard(async (c) => {
     };
   });
 
-  const tally = { MATCHED: 0, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 } as Record<string, number>;
-  for (const r of stored) tally[r.bucket] = (tally[r.bucket] ?? 0) + 1;
+  /* Typed against the matcher's own union, not `Record<string, …>` — the
+     bucket set has ONE home (MatchBucket) and a new bucket must fail to
+     compile here rather than tally into nowhere. */
+  const tally: Record<MatchBucket, number> = { MATCHED: 0, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 };
+  for (const r of stored) {
+    const b = r.bucket as MatchBucket;
+    tally[b] = (tally[b] ?? 0) + 1;
+  }
 
   /* WHICH BANK this merchant pays THIS company — named on screen at the moment
      the money is recorded, because the same merchant pays different companies
@@ -704,8 +710,11 @@ export const settlementBatchDetail = guard(async (c) => {
      but the fallback is reported, never silent. */
   const roles = await resolveRoles(sb, co.companyId);
   const bankCode = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
-  const { data: bankRow } = await sb.from('accounts')
+  const { data: bankRow, error: bankErr } = await sb.from('accounts')
     .select('account_code, account_name').eq('company_id', co.companyId).eq('account_code', bankCode).maybeSingle();
+  /* The screen names WHICH BANK before money is recorded against it; a failed
+     read must not dress up as "no such account". */
+  if (bankErr) return c.json({ error: 'load_failed', reason: bankErr.message }, 500);
 
   const payable = payableOf(batch as Record<string, number | null>);
   return c.json({
@@ -1129,7 +1138,10 @@ export const settlementInTransit = guard(async (c) => {
   const staffIds = [...new Set(lines.map((l) => l.recordedById).filter((v): v is string => typeof v === 'string' && v !== ''))];
   const nameOf = new Map<string, string>();
   if (staffIds.length > 0) {
-    const { data: staffRaw } = await sb.from('staff').select('id, name').in('id', staffIds);
+    const { data: staffRaw, error: staffErr } = await sb.from('staff').select('id, name').in('id', staffIds);
+    /* "Who keyed it in" is the first thing he needs in order to ask; a failed
+       read showing every line blank would read as "nobody recorded". */
+    if (staffErr) return c.json({ error: 'load_failed', reason: staffErr.message }, 500);
     for (const s of (staffRaw ?? []) as Array<{ id: string; name: string | null }>) {
       if (s.name) nameOf.set(String(s.id), s.name);
     }
