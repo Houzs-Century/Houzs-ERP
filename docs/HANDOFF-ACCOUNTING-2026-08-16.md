@@ -197,8 +197,12 @@ and AEON pays net like any acquirer (他不理顾客是不是分期，他会进�
 
 ### The payment advice, as built (2026-08-24)
 
-The screen is a **"Payment advice" tab on /scm/bank-recon**
-(`PayoutAdviceTab.tsx`), not its own route. It uploads the PDF as
+The screen is a **"Payment advice" tab on BOTH settlement screens** — one
+component (`PayoutAdviceTab.tsx`), two doors. The owner placed it on
+/scm/merchant-recon himself (2026-08-24: 毕竟它属于card merchant 那边 — the
+advice is the acquirer's paperwork, and everything a person DOES about one is
+merchant-side work); /scm/bank-recon keeps its door because the credit lands
+there. It uploads the PDF as
 `contentBase64` (acquirer fixed to PBB — the server refuses any other by
 name), shows total / payee bank + account / advice date, every day's
 `AGREES` / `DIFFERS` / `REPORT_MISSING` / `REPORT_NOT_RECONCILED`, and the

@@ -106,6 +106,11 @@ vi.mock('./settlement-queries', () => ({
   ] }, isLoading: false }),
 }));
 
+/* The advice tab is the acquirer's own paperwork, so it has a door on this
+   screen too (owner, 2026-08-24: 毕竟它属于card merchant 那边). Its contract is
+   PayoutAdviceTab.test.tsx; here it is stubbed and only its door is proved. */
+vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
+
 import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
@@ -128,6 +133,16 @@ describe("refusalText — the server's sentence must reach the operator", () => 
     expect(refusalText(new Error('plain failure'), 'fallback')).toBe('plain failure');
     expect(refusalText(Object.assign(new Error(''), { body: 'not json' }), 'fallback')).toBe('fallback');
     expect(refusalText(null, 'fallback')).toBe('fallback');
+  });
+});
+
+describe('the tab strip', () => {
+  test('carries the payment advice beside the reports, and opens on the reports', () => {
+    draw();
+    /* The work queue is the default — the advice is a door, not a detour. */
+    expect(screen.queryByText('payment advice tab')).toBeNull();
+    fireEvent.click(screen.getByText('Payment advice'));
+    expect(screen.getByText('payment advice tab')).toBeTruthy();
   });
 });
 

@@ -51,7 +51,9 @@ export const BankRecon = () => {
         <button type="button" style={btn(tab === 'statement')} onClick={() => setTab('statement')}>Bank statement</button>
         {/* Public Bank's IBG advice — the payer's own list of which reports one
             credit pays, and what lets the statement above match a payout
-            spanning more reports than any search would try. */}
+            spanning more reports than any search would try. The merchant screen
+            carries the same tab (owner, 2026-08-24: 毕竟它属于card merchant
+            那边); this door stays because the credit lands on THIS side. */}
         <button type="button" style={btn(tab === 'advice')} onClick={() => setTab('advice')}>Payment advice</button>
         <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Money to come in</button>
         <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Still with the merchants</button>

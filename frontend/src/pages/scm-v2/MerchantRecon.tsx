@@ -38,6 +38,7 @@ import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   BUCKET_LABEL, refusalText, payableOf,
 } from './settlement-ui';
+import { PayoutAdviceTab } from './PayoutAdviceTab';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
@@ -49,11 +50,20 @@ const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): nu
   Number(buckets[key] ?? 0);
 
 export const MerchantRecon = () => {
+  const [tab, setTab] = useState<'reports' | 'advice'>('reports');
 
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · step 1 of 2" title="Merchant reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <button type="button" style={btn(tab === 'reports')} onClick={() => setTab('reports')}>Merchant reports</button>
+        {/* The advice is the ACQUIRER'S paperwork, so it lives here too — the
+            owner, 2026-08-24: 毕竟它属于card merchant 那边. Everything a person
+            DOES about an advice is on this side (upload it, see which report is
+            missing or differs, fix that report); the bank screen carries the
+            same tab because the credit lands there, and the matcher consumes
+            the advice without being asked. One component, two doors. */}
+        <button type="button" style={btn(tab === 'advice')} onClick={() => setTab('advice')}>Payment advice</button>
         <span style={{ flex: 1 }} />
         <Link to="/scm/settlement-setup" style={{ ...btn(), textDecoration: 'none' }}>Setup</Link>
         {/* Step two is its own screen; the link is here so the next job is one
@@ -62,7 +72,8 @@ export const MerchantRecon = () => {
           Bank statement reconciliation <ArrowRight {...ICON} />
         </Link>
       </div>
-      <ReconcileTab />
+      {tab === 'reports' && <ReconcileTab />}
+      {tab === 'advice' && <PayoutAdviceTab />}
     </div>
   );
 };
