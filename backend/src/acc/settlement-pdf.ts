@@ -164,7 +164,34 @@ function textiness(s: string): number {
   return good / s.length;
 }
 
+/** One positioned string, as the PDF itself holds it. */
+export type PdfCell = { page: number; x: number; y: number; text: string };
+export type PdfCellsResult = { ok: true; cells: PdfCell[] } | { ok: false; reason: string };
+
+/**
+ * The decrypted, de-obfuscated, positioned strings — everything below this is
+ * a way of arranging them.
+ *
+ * Exposed because one arrangement does not fit every document. pdfToCsv below
+ * groups by y and clusters x into a grid, which is right for a statement whose
+ * table fills the page. Public Bank's IBG payment advice does NOT: it prints
+ * two tables side by side plus a summary block in the right margin, so grouping
+ * by y alone merges two unrelated batches into one row and folds the Grand
+ * Total into whichever batch happens to share its line. That reader
+ * (acc/pbb-advice) works from these cells directly.
+ */
+export async function pdfCells(bytes: Uint8Array): Promise<PdfCellsResult> {
+  const built = await buildCells(bytes);
+  return built;
+}
+
 export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
+  const built = await buildCells(bytes);
+  if (!built.ok) return built;
+  return { ok: true, csv: cellsToCsv(built.cells) };
+}
+
+async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
   let s = '';
   for (let i = 0; i < bytes.length; i += 8192) {
     s += String.fromCharCode(...bytes.subarray(i, Math.min(i + 8192, bytes.length)));
@@ -246,10 +273,17 @@ export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
   if (streams.size === 0) return { ok: false, reason: 'Nothing in this PDF could be read — it may be a scan rather than a statement.' };
 
   /* ── positioned text ── */
-  type Cell = { x: number; y: number; text: string };
-  const rawCells: Array<{ x: number; y: number; raw: string }> = [];
+  type Cell = { page: number; x: number; y: number; text: string };
+  /* PAGE, not just position. Every content stream is one page, and until this
+     was recorded they were all flattened into one coordinate space — so a
+     two-page document laid page 2 exactly on top of page 1 and every row came
+     out holding two unrelated records at identical x. Public Bank's IBG advice
+     is two pages, which is how this surfaced. */
+  const rawCells: Array<{ page: number; x: number; y: number; raw: string }> = [];
+  let page = 0;
   for (const content of streams.values()) {
     if (!/(Tj|TJ)/.test(content)) continue;
+    page += 1;
     let x = 0; let y = 0; let leading = 0;
     const tok = /BT|ET|([-\d.]+)\s+([-\d.]+)\s+Td|([-\d.]+)\s+([-\d.]+)\s+TD|([-\d.]+)\s+TL|T\*|([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+Tm|\(/g;
     let m: RegExpExecArray | null;
@@ -265,7 +299,7 @@ export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
       if (t === '(') {
         const lit = readLiteral(content, tok.lastIndex);
         tok.lastIndex = lit.end + 1;
-        if (lit.text) rawCells.push({ x, y, raw: lit.text });
+        if (lit.text) rawCells.push({ page, x, y, raw: lit.text });
       }
     }
   }
@@ -284,15 +318,24 @@ export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
   const sample = rawCells.slice(0, 60).map((c) => c.raw).join('');
   const decode = textiness(twoByteShift(sample)) > textiness(asIs(sample)) ? twoByteShift : asIs;
   const cells: Cell[] = rawCells
-    .map((c) => ({ x: c.x, y: c.y, text: decode(c.raw).trim() }))
+    .map((c) => ({ page: c.page, x: c.x, y: c.y, text: decode(c.raw).trim() }))
     .filter((c) => c.text !== '');
 
+  return { ok: true, cells };
+}
+
+/* ── one arrangement: a grid, for a statement whose table fills the page ──── */
+
+function cellsToCsv(cells: PdfCell[]): string {
   /* ── rows by y ── */
-  cells.sort((a, b) => (Math.abs(a.y - b.y) > 2 ? b.y - a.y : a.x - b.x));
-  const rows: Cell[][] = [];
-  for (const c of cells) {
+  /* Page first, then y, then x — a two-page document used to interleave its
+     pages here, because every page starts its coordinates again from the top. */
+  const ordered = [...cells].sort((a, b) => (a.page !== b.page ? a.page - b.page
+    : Math.abs(a.y - b.y) > 2 ? b.y - a.y : a.x - b.x));
+  const rows: PdfCell[][] = [];
+  for (const c of ordered) {
     const last = rows[rows.length - 1];
-    if (last && Math.abs(last[0].y - c.y) <= 2) last.push(c);
+    if (last && last[0].page === c.page && Math.abs(last[0].y - c.y) <= 2) last.push(c);
     else rows.push([c]);
   }
 
@@ -304,7 +347,7 @@ export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
      column that way and you are reading the neighbouring column's number.
      So the x coordinates are clustered into a grid and each cell is placed in
      ITS OWN column, with gaps left empty. */
-  const xs = [...cells.map((c) => c.x)].sort((a, b) => a - b);
+  const xs = [...ordered.map((c) => c.x)].sort((a, b) => a - b);
   const columns: number[] = [];
   for (const x of xs) {
     if (columns.length === 0 || x - columns[columns.length - 1] > 3) columns.push(x);
@@ -332,5 +375,5 @@ export async function pdfToCsv(bytes: Uint8Array): Promise<PdfToCsvResult> {
     while (end > 0 && wide[end - 1] === '') end -= 1;
     return wide.slice(0, end).map(quote).join(',');
   }).filter((line) => line.trim() !== '').join('\n');
-  return { ok: true, csv };
+  return csv;
 }
