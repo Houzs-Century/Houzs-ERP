@@ -14,7 +14,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist,
+  useSettlementWatchlist, usePayouts, useUploadPayoutAdvice,
 } from './settlement-queries';
 
 const mockedFetch = vi.mocked(authedFetch);
@@ -123,5 +123,32 @@ describe('the writes', () => {
     const [path, init] = mockedFetch.mock.calls[1]!;
     expect(path).toBe('/accounting/settlement/rows/11/ignore');
     expect(JSON.parse(String(init?.body))).toMatchObject({ restore: false, notes: 'duplicate' });
+  });
+});
+
+describe('the payment advice', () => {
+  test('usePayouts reads GET /accounting/settlement/payouts', async () => {
+    mockedFetch.mockResolvedValueOnce({ payouts: [] });
+    const { result } = renderHook(() => usePayouts(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockedFetch).toHaveBeenCalledWith('/accounting/settlement/payouts');
+  });
+
+  test('useUploadPayoutAdvice posts the PDF as base64, never as text', async () => {
+    mockedFetch.mockResolvedValueOnce({ ok: true, payoutId: 2, status: { netSen: 0, days: [], readyToReceive: false, blockedBy: null } });
+    const { result } = renderHook(() => useUploadPayoutAdvice(), { wrapper });
+    result.current.mutate({
+      acquirerCode: 'PBB',
+      fileName: 'HOUZSCENTURY_IBG_100826.pdf',
+      contentBase64: 'data:application/pdf;base64,JVBERi0xLjQ=',
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [path, init] = mockedFetch.mock.calls[0]!;
+    expect(path).toBe('/accounting/settlement/payouts');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      acquirerCode: 'PBB',
+      contentBase64: 'data:application/pdf;base64,JVBERi0xLjQ=',
+    });
   });
 });
