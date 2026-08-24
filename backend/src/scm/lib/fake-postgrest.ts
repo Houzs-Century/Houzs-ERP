@@ -56,6 +56,8 @@ export function fakeSb(
     let pendingUpdate: Row | null = null;
     let pendingDelete = false;
     let columnError: { code: string; message: string } | null = null;
+    /** What the last UPDATE actually touched, for `.update(...).select(...)`. */
+    let updated: Row[] | null = null;
     let wantCount = false;
     let selectCalled = false;
     let lastInserted: Row | null = null;
@@ -159,7 +161,19 @@ export function fakeSb(
         return { data: null, error: null };
       }
       if (pendingUpdate) {
-        for (const r of rows()) Object.assign(r, pendingUpdate);
+        /* THE ROWS THIS UPDATE MATCHED, remembered before it changes them.
+           PostgREST's `.update(...).select()` is one `UPDATE … RETURNING`
+           statement: the WHERE is evaluated against the rows as they were, and
+           what comes back is what it actually touched. Recomputing `rows()`
+           afterwards is a different question — it re-runs the filter over the
+           CHANGED rows — and the two answers differ exactly when the update
+           writes the column being filtered on. That is not a corner case here:
+           it is how a conditional claim works (claimOutboxRow sets `claimed_at`
+           while filtering on `claimed_at IS NULL`), and a fake that recomputed
+           would report every successful claim as a lost one. */
+        const touched = rows();
+        for (const r of touched) Object.assign(r, pendingUpdate);
+        updated = touched;
         return { data: null, error: null };
       }
       return { data: rows(), error: null };
@@ -180,6 +194,15 @@ export function fakeSb(
       update(patch: Row) { pendingUpdate = patch; return builder; },
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
+      /* PostgREST `is`, which is the ONLY correct way to ask about NULL — `eq`
+         sends `=`, and `col = NULL` is NULL rather than true in SQL, so a null
+         test written as `.eq(col, null)` matches nothing against a real
+         database however well it reads. Absent and null are the same answer
+         here, as they are in Postgres: a column with no value is null. */
+      is(col: string, val: unknown) {
+        filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
+        return builder;
+      },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
@@ -221,6 +244,9 @@ export function fakeSb(
       maybeSingle: async () => {
         const settled = settle();
         if (settled.error) return { data: null, error: settled.error };
+        /* `updated` first: see the UPDATE branch in settle(). It is null on every
+           chain that did not update, so nothing else changes shape. */
+        if (updated) return { data: updated[0] ?? null, error: null };
         return { data: lastInserted ?? rows()[0] ?? null, error: null };
       },
       /* `.single()` on zero rows is an ERROR in PostgREST (PGRST116), not a null
@@ -240,5 +266,25 @@ export function fakeSb(
     };
     return builder;
   };
-  return { from, tables } as never as { from: (t: string) => any; tables: Record<string, Row[]> };
+  /* `.schema('public')` — a real supabase-js client returns a client scoped to
+     that schema. The fakes model ONE table namespace, so it returns itself: a
+     test's `tables` map is the whole database and has no schema dimension.
+     Present because production code reaches ACROSS schemas: the SCM client is
+     pinned to `scm` (db/supabase.ts), and the companies master lives in
+     `public`, so `jePrefixForCompany` must say so explicitly. Without this the
+     fake throws `sb.schema is not a function` and the test would be measuring
+     the fake, not the code. See docs/bugs/0522. */
+  const schemaCalls: string[] = [];
+  const api: {
+    from: (t: string) => any;
+    tables: Record<string, Row[]>;
+    schema: (s: string) => any;
+    schemaCalls: string[];
+  } = {
+    from,
+    tables,
+    schema: (s: string) => { schemaCalls.push(s); return api; },
+    schemaCalls,
+  };
+  return api as never as typeof api;
 }

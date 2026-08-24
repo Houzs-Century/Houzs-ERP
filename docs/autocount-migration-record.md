@@ -41,8 +41,11 @@
 > ### Verifications that do not verify what they claim
 >
 > - **Step 1** accepts `/health` as proof of the swap. `/health` answers from
->   CONSTANTS — `deploy-on-host.ps1:215-222` records that exact failure on
->   2026-08-12. **Half of this is fixed as of 2026-08-15**: `/health` now also
+>   CONSTANTS — `deploy-on-host.ps1` records that exact failure on 2026-08-12 in
+>   its section 3 and section 7 comments. (This cited `:215-222` until
+>   2026-08-16, when the rewrite moved the text; grep for
+>   `answers from CONSTANTS` rather than trusting a line number here again.)
+>   **Half of this is fixed as of 2026-08-15**: `/health` now also
 >   returns `builtAt` (the assembly's own file timestamp) and `mvid` (unique per
 >   compilation), so it CAN prove a new binary was swapped in — compare `builtAt`
 >   against `git log -1 --date=short -- backend/scripts/autocount-service/AcSyncService.cs`.
@@ -139,7 +142,7 @@ convert can follow. Stock checked first makes it *"更加准"*.
 
 | # | Criterion | Verdict | The number |
 |---|---|---|---|
-| 1 | Every document syncs on create, convert AND edit | **BUILT, GATED SHUT, NOT WIRED** | The whole ERP half merged (`#1855`, migration `0277`). The line-identity guard merged (`#1935`, `#1936`, `#1945`). But `AC_SYNC_URL` has **0** uncommented occurrences in `backend/wrangler.toml`, `scm.autocount_writeback = 'off'`, and `scm.autocount_outbox` holds **0 rows** — nothing has ever been enqueued, let alone sent |
+| 1 | Every document syncs on create, convert AND edit | **LIVE — see `docs/generated/autocount-coverage.md`, not this row** | **This row said `BUILT, GATED SHUT, NOT WIRED` until 2026-08-18 and every number in it was overtaken by events within a day.** The owner turned `scm.autocount_writeback` on for company 1 on 2026-08-13, `AC_SYNC_URL` has been set at `backend/wrangler.toml` since 2026-08-11 (#2030), and the queue has sent documents — `HC-SO-2608-001` / `-002` and the six document types that followed on 2026-08-17. Which operations are PROVEN against the live book is generated on every run from `backend/scripts/data/ac-live-proof.json`; do not restate it here, which is exactly how four coverage tables came to disagree |
 | 2 | Compartment and variant aligned, and their relationships aligned | **PARTIAL, and far better than the first measurement said** | PO sofa compartment **213 / 219**, SO sofa **262 / 272**. The class "no compartment at all" is **empty**. Company 2 clean on all four chain legs; company 1 carries **0** wrong item codes on every leg. SO to PO piece-set mismatches went **8 to 2**, and both survivors are correct outcomes. Six real defects remain, on `HC-PO-009469` and `HC-PO-009596` |
 | 3 | Stock balance reconciles, and Remark 2 agrees with ERP stock status | **BALANCE RECONCILES with every delta explained. STATUS moved and is still moving** | Per-warehouse agreement **917 of 976 cells (94%)**; 8 of 15 warehouses agree to the unit. `warehouse_id` **13,837 verified** against AutoCount (7,800 on exact `DtlKey`), **0 miswarehoused**. Sofa READY **0 to 70**, lots with `batch_no` **0/20 to 103/123**. Status-axis disagreements **151 to 126** |
 
@@ -797,9 +800,19 @@ Friday:
   an operator uses to check exactly that.
 - **The over-transfer handler was uncompilable and is now gone.** The SDK raises a WinForms dialog
   for over-transfer, and the obvious fix is to subscribe to the event and answer it
-  programmatically. That event's `EventArgs` type is **not public**, so it cannot be subscribed at
-  all — the handler could never have compiled. The condition is instead made **unreachable**, by
-  only ever transferring what is outstanding.
+  programmatically. That event's `EventArgs` type is **not public**, so a handler that NAMES it
+  could never have compiled. The condition was instead made **unreachable**, by only ever
+  transferring what is outstanding.
+
+  > **CORRECTED 2026-08-17.** Both halves stopped being true. *"It cannot be subscribed at all"*
+  > is wrong: a handler does not have to name the args type. .NET's relaxed delegate binding
+  > matches a method declared with `object` parameters to a delegate whose parameters are any
+  > reference types, so `Delegate.CreateDelegate` binds one — which is what `Watch()` in
+  > `AcSyncService.cs` now does. And *"unreachable"* stopped holding the day the ERP began naming
+  > `DtlKeys`: `DtlKeys()` returns a supplied list verbatim, so the
+  > `(Qty - TransferedQty) > 0` predicate is never evaluated for those lines. The event is now
+  > subscribed and **logged only** — nothing answers it, because confirming an over-transfer would
+  > silently accept shipping more than was ordered.
 
 ---
 
@@ -1000,13 +1013,17 @@ A DO raised in the ERP with no parent SO simply has no path, and the ERP must no
 
 Three real caveats on convert, all from `docs/archive/autocount-sync-coverage-2026-08-11.md`:
 
-- **One source document only.** The ERP can merge N SOs into one DO. AutoCount has no shape for
-  that, so `recordConvertSkipped` writes a `skipped` outbox row with the reason. Merged conversions
-  will never reach AutoCount and someone must work that backlog by hand.
-- **A partial conversion becomes a full one (D14).** `enqueueConvert` sends no `DtlKeys`, so the
-  service selects **every** still-outstanding line on the parent. An ERP DO shipping 2 of 5 lines
-  would produce an AutoCount DO containing all 5, moving stock in AutoCount that did not move in
-  the ERP. **Fix before enabling any convert.**
+- ~~**One source document only.**~~ **CLOSED 2026-08-18.** The limit belonged to
+  `AddPartialTransferDetail`, not to AutoCount: `FullTransfer` takes an ARRAY of document numbers,
+  and the service groups named keys per source and calls the primitive once each (2026-08-16).
+  `enqueueConvert` now takes an array and all six ERP call sites name every source. Rows recorded
+  BEFORE that date are still `skipped` and still need working by hand — nothing was composed for
+  them, so no re-queue can help.
+- ~~**A partial conversion becomes a full one (D14).**~~ **CLOSED.** `readConvertSourceKeys` names
+  the lines the conversion actually took, and refuses when it cannot name them rather than sending
+  blind. Note the second half, closed 2026-08-18 with the merge: `conversionIsPartial` compared ONE
+  parent's line count against the total taken from all of them, so a MERGED partial read as
+  whole-document — the same blind transfer, one level up. It counts per parent now.
 - **Over-transfer is refused, silently.** Correct default, but combined with the above it means a
   conversion can fail for a reason the ERP user never sees.
 

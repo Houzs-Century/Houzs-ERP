@@ -83,7 +83,7 @@ whole point of this doc is to record which one answers which question.
 | # | Linkage | Where it lives | Semantics | Survives delivery? |
 |---|---------|----------------|-----------|--------------------|
 | A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
-| B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO "From SOs:" note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — they survive delivery, which floating coverage does not. But they are RECORDED, not ENFORCED: every one is nullable (an ad-hoc DO line is written with `so_item_id ?? null` straight from the client payload, `delivery-orders-mfg.ts:3752`), and several have been rewritten by repair scripts (`backfill-po-so-item-links.mjs`, `repair-2990-doc-refs.mjs`) — so they are not immutable either. |
+| B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO provenance note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — they survive delivery, which floating coverage does not. But they are RECORDED, not ENFORCED: every one is nullable (an ad-hoc DO line is written with `so_item_id ?? null` straight from the client payload, `delivery-orders-mfg.ts:3752`), and several have been rewritten by repair scripts (`backfill-po-so-item-links.mjs`, `repair-2990-doc-refs.mjs`) — so they are not immutable either. |
 | C | **Physical batch/lot trail** | `soLineShippedSourcePos()` (`delivery-orders-mfg.ts`) | `batch_no = source PO number` (stamped by the GRN, mig 0120, copied onto the FIFO lot by the trigger). Recovers, for a SHIPPED SO line, the PO(s) its goods physically came from, via DO OUT movements ∪ `inventory_lot_consumptions` → `inventory_lots.batch_no`. | **Yes, but only for BATCHED stock** — plain-FIFO un-batched stock carries no batch, so the trail is best-effort and incomplete. |
 
 Key trap: **A ≠ B.** For a PO raised via convert-from-SO, `so_item_id` (B) is the
@@ -111,7 +111,7 @@ linkages:
 | # | Precedence | Linkage | State |
 |---|-----------|---------|-------|
 | a | **DELIVERED → DO-locked** | **C** (reverse of `soLineShippedSourcePos`: `batch_no` = this PO number consumed by a DO → that DO's `so_item_id` / `so_doc_no`) | **STATIC** (`locked:true`) |
-| b | **STORED ORIGIN** | **B** (`so_item_id` ∪ "From SOs:" note) | **STATIC** (`locked:true`) |
+| b | **STORED ORIGIN** | **B** (`so_item_id` ∪ provenance note) | **STATIC** (`locked:true`) |
 | c | **MRP FLOATING coverage** | **A** (`computeMrp` → `mrpReverseCoverage`, matched by SKU) | **FLOATING** (`locked:false`) |
 | d | none | — | dash |
 
@@ -133,7 +133,7 @@ Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, del
 where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked,
 source }], storedLink, provenance: [{ soDocNo, deliveryDate, locked: true,
 source: 'linked' }] }]` and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`,
-matched by SKU (`material_code`). The full relationship graph (SO/DO/SI +
+matched by SKU (`item_code`). The full relationship graph (SO/DO/SI +
 returns) stays on the Relationship Map modal (`/document-flow/:type/:id`) —
 unchanged.
 
@@ -418,7 +418,7 @@ soft-until-DO model is legible at a glance:
 | identity | data | dress | tooltip says |
 |---|---|---|---|
 | **ANCHORED** | `source 'delivered'` (DO shipped the goods); shipped source-PO chips; Delivered DO chips | solid accent chip — unchanged | delivered / anchored history |
-| **PROVENANCE** | `source 'linked'` (stored `so_item_id` / "From SOs" note); mig-0235 allocation SO-slices | muted (`bg-surface-dim` / phone `mutedChip`) | "Bought for `<SO>` — procurement provenance, not the live assignment." **Never the word "Locked"** |
+| **PROVENANCE** | `source 'linked'` (stored `so_item_id` / provenance note); mig-0235 allocation SO-slices | muted (`bg-surface-dim` / phone `mutedChip`) | "Bought for `<SO>` — procurement provenance, not the live assignment." **Never the word "Locked"** |
 | **FLOATING** | `source 'mrp'` / `locked:false`; READY FIFO projections; incoming MRP coverage | dashed border + trailing "~" | live, "recomputed on every view", moves as demand moves |
 
 Implemented as one helper trio in `DocumentLinesExpansion.tsx`
@@ -459,6 +459,9 @@ column, so they still name PRE-IMPORT document numbers:
 | reference | mismatched | dangling |
 |---|---|---|
 | `purchase_orders.notes` -> `From SOs: SO-2606-005` | 44 of 49 tokens | 0 |
+<!-- recorded verbatim: this is what production held on the measurement date.
+     The label was unified to "Transfer from Sales Order:" on 2026-08-18 -
+     see docs/modules/document-conversion.md §10. -->
 | `inventory_lots.batch_no` + `inventory_movements.batch_no` -> `PO-2606-001` | 24 of 32 batches | 0 |
 
 Every consumer resolves these by string EQUALITY, so the reference matches
@@ -581,7 +584,7 @@ against a real unique index in CI's postgres container.
 **Line-basis fallback since the 2026-08-01 live run** (which planned zero:
 the short product had written NO movement at all, so no sibling existed): when
 the sibling rule refuses with `no-sibling`, the insert falls back to the GRN
-line's OWN landed cost — `round(unit_price_centi x exchange_rate)`, the same
+line's OWN landed cost — `round(unit_price_sen x exchange_rate)`, the same
 `toMyrSen` path grns.ts uses for movements written outside the allocation —
 with the bucket from single-valued GRN facts (`deriveGrnLineBasis`: exactly
 one line for the product, one warehouse across the GRN's movements else the
@@ -603,7 +606,7 @@ ambiguous history alone — so any new note reader must accept either.
 `backend/scripts/backfill-po-so-item-links.mjs` + workflow **Backfill PO -> SO
 item links (DRY-RUN gated)**. Tier 1 (the delivered chain, linkage C) is
 suppressed until the batches are repaired, because that join is exactly the one
-that misses. Tier 2 is a `"From SOs:"` note naming exactly ONE valid,
+that misses. Tier 2 is a provenance note naming exactly ONE valid,
 company-owned SO. Both write only where the item code pairs 1:1 — the rule now
 shared with `link-po-to-so.mjs` via `scripts/lib/po-so-line-pairing.mjs`.
 
@@ -624,7 +627,7 @@ Resolution, all set-based and company-scoped:
    reverse of the `mrpLineCoverage` the SO detail reads (§ linkage A). Group by SKU,
    `locked:false`. This is called ONCE per request, NOT per-SKU in a loop.
 3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' EFFECTIVE
-   stored links → `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …"
+   stored links → `mfg_sales_order_items.doc_no` **∪** the PO's provenance
    note (shared `parseFromSosNote`), validated against company-owned
    `mfg_sales_orders` (the company gate + whole-token check). Pure
    `buildStoredOrigins(...)` matches by `item_code`, effective date
@@ -712,7 +715,7 @@ the map at all.
 | class | what it is | where it comes from | rendering |
 |---|---|---|---|
 | **chain** | vertical execution FKs — SO→DO→SI→payment, DO→DR, PO→GRN→PI, GRN→PR, consignment | `/document-flow` stamps `linkage:'chain'` on every edge (ADDITIVE field; default) | solid, existing kind colours — anchored history |
-| **provenance** | the SO→PO raise-link (stored `so_item_id` / "From SOs:" note) | `/document-flow` stamps `linkage:'provenance'` at the ONE SO→PO edge callsite | muted solid, tooltip "Bought for — procurement provenance" |
+| **provenance** | the SO→PO raise-link (stored `so_item_id` / provenance note) | `/document-flow` stamps `linkage:'provenance'` at the ONE SO→PO edge callsite | muted solid, tooltip "Bought for — procurement provenance" |
 | **floating** | the live pre-DO PO↔SO MRP pairing ("会跳动" — recomputed per open, may change) | CLIENT-ASSEMBLED: `buildFloatingOverlay` / `floatingSoDocNos` (flow-queries.ts) over the `usePoSoCoverage` response, `source:'mrp'` assignments ONLY | dashed + pulse (`animate-pulse`, no bespoke animation system), tooltip "Live MRP pairing — recomputed on every view; may change" |
 
 **The zero-load rule (owner: "它可能会 API 爆炸").** The floating overlay adds
@@ -865,10 +868,10 @@ Stored-origin build (`feat/po-real-origin-so`, 2026-07-25 — superseded by the 
 - `frontend/src/pages/scm-v2/{PurchaseOrdersListV2,GoodsReceivedListV2,PurchaseInvoicesListV2}.tsx`
   — feed the columns from `usePoSoCoverage`; the old `DocumentTraceability` strip removed.
 - `frontend/src/mobile/MobileModuleDetail.tsx` — assignment rides each `LineItem`.
-- `frontend/src/components/DocumentTraceability.tsx` — DELETED.
+- `frontend/src/components/DocumentTraceability.tsx` [gone] — DELETED.
 
 Original strip (`feat/doc-traceability-display`, 2026-07-24 — now superseded):
-- `frontend/src/components/DocumentTraceability.tsx` (new, since deleted).
+- `frontend/src/components/DocumentTraceability.tsx` [gone] (new, since deleted).
 - `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`,
   `PurchaseInvoicesListV2.tsx` — rendered the strip in the row-expansion wrappers.
 - `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` — `drillStock` service → READY.
@@ -883,6 +886,12 @@ Amendments-on-map + clickability (`feat/relmap-clickable-amendment`, §2.3):
 - `frontend/src/components/scm-v2/DocumentRelationshipMapModal.tsx` — amendments branch,
   `AmendmentChip` type, `actionable` flag + clickable-logic fix.
 - `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx`, `SalesOrderDetail.tsx` — pass amendments.
+
+> **2026-08-17, same two files, unrelated surface:** the detail page's Edit
+> affordance is no longer disabled outright on a hard-locked (DO/SI) order —
+> a caller holding `scm.so.attribute_other` can open it to change the
+> Salesperson, and only that field. Every other input stays locked and
+> Override remains the door for addresses and lines. See `so-handover.md`.
 
 ## 5. Sales-side Relationship Maps read the live graph (SO/DO/SI/DR) — audit R8
 
@@ -901,7 +910,16 @@ lied about exactly the nodes an operator needs:
 
 **Shipped (`feat/r8-docflow-do-si-dr`, display-only):**
 `frontend/src/pages/scm-v2/sales-doc-relationship-map.ts` — the ONE builder for
-all three, mirroring `so-relationship-map.ts`. Each hook
+all three, mirroring `so-relationship-map.ts`.
+
+> **Customer reference — ONE rule since 2026-08-18 (`fix/unify-customer-ref-builders`).**
+> The four builders here and in `so-relationship-map.ts` each inlined their own
+> fallback for the "Customer PO" cell (three different orders), so one order
+> could show a different reference on the DO map than the SI map. They now all
+> call `customerRefOf(header)` from `frontend/src/lib/customer-ref.ts`, which
+> resolves `ref || customer_so_no || po_doc_no`. Owner ruling: `ref` is the
+> customer-reference field; `customer_so_no` is a retired near-duplicate and
+> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration. Each hook
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a

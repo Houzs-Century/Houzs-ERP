@@ -48,6 +48,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -57,13 +59,6 @@ const fmtRm = (centi: number | null | undefined): string => {
   return `MYR ${(v / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`;
-};
-
-/* T12 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg + Gap. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 type HeaderDraft = {
@@ -79,7 +74,7 @@ type HeaderDraft = {
    free-add — this is the ONLY new editing capability here.) */
 type LineDraft = {
   qty: number;            // maps to qty_returned
-  unitPriceCenti: number;
+  unitPriceSen: number;
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
@@ -87,11 +82,11 @@ type LineDraft = {
 
 type PrItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty_returned: number;
-  unit_price_centi: number;
-  line_refund_centi?: number;
+  unit_price_sen: number;
+  line_refund_sen?: number;
   item_group?: string | null;
   material_kind?: string | null;
   description?: string | null;
@@ -112,7 +107,7 @@ const headerSnapshot = (p: any): HeaderDraft => ({
 
 const lineSnapshot = (it: PrItemRow): LineDraft => ({
   qty:            it.qty_returned,
-  unitPriceCenti: it.unit_price_centi,
+  unitPriceSen: it.unit_price_sen,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -154,6 +149,57 @@ export const PurchaseConsignmentReturnDetail = () => {
     }
   }, [isLocked, isEditing]);
 
+  /* The line-total helpers sit above the guards because usePrintPreview does —
+     `refundTotal` is what the PDF header's Value column reports, and it is
+     derived only from `items` + the drafts, neither of which needs `pr`. */
+  const visibleItems = items;
+  const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
+  const lineTotalOf = (it: PrItemRow): number => {
+    if (!isEditing) return it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen);
+    const d = lineOf(it);
+    return d.qty * d.unitPriceSen;
+  };
+  const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
+
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     pr; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!pr) return;
+    const pdfHeader = {
+      return_number: pr.return_number,
+      status: String(pr.status),
+      return_date: pr.return_date ?? '',
+      reason: pr.reason ?? null,
+      refund_sen: refundTotal,
+      credit_note_ref: pr.credit_note_ref ?? null,
+      notes: pr.notes ?? null,
+      supplier: pr.supplier ?? undefined,
+    };
+    const pdfItems = items.map((it) => ({
+      item_code: it.item_code,
+      material_name: it.material_name,
+      qty_returned: it.qty_returned,
+      unit_price_sen: it.unit_price_sen,
+      line_refund_sen: it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen),
+      reason: null,
+    }));
+    return import('../../vendor/scm/lib/purchase-return-pdf')
+      .then(({ generatePurchaseReturnPdf }) =>
+        generatePurchaseReturnPdf(pdfHeader as never, pdfItems as never, {
+          docTitle: 'PURCHASE CONSIGNMENT RETURN', docNoLabel: 'Return No',
+          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
+        }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -172,45 +218,7 @@ export const PurchaseConsignmentReturnDetail = () => {
     );
   }
 
-  const visibleItems = items;
-  const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
-  const lineTotalOf = (it: PrItemRow): number => {
-    if (!isEditing) return it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi);
-    const d = lineOf(it);
-    return d.qty * d.unitPriceCenti;
-  };
-  const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
-
   const headerView = headerDraft ?? headerSnapshot(pr);
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    const pdfHeader = {
-      return_number: pr.return_number,
-      status: String(pr.status),
-      return_date: pr.return_date ?? '',
-      reason: pr.reason ?? null,
-      refund_centi: refundTotal,
-      credit_note_ref: pr.credit_note_ref ?? null,
-      notes: pr.notes ?? null,
-      supplier: pr.supplier ?? undefined,
-    };
-    const pdfItems = items.map((it) => ({
-      material_code: it.material_code,
-      material_name: it.material_name,
-      qty_returned: it.qty_returned,
-      unit_price_centi: it.unit_price_centi,
-      line_refund_centi: it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi),
-      reason: null,
-    }));
-    return import('../../vendor/scm/lib/purchase-return-pdf')
-      .then(({ generatePurchaseReturnPdf }) =>
-        generatePurchaseReturnPdf(pdfHeader as never, pdfItems as never, {
-          docTitle: 'PURCHASE CONSIGNMENT RETURN', docNoLabel: 'Return No',
-          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
-        }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(pr)), [k]: v }));
@@ -225,11 +233,8 @@ export const PurchaseConsignmentReturnDetail = () => {
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
       const variants: Record<string, unknown> = { ...(cur.variants ?? {}), [key]: value };
-      if (cur.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(cur.itemGroup) && isTotalHeightPart(key)) {
+        variants.totalHeight = computeTotalHeight(cur.itemGroup, variants);
       }
       return { ...prev, [it.id]: { ...cur, variants } };
     });
@@ -261,12 +266,12 @@ export const PurchaseConsignmentReturnDetail = () => {
         );
         const changed =
           d.qty !== it.qty_returned ||
-          d.unitPriceCenti !== it.unit_price_centi ||
+          d.unitPriceSen !== it.unit_price_sen ||
           identityChanged;
         if (changed) {
           await updateItem.mutateAsync({
             id: pr.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
             /* T12 — only manual lines send identity/variants; the server
                recomputes description2 + resyncs the return's inventory. */
             ...(manual ? {
@@ -395,7 +400,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                   <Fragment key={it.id}>
                   <tr>
                     <td>
-                      <div className={styles.codeCell}>{it.material_code}</div>
+                      <div className={styles.codeCell}>{it.item_code}</div>
                       {(() => {
                         const summary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                           || it.description
@@ -422,11 +427,11 @@ export const PurchaseConsignmentReturnDetail = () => {
                         <td className={styles.tableRight}>
                           <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
                             style={{ width: 110, textAlign: 'right' }}
-                            valueSen={d.unitPriceCenti}
+                            valueSen={d.unitPriceSen}
                             disabled={isLocked}
-                            onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                            onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                         </td>
-                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceCenti)}</td>
+                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceSen)}</td>
                         <td>
                           <span className={styles.actionsCell}>
                             <button type="button"
@@ -453,7 +458,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                     ) : (
                       <>
                         <td className={styles.tableRight}>{it.qty_returned}</td>
-                        <td className={styles.tableRight}>{fmtRm(it.unit_price_centi)}</td>
+                        <td className={styles.tableRight}>{fmtRm(it.unit_price_sen)}</td>
                         <td className={styles.priceCell}>{fmtRm(lineTotalOf(it))}</td>
                       </>
                     )}
@@ -482,7 +487,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                               </div>
                               <PcVariantEditor
                                 category={d.itemGroup ?? ''}
-                                itemCode={it.material_code}
+                                itemCode={it.item_code}
                                 variants={(d.variants ?? {}) as Record<string, unknown>}
                                 onChange={(k, v) => setVariant(it, k, v)}
                                 fabrics={fabrics}
@@ -586,8 +591,13 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Return Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.returnDate} disabled={locked}
-              onChange={(e) => onField('returnDate', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.returnDate}
+              disabled={locked}
+              onChange={(iso) => onField('returnDate', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Credit Note Ref</span>

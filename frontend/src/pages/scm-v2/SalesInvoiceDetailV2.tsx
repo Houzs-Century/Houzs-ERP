@@ -11,9 +11,13 @@
 //     is the number finance reads first when opening an SI.
 //   · Status flow = payment lifecycle (Sent → Partially paid → Paid /
 //     Overdue, plus Cancelled). Mirrors SI listing V2.
-//   · Header CTA switches by payment state:
-//       Record payment — DRAFT / SENT / PARTIALLY_PAID + balance > 0
-//       Mark paid      — DRAFT / SENT / PARTIALLY_PAID + balance == 0
+//   · Header CTA by payment state. BOTH record money; neither writes a
+//     status (the server derives it from the payments ledger):
+//       Record payment — payable + balance > 0, opens an empty ledger row
+//       Mark paid      — payable + balance > 0 + the order's deposit is
+//                        readable; opens ONE row pre-filled at the balance
+//                        (markPaidPlan.ts). Was `balance == 0` until
+//                        2026-08-23, when it wrote a status and no payment.
 //   · Line-items get the SO detail's 5-column layout back — Item · Qty ·
 //     Unit price · Disc · Amount — with the FOC badge on zero-price
 //     lines. An SI without money is a design bug, not a valid state.
@@ -30,6 +34,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { siSettledSen, siOutstandingSen } from "../../vendor/scm/lib/si-outstanding";
 import {
   ArrowLeft,
   History,
@@ -62,6 +67,7 @@ import {
 import {
   useSalesInvoiceDetail,
   useUpdateSalesInvoiceStatus,
+  useUpdateSalesInvoiceHeader,
   useSalesInvoicePayments,
   useAddSalesInvoicePayment,
   useDeleteSalesInvoicePayment,
@@ -69,14 +75,22 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { useSiRelationshipMap } from "./sales-doc-relationship-map";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import {
   PaymentsTable,
   labelToApi,
   draftMethodFields,
+  newPaymentDraft,
   type PaymentDraft,
 } from "../../vendor/scm/components/PaymentsTable";
+import {
+  MARK_PAID_REFUSAL_MESSAGE,
+  canOfferMarkPaid,
+  planMarkPaid,
+} from "./markPaidPlan";
+import { useSiPaymentIntent } from "./siPaymentIntent";
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
@@ -85,9 +99,10 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
@@ -106,7 +121,7 @@ type SiHeader = {
   invoice_number: string;
   so_doc_no: string | null;
   delivery_order_id: string | null;
-  do_doc_no?: string | null;
+  do_number?: string | null;
   status: SiStatus;
   invoice_date: string;
   due_date: string | null;
@@ -136,25 +151,25 @@ type SiHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
-  total_centi: number;
-  paid_centi: number;
+  local_total_sen: number;
+  total_sen: number;
+  paid_sen: number;
   line_count: number;
   currency: string;
   // Finance-gated cost / margin fields (served on the detail payload; shown only
   // to a project_finance_viewer — same rule as the SI list columns, #574).
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number | null;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number | null;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -165,10 +180,10 @@ type SiItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
-  unit_cost_centi?: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
+  unit_cost_sen?: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -179,15 +194,7 @@ type SiItem = {
 /* ONE shared centi formatter (vendor/shared/format.ts) — the page-local copy
    this replaces had no finite guard, so an absent / non-numeric cost rendered
    the literal "MYR NaN"; the shared helper renders "—" instead. */
-const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = fmtMoneySen;
 
 // Days between today and an ISO date; positive when the date is in the past.
 // Only used for the due-date overdue check, so time-of-day noise is fine.
@@ -205,15 +212,12 @@ const refOf = (h: SiHeader): string =>
 
 const soOf = (h: SiHeader): string => h.so_doc_no || "—";
 
-// The SI header carries a delivery_order_id (UUID) plus an optional do_doc_no
-// display string served by the enriched endpoint. Prefer the doc no for the
-// header meta line; fall back to a short id slug so the field never renders
-// blank when the SI genuinely has a DO parent.
-const doOf = (h: SiHeader): string => {
-  if (h.do_doc_no) return h.do_doc_no;
-  if (h.delivery_order_id) return h.delivery_order_id.slice(0, 8);
-  return "—";
-};
+/* `do_number` is stamped on by the server (stampDoNumber) and is the field the
+   SI LIST already reads. This page read `do_doc_no` — a DELIVERY-RETURN column
+   that never existed here — and fell through to `delivery_order_id.slice(0,8)`,
+   printing a uuid fragment where a document number belongs. A dash is the
+   honest answer: it says we have nothing, not something false. docs/bugs/0526. */
+const doOf = (h: SiHeader): string => h.do_number || "—";
 
 const brandOf = (h: SiHeader): string => h.branding || "—";
 
@@ -221,23 +225,63 @@ const brandOf = (h: SiHeader): string => h.branding || "—";
 // exist for display. If for any reason the header total is 0 while the lines
 // aren't, fall back to the line sum so the drawer never lies.
 const totalOf = (h: SiHeader, items: SiItem[]): number =>
-  h.total_centi || h.local_total_centi || items.reduce((s, l) => s + (l.line_total_centi ?? 0), 0);
+  h.total_sen || h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
-const outstandingOf = (h: SiHeader, items: SiItem[]): number =>
-  Math.max(0, totalOf(h, items) - (h.paid_centi ?? 0));
+/* The deposit taken on the SALES ORDER this invoice came from, served beside
+   paid_sen by GET /sales-invoices/:id (backend lib/si-order-deposit). It is NOT
+   folded into paid_sen anywhere: the two are different money, banked against
+   different documents, and the office reading this screen has to be able to see
+   which document took it. */
+type OrderDeposit = {
+  so_doc_no: string;
+  order_collected_sen: number;
+  applied_sen: number;
+  transactions: Array<{
+    id: string;
+    paid_at: string | null;
+    method: string | null;
+    amount_sen: number;
+    account_sheet: string | null;
+    note: string | null;
+  }>;
+};
+
+/* Everything settling this invoice: its own receipts PLUS the slice of the
+   order's deposit allocated to it. `depositSen` is a REQUIRED argument on both
+   helpers below, not an optional one — its absence changes the answer, so an
+   optional parameter would leave every caller that forgot it silently showing
+   the old, wrong figure with no compile error (CLAUDE.md, optional-param-noop).
+
+   The arithmetic itself is the SHARED rule (vendor/scm/lib/si-outstanding.ts),
+   not a local copy: this page held the only deposit-aware formula in the app
+   for one day, and the list, the cards, the mobile card and the customer's PDF
+   all disagreed with it. `totalOf` stays local because only this screen has the
+   line items to fall back on. */
+/* ONE site reads the column, so the runtime guard on a hand-typed payload lives
+   in one place instead of once per formula. */
+const paidOf = (h: SiHeader): number => h.paid_sen ?? 0;
+
+const settledOf = (h: SiHeader, depositSen: number): number =>
+  siSettledSen(paidOf(h), depositSen);
+
+const outstandingOf = (h: SiHeader, items: SiItem[], depositSen: number): number =>
+  siOutstandingSen(totalOf(h, items), paidOf(h), depositSen);
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
-const effectiveOf = (h: SiHeader, items: SiItem[]): Effective => {
+/* The pill and the Outstanding figure are computed from the SAME `settledOf`,
+   so they cannot disagree: an invoice covered by the order's deposit cannot
+   read "Outstanding 0" beside a "Sent · awaiting payment" pill. */
+const effectiveOf = (h: SiHeader, items: SiItem[], depositSen: number): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
-  if (s === "PAID" || outstandingOf(h, items) === 0) return "paid";
-  if (s === "PARTIALLY_PAID" || (h.paid_centi ?? 0) > 0) return "partial";
+  if (s === "PAID" || outstandingOf(h, items, depositSen) === 0) return "paid";
+  if (s === "PARTIALLY_PAID" || settledOf(h, depositSen) > 0) return "partial";
   if (s === "OVERDUE") return "overdue";
   if (s === "DRAFT") return "draft";
   // Sent + anything else with no payment yet.
   const overdueDays = daysPast(h.due_date);
-  if (overdueDays > 0 && outstandingOf(h, items) > 0) return "overdue";
+  if (overdueDays > 0 && outstandingOf(h, items, depositSen) > 0) return "overdue";
   return "sent";
 };
 
@@ -446,15 +490,18 @@ function ActivityRow({
 function OutstandingHeroCard({
   header,
   items,
+  orderDeposit,
 }: {
   header: SiHeader;
   items: SiItem[];
+  orderDeposit: OrderDeposit | null;
 }) {
-  const eff = effectiveOf(header, items);
+  const depositSen = orderDeposit?.applied_sen ?? 0;
+  const eff = effectiveOf(header, items, depositSen);
   const t = EFFECTIVE_TONE[eff];
   const total = totalOf(header, items);
-  const paid = header.paid_centi ?? 0;
-  const outstanding = outstandingOf(header, items);
+  const paid = header.paid_sen ?? 0;
+  const outstanding = outstandingOf(header, items, depositSen);
   const isPaid = outstanding === 0;
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -488,10 +535,19 @@ function OutstandingHeroCard({
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
         <HeroLine k="Invoice total" v={fmtMoney(total, header.currency)} />
         <HeroLine
-          k="Paid"
+          k={depositSen > 0 ? "Paid on this invoice" : "Paid"}
           v={fmtMoney(paid, header.currency)}
           tone={paid > 0 ? "success" : "muted"}
         />
+        {/* Named for the document that actually took the money — the office
+            reads this line to know it does not have to chase it. */}
+        {depositSen > 0 && (
+          <HeroLine
+            k={`Deposit on ${orderDeposit!.so_doc_no}`}
+            v={fmtMoney(depositSen, header.currency)}
+            tone="success"
+          />
+        )}
         <HeroLine
           k="Outstanding"
           v={fmtMoney(outstanding, header.currency)}
@@ -575,6 +631,21 @@ export function SalesInvoiceDetailV2() {
   const [savingPayments, setSavingPayments] = useState(false);
   const paymentsSectionRef = useRef<HTMLDivElement | null>(null);
 
+  // ── Header-only edit (owner 2026-08-20) ──────────────────────────────────
+  // An SI's LINES are read-only — they are what the Delivery Order actually
+  // shipped (industry standard: an invoice's lines are locked to the delivery).
+  // The "Edit" button used to navigate to a dead ?edit=1 that nothing consumed.
+  // It now opens an inline HEADER editor: invoice date (only while DRAFT — the
+  // backend freezes it once issued, SI_ISSUED_FROZEN_FIELDS), due date and notes.
+  // Payments are edited in their own inline editor below; nothing here touches a
+  // line or a variant.
+  const updateHeader = useUpdateSalesInvoiceHeader();
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [hdrInvoiceDate, setHdrInvoiceDate] = useState("");
+  const [hdrDueDate, setHdrDueDate] = useState("");
+  const [hdrNotes, setHdrNotes] = useState("");
+  const headerSectionRef = useRef<HTMLDivElement | null>(null);
+
   const salesInvoice =
     (detail.data as { salesInvoice?: SiHeader } | undefined)?.salesInvoice ??
     null;
@@ -585,6 +656,19 @@ export function SalesInvoiceDetailV2() {
       ),
     [detail.data]
   );
+  /* The order's deposit, served alongside the invoice. `undefined` here is the
+     server saying it could not read the order (orderDepositUnavailable) — NOT
+     "there is no deposit", which is why the banner below exists: an invoice
+     whose order we cannot see must not quietly claim the customer owes
+     everything. That is the bug this whole screen change is about. */
+  const orderDeposit =
+    (detail.data as { orderDeposit?: OrderDeposit | null } | undefined)
+      ?.orderDeposit ?? null;
+  const orderDepositUnavailable = Boolean(
+    (detail.data as { orderDepositUnavailable?: boolean } | undefined)
+      ?.orderDepositUnavailable
+  );
+  const depositSen = orderDeposit?.applied_sen ?? 0;
 
   // Persisted SI payment row → the shared PaymentsTable draft shape.
   const apiToDraft = useCallback(
@@ -606,7 +690,7 @@ export function SalesInvoiceDetailV2() {
         merchantProvider: p.merchant_provider ?? "",
         installmentMonthsLabel: installmentLabel,
         onlineType: p.online_type ?? "",
-        amountCenti: p.amount_centi,
+        amountSen: p.amount_sen,
         accountSheet: p.account_sheet ?? "",
         approvalCode: p.approval_code ?? "",
         collectedBy: p.collected_by ?? "",
@@ -650,7 +734,7 @@ export function SalesInvoiceDetailV2() {
     { label: salesInvoice?.invoice_number ?? id ?? "Sales Invoice" },
   ]);
 
-  const eff = salesInvoice ? effectiveOf(salesInvoice, items) : null;
+  const eff = salesInvoice ? effectiveOf(salesInvoice, items, depositSen) : null;
   const stageLabel = salesInvoice
     ? STAGE_LABEL[(salesInvoice.status || "").toUpperCase()] ??
       salesInvoice.status
@@ -663,8 +747,8 @@ export function SalesInvoiceDetailV2() {
   );
 
   const total = salesInvoice ? totalOf(salesInvoice, items) : 0;
-  const outstanding = salesInvoice ? outstandingOf(salesInvoice, items) : 0;
-  const paid = salesInvoice?.paid_centi ?? 0;
+  const outstanding = salesInvoice ? outstandingOf(salesInvoice, items, depositSen) : 0;
+  const paid = salesInvoice?.paid_sen ?? 0;
 
   const overdueDays = salesInvoice ? daysPast(salesInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
@@ -674,7 +758,40 @@ export function SalesInvoiceDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/sales-invoices"));
-  const goEdit = () => id && navigate(`/scm/sales-invoices/${id}?edit=1`);
+  // Header-only edit — seed the drafts from the invoice and reveal the inline
+  // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
+  // while DRAFT; the backend rejects it once issued.
+  const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
+  const startEditHeader = () => {
+    if (!salesInvoice) return;
+    setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));
+    setHdrDueDate((salesInvoice.due_date ?? "").slice(0, 10));
+    setHdrNotes(salesInvoice.note ?? salesInvoice.notes ?? "");
+    setEditingHeader(true);
+    setTimeout(() => headerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  };
+  const cancelEditHeader = () => setEditingHeader(false);
+  const saveEditHeader = () => {
+    if (!id || !salesInvoice) return;
+    const body: Record<string, unknown> = {
+      dueDate: hdrDueDate || null,
+      notes: hdrNotes,
+    };
+    // Only send invoice date when it may change (DRAFT) — the backend freezes it
+    // once issued and rejects the whole PATCH if a frozen field is present.
+    if (siIsDraft) body.invoiceDate = hdrInvoiceDate || null;
+    updateHeader.mutate(
+      { id, ...body },
+      {
+        onSuccess: () => {
+          setEditingHeader(false);
+          void notify({ title: "Invoice updated", tone: "info" });
+        },
+        onError: (err) =>
+          notify({ title: "Update failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }),
+      },
+    );
+  };
   // Status transitions post to the same server endpoint the ledger page uses.
   // The endpoint keys off UPPERCASE status values (SENT / CANCELLED / PAID) — a
   // lowercase value silently misroutes (e.g. cancel would write "cancelled" and
@@ -822,13 +939,13 @@ export function SalesInvoiceDetailV2() {
       await deletePayment.mutateAsync({ id: salesInvoice.id, paymentId });
     }
     for (const d of plan.draftsToPost) {
-      if (d.amountCenti <= 0) continue;
+      if (d.amountSen <= 0) continue;
       const { method } = labelToApi(d.methodLabel);
       const body: { id: string } & Record<string, unknown> = {
         id: salesInvoice.id,
         paidAt: d.paidAt,
         method,
-        amountCenti: d.amountCenti,
+        amountSen: d.amountSen,
         accountSheet: d.accountSheet || null,
         approvalCode: d.approvalCode || null,
         collectedBy: d.collectedBy || null,
@@ -864,28 +981,51 @@ export function SalesInvoiceDetailV2() {
       )
       .finally(() => setSavingPayments(false));
   };
-  const doMarkPaid = async () => {
+  /* Mark paid RECORDS THE MONEY and writes NO status; markPaidPlan.ts holds the
+     trace and the four refusals. It stops at the editor rather than committing
+     because the METHOD is the operator's — a guessed `cash` lands in the daily
+     cash-up and leaves the drawer short. */
+  const doMarkPaid = () => {
     if (!salesInvoice) return;
-    if (
-      await askConfirm({
-        title: `Mark ${salesInvoice.invoice_number} as paid?`,
-        body: "Sets the invoice status to Paid.",
-        confirmLabel: "Mark paid",
-      })
-    ) {
-      updateStatus.mutate(
-        { id: salesInvoice.id, status: "PAID" },
-        {
-          onError: (e) =>
-            notify({
-              title: "Couldn't mark this invoice as paid",
-              body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
-              tone: "error",
-            }),
-        },
-      );
+    const plan = planMarkPaid({
+      status: salesInvoice.status,
+      outstandingSen: outstanding,
+      depositUnavailable: orderDepositUnavailable,
+    });
+    if (!plan.ok) {
+      // Fire-and-forget: the dialog's own OK button closes it (NotifyDialog).
+      void notify({
+        title: "Nothing to record",
+        body: MARK_PAID_REFUSAL_MESSAGE[plan.reason],
+        tone: "error",
+      });
+      return;
     }
+    paymentEditBaselineIds.current = new Set(persistedDrafts.map((draft) => draft.uid));
+    setPaymentDrafts([
+      ...persistedDrafts,
+      ...paymentRetryDrafts,
+      { ...newPaymentDraft(), amountSen: plan.amountSen },
+    ]);
+    setEditingPayments(true);
+    requestAnimationFrame(() =>
+      paymentsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    );
   };
+
+  /* The LIST's two payment entries land here (siPaymentIntent.ts). They delegate
+     because a receipt's amount must be decided where `orderDepositUnavailable`
+     is known: a list row cannot tell "the order collected nothing" from "we
+     could not read the order", and the second books the deposit twice. */
+  useSiPaymentIntent({
+    invoiceId: id ?? null,
+    ready: paymentsQ.isSuccess,
+    onOpen: goRecordPayment,
+    onBalance: doMarkPaid,
+  });
 
   // ── SI line item columns — money-forward, 5 cols like SO detail ────────
   const lineColumns: Column<SiItem>[] = [
@@ -934,10 +1074,10 @@ export function SalesInvoiceDetailV2() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, salesInvoice?.currency)}
+          {fmtMoney(l.unit_price_sen, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -946,10 +1086,10 @@ export function SalesInvoiceDetailV2() {
       label: "Disc",
       width: "88px",
       align: "right",
-      getValue: (l) => l.discount_centi,
+      getValue: (l) => l.discount_sen,
       render: (l) => {
         const isFoc =
-          l.unit_price_centi === 0 && (l.line_total_centi ?? 0) === 0;
+          l.unit_price_sen === 0 && (l.line_total_sen ?? 0) === 0;
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">
@@ -957,10 +1097,10 @@ export function SalesInvoiceDetailV2() {
             </Badge>
           );
         }
-        if (l.discount_centi > 0) {
+        if (l.discount_sen > 0) {
           return (
             <span className="font-money text-[13px] text-ink-secondary">
-              {fmtMoney(l.discount_centi, salesInvoice?.currency)}
+              {fmtMoney(l.discount_sen, salesInvoice?.currency)}
             </span>
           );
         }
@@ -972,10 +1112,10 @@ export function SalesInvoiceDetailV2() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_centi ?? 0, salesInvoice?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -1027,7 +1167,14 @@ export function SalesInvoiceDetailV2() {
   // A DRAFT SI is not payable (the server 409s any payment) until Confirm issues
   // it — so payment actions are hidden until it leaves DRAFT.
   const canRecordPayment = !isTerminal && !isDraft && outstanding > 0;
-  const canMarkPaid = !isTerminal && !isDraft && outstanding === 0;
+  /* WAS `outstanding === 0` — offered ONLY where there was no money to record,
+     which is why it could not have been recording any. Same rule `doMarkPaid`
+     re-checks on click, so a stale screen refuses rather than books. */
+  const canMarkPaid = canOfferMarkPaid({
+    status: salesInvoice.status,
+    outstandingSen: outstanding,
+    depositUnavailable: orderDepositUnavailable,
+  });
 
   return (
     <div className="pb-24 md:pb-0">
@@ -1116,7 +1263,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(salesInvoice)}
                       </span>
@@ -1127,7 +1274,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From SO{" "}
+                      {transferFromColumnLabel('so')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {soOf(salesInvoice)}
                       </span>
@@ -1210,7 +1357,7 @@ export function SalesInvoiceDetailV2() {
               <Button
                 variant="primary"
                 icon={<Edit3 size={14} />}
-                onClick={goEdit}
+                onClick={startEditHeader}
               >
                 Edit
               </Button>
@@ -1221,6 +1368,50 @@ export function SalesInvoiceDetailV2() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
+        {/* Header-only edit panel (owner 2026-08-20). Lines stay read-only — an
+            invoice's lines are what the DO shipped. Only invoice date (DRAFT
+            only), due date and notes are editable here. */}
+        {editingHeader && (
+          <div ref={headerSectionRef} className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-stone">
+            <div className="mb-3 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+              Edit invoice header
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">
+                  Invoice date{!siIsDraft && <span className="italic"> (locked once issued)</span>}
+                </span>
+                <DateField
+                  fullWidth
+                  value={hdrInvoiceDate}
+                  disabled={!siIsDraft}
+                  onChange={(iso) => setHdrInvoiceDate(iso)}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[12px] text-ink-muted">Due date</span>
+                <DateField fullWidth value={hdrDueDate} onChange={(iso) => setHdrDueDate(iso)} />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-3">
+                <span className="text-[12px] text-ink-muted">Notes</span>
+                <textarea
+                  value={hdrNotes}
+                  rows={2}
+                  onChange={(e) => setHdrNotes(e.target.value)}
+                  className="rounded-md border border-border bg-canvas px-2 py-1.5 text-[13px]"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Button variant="primary" icon={<Save size={14} />} onClick={saveEditHeader} disabled={updateHeader.isPending}>
+                {updateHeader.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="ghost" onClick={cancelEditHeader} disabled={updateHeader.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Mobile-only Outstanding hero — sits at the top of the scroll body.
             On md+ the dark aside hero replaces this. */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
@@ -1288,13 +1479,13 @@ export function SalesInvoiceDetailV2() {
                   muted={!salesInvoice.email}
                 />
                 <Field
-                  label="From DO"
+                  label={transferFromColumnLabel('do')}
                   value={doOf(salesInvoice)}
                   mono={doOf(salesInvoice) !== "—"}
                   muted={doOf(salesInvoice) === "—"}
                 />
                 <Field
-                  label="From SO"
+                  label={transferFromColumnLabel('so')}
                   value={soOf(salesInvoice)}
                   mono={soOf(salesInvoice) !== "—"}
                   muted={soOf(salesInvoice) === "—"}
@@ -1334,7 +1525,7 @@ export function SalesInvoiceDetailV2() {
                   muted={!salesInvoice.due_date}
                 />
                 <Field
-                  label="Delivery date"
+                  label="Delivery Date"
                   value={
                     salesInvoice.customer_delivery_date
                       ? fmtDate(salesInvoice.customer_delivery_date)
@@ -1515,18 +1706,68 @@ export function SalesInvoiceDetailV2() {
                     docNo={null}
                     payments={editingPayments ? paymentDrafts : persistedDrafts}
                     onChange={setPaymentDrafts}
-                    grandTotalCenti={total}
+                    grandTotalSen={total}
                     currency={salesInvoice.currency}
                     locked={!editingPayments || isCancelled}
                   />
                 )}
               </Section>
             </div>
+
+            {/* Collected on the ORDER — deliberately its own section rather than
+                extra rows in the table above. These receipts were banked against
+                the Sales Order, not this invoice, and merging the two lists would
+                lose exactly the fact the office needs: which document took the
+                money. Read-only here; it is edited on the order. */}
+            {orderDepositUnavailable && (
+              <div className="mt-4 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink" role="status">
+                We could not read the sales order behind this invoice, so any
+                deposit taken on the order is not counted in the figures above.
+                The outstanding amount shown may be too high. Please refresh.
+              </div>
+            )}
+            {orderDeposit && (
+              <Section title={`Collected on ${orderDeposit.so_doc_no}`}>
+                <p className="px-1 pb-2 text-[12.5px] text-ink-muted">
+                  Taken on the sales order, not on this invoice.{" "}
+                  <span className="font-semibold text-ink">
+                    {fmtMoney(orderDeposit.applied_sen, salesInvoice.currency)}
+                  </span>{" "}
+                  of it settles this invoice
+                  {orderDeposit.order_collected_sen > orderDeposit.applied_sen && (
+                    <>
+                      {" "}
+                      — the remaining{" "}
+                      {fmtMoney(
+                        orderDeposit.order_collected_sen - orderDeposit.applied_sen,
+                        salesInvoice.currency
+                      )}{" "}
+                      goes to the order&apos;s other invoices, earliest first
+                    </>
+                  )}
+                  .
+                </p>
+                <div className="divide-y divide-border">
+                  {orderDeposit.transactions.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between gap-3 px-1 py-2 text-[13px]">
+                      <span className="text-ink-muted">
+                        {fmtDate(t.paid_at)}
+                        {t.method ? ` · ${t.method}` : ""}
+                        {t.account_sheet ? ` · ${t.account_sheet}` : ""}
+                      </span>
+                      <span className="font-money font-semibold text-ink">
+                        {fmtMoney(t.amount_sen, salesInvoice.currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
           </DetailMain>
 
           <DetailAside>
             <div className="hidden lg:sticky lg:top-[124px] space-y-3 md:block">
-              <OutstandingHeroCard header={salesInvoice} items={items} />
+              <OutstandingHeroCard header={salesInvoice} items={items} orderDeposit={orderDeposit} />
 
               <AsideCard title="Key dates">
                 <KeyDateRow
@@ -1596,11 +1837,11 @@ export function SalesInvoiceDetailV2() {
               <AsideCard title="Recent activity">
                 <ActivityRow
                   title={`Invoice ${
-                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items)].label.toLowerCase()
+                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items, depositSen)].label.toLowerCase()
                   }`}
                   meta={fmtDate(salesInvoice.invoice_date)}
                   dot={
-                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items)].tone ===
+                    EFFECTIVE_TONE[effectiveOf(salesInvoice, items, depositSen)].tone ===
                     "success"
                       ? "success"
                       : "primary"
@@ -1644,7 +1885,7 @@ export function SalesInvoiceDetailV2() {
             ) : (
               <button
                 type="button"
-                onClick={goEdit}
+                onClick={startEditHeader}
                 className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
               >
                 <Edit3 size={16} /> Edit

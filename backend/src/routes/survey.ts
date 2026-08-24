@@ -85,6 +85,7 @@ app.get("/:token", async (c) => {
 
 // ── Submit the survey ─────────────────────────────────────────
 app.post("/:token", async (c) => {
+  // company-scope: capability token, not a session. The bearer resolves through assr_survey_tokens to ONE assr_id (:104-109) and every write below binds THAT id (:127, :140) or the token itself (:133) — never a route param. A stronger scope than a company predicate. Verified 2026-08-19.
   const limited = await checkRateLimit(c, "survey_submit", clientIp(c), 20, 900);
   if (limited) return limited;
 

@@ -52,7 +52,7 @@ export type ReturnablePcReceiveLine = {
   supplierId: string | null;
   supplierName: string | null;
   materialKind: string;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   itemGroup: string | null;
   description: string | null;
@@ -60,7 +60,7 @@ export type ReturnablePcReceiveLine = {
   accepted: number;
   returned: number;
   remaining: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants: unknown;
 };
 

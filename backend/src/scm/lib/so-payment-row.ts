@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
-import { postSoPayment } from '../../acc/payments';
+import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { recomputeSiPaidForOrder } from './si-order-deposit';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -39,11 +40,11 @@ export function deriveAccountSheet(
 }
 
 // merchant_provider, installment_months, approval_code, payment_date,
-// paid_centi) are NOT touched here — those columns are scheduled for
+// paid_sen) are NOT touched here — those columns are scheduled for
 // drop in a follow-up migration once live data is migrated.
 export const PAYMENT_COLS =
   'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, slip_key, collected_by, note, ' +
+  'online_type, approval_code, amount_sen, account_sheet, slip_key, collected_by, note, ' +
   'created_at, created_by, version, updated_at';
 
 /* ── recordSoPaymentRow — the factored insert+audit core of
@@ -63,7 +64,7 @@ export type SoPaymentRowInput = {
   installmentMonths?: number | null;
   onlineType?: string | null;
   approvalCode?: string | null;
-  amountCenti: number;
+  amountSen: number;
   accountSheet?: string | null;
   slipKey: string | null;
   collectedBy?: string | null;
@@ -71,7 +72,7 @@ export type SoPaymentRowInput = {
   createdBy: string;
   actorName?: string | null;
   /* First-deposit marker — the list/detail paid-rollup adds the header
-     deposit_centi on top of the ledger UNLESS an is_deposit row marks the
+     deposit_sen on top of the ledger UNLESS an is_deposit row marks the
      deposit as already booked (migration 0155 semantics). The scan job's
      first receipt row IS the header deposit, so it sets this. */
   isDeposit?: boolean;
@@ -123,7 +124,7 @@ export async function recordSoPaymentRow(
     installment_months: installmentMonths,
     online_type:        onlineType,
     approval_code:      p.approvalCode ?? null,
-    amount_centi:       p.amountCenti,
+    amount_sen:       p.amountSen,
     /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
        blank/whitespace falls back to the method-derived default. */
     account_sheet:      p.accountSheet?.trim() || deriveAccountSheet(p.method, merchantProvider, onlineType),
@@ -150,7 +151,7 @@ export async function recordSoPaymentRow(
     fieldChanges: [
       { field: 'paidAt',             from: null, to: p.paidAt },
       { field: 'method',             from: null, to: p.method },
-      { field: 'amountCenti',        from: null, to: p.amountCenti },
+      { field: 'amountSen',        from: null, to: p.amountSen },
       ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
       ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
       ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
@@ -192,5 +193,41 @@ export async function recordSoPaymentRow(
     console.error('[acc] SO payment not booked:', (data as { id?: string }).id, booked.status, booked.reason);
   }
 
+  /* The invoices raised off this order settle partly out of THIS money
+     (lib/si-order-deposit), so their status has to be re-rolled here. Without
+     it the invoice DETAIL would read correctly the moment you opened it while
+     the invoice LIST — which reads the persisted status — kept telling the
+     office to chase a customer who had just paid. Queued from the CORE for the
+     same reason the AutoCount enqueue above is: scan-so.ts books receipts
+     through here with no request context. Best-effort; a failure leaves a stale
+     status the next roll self-heals. */
+  await recomputeSiPaidForOrder(sb, p.docNo, companyId);
+
   return { payment: data as Record<string, unknown>, errorMessage: null };
+}
+
+/**
+ * Everything that must happen AFTER an order's payment row is deleted.
+ *
+ * Here rather than in the route for this module's standing reason: a rule
+ * written into `DELETE /:docNo/payments/:id` covers the payments a human
+ * deleted and nothing else. Both halves are best-effort — the operator's delete
+ * has already committed and neither a ledger nor a status roll may turn it into
+ * a 500 they would retry.
+ */
+export async function afterSoPaymentRemoved(
+  sb: any,
+  p: { paymentId: string; docNo: string; companyId: number | null },
+): Promise<void> {
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry. A row that never booked no-ops. */
+  const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo);
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
+  }
+  /* The deposit just shrank, so an invoice it was settling may owe money again.
+     This is the direction that matters: an invoice left reading PAID after the
+     payment behind it was reversed tells the office to collect nothing. */
+  await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
 }

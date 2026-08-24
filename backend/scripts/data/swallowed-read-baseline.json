@@ -70,7 +70,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/customer-credits.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/derive-line-branding.ts": {
@@ -78,14 +78,6 @@
       "catches": 0
     },
     "backend/src/scm/lib/do-email.ts": {
-      "reads": 1,
-      "catches": 0
-    },
-    "backend/src/scm/lib/do-line-remaining.ts": {
-      "reads": 8,
-      "catches": 0
-    },
-    "backend/src/scm/lib/do-unlinked-so-lines.ts": {
       "reads": 1,
       "catches": 0
     },
@@ -121,12 +113,12 @@
       "reads": 1,
       "catches": 0
     },
-    "backend/src/scm/lib/grn-rack-sync.ts": {
-      "reads": 5,
+    "backend/src/scm/lib/grn-audit-meta.ts": {
+      "reads": 1,
       "catches": 0
     },
-    "backend/src/scm/lib/grn-unlinked-po-lines.ts": {
-      "reads": 1,
+    "backend/src/scm/lib/grn-rack-sync.ts": {
+      "reads": 5,
       "catches": 0
     },
     "backend/src/scm/lib/inventory-movements.ts": {
@@ -161,8 +153,8 @@
       "reads": 12,
       "catches": 0
     },
-    "backend/src/scm/lib/return-unlinked-lines.ts": {
-      "reads": 2,
+    "backend/src/scm/lib/sales-doc-derive.ts": {
+      "reads": 4,
       "catches": 0
     },
     "backend/src/scm/lib/salesScope.ts": {
@@ -246,23 +238,23 @@
       "catches": 1
     },
     "backend/src/scm/routes/consignment-notes.ts": {
-      "reads": 13,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
-      "reads": 29,
+      "reads": 24,
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
-      "reads": 12,
+      "reads": 11,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 51,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
-      "reads": 36,
+      "reads": 34,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-rate-cards.ts": {
@@ -270,7 +262,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 20,
+      "reads": 19,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -298,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 51,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -330,15 +322,15 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 49,
+      "reads": 45,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 88,
+      "reads": 82,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
-      "reads": 6,
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/routes/outstanding.ts": {
@@ -374,11 +366,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-invoices.ts": {
-      "reads": 35,
+      "reads": 26,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
-      "reads": 27,
+      "reads": 25,
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {
@@ -389,12 +381,8 @@
       "reads": 5,
       "catches": 0
     },
-    "backend/src/scm/routes/sales-analysis.ts": {
-      "reads": 2,
-      "catches": 0
-    },
     "backend/src/scm/routes/sales-invoices.ts": {
-      "reads": 30,
+      "reads": 25,
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
@@ -410,7 +398,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 13,
+      "reads": 12,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {
@@ -493,10 +481,6 @@
       "reads": 0,
       "catches": 1
     },
-    "frontend/src/components/Avatar.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
     "frontend/src/components/Layout.tsx": {
       "reads": 0,
       "catches": 1
@@ -526,14 +510,6 @@
       "catches": 2
     },
     "frontend/src/lib/tableLayouts.ts": {
-      "reads": 0,
-      "catches": 1
-    },
-    "frontend/src/mobile/MobileAnnouncements.tsx": {
-      "reads": 0,
-      "catches": 1
-    },
-    "frontend/src/mobile/MobileInbox.tsx": {
       "reads": 0,
       "catches": 1
     },

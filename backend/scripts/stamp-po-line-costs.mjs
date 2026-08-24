@@ -7,7 +7,7 @@
 // paperwork, not a data fault: in live AutoCount HOOKKA is 2,264/2,264 PO lines
 // unpriced, OHANA 100%, DORSETTLOFT 100%, while GRDTL is 17,377/19,013 priced
 // (91.4%). The cutover copied that faithfully -- 565 of the 579 SO-linked PO
-// lines carry unit_price_centi = 0.
+// lines carry unit_price_sen = 0.
 //
 // WHY IT MATTERS. Nothing downstream puts a cost back. On the next receipt the
 // zero rides purchase_order_items -> grn_items -> the FIFO trigger's IN branch
@@ -65,13 +65,13 @@
 //
 // SAFETY -- only touches lines that are all of:
 //   . on a PO imported from AutoCount (purchase_orders.linked_ac_docno set),
-//   . still unpriced (unit_price_centi = 0), so a hand-entered price is never
+//   . still unpriced (unit_price_sen = 0), so a hand-entered price is never
 //     overwritten, and
 //   . still open (received_qty < qty), so no settled receipt is re-costed.
 // A line two AutoCount lines want at DIFFERENT prices is refused, not resolved.
-// Idempotent: the unit_price_centi = 0 predicate means a second run finds
+// Idempotent: the unit_price_sen = 0 predicate means a second run finds
 // nothing left to do.
-// RE-RUN: inert. Every UPDATE re-asserts COALESCE(unit_price_centi, 0) = 0, so
+// RE-RUN: inert. Every UPDATE re-asserts COALESCE(unit_price_sen, 0) = 0, so
 // a second run plans the same lines and writes none of them, and a price a
 // person entered in between is never clobbered.
 //
@@ -111,7 +111,7 @@ function parseCsvLine(line) {
   out.push(cur); return out;
 }
 
-/** AutoCount ItemCode -> ERP material_code, the pair every cutover script uses. */
+/** AutoCount ItemCode -> ERP item_code, the pair every cutover script uses. */
 function loadCodeMap() {
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
     .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
@@ -136,14 +136,14 @@ async function main() {
      has reached it, so both are read here and both are preferred over the
      mapping CSV. */
   const rows = await sql`
-    SELECT i.id, i.material_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
-           i.unit_price_centi, i.linked_ac_dtlkey,
+    SELECT i.id, i.item_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
+           i.unit_price_sen, i.linked_ac_dtlkey,
            h.linked_ac_docno AS ac_doc, h.po_number
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE i.company_id = ${CO}
        AND h.linked_ac_docno IS NOT NULL
-       AND COALESCE(i.unit_price_centi, 0) = 0
+       AND COALESCE(i.unit_price_sen, 0) = 0
        AND COALESCE(i.received_qty, 0) < i.qty`;
   log(`ERP imported PO lines still unpriced and still open: ${rows.length}`);
 
@@ -154,7 +154,7 @@ async function main() {
   const units = plan.reduce((s, p) => s + p.qty, 0);
   const value = plan.reduce((s, p) => s + p.centi * p.qty, 0) / 100;
 
-  log(`AutoCount open lines considered: ${stats.acOpenLines}; matched to an ERP line by dtlkey ${stats.matchedByDtlKey}, by supplier_sku+Desc2 ${stats.matchedBySupplierSku}, by material_code+Desc2 ${stats.matchedByMaterialCode}; no ERP line ${stats.acLinesWithNoErpLine}; no defensible price ${stats.acLinesWithNoPrice}`);
+  log(`AutoCount open lines considered: ${stats.acOpenLines}; matched to an ERP line by dtlkey ${stats.matchedByDtlKey}, by supplier_sku+Desc2 ${stats.matchedBySupplierSku}, by item_code+Desc2 ${stats.matchedByMaterialCode}; no ERP line ${stats.acLinesWithNoErpLine}; no defensible price ${stats.acLinesWithNoPrice}`);
   for (const k of Object.keys(tiers).sort()) log(`priced by ${k}: ${tiers[k]} ERP lines`);
   log(`TO STAMP: ${plan.length} ERP PO lines, ${units} open units, RM ${value.toFixed(2)} of committed purchase value`);
   log(`LEFT AT ZERO: ${skipped.length} ERP PO lines, ${skipped.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0)} open units`);
@@ -178,13 +178,13 @@ async function main() {
     const u = list.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0);
     log(`   ${reason}: ${list.length} lines / ${u} units`);
     const worst = new Map();
-    for (const k of list) worst.set(k.row.material_code, (worst.get(k.row.material_code) ?? 0) + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)));
+    for (const k of list) worst.set(k.row.item_code, (worst.get(k.row.item_code) ?? 0) + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)));
     for (const [code, u2] of [...worst.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`      ${code} x${u2}`);
   }
   /* An ambiguous line is the one a reviewer must see in full: it is where two
      AutoCount lines wanted different money on the same ERP row. */
   for (const s of skipped.filter((k) => k.reason === SKIP.AMBIGUOUS)) {
-    log(`   AMBIGUOUS ${s.row.id} ${s.row.po_number} (${s.row.ac_doc}) ${s.row.material_code}: ${s.prices.map(rm).join(" vs ")} from ${s.from.map((f) => f.ItemCode).join(", ")} -- refused, left at zero`);
+    log(`   AMBIGUOUS ${s.row.id} ${s.row.po_number} (${s.row.ac_doc}) ${s.row.item_code}: ${s.prices.map(rm).join(" vs ")} from ${s.from.map((f) => f.ItemCode).join(", ")} -- refused, left at zero`);
   }
 
   if (!APPLY) { log("DRY-RUN -- set APPLY=1 to write."); await sql.end(); return; }
@@ -194,9 +194,9 @@ async function main() {
        between the read and here is never clobbered, and a re-run is a no-op. */
     const res = await sql`
       UPDATE scm.purchase_order_items
-         SET unit_price_centi = ${p.centi},
-             line_total_centi = ${p.centi} * qty
-       WHERE id = ${p.id} AND COALESCE(unit_price_centi, 0) = 0`;
+         SET unit_price_sen = ${p.centi},
+             line_total_sen = ${p.centi} * qty
+       WHERE id = ${p.id} AND COALESCE(unit_price_sen, 0) = 0`;
     if (res.count > 0) done += res.count; else skippedWrite++;
   }
   /* plan holds one entry per ERP id, so `done` short of plan.length is never a
@@ -215,16 +215,16 @@ async function main() {
     log("VERIFY (fresh connection) - reading the priced rows back:");
     const ids = plan.slice(0, 300).map((p) => p.id);
     if (!ids.length) { log("  nothing planned, nothing to read back."); return; }
-    const rows = await check`SELECT id::text AS id, unit_price_centi, line_total_centi, qty
+    const rows = await check`SELECT id::text AS id, unit_price_sen, line_total_sen, qty
                                FROM scm.purchase_order_items WHERE id = ANY(${ids})`;
     const by = new Map(rows.map((r) => [r.id, r]));
     let ok = 0, wrong = 0, stillZero = 0;
     for (const p of plan.slice(0, 300)) {
       const r = by.get(String(p.id));
       if (!r) continue;
-      const price = Number(r.unit_price_centi ?? 0);
+      const price = Number(r.unit_price_sen ?? 0);
       if (price === 0) { stillZero++; continue; }
-      const total = Number(r.line_total_centi ?? 0);
+      const total = Number(r.line_total_sen ?? 0);
       if (price === p.centi && total === p.centi * Number(r.qty ?? 0)) ok++;
       else { wrong++; log(`  MISMATCH ${p.id}: unit ${price} (wanted ${p.centi}), line total ${total} (wanted ${p.centi * Number(r.qty ?? 0)})`); }
     }

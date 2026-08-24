@@ -31,12 +31,16 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import { resolveItemGroups } from '../lib/sku-category';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { CN_LOCK_COLS, CN_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -45,6 +49,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 
 export const consignmentNotes = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentNotes.use('*', supabaseAuth);
@@ -53,6 +58,11 @@ consignmentNotes.use('*', supabaseAuth);
    A Consignment Note locks (no line edit / no CANCELLED transition) once it has
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
+/* Header field-level lock — column set + labels from the ONE rulebook
+   (shared/document-policy.ts); mirrors the DO. */
+const CN_IDENTITY_LOCK_COLS = CN_LOCK_COLS;
+const CN_IDENTITY_LABELS = CN_LOCK_LABELS;
+
 async function noteHasDownstream(sb: any, noteId: string): Promise<{ error: string; message: string } | null> {
   const { count: crCount, error: crErr } = await sb.from('consignment_delivery_returns')
     .select('id', { head: true, count: 'exact' })
@@ -80,28 +90,28 @@ const HEADER =
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
-  'local_total_centi, total_cost_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
+  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, warehouse_id, ' +
   'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at';
 
 const ITEM =
   'id, consignment_delivery_order_id, consignment_so_item_id, item_code, item_group, description, description2, ' +
-  'uom, qty, m3_milli, unit_price_centi, discount_centi, line_total_centi, ' +
-  'unit_cost_centi, line_cost_centi, line_margin_centi, variants, notes, ' +
+  'uom, qty, m3_milli, unit_price_sen, discount_sen, line_total_sen, ' +
+  'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, ' +
   'line_delivery_date, line_delivery_date_overridden, created_at';
 
 const PAYMENT_COLS =
   'id, consignment_delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, collected_by, note, ' +
+  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
   'created_at, created_by';
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the note LIST and DETAIL
    payloads) but must reach ONLY a finance-viewer
    (lib/houzs-perms.canViewScmFinance). The note total everyone is meant to see
-   (local_total_centi) is deliberately NOT listed — the same line #625 (SO) and
+   (local_total_sen) is deliberately NOT listed — the same line #625 (SO) and
    #632 (DR) drew.
 
    Consignment got the SCOPE fix (#417) but never the FINANCE fix:
@@ -111,17 +121,17 @@ const PAYMENT_COLS =
 
    KEPT LOCAL, deliberately — do NOT "converge" this onto SO_FINANCE_KEYS. This
    list is the finance-shaped subset of THIS file's HEADER select, and the note
-   has a narrower money vocabulary than the SO: no service_centi /
-   service_cost_centi (a consignment note carries no service category) and no
-   deposit_centi (the note takes no deposit — the consignment ORDER does, which
+   has a narrower money vocabulary than the SO: no service_sen /
+   service_cost_sen (a consignment note carries no service category) and no
+   deposit_sen (the note takes no deposit — the consignment ORDER does, which
    is why CO_FINANCE_KEYS has it and this does not). Importing the SO's list
    would make this gate depend on a vocabulary this document does not speak, so
    an SO-only edit would silently move a rule on five other documents. The
    per-LINE keys ARE shared — see the SO_ITEM_FINANCE_KEYS import. */
 const CN_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
 /** Strip header + line cost/margin in place for a non-finance caller. Accepts a
@@ -171,7 +181,7 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, noteId: string) {
   const { data: items, error: itemsErr } = await sb.from('consignment_delivery_order_items')
-    .select('item_group, line_total_centi, line_cost_centi')
+    .select('item_group, line_total_sen, line_cost_sen')
     .eq('consignment_delivery_order_id', noteId);
   /* A failed READ is not an empty note, and `?? []` cannot tell them apart —
      it folded a transient blip into a ZERO header on a note whose lines were
@@ -184,9 +194,9 @@ async function recomputeTotals(sb: any, noteId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost  = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost  = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -197,17 +207,17 @@ async function recomputeTotals(sb: any, noteId: string) {
   }
   const margin = total - totalCost;
   const { error: updErr } = await sb.from('consignment_delivery_orders').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    local_total_centi: total,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    local_total_sen: total,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
     updated_at: new Date().toISOString(),
@@ -243,8 +253,24 @@ async function resolveNoteLineWarehouses(
     .filter((x): x is string => !!x))];
   const soWh = new Map<string, string | null>();
   if (soItemIds.length > 0) {
-    const { data: soRows } = await sb.from('consignment_sales_order_items')
-      .select('id, warehouse_id').in('id', soItemIds);
+    /* Company-scoped since 2026-08-21 (audit A3): these line ids arrive from the
+       caller on the create path, the client is service-role (no RLS), and this
+       read decides the SHIP-FROM warehouse — unscoped, a foreign CO line id
+       deducted stock out of the other company's warehouse under this company's
+       stamp. The create/add-line handlers now refuse foreign ids outright
+       (assertSourceLinesInCompany); this predicate is the depth behind them, so
+       a foreign id that slips through any future path resolves NO warehouse and
+       falls back to this company's own. Error bound: an unreadable row must not
+       silently become "use the fallback warehouse". */
+    const { data: soRows, error: soErr } = await sb.from('consignment_sales_order_items')
+      .select('id, warehouse_id').in('id', soItemIds)
+      .eq('company_id', companyId ?? -1);
+    if (soErr) {
+      /* Degrade to the fallback (this company's own warehouse), never to a
+         foreign one — and say so, instead of the old bare-destructure silence. */
+      // eslint-disable-next-line no-console
+      console.error('[consignment-notes] CO-line warehouse read failed — lines fall back to the header/default warehouse:', soErr.message);
+    }
     for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
       soWh.set(r.id, r.warehouse_id ?? null);
     }
@@ -298,7 +324,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
   if (!cancelled && !SHIPPED_STATES.includes(status)) return [];
 
   // 1. TARGET net OUT per bucket = sum of current active lines (empty if cancelled).
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled) {
     const { data: items } = await sb.from('consignment_delivery_order_items')
@@ -323,20 +349,20 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
       const k = `${wh}::${it.item_code}::${vk}::${batch ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
-      else targetByBucket.set(k, { warehouse_id: wh, product_code: it.item_code, variant_key: vk, product_name: it.description, qty, batch_no: batch });
+      else targetByBucket.set(k, { warehouse_id: wh, item_code: it.item_code, variant_key: vk, product_name: it.description, qty, batch_no: batch });
     }
   }
 
   // 2. CURRENT net OUT per bucket from ALL this note's movements (CS_DO ship +
   //    any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
-    .select('movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name')
+    .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', noteId)
     .in('source_doc_type', ['CS_DO', 'STOCK_TRANSFER']);
   type Agg = { out_qty: number; in_qty: number; out_total_cost: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
     if (m.movement_type === 'OUT') { a.out_qty += Number(m.qty ?? 0); a.out_total_cost += Number(m.total_cost_sen ?? 0); }
@@ -363,7 +389,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
       const useCsDo = neverMoved && !csDoEmitted.has(`${pc}::${vk}`);
       if (useCsDo) csDoEmitted.add(`${pc}::${vk}`);
       writes.push({
-        movement_type: 'OUT', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'OUT', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: delta,
         source_doc_type: useCsDo ? 'CS_DO' : 'STOCK_TRANSFER',
         source_doc_id: noteId, source_doc_no: noteNo,
@@ -374,7 +400,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
     } else {
       const unitCost = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
       writes.push({
-        movement_type: 'IN', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'IN', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: -delta, unit_cost_sen: unitCost,
         source_doc_type: 'STOCK_TRANSFER',
         source_doc_id: noteId, source_doc_no: cancelled ? `${noteNo}-CANCEL` : noteNo,
@@ -404,8 +430,8 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
    payload. Shared by POST / (bulk create) and POST /:id/items (single add).
 
    `sourceCostByOrderItem` (lib/source-cost) is the server's own read of the
-   SOURCE consignment-order line's unit_cost_centi. When the line is CO-linked it
-   WINS over the client's `unitCostCenti` unconditionally — the note must be
+   SOURCE consignment-order line's unit_cost_sen. When the line is CO-linked it
+   WINS over the client's `unitCostSen` unconditionally — the note must be
    booked at the cost the order snapshotted, which is history, not a catalog
    lookup. Ignoring the client is what makes stripping the cost off
    /deliverable-order-lines safe (the #632 trap, disarmed at its root). A
@@ -416,11 +442,11 @@ function buildItemRow(
   sourceCostByOrderItem?: Map<string, number>,
 ) {
   const qty = Number(it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceCenti ?? 0);
-  const discount = Number(it.discountCenti ?? 0);
+  const unitPrice = Number(it.unitPriceSen ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   const orderItemId = ((it.soItemId as string | undefined) ?? (it.consignmentSoItemId as string | undefined)) ?? undefined;
   const sourceCost = orderItemId ? sourceCostByOrderItem?.get(orderItemId) : undefined;
-  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostCenti ?? 0);
+  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostSen ?? 0);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
@@ -436,15 +462,15 @@ function buildItemRow(
     uom: (it.uom as string) ?? 'UNIT',
     qty,
     m3_milli: Number(it.m3Milli ?? 0),
-    unit_price_centi: unitPrice,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
+    unit_price_sen: unitPrice,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
     variants,
     notes: (it.notes as string) ?? null,
-    line_delivery_date: (it.lineDeliveryDate as string | null) ?? null,
+    line_delivery_date: dateOrNull(it.lineDeliveryDate),
     line_delivery_date_overridden: Boolean(it.lineDeliveryDateOverridden ?? false),
   };
 }
@@ -471,7 +497,7 @@ consignmentNotes.get('/', async (c) => {
      these columns over the whole filtered array; paging broke that. Recomputed
      server-side here over the identical filters. Only present on the paginated
      path. */
-  let aggregates: { revenueCenti: number; costCenti: number; marginCenti: number } | undefined;
+  let aggregates: { revenueSen: number; costSen: number; marginSen: number } | undefined;
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
     let q = sb.from('consignment_delivery_orders').select(HEADER).order('do_date', { ascending: false }).limit(500);
@@ -484,7 +510,7 @@ consignmentNotes.get('/', async (c) => {
     /* --- PAGINATED PATH (opt-in via `page`) --- */
     /* Deterministic order + unique tiebreaker (id, in HEADER). Sort columns are
        all already in the HEADER select (schema-drift safe). */
-    const SORT_COLS = new Set(['do_date', 'do_number', 'debtor_name', 'status', 'local_total_centi']);
+    const SORT_COLS = new Set(['do_date', 'do_number', 'debtor_name', 'status', 'local_total_sen']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'do_date:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'do_date';
     const sortAsc = rawDir === 'asc';
@@ -502,25 +528,25 @@ consignmentNotes.get('/', async (c) => {
     data = res.data ?? [];
     count = res.count ?? (res.data?.length ?? 0);
 
-    /* Full-set money KPIs — sum local_total_centi (Revenue) / total_cost_centi
-       (Cost) / total_margin_centi (Margin) over the SAME status + search filters
+    /* Full-set money KPIs — sum local_total_sen (Revenue) / total_cost_sen
+       (Cost) / total_margin_sen (Margin) over the SAME status + search filters
        as the page query, WITHOUT .range(). Mirrors the pre-pagination client KPI.
        paginateAll pages past the 1000-row cap. All three columns are in HEADER. */
-    const moneyRes = await paginateAll<{ local_total_centi: number | null; total_cost_centi: number | null; total_margin_centi: number | null }>((mfrom, mto) => {
-      let mq = sb.from('consignment_delivery_orders').select('local_total_centi, total_cost_centi, total_margin_centi');
+    const moneyRes = await paginateAll<{ local_total_sen: number | null; total_cost_sen: number | null; total_margin_sen: number | null }>((mfrom, mto) => {
+      let mq = sb.from('consignment_delivery_orders').select('local_total_sen, total_cost_sen, total_margin_sen');
       if (status) mq = mq.eq('status', status);
       if (qText) { const s = escapeForOr(qText); if (s) mq = mq.or(`do_number.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
       mq = scopeToCompany(mq, c);
       return mq.range(mfrom, mto);
     });
     if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-    let revenueCenti = 0, costCenti = 0, marginCenti = 0;
+    let revenueSen = 0, costSen = 0, marginSen = 0;
     for (const m of (moneyRes.data ?? [])) {
-      revenueCenti += m.local_total_centi ?? 0;
-      costCenti += m.total_cost_centi ?? 0;
-      marginCenti += m.total_margin_centi ?? 0;
+      revenueSen += m.local_total_sen ?? 0;
+      costSen += m.total_cost_sen ?? 0;
+      marginSen += m.total_margin_sen ?? 0;
     }
-    aggregates = { revenueCenti, costCenti, marginCenti };
+    aggregates = { revenueSen, costSen, marginSen };
   }
 
   /* Downstream-lock — stamp has_children when a non-cancelled Consignment Return
@@ -541,13 +567,13 @@ consignmentNotes.get('/', async (c) => {
   const consignmentNotesOut = rows.map((r) => ({ ...r, has_children: childIds.has(r.id) }));
   /* Strip the header finance keys for a non-finance caller (list half) AND drop
      the full-set Cost / Margin KPIs — `aggregates` is derived from
-     total_cost_centi / total_margin_centi, so shipping it would hand back over
+     total_cost_sen / total_margin_sen, so shipping it would hand back over
      the whole filtered set exactly what the row strip just removed. Revenue
-     (local_total_centi) stays: it is the note total everyone may see. */
+     (local_total_sen) stays: it is the note total everyone may see. */
   gateCnFinance(c, consignmentNotesOut, null);
   const aggregatesOut = canViewScmFinance(c)
     ? aggregates
-    : (aggregates ? { revenueCenti: aggregates.revenueCenti } : undefined);
+    : (aggregates ? { revenueSen: aggregates.revenueSen } : undefined);
   if (paginate) return c.json({ deliveryOrders: consignmentNotesOut, total: count ?? consignmentNotesOut.length, page, pageSize, aggregates: aggregatesOut });
   return c.json({ deliveryOrders: consignmentNotesOut });
 });
@@ -559,7 +585,7 @@ consignmentNotes.get('/', async (c) => {
 // pickable. Mirrors the SO→DO from-so picker. MUST precede /:id.
 //
 // FINANCE-GATED (was not — see below). Each descriptor carries the source order
-// line's unitCostCenti, so this picker shipped every outstanding line's unit cost
+// line's unitCostSen, so this picker shipped every outstanding line's unit cost
 // to any caller who could reach it. It was left open deliberately, because
 // ConsignmentNoteFromOrder / ConsignmentNoteNew fed the value straight back into
 // the create payload and buildItemRow trusted it — a strip alone would have
@@ -585,7 +611,7 @@ consignmentNotes.get('/deliverable-order-lines', async (c) => {
 
   const { data: items, error: iErr } = await chunkIn<Record<string, unknown>>(docNos, (batch, from, to) => sb
     .from('consignment_sales_order_items')
-    .select('id, doc_no, item_code, item_group, description, description2, uom, qty, unit_price_centi, discount_centi, unit_cost_centi, variants, cancelled')
+    .select('id, doc_no, item_code, item_group, description, description2, uom, qty, unit_price_sen, discount_sen, unit_cost_sen, variants, cancelled')
     .in('doc_no', batch)
     .range(from, to));
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
@@ -594,10 +620,17 @@ consignmentNotes.get('/deliverable-order-lines', async (c) => {
   const itemIds = itemList.map((it) => it.id as string);
 
   // Already-delivered per CO line — only count non-cancelled notes.
-  const { data: noteRows } = await sb
+  // Paged + company-scoped + error bound (2026-08-21, audit A6): the sibling
+  // read two queries up has used paginateAll all along; this one was a bare
+  // .neq() capped at 1000 rows, so past that the picker under-counted delivered
+  // and re-offered CO lines that were already fully shipped.
+  const { data: noteRows, error: noteErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_orders')
     .select('id, status')
-    .neq('status', 'CANCELLED');
+    .neq('status', 'CANCELLED'), c)
+    .order('id', { ascending: true })
+    .range(from, to));
+  if (noteErr) return c.json({ error: 'load_failed', reason: noteErr.message }, 500);
   const liveNoteIds = new Set(((noteRows ?? []) as Array<{ id: string }>).map((r) => r.id));
   const { data: noteItems } = await chunkIn<{ consignment_delivery_order_id: string; consignment_so_item_id: string | null; qty: number }>(itemIds, (batch, from, to) => sb
     .from('consignment_delivery_order_items')
@@ -627,15 +660,15 @@ consignmentNotes.get('/deliverable-order-lines', async (c) => {
       ordered,
       delivered,
       outstanding: ordered - delivered,
-      unitPriceCenti: Number(it.unit_price_centi ?? 0),
-      discountCenti: Number(it.discount_centi ?? 0),
-      unitCostCenti: Number(it.unit_cost_centi ?? 0),
+      unitPriceSen: Number(it.unit_price_sen ?? 0),
+      discountSen: Number(it.discount_sen ?? 0),
+      unitCostSen: Number(it.unit_cost_sen ?? 0),
       variants: it.variants ?? null,
     };
   }).filter((l) => l.outstanding > 0);
 
   if (!canViewScmFinance(c)) {
-    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostCenti;
+    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
   return c.json({ lines });
 });
@@ -683,7 +716,7 @@ consignmentNotes.post('/', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
-  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -691,6 +724,34 @@ consignmentNotes.post('/', async (c) => {
   if (items.length > 0) {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+  }
+
+  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0524.
+     `item_group` is not a label, it is the input to the stock bucket
+     (shared/variant-key.ts): the OUT that sends the goods to the showroom floor is keyed from the group
+     STORED on the line, so a client that sends a blank or wrong one picks the
+     bucket. Rewritten here, above every reader, so the value written and the
+     value later keyed from cannot differ. #2660 closed the inbound half. */
+  items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
+
+  /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the GRN/DR/DO trio always
+     guarded this and the consignment clone never did. Two caller-supplied
+     inputs crossed the tenant boundary unchecked: the CO line ids (which
+     resolve the ship-from WAREHOUSE and the unit cost — a foreign id deducted
+     stock out of the other company's warehouse under this company's stamp),
+     and the free-text consignment_so_doc_no (which document-flow then traced
+     across tenants). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_sales_order_items',
+      items.map((it) => (it.soItemId ?? it.consignmentSoItemId) as string | undefined));
+    if (!xl.ok) return c.json(xl.body, xl.status);
+    const soDocNo = (body.consignmentSoDocNo as string) ?? (body.soDocNo as string) ?? null;
+    if (soDocNo) {
+      const { data: co, error: coErr } = await scopeToCompany(
+        sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', soDocNo), c).maybeSingle();
+      if (coErr) return c.json({ error: 'source_check_failed', reason: coErr.message }, 500);
+      if (!co) return c.json({ error: 'consignment_order_not_found', docNo: soDocNo }, 404);
+    }
   }
 
   /* DROPPED vs DO: the soft short-stock confirmStockShort gate, the SO-remaining
@@ -708,9 +769,9 @@ consignmentNotes.post('/', async (c) => {
     consignment_so_doc_no: (body.consignmentSoDocNo as string) ?? (body.soDocNo as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    do_date: (body.doDate as string) ?? todayMyt(),
-    expected_delivery_at: (body.expectedDeliveryAt as string) ?? (body.customerDeliveryDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    do_date: dateOrNull(body.doDate) ?? todayMyt(),
+    expected_delivery_at: dateOrNull(body.expectedDeliveryAt) ?? dateOrNull(body.customerDeliveryDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     driver_id: (body.driverId as string) ?? null,
     driver_name: (body.driverName as string) ?? null,
     vehicle: (body.vehicle as string) ?? null,
@@ -758,7 +819,7 @@ consignmentNotes.post('/', async (c) => {
     const sourceCostByOrderItem = await sourceUnitCostByItemId(
       sb, 'consignment_sales_order_items',
       items.map((it: Record<string, unknown>) => (it.soItemId ?? it.consignmentSoItemId) as string | undefined),
-    );
+    activeCompanyId(c) ?? null);
     const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByOrderItem));
     const { error: iErr } = await sb.from('consignment_delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('consignment_delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -811,11 +872,27 @@ consignmentNotes.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  /* Header is locked once a Consignment Return exists. */
-  const headerLock = await noteHasDownstream(sb, id);
-  if (headerLock) return c.json(headerLock, 409);
+  /* Header lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1): once a Consignment
+     Return exists only the columns it inherits (customer + currency + location +
+     branding) freeze; the Note's own delivery dates, dispatch and notes stay
+     editable. Mirrors the DO. */
+  {
+    const { data: before, error: bErr } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
+      .select('debtor_code, debtor_name, currency, sales_location, branding').eq('id', id), co.companyId).maybeSingle();
+    if (bErr) return c.json({ error: 'update_failed', reason: bErr.message }, 500);
+    const locked = before ? changedLockedCols(CN_IDENTITY_LOCK_COLS, updates, before as Record<string, unknown>) : [];
+    if (locked.length > 0 && (await noteHasDownstream(sb, id))) {
+      return c.json(identityLockedRefusal({
+        error: 'cn_identity_locked', fields: locked, labels: CN_IDENTITY_LABELS,
+        what: 'Consignment Note', child: 'Consignment Return', ownFields: 'delivery dates, dispatch details and notes',
+      }), 409);
+    }
+  }
 
   const { data, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -838,6 +915,10 @@ consignmentNotes.post('/:id/items', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* SKU wins, decided once — docs/bugs/0524. Same rule as the create path: the
+     stored group is what the stock movement is keyed from. */
+  it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
+
   /* Downstream-lock — line-add is blocked once a Consignment Return exists. */
   const childLock = await noteHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
@@ -845,9 +926,16 @@ consignmentNotes.post('/:id/items', async (c) => {
   const { data: header } = await scopeToCompanyId(sb.from('consignment_delivery_orders').select('id, status, warehouse_id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
+  /* Same cross-company line guard as the create path (2026-08-21, audit A3). */
+  {
+    const xl = await assertSourceLinesInCompany(sb, c, 'consignment_sales_order_items',
+      [(it.soItemId ?? it.consignmentSoItemId) as string | undefined]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
+  }
+
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'consignment_sales_order_items', [(it.soItemId ?? it.consignmentSoItemId) as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('consignment_delivery_order_items').insert({ company_id: activeCompanyId(c), ...row }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* The ITEM select echoes the stored line back — cost/margin included. A
@@ -884,16 +972,32 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_delivery_order_items')
-    .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, consignment_so_item_id')
+    .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, consignment_so_item_id')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
+  /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
+     or re-points the code, decides which bucket this line's stock resync moves;
+     the group stored is the SKU's. Every reader below takes
+     `it.itemGroup ?? prev.item_group`, so one assignment settles the stored
+     column, description2 and the resync's key together.
+     ONLY when the request touches identity. An edit that changes neither is
+     left exactly as it was: repairing rows this request did not touch is a
+     different, write-shaped job that needs the probe's count first (#2671). */
+  if (it.itemGroup !== undefined || it.itemCode !== undefined) {
+    const [resolved] = await resolveItemGroups(sb, [{
+      itemCode: (it.itemCode ?? prev.item_code) as string | null,
+      itemGroup: (it.itemGroup ?? prev.item_group) as string | null,
+    }], activeCompanyId(c) ?? null);
+    it.itemGroup = resolved?.itemGroup ?? null;
+  }
+
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
-  const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
+  const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_centi for a non-finance caller, and ConsignmentNoteDetail
-     seeds each line draft straight off that payload (`unit_cost_centi ?? 0`) and
+     strips unit_cost_sen for a non-finance caller, and ConsignmentNoteDetail
+     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
      posts the value back here on save — so trusting the client would let the
      stripped field round-trip as a genuine 0 and wipe the line's cost basis
      (recomputeTotals would then roll the note's cost to 0 and its margin to the
@@ -902,16 +1006,16 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
      `explicitCost > 0` precedence makes a 0 fall through to the stored cost —
      which is why the same strip was safe there (#625). Keep the stored cost for
      a non-finance caller; a finance caller is unaffected. */
-  const unitCost = (canViewScmFinance(c) && it.unitCostCenti !== undefined)
-    ? Number(it.unitCostCenti)
-    : Number(prev.unit_cost_centi);
+  const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
+    ? Number(it.unitCostSen)
+    : Number(prev.unit_cost_sen);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unitPrice, discount_centi: discount, unit_cost_centi: unitCost,
-    line_total_centi: lineTotal, line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
+    qty, unit_price_sen: unitPrice, discount_sen: discount, unit_cost_sen: unitCost,
+    line_total_sen: lineTotal, line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
   };
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
@@ -920,6 +1024,7 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  coerceEmptyDates(updates);
   if (it.lineDeliveryDate !== undefined) updates['line_delivery_date_overridden'] = true;
   if (it.lineDeliveryDateOverridden !== undefined) updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);
   {
@@ -996,7 +1101,7 @@ const paymentCreateSchema = z.object({
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
   approvalCode:       z.string().optional().nullable(),
-  amountCenti:        z.number().int().nonnegative(),
+  amountSen:        z.number().int().nonnegative(),
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
@@ -1032,7 +1137,7 @@ consignmentNotes.post('/:id/payments', async (c) => {
     installment_months: installmentMonths,
     online_type:        onlineType,
     approval_code:      p.approvalCode ?? null,
-    amount_centi:       p.amountCenti,
+    amount_sen:       p.amountSen,
     account_sheet:      p.accountSheet ?? null,
     collected_by:       p.collectedBy ?? null,
     note:               p.note ?? null,
@@ -1062,10 +1167,39 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   let body: { status?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
+  /* NORMALISE FIRST, exactly as the Sales Order, Delivery Order and Sales
+     Invoice status handlers already do (`String(body.status).trim().toUpperCase()`
+     in mfg-sales-orders.ts / delivery-orders-mfg.ts, `canonicalSiStatus` in
+     sales-invoices.ts). This handler was the one that never got it, and the
+     asymmetry was inside this same FILE: `resyncNoteInventory` uppercases the
+     PERSISTED status before deciding `cancelled` (:293), while every gate below
+     compared the INCOMING status raw.
+
+     What a lowercase 'cancelled' did, before this line existed: it missed the
+     already-cancelled echo, missed `noteHasDownstream`, missed the atomic
+     `.neq('status','CANCELLED')` single-flight, fell into the plain `else`
+     write, and — the damage — never called `resyncNoteInventory`, so the CS_DO
+     inventory OUT was NEVER reversed. The note then read as cancelled
+     everywhere (the resync's own uppercasing agrees it is), with its stock still
+     shipped out. That is the Sales Invoice bug (`SI_STATUS_CANON`, "a lowercase
+     'cancelled' slipped past the `status === 'CANCELLED'` gate and skipped the
+     revenue reversal") reproduced on this document with stock instead of
+     revenue. No live caller sends lowercase HERE today — but
+     SalesOrderDetailV2 sends `"cancelled"` and SalesInvoicesListV2 sends
+     `"paid"`, so the assumption that callers send canonical case has already
+     been broken twice on sibling documents.
+
+     Deliberately NOT accompanied by a status whitelist. The DO handler can
+     afford `DO_STATUSES.has(...)` because that vocabulary is declared in one
+     place; this document's is not, and a guessed whitelist would refuse a
+     legitimate status. Rejecting an unknown value is written up as a
+     recommendation, not shipped here. */
+  const toStatus = String(body.status).trim().toUpperCase();
+
   const { data: cur } = await scopeToCompanyId(sb.from('consignment_delivery_orders').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ consignmentNote: { id, status: 'CANCELLED' } });
   }
 
@@ -1078,23 +1212,23 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   }
 
   /* Downstream-lock — only the CANCELLED transition is gated. */
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const childLock = await noteHasDownstream(sb, id);
     if (childLock) return c.json(childLock, 409);
   }
 
   const now = new Date().toISOString();
   const ts: Record<string, string> = { updated_at: now };
-  if (body.status === 'DISPATCHED') ts.dispatched_at = now;
-  if (body.status === 'SIGNED')     ts.signed_at = now;
-  if (body.status === 'DELIVERED')  ts.delivered_at = now;
+  if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  if (toStatus === 'SIGNED')     ts.signed_at = now;
+  if (toStatus === 'DELIVERED')  ts.delivered_at = now;
 
   /* ATOMIC cancel guard — make the CANCELLED write conditional on the row still
      being non-cancelled so two concurrent cancels can't double-reverse. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-      .update({ status: body.status, ...ts })
+      .update({ status: toStatus, ...ts })
       .eq('id', id).neq('status', 'CANCELLED'), co.companyId)
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -1102,7 +1236,7 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-      .update({ status: body.status, ...ts }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
@@ -1113,7 +1247,7 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   // Hoisted: the response is OUTSIDE this block, so a block-scoped
   // declaration would leave the cancel path unable to report.
   let resyncErrs: string[] = [];
-  if (SHIPPED_STATES.includes(body.status) || body.status === 'CANCELLED') {
+  if (SHIPPED_STATES.includes(toStatus) || toStatus === 'CANCELLED') {
     /* REPORTED, not discarded. The CREATE path returns this exact string[] as
     movementErrors; these mutations threw it away, so a resync that failed to
     book or drain stock returned a clean 200. writeMovements never throws, so

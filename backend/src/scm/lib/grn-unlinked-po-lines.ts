@@ -29,34 +29,35 @@
 // vocabulary and the lookup differ.
 // ----------------------------------------------------------------------------
 
-import { findUnlinkedSoItemLines, type UnlinkedCandidate } from './do-unlinked-so-lines';
+import {
+  findUnlinkedSoItemLines,
+  readParentCodes,
+  type ParentCodes,
+  type UnlinkedCandidate,
+  type UnlinkedScan,
+} from './do-unlinked-so-lines';
 
 export type UnlinkedPoOffender = {
   lineRef: string;
-  materialCode: string;
+  itemCode: string;
   qty: number;
   poNumber: string;
 };
 
-/** Every material_code the named Purchase Order orders. Empty when the GRN has
+/** Every item_code the named Purchase Order orders. Empty when the GRN has
  *  no parent PO, which is the legitimate free-receipt case. */
-export async function poMaterialCodesOf(
+export function poMaterialCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   purchaseOrderId: string | null | undefined,
-): Promise<Set<string>> {
-  const id = String(purchaseOrderId ?? '').trim();
-  if (!id) return new Set();
-  const { data } = await sb
-    .from('purchase_order_items')
-    .select('material_code')
-    .eq('purchase_order_id', id);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ material_code: string | null }>) {
-    const k = String(r.material_code ?? '').trim().toUpperCase();
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'purchase_order_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'purchase_order_id',
+    parentId: purchaseOrderId,
+  });
 }
 
 /**
@@ -73,9 +74,10 @@ export async function findUnlinkedPoLines(
   purchaseOrderId: string | null | undefined,
   poNumber: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedPoOffender[]> {
-  if (!String(purchaseOrderId ?? '').trim()) return [];
-  if (!lines.some((l) => !l.soItemId)) return [];   // nothing unlinked — skip the read
+): Promise<UnlinkedScan<UnlinkedPoOffender>> {
+  if (!String(purchaseOrderId ?? '').trim()) return { ok: true, offenders: [] };
+  // nothing unlinked — skip the read
+  if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
 
   /* The number is fetched only on this path, and only when a line is actually
      unlinked — a receipt whose lines are all linked pays for neither query. */
@@ -86,20 +88,24 @@ export async function findUnlinkedPoLines(
       : sb.from('purchase_orders').select('po_number').eq('id', purchaseOrderId).maybeSingle()
           .then((r: { data?: { po_number?: string | null } | null }) => r?.data?.po_number ?? ''),
   ]);
+  if (!codes.ok) return codes;
   /* The parent label must be non-empty for the shared predicate to engage; the
      id is the last resort so a missing PO row never turns into "allowed". */
   const label = String(fetchedNo ?? '').trim() || String(purchaseOrderId);
-  return findUnlinkedSoItemLines(label, lines, codes).map((o) => ({
-    lineRef: o.lineRef,
-    materialCode: o.itemCode,
-    qty: o.qty,
-    poNumber: label,
-  }));
+  return {
+    ok: true,
+    offenders: findUnlinkedSoItemLines(label, lines, codes.codes).map((o) => ({
+      lineRef: o.lineRef,
+      itemCode: o.itemCode,
+      qty: o.qty,
+      poNumber: label,
+    })),
+  };
 }
 
 export function unlinkedPoLinesResponse(offenders: UnlinkedPoOffender[]) {
   const po = offenders[0]?.poNumber ?? '';
-  const list = [...new Set(offenders.map((o) => o.materialCode))].join(', ');
+  const list = [...new Set(offenders.map((o) => o.itemCode))].join(', ');
   return {
     error: 'unlinked_po_lines',
     message:

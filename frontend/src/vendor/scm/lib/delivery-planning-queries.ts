@@ -11,10 +11,12 @@
 // HOUZS VENDOR NOTE: the source has NO `import { supabase } from './supabase'`
 // to drop (it only used authedFetch). Everything else is copied verbatim.
 
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
+import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
 
 export const DELIVERY_STATES = [
   'PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED',
@@ -64,15 +66,23 @@ export type PlanningOrder = {
   debtor_code: string | null;
   debtor_name: string | null;
   phone: string | null;
+  /* Sales context (owner 2026-08-19) — who sold it + the sales venue. `agent`
+     is free text (sometimes a raw UUID); resolve to a display name via
+     useStaffLookup(agent, salesperson_id), never render either raw. null on
+     ASSR / DP rows; project rows fill `venue` with the PMS event venue.
+     Optional (`?`) so a cached pre-upgrade payload still typechecks. */
+  agent?: string | null;
+  salesperson_id?: string | null;
+  venue?: string | null;
   branding: string | null;
   status: string;
   delivery_state: DeliveryState;
   delivery_state_override: string | null;
-  balance_centi: number;
+  balance_sen: number;
   /* Live balance (= local_total − Σpayments, from the SO-list payment-totals
-     view); null when the view has no row → fall back to balance_centi. */
-  balance_centi_live: number | null;
-  local_total_centi: number;
+     view); null when the view has no row → fall back to balance_sen. */
+  balance_sen_live: number | null;
+  local_total_sen: number;
   so_date: string | null;
   /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
@@ -117,9 +127,18 @@ export type PlanningOrder = {
   /* The latest DO's OWN document date (delivery_orders.do_date); null when this
      SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
+  /* A STATUS: 'READY' | 'PENDING' only. There is no third value — the string
+     "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
+     this field and produced a header that contradicted every row under it. */
   stock_status: string;
+  /* The LABEL: '' | 'READY' | 'PARTIAL' | a '/'-joined list of the groups that
+     ARE in ('BEDFRAME', 'MATTRESS/ACC'). Names what IS ready — blank means
+     nothing is, including an accessory-only order whose accessory is short. */
   stock_remark: string;
+  /* VACUOUSLY true when the SO has no main line — do not gate shipping on it. */
   is_main_ready: boolean;
+  /* THE ship gate. Use this, not is_main_ready, to ask "can this leave". */
+  is_ship_ready: boolean;
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
@@ -250,9 +269,9 @@ export type PlanningLineItem = {
   description2: string | null;
   uom: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  discount_centi: number | null;
-  total_centi: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
+  total_sen: number | null;
   variants: Record<string, unknown> | null;
   stock_status: string | null;
   cancelled: boolean | null;
@@ -563,6 +582,16 @@ export type DpOrderRow = {
   remark: string | null;
   created_at: string;
   updated_at: string;
+  /* Sales context off the SOURCE SO (owner 2026-08-19) — stamped server-side on
+     SO-sourced jobs only; null on manual / supplier / project / case rows.
+     Resolve so_agent / so_salesperson_id to a name via useStaffLookup, never
+     render either raw. Optional (`?`) so a cached pre-upgrade payload still
+     typechecks. */
+  so_agent?: string | null;
+  so_salesperson_id?: string | null;
+  so_venue?: string | null;
+  so_processing_date?: string | null;
+  so_total_sen?: number | null;
 };
 export function useDpOrders() {
   return useQuery({
@@ -653,7 +682,7 @@ export type ScheduleDeliveryVars = {
   /* Fleet A3: the captured cost (integer sen) when the chosen lorry is a 3PL
      carrier (OUTSOURCE). Written on a trip CREATE; ignored for an own-fleet
      lorry. This is the seam Module C's rate-card will compute against. */
-  threePlCostCenti?: number | null;
+  threePlCostSen?: number | null;
   /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
@@ -674,7 +703,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostCenti }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -692,7 +721,7 @@ export function useScheduleDelivery() {
       if (etaOffsetS !== undefined) body.etaOffsetS = etaOffsetS;
       if (legDistanceM !== undefined) body.legDistanceM = legDistanceM;
       if (legDurationS !== undefined) body.legDurationS = legDurationS;
-      if (threePlCostCenti !== undefined) body.threePlCostCenti = threePlCostCenti;
+      if (threePlCostSen !== undefined) body.threePlCostSen = threePlCostSen;
       return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });
@@ -813,6 +842,39 @@ export type ConvertSoResult = {
    into a burst of Worker subrequests. */
 export function useConvertSosToDo() {
   const qc = useQueryClient();
+
+  /* ONE IDEMPOTENCY KEY PER SALES ORDER, held across the whole mount.
+     Cutting a DO is a stock write, so a double-fire is a double shipment — the
+     shape of the SO-2606-019 double-ship already on record. Mobile's identical
+     call carries a key; this one did not, and it is fired from BOTH a single-row
+     action and a 4-at-a-time bulk bar.
+
+     Keyed by DOC NO, not by mount, and that is not a variation on mobile's
+     scheme — it is what mobile's own comment instructs. Its key is per-mount
+     only because MobileDeliveryPlanning renders StopDetail behind an early
+     return, so a mount is exactly one stop: "If that early return is ever
+     replaced ... this key MUST move onto the order identity". This board is
+     precisely that case — one mount converts many SOs — so the identity is the
+     SO. A single per-mount key here would post SO #2 under SO #1's claim with a
+     different payload and be answered `idempotency_key_reused`, converting the
+     first order and failing the rest of the bulk selection.
+
+     Minted lazily on first use and NEVER rotated for the life of the mount, per
+     the module's rule that a key is retired by the INTENT ending, not by the
+     write succeeding: the two halves of a double-click must find the same key,
+     so the retry replays the first DO instead of cutting a second. A genuine
+     later re-convert of the same SO (its DO was cancelled, restoring remaining)
+     carries a different payload and is refused rather than silently replayed —
+     the safe direction, and a board refresh mints fresh keys. */
+  const keys = useRef(new Map<string, string>());
+  const keyFor = (docNo: string): string => {
+    const existing = keys.current.get(docNo);
+    if (existing) return existing;
+    const minted = newIdempotencyKey();
+    keys.current.set(docNo, minted);
+    return minted;
+  };
+
   return useMutation<ConvertSoResult, Error, { docNos: string[] }>({
     mutationFn: async ({ docNos }) => {
       const wanted = [...new Set(docNos.filter(Boolean))];
@@ -847,7 +909,7 @@ export function useConvertSosToDo() {
           try {
             const res = await authedFetch<{ id: string; doNumber: string }>(
               `/delivery-orders-mfg/from-sos`,
-              { method: 'POST', body: JSON.stringify({ picks }) },
+              idempotentInit(keyFor(docNo), { method: 'POST', body: JSON.stringify({ picks }) }),
             );
             out.converted.push({ docNo, doNumber: res.doNumber });
           } catch (e) {

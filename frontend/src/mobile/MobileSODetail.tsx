@@ -135,15 +135,12 @@ type SoHeader = {
   postcode: string | null;
   customer_delivery_date: string | null;
   processing_date: string | null;
-  /* proceeded_at — when the salesperson proceeded the order (server-stamped).
-     Used with processing_date to reflect the processing-date LOCK. */
-  proceeded_at: string | null;
   so_date: string | null;
   created_at: string | null;
-  local_total_centi: number | null;
-  total_revenue_centi: number | null;
-  paid_centi_total: number | null;
-  balance_centi: number | null;
+  local_total_sen: number | null;
+  total_revenue_sen: number | null;
+  paid_sen_total: number | null;
+  balance_sen: number | null;
   /* Tier 2 downstream-lock + delivery progress — stamped by the detail GET
      (same fields the desktop SO Detail / list read). has_children = a
      non-cancelled DO/SI references this SO (locks Edit + Cancel). */
@@ -185,12 +182,12 @@ type SoItem = {
   /* Unit of measure — the Build Spec line item reads "SKU {sku} · {uom}". */
   uom: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  /* Per-line discount (mfg_sales_order_items.discount_centi). Desktop SO detail
+  unit_price_sen: number | null;
+  /* Per-line discount (mfg_sales_order_items.discount_sen). Desktop SO detail
      shows it in the "Disc" column; without it a discounted line silently hid the
      discount on mobile and an FOC line read "RM 0.00 ×qty" with no marker. */
-  discount_centi: number | null;
-  total_centi: number | null;
+  discount_sen: number | null;
+  total_sen: number | null;
   line_delivery_date: string | null;
   /* Per-line stock + source-PO trace (owner 2026-08-01) — stamped by the SAME
      GET /mfg-sales-orders/:docNo the desktop reads. Mobile renders the stock
@@ -224,7 +221,7 @@ type SoPayment = {
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;
-  amount_centi: number | null;
+  amount_sen: number | null;
   slip_key: string | null;
   /* Row creation instant (UTC) — drives the same-day EDIT affordance (a payment
      may be corrected only on the MY calendar day it was recorded). */
@@ -252,7 +249,7 @@ const phase = (status: string | null): "draft" | "cancelled" | "submitted" => {
   if (s === "CANCELLED") return "cancelled";
   return "submitted";
 };
-const total = (h: SoHeader) => h.local_total_centi ?? h.total_revenue_centi ?? 0;
+const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
 
 /** Sales Order DETAIL — markup ported VERBATIM from the owner's mobile design
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
@@ -369,7 +366,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
     setActionError(null);
     setBusy(true);
     try {
-      await updateStatus.mutateAsync({ docNo, status });
+      await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
     } finally {
@@ -404,14 +401,14 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
 
   const ph = h ? phase(h.status) : "submitted";
   /* Balance — null means UNKNOWN, not zero. deriveBalance prefers the
-     server-stamped `balance_centi`, then `paid_centi_total`, and only falls
+     server-stamped `balance_sen`, then `paid_sen_total`, and only falls
      through to summing the payments ledger when BOTH header fields are null.
      That is the one case where a failed payments read corrupts the answer:
      paid becomes 0 and the balance renders as the FULL order total. Narrow, but
      it is the #653 loss exactly (an already-paid order shown as owing
      everything), so it fails closed instead of guessing. */
   const balanceUnknown =
-    h != null && h.balance_centi == null && h.paid_centi_total == null && !paymentsKnown;
+    h != null && h.balance_sen == null && h.paid_sen_total == null && !paymentsKnown;
   const bal = h && !balanceUnknown ? deriveBalance(h, payments) : null;
 
   /* Parity with desktop SO Detail / list gating — the primitives now come from
@@ -427,10 +424,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const canCancel = CANCELLABLE_STATUSES.includes(rawStatus);
   const isLocked = isSoLocked(h?.status, hasChildren);
 
-  /* Processing LOCK — the shared procLockActive: once the SO has been PROCEEDED
-     (proceeded_at stamped) AND its processing day has passed (compared against
-     todayMyt() — the Malaysia calendar day, NOT the device's local day) the
-     line items are historical. Here we surface a banner and treat the SO as
+  /* Processing LOCK — the shared procLockActive: once the SO has a Processing
+     Date AND that day has passed (compared against todayMyt() — the Malaysia
+     calendar day, NOT the device's local day) the line items are historical.
+     Having a Processing Date IS being proceeded (owner, pinned 2026-08-13);
+     there is no separate stamp to consult. Here we surface a banner and treat the SO as
      edit-locked so the detail never offers line-item edits on a proceeded,
      past-processing order. */
   const processingLocked = h ? soProcLockActive(h) : false;
@@ -979,7 +977,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 steps down a size once it passes 6 digits — see <Kpi/>. */}
             <div style={{ display: "flex", gap: 7, marginBottom: 12 }}>
               <Kpi label="Total" centi={total(h)} color="#0c3f39" />
-              <Kpi label="Paid" centi={h.paid_centi_total} color="#0c3f39" />
+              <Kpi label="Paid" centi={h.paid_sen_total} color="#0c3f39" />
               <Kpi label="Balance" centi={bal} color="#b23a3a" unknown={balanceUnknown} />
             </div>
 
@@ -1000,7 +998,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Venue" value={val(h.venue ?? h.venue_id)} /></div></div>
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery date" value={dl(h.customer_delivery_date)} mono /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing Date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery Date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop
                   SalesOrderDetailV2 parity), reusing THIS screen's own amber family
@@ -1066,11 +1064,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 });
                 /* FOC + discount markers (desktop SalesOrderDetailV2 "Disc"
                    column). FOC = zero unit price AND zero line total; otherwise a
-                   positive discount_centi renders under the unit price. Without
+                   positive discount_sen renders under the unit price. Without
                    these the row hid the discount and an FOC line looked like a
                    plain "RM 0.00 ×qty". */
-                const isFoc = (it.unit_price_centi ?? 0) === 0 && lineTotalCenti(it) === 0;
-                const discountCenti = it.discount_centi ?? 0;
+                const isFoc = (it.unit_price_sen ?? 0) === 0 && lineTotalSen(it) === 0;
+                const discountSen = it.discount_sen ?? 0;
                 return (
                 <div key={it.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "11px 13px", borderTop: i ? "1px solid var(--line2)" : "none" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1112,15 +1110,15 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                     />
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                    <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "#0c3f39" }}>RM {rm(lineTotalCenti(it))}</div>
+                    <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "#0c3f39" }}>RM {rm(lineTotalSen(it))}</div>
                     {/* Unit price × qty — the per-unit price was missing on mobile,
                         so a discounted / FOC line was indistinguishable from a
                         full-price one. */}
-                    <div className="money" style={{ fontSize: 11, color: "var(--mut)" }}>RM {rm(it.unit_price_centi ?? 0)} {"×"}{it.qty ?? 0}</div>
+                    <div className="money" style={{ fontSize: 11, color: "var(--mut)" }}>RM {rm(it.unit_price_sen ?? 0)} {"×"}{it.qty ?? 0}</div>
                     {isFoc ? (
                       <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "#a16a2e", background: "#f6ecd9", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
-                    ) : discountCenti > 0 ? (
-                      <div className="money" style={{ fontSize: 10.5, color: "#b23a3a" }}>Disc RM {rm(discountCenti)}</div>
+                    ) : discountSen > 0 ? (
+                      <div className="money" style={{ fontSize: 10.5, color: "#b23a3a" }}>Disc RM {rm(discountSen)}</div>
                     ) : null}
                   </div>
                 </div>
@@ -1379,10 +1377,10 @@ function composeEmergency(h: SoHeader): string {
   return rel ? `${head} (${rel})` : head || "—";
 }
 
-/* Line total — prefer the persisted total_centi; fall back to unit_price × qty
+/* Line total — prefer the persisted total_sen; fall back to unit_price × qty
    for older rows that never stamped it. */
-const lineTotalCenti = (it: SoItem): number =>
-  it.total_centi ?? Math.round((it.unit_price_centi ?? 0) * (it.qty ?? 0));
+const lineTotalSen = (it: SoItem): number =>
+  it.total_sen ?? Math.round((it.unit_price_sen ?? 0) * (it.qty ?? 0));
 
 /* ── Scanned photos card (mobile port of desktop's ScannedImageCard pair) ────
    Order slip (slip_image_key, mig 0033) + payment receipt (receipt_image_key,
@@ -1479,9 +1477,9 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
 const HIST_FIELD_LABEL: Record<string, string> = {
   debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
   phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
-  paymentMethod: "Payment method", depositCenti: "Deposit",
-  processingDate: "Processing date", customerSoNo: "Customer SO ref",
-  customerPo: "Customer PO", customerDeliveryDate: "Delivery date",
+  paymentMethod: "Payment method", depositSen: "Deposit",
+  processingDate: "Processing Date", customerSoNo: "Customer SO ref",
+  customerPo: "Customer PO", customerDeliveryDate: "Delivery Date",
   amendedDeliveryDate: "Amended delivery date",
   amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",
   deliveryState: "Delivery region", possessionDate: "Possession date",
@@ -1491,9 +1489,9 @@ const HIST_FIELD_LABEL: Record<string, string> = {
   address3: "Address 3", address4: "Address 4", note: "Note", remark: "Remark",
   itemCode: "Item", itemGroup: "Group", description: "Description",
   description2: "Description 2", uom: "UOM", qty: "Qty",
-  unitPriceCenti: "Unit price", discountCenti: "Discount",
-  unitCostCenti: "Unit cost", totalCenti: "Line total", lineCount: "Lines",
-  localTotalCenti: "Total", amountCenti: "Amount", paidAt: "Paid on",
+  unitPriceSen: "Unit price", discountSen: "Discount",
+  unitCostSen: "Unit cost", totalSen: "Line total", lineCount: "Lines",
+  localTotalSen: "Total", amountSen: "Amount", paidAt: "Paid on",
   method: "Method", merchantProvider: "Bank", installmentMonths: "Installment months",
   onlineType: "Online type", approvalCode: "Approval code",
   stockStatus: "Stock status", salespersonId: "Salesperson",
@@ -1505,12 +1503,12 @@ const HIST_FIELD_LABEL: Record<string, string> = {
   pwpCodesDeleted: "PWP codes deleted", photosCleaned: "Photos removed",
 };
 const HIST_MONEY_FIELDS = new Set([
-  "unitPriceCenti", "discountCenti", "totalCenti", "depositCenti",
-  "localTotalCenti", "unitCostCenti", "amountCenti",
+  "unitPriceSen", "discountSen", "totalSen", "depositSen",
+  "localTotalSen", "unitCostSen", "amountSen",
 ]);
 const histVal = (field: string, v: unknown): string => {
   if (v === null || v === undefined || v === "") return "—";
-  if ((HIST_MONEY_FIELDS.has(field) || /Centi$/.test(field)) && typeof v === "number") return `RM ${rm(v)}`;
+  if ((HIST_MONEY_FIELDS.has(field) || /Sen$/.test(field)) && typeof v === "number") return `RM ${rm(v)}`;
   // An object field-change (variants / sofa build) must never dump raw JSON at
   // the user: summarise a list by its count, any other object as "updated".
   if (typeof v === "object") {
@@ -1556,15 +1554,15 @@ const histSentence = (e: SoAuditEntry): string => {
         : `changed status to ${to}`;
     }
     case "ADD_PAYMENT": {
-      const a = find("amountCenti");
+      const a = find("amountSen");
       return typeof a?.to === "number" ? `added payment RM ${rm(a.to)}` : "added a payment";
     }
     case "UPDATE_PAYMENT": {
-      const a = find("amountCenti");
+      const a = find("amountSen");
       return typeof a?.to === "number" ? `edited payment (RM ${rm(a.to)})` : "edited a payment";
     }
     case "DELETE_PAYMENT": {
-      const a = find("amountCenti");
+      const a = find("amountSen");
       return typeof a?.from === "number" ? `removed payment RM ${rm(a.from)}` : "removed a payment";
     }
     case "ADD_LINE": {
@@ -2035,6 +2033,8 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                                 {(l.new_remark ?? "").trim() ? `“${l.new_remark}”` : "Remark cleared"}
                               </div>
                             ) : null}
+                            {/* mig 0317 — a fee line's discount IS the request. */}
+                            {chg.discount ? <div className="money" style={{ fontSize: 10.5, marginTop: 2, ...mEmphIf(true) }}>{Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount RM ${rm(l.new_discount_sen ?? 0)}` : "Discount cleared"}</div> : null}
                           </>
                         )}
                       </div>

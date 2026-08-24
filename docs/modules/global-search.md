@@ -26,7 +26,7 @@ Written 2026-08-02 alongside the fix for the bug that rule is named after
 | Surface | File | Notes |
 |---|---|---|
 | Desktop | `frontend/src/components/GlobalSearch.tsx` | Cmd+K overlay, grouped by type with icons + keyboard nav |
-| Mobile | `frontend/src/mobile/MobileSearch.tsx` | Same sources, flat list with type chips |
+| Mobile | `frontend/src/mobile/MobileSearch.tsx` | Same sources, same ten types. Five are tappable (sales order, project, service case, product, person); the five SCM documents render READ-ONLY with an "Open on desktop" line, because the phone has no detail screen to route them to |
 
 ### The shared layer
 
@@ -162,7 +162,17 @@ positive must cost a conversation, never a deploy.
 4. **A new hit type needs the deep link to exist on BOTH surfaces.** Desktop
    navigates the router; mobile resolves through `mobileRoute.ts`, which will not
    404 on an unknown path — it lands somewhere wrong.
-5. **`.or()` cannot filter an embedded FK resource.** Supplier name reaches the
+5. **On mobile, "cannot open it" must never mean "do not show it".** Until
+   2026-08-21 the phone listed only the five types it could route to, while its
+   "No matches" line was gated on the RAW hit count — so a search for a
+   delivery-order or invoice number returned hits, suppressed the empty state,
+   dropped every hit, and rendered a BLANK screen with no explanation. Mobile's
+   display order is now `Object.keys(TYPE_LABEL)`, and `TYPE_LABEL` is
+   `Record<SearchHitType, string>`, so **tsc** refuses a type that is not listed:
+   a new hit type cannot go unrendered on the phone again. Whether a card is a
+   button is decided by `navFor` alone — one source of truth, no parallel list of
+   "openable" types to drift.
+6. **`.or()` cannot filter an embedded FK resource.** Supplier name reaches the
    subtitle through the SELECT, not the filter. Adding it to `.or` errors — and
    before 0239's sibling fix, that error was silent.
 
@@ -172,3 +182,22 @@ positive must cost a conversation, never a deploy.
 - `docs/CODEBASE-MAP.md` §6 — Sales Report ("Fair Report") and the other
   easy-to-miss subsystems, several of which are search sources
 - `backend/src/scm/lib/postgrest-search.ts` — `escapeForOr`
+
+## 7. What an operator's search term is allowed to contain
+
+A PostgREST `.or()` filter uses `,` to separate conditions and `()` to group
+them, so a term carrying any of `,(){}` cannot be interpolated raw. `escapeForOr`
+replaces each of them with `_`, the LIKE single-character wildcard.
+
+**It used to DELETE them, and that made a whole class of SKU unfindable.**
+Deleting works when the character sits at an END of the term; delete one from
+the MIDDLE and the term is no longer a substring of the stored value, so it
+matches nothing. Measured on production 2026-08-22: `2376-1A` found 6 products,
+`2376-1A(RHF)` found **0** — and that SKU exists. `(LHF)` / `(RHF)` is how this
+catalogue spells a left- or right-hand facing piece, so it was every
+parenthesised sofa code in every list that searches. See `docs/bugs/0519`.
+
+The trade `_` carries, and the exact fix that was NOT taken (PostgREST's
+double-quoted value, which needs all 43 call sites to stop building `%${s}%`
+themselves), are written at the top of the module rather than here — that is
+where someone changing the function will be looking.

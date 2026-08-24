@@ -61,6 +61,27 @@ message rather than a company-mismatch 404.
 | Desktop detail | `frontend/src/pages/scm-v2/PurchaseReturnDetailV2.tsx` |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseReturnNew.tsx` |
 
+### The desktop list has a right-click menu (2026-08-22)
+
+Open · Edit · Print, then **Confirm** on a DRAFT, then **Cancel Purchase
+Return** alone at the bottom in red. `purchaseReturnRowMenu` in
+`frontend/src/pages/scm-v2/row-menus.ts`, shape per `document-conversion.md`
+§8a.
+
+**Nothing new happens in it.** Confirm calls the list's existing `doPost`,
+Cancel its existing `doCancel`.
+
+**Cancel is offered on MORE rows than the drawer ever showed it.** The drawer's
+action slot is one if/else chain, so a DRAFT renders Post and a POSTED renders
+Complete and neither ever renders Cancel — while `cancelPurchaseReturnHandler`
+accepts both and refuses only COMPLETED and an already-cancelled return (§4).
+The menu is a separate group, so it offers what the server actually allows.
+
+**Complete is deliberately absent.** It records the supplier's credit-note
+reference, which the drawer's Complete tab asks for and a right-click cannot.
+Only Confirm, Hold and Cancel are ever offered to a person
+(`document-status-vocabulary.md` §1b); Hold lands when it becomes a flag.
+
 **No dedicated mobile screen** — the generic `MobileModuleList` /
 `MobileModuleDetail` render it. The repo-wide "desktop and mobile change
 together" rule has no paired file to apply to here.
@@ -138,6 +159,30 @@ cannot carry the failure at all. Every sibling line-delete
 (`consignment-notes.ts`, `consignment-returns.ts`, `delivery-returns.ts`) already
 answered 200 `{ ok, movementErrors? }`.
 
+### 4b. The create-path guards (2026-08-21)
+
+The bare `POST /` used to be the thinnest stock-moving path in the module; four
+guards brought it level with its siblings (docs/bugs/0499):
+
+- **Fail-closed source reads.** The header-GRN read and the line-cap read bind
+  their errors and refuse (`source_check_failed` / `cap_check_failed`) instead
+  of silently skipping the cap and the cross-company line guard on a blip. A
+  supplied `grnItemId` the read does not answer refuses too
+  (`grn_item_not_found`) — an unknown id is not a free line.
+- **POSTED source only.** The header `grnId` AND the parent GRN behind any
+  caller-supplied line id must be `POSTED` (`grn_not_posted`, 409) — the gate
+  `/from-grn` and `/from-grns` always had. Cancel-first-return-second used to
+  write a second OUT for goods whose reversing OUT had already run. The
+  add-line path (`POST /:id/items`) carries the same gate.
+- **Post-insert over-return verification.** Between the item insert and the
+  movement write, the live non-cancelled `qty_returned` sum per linked GRN line
+  is re-derived; broken → the items and header are deleted, the idempotency
+  claim is released, and the answer is 409 `qty_exceeds_remaining`. Closes the
+  read-then-write race two concurrent creates used to win together.
+- **No-write refusals release the idempotency claim.** Pre-write refusals on
+  the three create handlers call `markIdempotencyNoWrite`, so a corrected
+  resubmit gets a fresh claim instead of `idempotency_key_reused`.
+
 ---
 
 ## 5. The unlinked-line guard — read this before touching create/add-item
@@ -151,6 +196,14 @@ lines (no grnItemId) stay uncapped."*
 
 `backend/src/scm/lib/return-unlinked-lines.ts` (`findUnlinkedPrLines`,
 `unlinkedReturnResponse`) applies the same narrow rule as the other three chains:
+
+> Lodger note (2026-08-20): this module also now exports `coveredGrnIds`, which
+> is **not** part of the purchase-return surface — it belongs to the sixth chain
+> (`findUnlinkedPiLines`, GRN → Purchase Invoice) and resolves the SET of
+> receipts one supplier invoice covers, because a PI is line-level multi-receipt
+> while a return is not. It moved here from `routes/purchase-invoices.ts` to sit
+> beside the guard that consumes it; all three of its call sites stayed in that
+> router, where `return-unlinked-lines.test.ts` proves them per handler.
 
 | situation | outcome |
 |---|---|
@@ -222,3 +275,10 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link
   hole"
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A PR row offers
+`Print`, `Print Purchase Order <no>` and `Print Goods Received <no>` in place —
+the row already carries `purchase_order` and `grn`, so no payload change was
+required. `document-conversion.md` §8b has the rule.

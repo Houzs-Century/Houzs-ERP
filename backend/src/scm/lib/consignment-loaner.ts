@@ -24,7 +24,7 @@
 //
 // IDEMPOTENCY: the OUT leg is tagged with the CS_DO / CS_DR source type, whose
 // partial UNIQUE index (uq_inv_mov_cs_*_source, migration 0153) — keyed on
-// (source_doc_type, source_doc_id, product_code, variant_key) — guarantees a
+// (source_doc_type, source_doc_id, item_code, variant_key) — guarantees a
 // note can only move stock once. Because that index does NOT include
 // warehouse_id, both legs of a single transfer CANNOT share the CS_* type (the
 // OUT @from and IN @to would collide on the same product/variant). So only the
@@ -42,19 +42,58 @@ import { reconcileUncostedAfterIn } from './oversell-retrocost';
 export type LoanerSourceType = 'CS_DO' | 'CS_DR';
 
 export type LoanerLine = {
-  product_code: string;
+  item_code: string;
   /** Migration 0095 attribute-composition bucket key. '' = unclassified. */
   variant_key: string;
   product_name: string | null;
   qty: number;
 };
 
-/** The hidden Consignment (Out) warehouse id (migration 0152), or null when the
- *  warehouse hasn't been seeded. Callers skip the transfer when null. */
-export async function consignmentWarehouseId(sb: any): Promise<string | null> {
+/**
+ * The hidden Consignment (Out) warehouse id (migration 0152) FOR ONE COMPANY,
+ * or null when that company hasn't seeded one. Callers skip the transfer when
+ * null.
+ *
+ * `companyId` IS REQUIRED, for the same reason `defaultWarehouseId` took the
+ * same medicine on 2026-08-03 (lib/inventory-movements.ts, which spells the
+ * incident out): a warehouse lookup with no company predicate is a
+ * cross-company draw decided silently by whatever the database returns first.
+ *
+ * This one was worse than a draw, because it also had `.maybeSingle()` and no
+ * `error` binding. Three failure modes sat behind one `null`:
+ *   · GLOBAL SINGLETON — `scm.warehouses` is per-company (migration 0086), so
+ *     `is_consignment = true` can legitimately be true once PER COMPANY. The
+ *     unscoped read treated the whole table as if only one such warehouse could
+ *     exist anywhere;
+ *   · WRONG COMPANY'S WAREHOUSE — with exactly one seeded, every company
+ *     resolved to it, so one organisation's consignment stock would have moved
+ *     into another organisation's warehouse row;
+ *   · TWO ROWS = SILENT NULL — the moment a second company seeded its own,
+ *     PostgREST's `.maybeSingle()` errors on multiple rows, the discarded
+ *     `error` made that identical to "not seeded", and the documented caller
+ *     behaviour is to SKIP the stock transfer. So seeding a warehouse correctly
+ *     would have quietly disabled the loaner movement for BOTH companies.
+ *
+ * Ordered and limited rather than `.maybeSingle()`, so a company that somehow
+ * holds two consignment warehouses gets a deterministic answer instead of an
+ * error rendered as an absence.
+ *
+ * NOTE FOR WHOEVER WIRES THIS UP: this module currently has no importers —
+ * `transferLoaner` and `reverseLoaner` are exported and uncalled — so nothing in
+ * production reaches this today. That is exactly why the signature is being
+ * fixed now: the trap is cheaper to disarm before it has callers than after.
+ */
+export async function consignmentWarehouseId(
+  sb: any,
+  companyId: number | undefined,
+): Promise<string | null> {
+  if (companyId === undefined) return null;
   const { data } = await sb.from('warehouses')
     .select('id')
     .eq('is_consignment', true)
+    .eq('company_id', companyId)
+    .order('code', { ascending: true })
+    .limit(1)
     .maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
 }
@@ -62,7 +101,7 @@ export async function consignmentWarehouseId(sb: any): Promise<string | null> {
 /* Resolve the dye-lot batch each line moves so a batched (sofa) lot keeps its
    batch_no across the warehouse hop — otherwise the destination can't satisfy a
    batch-scoped sofa ship. Reads OPEN lots at the SOURCE warehouse; for each
-   (product_code, variant_key) bucket carries the batch ONLY when the source
+   (item_code, variant_key) bucket carries the batch ONLY when the source
    stock sits in a single non-null batch. Multi-batch / plain stock → un-batched
    (plain FIFO), never a guessed dye-lot. Forward-compat: view/column absent
    pre-0120 → empty map → every line un-batched. Mirrors stock-transfers.ts. */
@@ -74,17 +113,17 @@ async function resolveSourceBatches(
   try {
     const { data: lots, error } = await sb
       .from('v_inventory_lots_open')
-      .select('warehouse_id, product_code, variant_key, batch_no, qty_remaining')
+      .select('warehouse_id, item_code, variant_key, batch_no, qty_remaining')
       .eq('warehouse_id', fromWh)
       .not('batch_no', 'is', null)
       .gt('qty_remaining', 0);
     if (!error) {
       const batchesByBucket = new Map<string, Set<string>>();
       for (const r of (lots ?? []) as Array<{
-        product_code: string; variant_key: string | null; batch_no: string | null;
+        item_code: string; variant_key: string | null; batch_no: string | null;
       }>) {
         if (!r.batch_no) continue;
-        const k = `${r.product_code}::${r.variant_key ?? ''}`;
+        const k = `${r.item_code}::${r.variant_key ?? ''}`;
         const set = batchesByBucket.get(k) ?? new Set<string>();
         set.add(r.batch_no);
         batchesByBucket.set(k, set);
@@ -131,24 +170,24 @@ export async function transferLoaner(
 
   const batchByBucket = await resolveSourceBatches(sb, fromWh);
 
-  /* Collapse identical (product_code, variant_key) lines into one OUT/IN pair so
+  /* Collapse identical (item_code, variant_key) lines into one OUT/IN pair so
      the CS_* unique index (which omits warehouse_id) is never hit twice for the
      same (doc, product, variant). A note can legitimately list the same product
      across two lines (qty split). */
   const byKey = new Map<string, LoanerLine>();
   for (const ln of lines) {
     const qty = Number(ln.qty ?? 0);
-    if (qty <= 0 || !ln.product_code) continue;
+    if (qty <= 0 || !ln.item_code) continue;
     const variantKey = ln.variant_key ?? '';
-    const k = `${ln.product_code}::${variantKey}`;
+    const k = `${ln.item_code}::${variantKey}`;
     const cur = byKey.get(k);
     if (cur) { cur.qty += qty; }
-    else byKey.set(k, { product_code: ln.product_code, variant_key: variantKey, product_name: ln.product_name ?? null, qty });
+    else byKey.set(k, { item_code: ln.item_code, variant_key: variantKey, product_name: ln.product_name ?? null, qty });
   }
 
   for (const ln of byKey.values()) {
     const variantKey = ln.variant_key ?? '';
-    const batchNo = batchByBucket.get(`${ln.product_code}::${variantKey}`) ?? null;
+    const batchNo = batchByBucket.get(`${ln.item_code}::${variantKey}`) ?? null;
 
     // 1) OUT @from — the FIFO trigger consumes the source lot(s) and fills
     //    total_cost_sen. CS_* source type = idempotency backstop for the ship.
@@ -156,7 +195,7 @@ export async function transferLoaner(
       ...companyCol,
       movement_type:   'OUT',
       warehouse_id:    fromWh,
-      product_code:    ln.product_code,
+      item_code:    ln.item_code,
       variant_key:     variantKey,
       product_name:    ln.product_name,
       qty:             ln.qty,
@@ -168,7 +207,7 @@ export async function transferLoaner(
       notes:           `Consignment loaner transfer to warehouse ${toWh} (value-neutral)`,
     }).select('id, qty, unit_cost_sen, total_cost_sen').single();
     if (outErr || !outRow) {
-      errors.push(`OUT ${ln.product_code}: ${outErr?.message ?? 'no data'}`);
+      errors.push(`OUT ${ln.item_code}: ${outErr?.message ?? 'no data'}`);
       continue;
     }
 
@@ -183,7 +222,7 @@ export async function transferLoaner(
     const inOk = await writeMovements(sb, [{
       movement_type:   'IN',
       warehouse_id:    toWh,
-      product_code:    ln.product_code,
+      item_code:    ln.item_code,
       variant_key:     variantKey,
       product_name:    ln.product_name,
       qty:             ln.qty,
@@ -195,7 +234,7 @@ export async function transferLoaner(
       performed_by:    userId,
       notes:           `Consignment loaner transfer from warehouse ${fromWh} (value-neutral)`,
     }], companyId);
-    if (!inOk.ok) errors.push(`IN ${ln.product_code}: ${inOk.reason ?? 'unknown'}`);
+    if (!inOk.ok) errors.push(`IN ${ln.item_code}: ${inOk.reason ?? 'unknown'}`);
     /* Oversell retro-cost (0154) — the loaner hop opens a lot at the DESTINATION,
        so a prior "ship anyway" DO that went out at RM0 there can now be costed
        from it. Wired 2026-07-29; until then only the GRN post reconciled, so
@@ -203,15 +242,21 @@ export async function transferLoaner(
        Best-effort — never fails the loaner. */
     if (inOk.ok) {
       await reconcileUncostedAfterIn(sb, [{
-        movement_type: 'IN', warehouse_id: toWh, product_code: ln.product_code,
+        movement_type: 'IN', warehouse_id: toWh, item_code: ln.item_code,
         variant_key: variantKey, qty: ln.qty,
       }], userId);
     }
   }
 
-  /* The transfer is net-zero across all warehouses, but SO allocation sums every
-     warehouse, so re-walk it in case a partial transfer (a failed leg) actually
-     shifted a bucket. Best-effort. */
+  /* Re-walk allocation: a transfer is net-zero in TOTAL but not per BUCKET, and
+     the bucket is what allocation reads.
+
+     This comment used to say "SO allocation sums every warehouse", which has
+     been false since migration 0118 (2026-05-31) — a line draws only its own
+     warehouse's stock (so-stock-allocation.ts:471, :564). The re-walk is not a
+     safety net for a failed leg; it is the POINT. Moving a unit from KL to PJ
+     changes nothing in total and everything to a PJ line that could not see it
+     five seconds ago. Best-effort. */
   try {
     const { recomputeSoStockAllocation } = await import('./so-stock-allocation');
     await recomputeSoStockAllocation(sb);
@@ -226,7 +271,7 @@ export async function transferLoaner(
  * the OPPOSITE direction (swap from/to), with a '-CANCEL' source-doc-no suffix.
  *
  * Why not reverseMovements: its balancing row reuses the CS_* (source_doc_type,
- * source_doc_id, product_code, variant_key) key, which the partial UNIQUE index
+ * source_doc_id, item_code, variant_key) key, which the partial UNIQUE index
  * uq_inv_mov_cs_*_source (migration 0153, keyed WITHOUT movement_type) rejects —
  * the same-key opposite collides and the insert silently fails, leaving the
  * loaner permanently relocated. Running transferLoaner in reverse sidesteps that
@@ -269,31 +314,31 @@ export async function reverseLoaner(
   // movements: the canonical OUT leg carries the CS_* type, batch_no, qty and
   // cost. Net per (product, variant, batch) bucket so a partial original (a
   // failed leg) only reverses what actually moved.
-  const sel = 'movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name';
+  const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name';
   let movsRes = await sb.from('inventory_movements').select(sel)
     .eq('source_doc_type', sourceDocType).eq('source_doc_id', sourceDocId);
   if (movsRes.error && (movsRes.error.message ?? '').includes('batch_no')) {
     movsRes = await sb.from('inventory_movements')
-      .select('movement_type, warehouse_id, product_code, variant_key, qty, total_cost_sen, product_name')
+      .select('movement_type, warehouse_id, item_code, variant_key, qty, total_cost_sen, product_name')
       .eq('source_doc_type', sourceDocType).eq('source_doc_id', sourceDocId);
   }
   if (movsRes.error) { errors.push(`reverse load: ${movsRes.error.message}`); return errors; }
 
   type Agg = {
-    product_code: string; variant_key: string; batch_no: string | null;
+    item_code: string; variant_key: string; batch_no: string | null;
     product_name: string | null; net_out: number; out_total_cost: number; out_qty: number;
   };
   const byBucket = new Map<string, Agg>();
   for (const m of (movsRes.data ?? []) as Array<{
-    movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null;
+    movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null;
     batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null;
   }>) {
     if (m.movement_type !== 'OUT') continue; // the CS_* leg that left fromWh
     const variant_key = m.variant_key ?? '';
     const batch_no = m.batch_no ?? null;
-    const k = `${m.product_code}::${variant_key}::${batch_no ?? ''}`;
+    const k = `${m.item_code}::${variant_key}::${batch_no ?? ''}`;
     let agg = byBucket.get(k);
-    if (!agg) { agg = { product_code: m.product_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 }; byBucket.set(k, agg); }
+    if (!agg) { agg = { item_code: m.item_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 }; byBucket.set(k, agg); }
     const q = Number(m.qty ?? 0);
     agg.net_out += q; agg.out_qty += q; agg.out_total_cost += Number(m.total_cost_sen ?? 0);
     if (!agg.product_name) agg.product_name = m.product_name;
@@ -313,7 +358,7 @@ export async function reverseLoaner(
       ...companyCol,
       movement_type:   'OUT',
       warehouse_id:    toWh,                 // consignment side gives the loaner back
-      product_code:    b.product_code,
+      item_code:    b.item_code,
       variant_key:     b.variant_key,
       product_name:    b.product_name,
       qty:             b.net_out,
@@ -324,12 +369,12 @@ export async function reverseLoaner(
       performed_by:    userId,
       notes:           `Consignment loaner cancelled — reversing transfer (value-neutral)`,
     }).select('id').single();
-    if (outErr) { errors.push(`reverse OUT ${b.product_code}: ${outErr.message}`); continue; }
+    if (outErr) { errors.push(`reverse OUT ${b.item_code}: ${outErr.message}`); continue; }
 
     const inOk = await writeMovements(sb, [{
       movement_type:   'IN',
       warehouse_id:    fromWh,               // stock returns to the source shelf
-      product_code:    b.product_code,
+      item_code:    b.item_code,
       variant_key:     b.variant_key,
       product_name:    b.product_name,
       qty:             b.net_out,
@@ -341,11 +386,11 @@ export async function reverseLoaner(
       performed_by:    userId,
       notes:           `Consignment loaner cancelled — reversing transfer (value-neutral)`,
     }], companyId);
-    if (!inOk.ok) errors.push(`reverse IN ${b.product_code}: ${inOk.reason ?? 'unknown'}`);
+    if (!inOk.ok) errors.push(`reverse IN ${b.item_code}: ${inOk.reason ?? 'unknown'}`);
     /* Same as the forward hop: the reversal re-opens a lot at the SOURCE shelf. */
     if (inOk.ok) {
       await reconcileUncostedAfterIn(sb, [{
-        movement_type: 'IN', warehouse_id: fromWh, product_code: b.product_code,
+        movement_type: 'IN', warehouse_id: fromWh, item_code: b.item_code,
         variant_key: b.variant_key, qty: b.net_out,
       }], userId);
     }

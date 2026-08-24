@@ -68,6 +68,8 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -76,14 +78,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return `${currency} ${(v / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`;
-};
-
-/* T12 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg + Gap (mirrors
-   GrnNew / SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* T12 — existing GRN lines whose product is a bedframe/sofa get the SAME
@@ -130,8 +124,8 @@ type HeaderDraft = {
 };
 type LineDraft = {
   qty: number;            // maps to qty_received
-  unitPriceCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  discountSen: number;
   deliveryDate: string | null;
   materialName: string;
   itemGroup: string | null;
@@ -148,15 +142,15 @@ type LineDraft = {
 
 type GrnItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   /* Supplier-facing dual-code rule (Commander) — grn_items snapshots the
      supplier's own SKU at receive time; surfaced read-only on the line card. */
   supplier_sku?: string | null;
   qty_received: number;
-  unit_price_centi: number;
-  discount_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen: number;
+  discount_sen?: number;
+  line_total_sen?: number;
   delivery_date?: string | null;
   item_group?: string | null;
   material_kind?: string | null;
@@ -188,8 +182,8 @@ const headerSnapshot = (g: any): HeaderDraft => ({
 
 const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   qty:            it.qty_received,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? null,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
@@ -259,19 +253,47 @@ export const GoodsReceivedDetail = () => {
   // editable. The line-CRUD endpoints accept DRAFT writes WITHOUT moving stock.
   const hasChildren = Boolean(grn?.has_children);
   const isDraft = grn?.status === 'DRAFT';
+  /* Owner 2026-08-20 (§8 GAP-1) — a Purchase Invoice / Return no longer freezes
+     the WHOLE GRN header. The lock is field-level (matching the backend):
+       · hardLocked — Cancelled / Closed: everything read-only, no Edit.
+       · lockedDueToChildren — a live PI/PR: only the INHERITED header fields
+         (supplier / currency) + the LINES freeze; the GRN's own received date /
+         delivery-note ref / warehouse / notes stay editable.
+     `isLocked` (= hard OR children) still gates the LINE editor + inherited
+     fields; `hardLocked` gates the Edit button + the own-stage header fields. */
+  const hardLocked = grn ? !(grn.status === 'DRAFT' || grn.status === 'POSTED') : true;
   const isLocked = grn ? !(grn.status === 'DRAFT' || (grn.status === 'POSTED' && !hasChildren)) : true;
-  // Distinguish the child-lock case so we can show the "delete it first" note.
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
-  /* If the GRN locks while we're in Edit mode (e.g. cancelled in another tab),
-     drop back to View + discard the draft. */
+  /* Only a HARD lock (Cancelled / Closed) drops us out of Edit — a GRN with a
+     PI/PR stays editable for its own-stage fields, so children must NOT kick us
+     back to View. */
   useEffect(() => {
-    if (isLocked && isEditing) {
+    if (hardLocked && isEditing) {
       setIsEditing(false);
       setHeaderDraft(null);
       setLineDrafts({});
     }
-  }, [isLocked, isEditing]);
+  }, [hardLocked, isEditing]);
+
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on every direct URL / refresh of a GRN. Arriving from
+     the list hid it: react-query already had the detail cached, so the
+     isPending branch never rendered first. `deliverPrintPdf` therefore has to
+     tolerate a null grn; it can only ever be CALLED from the preview dialog,
+     which does not exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!grn) return;
+    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
+    // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
+    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
+      generateGrnPdf(grn, items as any, { action }),
+    ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
 
   if (detail.isPending) {
     return <SkeletonDetailPage />;
@@ -295,17 +317,21 @@ export const GoodsReceivedDetail = () => {
   const visibleItems = items;
   const lineOf = (it: GrnItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: GrnItemRow): number => {
-    if (!isEditing) return it.line_total_centi ?? (it.qty_received * it.unit_price_centi - (it.discount_centi ?? 0));
+    if (!isEditing) return it.line_total_sen ?? (it.qty_received * it.unit_price_sen - (it.discount_sen ?? 0));
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti - d.discountCenti;
+    return d.qty * d.unitPriceSen - d.discountSen;
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
-  const grandTotal = itemsSubtotal + (grn.tax_centi ?? 0);
+  const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));
+    /* When a PI/PR exists the LINES are locked, so a Received-Date edit must NOT
+       fan down into the line drafts — that would mark a locked line "changed" and
+       Save would 409 on the line PATCH (owner 2026-08-20, §8 GAP-1). */
+    if (lockedDueToChildren) return;
     // Received Date cascades to every line's delivery date (mirror PO's Expected
     // Delivery cascade).
     if (k === 'receivedAt') {
@@ -328,11 +354,8 @@ export const GoodsReceivedDetail = () => {
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
       const variants: Record<string, unknown> = { ...(cur.variants ?? {}), [key]: value };
-      if (cur.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(cur.itemGroup) && isTotalHeightPart(key)) {
+        variants.totalHeight = computeTotalHeight(cur.itemGroup, variants);
       }
       return { ...prev, [it.id]: { ...cur, variants } };
     });
@@ -359,8 +382,8 @@ export const GoodsReceivedDetail = () => {
         const snap = lineSnapshot(it);
         const changed =
           d.qty !== it.qty_received ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          d.discountCenti !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          d.discountSen !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           /* T12 — identity/variant edits participate in the dirty check. */
           d.materialName !== snap.materialName ||
@@ -374,8 +397,8 @@ export const GoodsReceivedDetail = () => {
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
-            discountCenti: d.discountCenti, deliveryDate: d.deliveryDate,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
+            discountSen: d.discountSen, deliveryDate: d.deliveryDate,
             /* T12 — send the line's identity + variants; useUpdateGrnItem
                forwards them and the server re-buckets inventory + recomputes
                description2. materialName maps to both description + name. */
@@ -399,15 +422,6 @@ export const GoodsReceivedDetail = () => {
       setSavingDraft(false);
     }
   };
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
-    // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
-    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
-      generateGrnPdf(grn, items as any, { action }),
-    ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className={styles.page}>
@@ -494,7 +508,7 @@ export const GoodsReceivedDetail = () => {
               editing flips into draft mode and the button becomes the single
               "Save" that commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
-            <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
+            <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
               <Pencil {...ICON} />
               <span>Edit</span>
             </Button>
@@ -507,11 +521,14 @@ export const GoodsReceivedDetail = () => {
         </div>
       </div>
 
-      {/* Child-lock note — POSTED but has a downstream PI/PR, so the page is
-          read-only until the child is deleted (unified model, migration 0106). */}
+      {/* Child-lock note — POSTED with a downstream PI/PR. The supplier, currency
+          and line items are locked (the invoice/return was billed against them);
+          the received date, notes and warehouse stay editable (§8 GAP-1). */}
       {lockedDueToChildren && (
         <div className={styles.bannerWarn}>
-          <strong>Locked</strong> — has a Purchase Invoice / Return. Delete it first to edit.
+          <strong>Has a Purchase Invoice / Return.</strong> Its supplier, currency and line items are
+          locked — cancel the downstream invoice/return to change them. Received date, notes and
+          warehouse are still editable.
         </div>
       )}
 
@@ -562,7 +579,8 @@ export const GoodsReceivedDetail = () => {
         grn={grn}
         draft={headerView}
         onField={setHeaderField}
-        locked={isLocked}
+        locked={hardLocked}
+        identityLocked={lockedDueToChildren}
         isEditing={isEditing}
       />
 
@@ -587,7 +605,7 @@ export const GoodsReceivedDetail = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {visibleItems.map((it, idx) => {
               const d = lineOf(it);
-              const lineValueCenti = lineTotalOf(it);
+              const lineValueSen = lineTotalOf(it);
               const variantSummary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                 || it.description
                 || it.material_name;
@@ -619,7 +637,7 @@ export const GoodsReceivedDetail = () => {
                       {it.item_group && <ItemGroupPill group={it.item_group} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineValueCenti, grn.currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineValueSen, grn.currency)}</span>
                       {/* Remove — Edit mode only. Commander 2026-06-15 — confirm
                           before delete (no more 裸奔). On confirm the line is
                           removed and the server releases the PO's received_qty back. */}
@@ -661,7 +679,7 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       <input
-                        type="text" readOnly value={it.material_code}
+                        type="text" readOnly value={it.item_code}
                         className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -694,8 +712,15 @@ export const GoodsReceivedDetail = () => {
 
                   {/* T12 — variants. View shows the read-only summary; Edit shows
                       the per-category editor (bedframe / sofa) for EXISTING lines,
-                      mirroring New GRN. The server re-buckets inventory on save. */}
-                  {isEditing && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
+                      mirroring New GRN. The server re-buckets inventory on save.
+
+                      Owner 2026-08-20: a line RECEIVED FROM A PO inherits its
+                      variant from that PO — it is what the supplier was told to
+                      make, so it is READ-ONLY here even in Edit (the backend
+                      refuses the change too). To change it, cancel this GRN and
+                      edit the PO. Only a MANUAL line (source_po_number null) keeps
+                      the editor. You always still SEE the variant summary. */}
+                  {isEditing && !it.source_po_number && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
                       {d.itemGroup === 'bedframe' ? (
@@ -738,8 +763,15 @@ export const GoodsReceivedDetail = () => {
                       </div>
                     </div>
                   ) : (
-                    variantSummary && (
-                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{variantSummary}</div>
+                    (variantSummary || (isEditing && it.source_po_number)) && (
+                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        {variantSummary}
+                        {isEditing && it.source_po_number && (
+                          <span style={{ display: 'block', marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', fontStyle: 'italic' }}>
+                            Variant set on PO {it.source_po_number} — cancel this GRN and edit the PO to change it.
+                          </span>
+                        )}
+                      </div>
                     )
                   )}
 
@@ -796,11 +828,11 @@ export const GoodsReceivedDetail = () => {
                       <span className={styles.fieldLabel}>Unit Price ({grn.currency})</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.unitPriceCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                          valueSen={d.unitPriceSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                       ) : (
                         <input
-                          type="text" readOnly value={fmtRm(it.unit_price_centi, grn.currency)}
+                          type="text" readOnly value={fmtRm(it.unit_price_sen, grn.currency)}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -811,7 +843,7 @@ export const GoodsReceivedDetail = () => {
                         line the gate cannot fire, and a permanent "received
                         free" tick next to every line is exactly the kind of
                         control people learn to tick without reading. */}
-                    {(isEditing ? d.unitPriceCenti : it.unit_price_centi) === 0 && (
+                    {(isEditing ? d.unitPriceSen : it.unit_price_sen) === 0 && (
                       <label className={styles.field}>
                         <span className={styles.fieldLabel}>Received free</span>
                         {isEditing ? (
@@ -841,12 +873,12 @@ export const GoodsReceivedDetail = () => {
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { discountCenti: sen ?? 0 })} />
+                          valueSen={d.discountSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
                       ) : (
                         <input
                           type="text" readOnly
-                          value={(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, grn.currency) : '—'}
+                          value={(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, grn.currency) : '—'}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -855,10 +887,12 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Delivery Date</span>
                       {isEditing ? (
-                        <input
-                          type="date" className={styles.fieldInput}
-                          value={d.deliveryDate ?? ''} disabled={isLocked}
-                          onChange={(e) => setLine(it, { deliveryDate: e.target.value || null })}
+                        <DateField
+                          fullWidth
+                          className={styles.fieldInput}
+                          value={d.deliveryDate ?? ''}
+                          disabled={isLocked}
+                          onChange={(iso) => setLine(it, { deliveryDate: iso || null })}
                         />
                       ) : (
                         <input
@@ -920,17 +954,26 @@ export const GoodsReceivedDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  grn, draft, onField, locked, isEditing = true,
+  grn, draft, onField, locked, identityLocked = false, isEditing = true,
 }: {
   grn: any;
   /** Draft header values (page-owned). In View these mirror the saved GRN. */
   draft: HeaderDraft;
   /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
+  /** Hard lock — Cancelled / Closed: every field read-only. */
   locked: boolean;
+  /** A live Purchase Invoice / Purchase Return exists: the INHERITED fields
+   *  (supplier / currency) freeze because that PI/PR was billed against them,
+   *  but the GRN's own received date / delivery-note ref / warehouse / notes stay
+   *  editable (owner 2026-08-20, §8 GAP-1). */
+  identityLocked?: boolean;
   /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
+  // Inherited fields freeze on EITHER a hard lock or a live PI/PR; own fields on
+  // the hard lock only.
+  const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   const warehousesQ = useWarehouses();
@@ -979,7 +1022,7 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.supplierId} disabled={inheritedLocked}
                 onChange={(e) => onField('supplierId', e.target.value)}>
                 <option value="">— Pick supplier —</option>
                 {sortByText(suppliers).map((s) => (
@@ -992,7 +1035,7 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
+              <select className={styles.fieldSelect} value={draft.currency} disabled={inheritedLocked}
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
@@ -1007,8 +1050,13 @@ const SupplierCard = ({
             <span className={styles.fieldLabel}>Received Date</span>
             {/* Changing this cascades to every line's Delivery Date (handled in
                 the page's setHeaderField). */}
-            <input type="date" className={styles.fieldInput} value={draft.receivedAt} disabled={locked}
-              onChange={(e) => onField('receivedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.receivedAt}
+              disabled={locked}
+              onChange={(iso) => onField('receivedAt', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Delivery Note Ref</span>

@@ -42,9 +42,9 @@ export type DeliverableSoLine = {
   description2: string | null;
   uom: string | null;
   qty: number;
-  unitPriceCenti: number;
-  unitCostCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  unitCostSen: number;
+  discountSen: number;
   variants: unknown;
   delivered: number;
   returned: number;
@@ -262,12 +262,53 @@ export const useCreateMfgDeliveryOrder = () => {
   });
 };
 
+/* PROOF OF DELIVERY, as the status write's own payload.
+
+   This type is the fix for a divergence that looked like four careless call
+   sites and was actually ONE missing parameter. A delivery order can be closed
+   from five screens; until 2026-08-21 exactly one of them — the driver's POD
+   screen — attached the customer's signature and the GPS fix, and it did so by
+   BYPASSING this hook with a raw authedFetch, because the hook was declared
+   `{ id, status }` and posted `JSON.stringify({ status })`. Evidence could not
+   travel through it. So the bypass was not sloppiness; it was the only way to
+   send a signature at all, and every screen that used the hook properly filed
+   a delivery with no customer-side proof and said nothing about it.
+
+   Widening the type is therefore the whole repair. A second bypass would have
+   made three implementations of one PATCH — the duplication class this repo
+   keeps closing — so the capability moves INTO the shared home instead.
+
+   Every field is OPTIONAL and absent means absent. The backend writes each
+   column only `if present` (delivery-orders-mfg.ts, patchDeliveryOrderStatusHandler),
+   precisely so a plain status change never blanks a POD already on the row;
+   sending `''` or `null` here would defeat that guard from the client side.
+   `JSON.stringify` drops `undefined`, so a partially-captured POD serialises to
+   exactly the fields that were captured.
+
+   NOT a validation surface. Range-checking lives on the server, which
+   deliberately DROPS an out-of-range fix rather than refusing the write — "a
+   bad sensor reading must never be the reason a driver cannot close a
+   delivery". The client must not be stricter than that. */
+export type DoDeliveryEvidence = {
+  /** Customer signature, base64 PNG data URL → `delivery_orders.signature_data`. */
+  signatureData?: string;
+  /** R2 key of the delivery photo → `delivery_orders.pod_r2_key`. */
+  podKey?: string;
+  /** Where it was signed (mig 0249). Written server-side as a PAIR or not at all. */
+  podLat?: number;
+  podLng?: number;
+  /** Radius in metres — what tells a street GPS fix from an indoor wifi guess. */
+  podAccuracyM?: number;
+  /** The READING's own time, which can be minutes older than `delivered_at`. */
+  podLocatedAt?: string;
+};
+
 export const useUpdateMfgDeliveryOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
+    mutationFn: ({ id, status, evidence }: { id: string; status: string; evidence?: DoDeliveryEvidence }) =>
       authedFetch(`/delivery-orders-mfg/${id}/status`, {
-        method: 'PATCH', body: JSON.stringify({ status }),
+        method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }),
       }),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
@@ -358,7 +399,7 @@ export type DoPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;

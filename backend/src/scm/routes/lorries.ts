@@ -25,21 +25,21 @@ lorries.use('*', supabaseAuth);
 // road_tax_expiry / insurance_expiry / puspakom_expiry on the way out. These
 // are new columns on the table this route actually reads.
 //
-// No extra finance gate on purchase_price_centi, deliberately and by precedent:
+// No extra finance gate on purchase_price_sen, deliberately and by precedent:
 // this router is already behind scmAreaGuard('scm.transportation.drivers'), and
-// the sibling lorry-capacity route serves delivery revenue (revenue_centi) to
+// the sibling lorry-capacity route serves delivery revenue (revenue_sen) to
 // that same audience. Fleet money is visible to the fleet audience. If that
 // ruling ever changes it changes for both routes together, not just this one.
 const COLS = [
   'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'capacity_m3', 'capacity_kg',
   'active', 'notes', 'created_at', 'updated_at',
-  'model', 'purchase_date', 'purchase_price_centi',
+  'model', 'purchase_date', 'purchase_price_sen',
   'purchase_invoice_key', 'purchase_invoice_name', 'purchase_invoice_mime', 'purchase_invoice_size',
   'road_tax_expiry', 'insurance_expiry', 'puspakom_expiry',
   // Fleet A1 (mig 0205) — per-lorry delivery capacity ceilings the auto-propose
   // packer reads. NULL max_* => the packer uses its config default (10 sets /
   // RM30k). capacity_layer picks which ceiling(s) bind: SETS | REVENUE | BOTH.
-  'max_sets', 'max_revenue_centi', 'capacity_layer',
+  'max_sets', 'max_revenue_sen', 'capacity_layer',
   // WS3 (mig 0209) — cargo-box dimensions (ft); capacity_m3 is derived from them.
   'length_ft', 'width_ft', 'height_ft',
   // WS4a (mig 0210) — the 3PL carrier company this lorry belongs to (NULL = own
@@ -96,7 +96,7 @@ function toDateOrNull(v: unknown): { ok: true; value: string | null } | { ok: fa
   return ISO_DATE.test(s) ? { ok: true, value: s } : { ok: false };
 }
 
-/* An integer cents / km field. Rejects a negative (the table CHECKs cost_centi
+/* An integer cents / km field. Rejects a negative (the table CHECKs cost_sen
    >= 0 and odometer_km >= 0 — reject here so the operator gets a field-named
    400 instead of a raw constraint-violation 500). */
 function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
@@ -109,7 +109,7 @@ function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: fal
 /* The date columns a client may set on a lorry, and the wire name each maps
    from. Kept as an explicit list rather than a generic loop-over-body: this
    repo's BUG-HISTORY logs a generic client-field map as the exact mechanism
-   that made a server-owned column client-writable (the paid_centi back-door,
+   that made a server-owned column client-writable (the paid_sen back-door,
    2026-07-16). Every entry here is genuine operator-entered data. */
 const LORRY_DATE_FIELDS: [wire: string, col: string][] = [
   ['purchaseDate', 'purchase_date'],
@@ -154,13 +154,13 @@ lorries.post('/', async (c) => {
     if (!d.ok) return c.json({ error: 'invalid_date', reason: `${wire} must be YYYY-MM-DD` }, 400);
     dates[col] = d.value;
   }
-  const price = toIntOrNull(body.purchasePriceCenti);
-  if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceCenti must be a non-negative integer (cents)' }, 400);
+  const price = toIntOrNull(body.purchasePriceSen);
+  if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceSen must be a non-negative integer (cents)' }, 400);
 
   const maxSets = toCapacityOrNull(body.maxSets);
   if (!maxSets.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
-  const maxRevenue = toCapacityOrNull(body.maxRevenueCenti);
-  if (!maxRevenue.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueCenti must be a non-negative integer (cents) or blank' }, 400);
+  const maxRevenue = toCapacityOrNull(body.maxRevenueSen);
+  if (!maxRevenue.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueSen must be a non-negative integer (cents) or blank' }, 400);
   const layerRaw = body.capacityLayer === undefined || body.capacityLayer === null || body.capacityLayer === ''
     ? 'SETS' : String(body.capacityLayer).toUpperCase();
   if (!CAPACITY_LAYERS.has(layerRaw)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
@@ -193,9 +193,9 @@ lorries.post('/', async (c) => {
     notes: (body.notes as string) ?? null,
     active: body.active === false ? false : true,
     model: (body.model as string) || null,
-    purchase_price_centi: price.value,
+    purchase_price_sen: price.value,
     max_sets: maxSets.value,
-    max_revenue_centi: maxRevenue.value,
+    max_revenue_sen: maxRevenue.value,
     capacity_layer: layerRaw,
     ...dates,
     // The purchase invoice is NOT settable here — it arrives as a file via
@@ -289,20 +289,20 @@ lorries.patch('/:id', async (c) => {
     if (!d.ok) return c.json({ error: 'invalid_date', reason: `${wire} must be YYYY-MM-DD` }, 400);
     updates[col] = d.value;
   }
-  if (body.purchasePriceCenti !== undefined) {
-    const price = toIntOrNull(body.purchasePriceCenti);
-    if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceCenti must be a non-negative integer (cents)' }, 400);
-    updates.purchase_price_centi = price.value;
+  if (body.purchasePriceSen !== undefined) {
+    const price = toIntOrNull(body.purchasePriceSen);
+    if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceSen must be a non-negative integer (cents)' }, 400);
+    updates.purchase_price_sen = price.value;
   }
   if (body.maxSets !== undefined) {
     const m = toCapacityOrNull(body.maxSets);
     if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
     updates.max_sets = m.value;
   }
-  if (body.maxRevenueCenti !== undefined) {
-    const m = toCapacityOrNull(body.maxRevenueCenti);
-    if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueCenti must be a non-negative integer (cents) or blank' }, 400);
-    updates.max_revenue_centi = m.value;
+  if (body.maxRevenueSen !== undefined) {
+    const m = toCapacityOrNull(body.maxRevenueSen);
+    if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueSen must be a non-negative integer (cents) or blank' }, 400);
+    updates.max_revenue_sen = m.value;
   }
   if (body.capacityLayer !== undefined) {
     const layer = String(body.capacityLayer ?? 'SETS').toUpperCase();

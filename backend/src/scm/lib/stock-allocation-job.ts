@@ -9,29 +9,41 @@
 /* ══════════════════════════════════════════════════════════════════════════════
    SCOPE — READ THIS BEFORE RELYING ON "DURABLE".
 
-   This queue makes an SO stock-allocation recompute durable for the FOUR call
+   This queue makes an SO stock-allocation recompute durable for the SIX call
    sites that use `scheduleStockAllocationAfterCommand`: the three TBC line
-   commands and amendment approve-so. Those four run inside `runScmPgCommand`,
-   so the queue row commits in the SAME database transaction as the source
-   write, and a Worker crash between the two is impossible.
+   commands, amendment approve-so, and — since 2026-08-20 — the GRN line DELETE
+   and GRN cancel. Those six run inside `runScmPgCommand`, so the queue row
+   commits in the SAME database transaction as the source write, and a Worker
+   crash between the two is impossible.
 
-   The other THIRTY-FOUR allocation triggers in this codebase still call
-   `recomputeSoStockAllocation` best-effort (GRN post/cancel, DO ship/cancel,
+   The other THIRTY-TWO allocation triggers in this codebase still call
+   `recomputeSoStockAllocation` best-effort (GRN post, DO ship/cancel,
    delivery + purchase returns, stock takes, transfers, inventory adjustments,
    consignment, and eight paths in mfg-sales-orders itself). For those, a crash
    between the source write and the recompute leaves READY / PENDING and the SO
    header status stale until some later mutation happens to sweep. ALLOCATION IS
    NOT DURABLE IN GENERAL. Do not read the word "durable" in this file as
-   covering the whole surface — it covers four entry points.
+   covering the whole surface — it covers six entry points.
 
-   THIRTY-THREE of those thirty-four are `await`ed inline, so the operator's
+   NARROWED, NOT CLOSED, 2026-08-17. `recomputeSoStockAllocation` now enqueues
+   its OWN retry row whenever a sweep it actually ENTERED did not finish — a
+   lost single-flight race, a throw, or a header left un-advanced under an edit
+   lease. So the cron below IS now a repair loop for those outcomes, on all ~38
+   triggers rather than the durable six. The gap that remains is the one this
+   header was written about and it is unchanged: if the Worker dies BEFORE the
+   recompute is reached, there is still no row and still no retry, because only
+   a queue write inside the source write's own transaction can cover that. Six
+   entry points have it. Converting the rest still means moving each route onto
+   `runScmPgCommand` first.
+
+   THIRTY-ONE of those thirty-two are `await`ed inline, so the operator's
    request pays for the whole global sweep. ONE — the SO header PATCH — is
    DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
    upgrade: same call, same crash window, just moved off the response path. If
    anything it is harder to reason about, because the operator has already been
    told the save succeeded when the sweep dies. It buys latency and nothing
    else; the honest fix for that call site is still to move it onto
-   `runScmPgCommand` so it can join the durable four.
+   `runScmPgCommand` so it can join the durable six.
 
    The exact inventory is pinned by tests/stockAllocationDurabilityScope.test.ts,
    which fails if any count moves. Converting the rest requires first moving
@@ -43,6 +55,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env } from '../env';
 import { recomputeSoStockAllocation } from './so-stock-allocation';
+import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { deferScmAfterCommit } from './pg-supabase-transaction';
 
 const JOB_KEY = 'GLOBAL';
@@ -97,24 +110,11 @@ export type AllocationDrainResult = {
   reason?: string;
 };
 
-/**
- * Persist the invalidation in the caller's transaction.
- *
- * `attempts` / `deferrals` / `state` are DELIBERATELY not in the payload. This
- * is an upsert on the singleton row, so listing them would reset the failure
- * counter on every new mutation and a permanently broken job could never reach
- * its terminal state. On first INSERT the column defaults apply; on conflict
- * only the columns named here are overwritten.
- */
-export async function enqueueStockAllocationRecompute(sb: any, reason: string): Promise<void> {
-  const { error } = await sb.from('stock_allocation_recompute_queue').upsert({
-    job_key: JOB_KEY,
-    request_token: crypto.randomUUID(),
-    requested_at: new Date().toISOString(),
-    reason,
-  }, { onConflict: 'job_key' });
-  if (error) throw new Error(`Stock-allocation enqueue failed: ${error.message}`);
-}
+/* The enqueue moved to lib/stock-allocation-queue.ts on 2026-08-17 so that
+   so-stock-allocation.ts can write its own retry row without closing an import
+   cycle. Re-exported here because this is where callers look for it, and there
+   must go on being exactly ONE enqueue. */
+export { enqueueStockAllocationRecompute };
 
 /**
  * Claim and drain the singleton projection job. The random request_token
@@ -254,10 +254,16 @@ export async function drainStockAllocationRecompute(env: Env): Promise<Allocatio
  *
  * WHY THIS EXISTS (owner 2026-08-10, measured). Saving an SO header took 10.6s
  * on production. The write itself (apply_so_header_cas) is milliseconds; the
- * rest was this recompute, which is global by design — it walks 2,784 active
- * SOs and their 14,076 lines through PostgREST's 1000-row pages, ~25-30
- * sequential round trips at roughly 300ms each. That cost does not shrink with
- * `scopeToDocNo`, which narrows the WRITES only.
+ * rest was this recompute, which is global by design — it walks every active SO
+ * and every one of its lines through PostgREST's 1000-row pages, in series.
+ * That cost does not shrink with `scopeToDocNo`, which narrows the WRITES only.
+ *
+ * The "2,784 active SOs / 14,076 lines / ~25-30 sequential round trips at
+ * roughly 300ms each" this paragraph carried until 2026-08-16 was arithmetic,
+ * not a measurement, and it was wrong by a factor of four in the direction that
+ * makes the problem look smaller. `probe-so-save-cost` asked production and got
+ * 123 read round trips, 71 of them ONE read fetching 83 rows. Do not re-quote a
+ * number from here — run the probe; that is what it is for.
  *
  * WHAT YOU GIVE UP. The response returns before the projection settles, so a
  * client that refetches immediately can render READY / PENDING badges one sweep

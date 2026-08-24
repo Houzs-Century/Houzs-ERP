@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot data sync and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It brought Sales-department users' sales_reps rows into line. Superseded by whatever maintains that mapping now — find that before re-running this.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 /**
  * One-shot: bring every Sales-department user's sales_reps row into the
  * project "Sales Attending" picker.

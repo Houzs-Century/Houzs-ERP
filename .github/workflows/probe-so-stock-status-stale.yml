@@ -1,0 +1,67 @@
+name: probe-so-stock-status-stale
+
+# How many live Sales-Order lines show PENDING / PARTIAL right now while the
+# goods are standing in their own warehouse bucket?
+#
+# Owner, 2026-08-16, on 2990-SO-2608-002 and -003: the board wrote
+# "SHORT: MATTRESS" for a mattress that was in stock. The label rule is correct;
+# `mfg_sales_order_items.stock_status` — its input — goes stale, because ~34 of
+# the ~38 recompute triggers are best-effort and a sweep that lost the
+# single-flight race returned ok:true and left no queue row to retry.
+#
+# This is the before/after number for that fix. Read-only: SELECTs only, no
+# writes, no DDL, no transaction, and it never takes the allocation lock, so it
+# cannot block a production recompute.
+#
+# Answers are reported as a BRACKET (floor / ceiling) because the probe does not
+# replay the allocator's FIFO walk — see the header of
+# backend/scripts/probe-so-stock-status-stale.mjs for exactly what each bound
+# means and what is deliberately excluded.
+#
+# Runs under `npx tsx` so the script can import the REAL computeVariantKey /
+# isServiceLine / SO_TERMINAL_STATES out of src/ instead of re-implementing
+# them — the same reuse-not-replication rule recompute-so-allocation.yml follows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990, blank = both)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-stock-status-stale
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count the stale stock_status lines
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          npx tsx scripts/probe-so-stock-status-stale.mjs | tee stock-status-stale.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-so-stock-status-stale
+          path: backend/stock-status-stale.txt
+          retention-days: 14

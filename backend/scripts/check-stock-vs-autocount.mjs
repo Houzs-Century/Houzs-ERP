@@ -106,7 +106,16 @@ function summariseReadiness(lines) {
   const isFullyReady = (mainCount + accCount) > 0 && mainReady === mainCount && accReady === accCount;
   if (mainCount + accCount === 0) return "";
   if (isFullyReady) return "READY";
-  if (isMainReady) return "READY (PARTIAL)";
+  /* `mainCount > 0 &&` is load-bearing, and this copy was missing it until
+     2026-08-16: isMainReady is VACUOUSLY true when the SO has no main line, so
+     an accessory-only order with one short accessory scored as the partial
+     state and was counted "not falsifiable per category" instead of compared.
+     PARTIAL asserts "the MAIN products are in" — an order with no main line
+     cannot earn it and falls through to the (empty) ready list.
+     The token is the bare word, matching the ERP since 2026-08-16 evening;
+     AutoCount's corpus holds the older "READY (PARTIAL)" spelling and `canon`
+     below folds the two together. */
+  if (mainCount > 0 && isMainReady) return "PARTIAL";
   const readyCats = [];
   for (const cat of ["BEDFRAME", "SOFA", "MATTRESS"]) {
     const cell = mainByCat.get(cat);
@@ -201,15 +210,15 @@ async function main() {
      are not commensurable at all, which is exactly why section 4 excludes sofa
      from the balance axis. Exclude it on BOTH sides, and report the total so
      the exclusion stays visible rather than silent. */
-  const erpBal = await sql`SELECT b.product_code, b.warehouse_id, SUM(b.qty)::int qty,
+  const erpBal = await sql`SELECT b.item_code, b.warehouse_id, SUM(b.qty)::int qty,
       bool_or(UPPER(COALESCE(p.category::text,'')) = 'SOFA') AS is_sofa
     FROM scm.inventory_balances b
-    LEFT JOIN scm.mfg_products p ON p.code = b.product_code AND p.company_id = ${CO}
-   WHERE b.company_id = ${CO} GROUP BY b.product_code, b.warehouse_id`;
+    LEFT JOIN scm.mfg_products p ON p.code = b.item_code AND p.company_id = ${CO}
+   WHERE b.company_id = ${CO} GROUP BY b.item_code, b.warehouse_id`;
   const erpSofa = erpBal.filter((r) => r.is_sofa);
   const erpSofaUnits = erpSofa.reduce((s, r) => s + Number(r.qty), 0);
   log(`  ERP side, same exclusion: ${erpSofa.length} sofa-compartment cells / ${erpSofaUnits} units held out (AutoCount counts one whole sofa where the ERP counts its compartments — the two are not commensurable, so the balance axis excludes sofa on BOTH sides)`);
-  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
   const whName = new Map(whs.map((w) => [String(w.id), w.name]));
 
   /* Did the cutover import actually run? The repo contains a script that
@@ -275,13 +284,13 @@ async function main() {
      categories from each other: a cell whose only movement is the cutover
      adjustment cannot have drifted through trading, and a cell carrying the
      same source_doc_no twice is a duplicate rather than a missing posting. */
-  const mv = await sql`SELECT product_code, warehouse_id, source_doc_type,
+  const mv = await sql`SELECT item_code, warehouse_id, source_doc_type,
       COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
     FROM scm.inventory_movements WHERE company_id = ${CO}
-    GROUP BY product_code, warehouse_id, source_doc_type`;
+    GROUP BY item_code, warehouse_id, source_doc_type`;
   const mvBy = new Map();
   for (const r of mv) {
-    const k = `${norm(r.product_code)}|${r.warehouse_id}`;
+    const k = `${norm(r.item_code)}|${r.warehouse_id}`;
     if (!mvBy.has(k)) mvBy.set(k, new Map());
     mvBy.get(k).set(r.source_doc_type ?? "(null)", { n: r.n, units: Number(r.units) });
   }
@@ -293,17 +302,17 @@ async function main() {
      normal resyncs as corruption. A multi-line document posting the same
      product twice is likewise not a duplicate — hence doc_id, not doc_no. */
   const SINGLE_POST = ["GRN", "PURCHASE_RETURN", "STOCK_TRANSFER", "STOCK_TAKE"];
-  const dup = await sql`SELECT product_code, warehouse_id, source_doc_type, source_doc_no,
+  const dup = await sql`SELECT item_code, warehouse_id, source_doc_type, source_doc_no,
       movement_type, COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
     FROM scm.inventory_movements
     WHERE company_id = ${CO} AND source_doc_id IS NOT NULL
       AND source_doc_type = ANY(${SINGLE_POST})
-    GROUP BY product_code, warehouse_id, variant_key, batch_no, movement_type,
+    GROUP BY item_code, warehouse_id, variant_key, batch_no, movement_type,
              source_doc_type, source_doc_id, source_doc_no
     HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 200`;
-  const dupCell = new Set(dup.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  const dupCell = new Set(dup.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`single-post documents posted more than once (hard double-post signal): ${dup.length} buckets over ${dupCell.size} cells`);
-  for (const r of dup.slice(0, 15)) log(`  DOUBLE-POST ${r.product_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} ${r.movement_type} x${r.n} = ${r.units} units`);
+  for (const r of dup.slice(0, 15)) log(`  DOUBLE-POST ${r.item_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} ${r.movement_type} x${r.n} = ${r.units} units`);
 
   const provenance = (r) => {
     const m = mvBy.get(`${r.code}|${r.whId}`);
@@ -315,10 +324,10 @@ async function main() {
      by product name. DO-2607-005 and DO-2607-017 both dispatched SO-2606-019;
      DO-2607-017 additionally carries two phantom XAMMAR movements. Traced and
      confirmed already — it is labelled, not re-litigated. */
-  const knownDo = await sql`SELECT DISTINCT product_code, warehouse_id, source_doc_no
+  const knownDo = await sql`SELECT DISTINCT item_code, warehouse_id, source_doc_no
     FROM scm.inventory_movements
     WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
-  const knownCells = new Set(knownDo.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  const knownCells = new Set(knownDo.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
 
   const causeOf = (r) => {
@@ -422,8 +431,17 @@ async function main() {
      up as "BEDFRAME/ACC" 31 times and "ACC/BEDFRAME" twice. Comparing the raw
      strings would report the second spelling as a disagreement when the two
      systems in fact agree. Order-insensitive is the honest comparison; the
-     raw-string count is kept beside it so the cosmetic gap stays visible. */
-  const canon = (s) => (s || "").split("/").map((t) => t.trim()).filter(Boolean).sort().join("/");
+     raw-string count is kept beside it so the cosmetic gap stays visible.
+
+     Second spelling difference, same shape: AutoCount holds "READY (PARTIAL)"
+     for the state the ERP has called the bare "PARTIAL" since 2026-08-16. Same
+     meaning, one generation apart, so it is folded here rather than counted as
+     a disagreement — a stored remark cannot be re-typed retroactively. */
+  const canon = (s) => {
+    const t = (s || "").trim().toUpperCase();
+    if (t === "READY (PARTIAL)") return "PARTIAL";
+    return (s || "").split("/").map((x) => x.trim()).filter(Boolean).sort().join("/");
+  };
 
   const matrix = new Map();
   const mismatches = [];

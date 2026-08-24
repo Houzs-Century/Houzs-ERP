@@ -62,8 +62,8 @@ import {
   canTransitionWorkOrder,
   isWorkOrderOpen,
   workOrderSeam,
-  workOrderTotalCenti,
-  workOrderLineCenti,
+  workOrderTotalSen,
+  workOrderLineSen,
   type WorkOrderLineInput,
   COMPONENT_TYPES,
   type ComponentType,
@@ -108,7 +108,7 @@ type VaultRow = {
   document_ref: string | null;
   issue_date: string | null;
   expiry_date: string | null;
-  cost_centi: number | null;
+  cost_sen: number | null;
   owner: string | null;
   result: string | null;
   reinspection_deadline: string | null;
@@ -125,7 +125,7 @@ function shapeDoc(row: VaultRow, today: string) {
     documentRef: row.document_ref,
     issueDate: iso(row.issue_date),
     expiryDate,
-    costCenti: row.cost_centi,
+    costSen: row.cost_sen,
     owner: row.owner,
     result: row.result as PuspakomResult | null,
     reinspectionDeadline: iso(row.reinspection_deadline),
@@ -149,7 +149,7 @@ function flatDoc(docType: ComplianceDocType, expiry: string | null, today: strin
     documentRef: null,
     issueDate: null,
     expiryDate,
-    costCenti: null,
+    costSen: null,
     owner: null,
     result: null as PuspakomResult | null,
     reinspectionDeadline: null,
@@ -183,7 +183,7 @@ type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
   sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
 
-/* UNIFIED FLEET — nothing here scopes a row to the company; the
+/* company-scope-file: UNIFIED FLEET — nothing here scopes a row to the company; the
    `// company-scope:` annotations on the by-id writers below point at this note.
 
    The authority is the migration header plus the READ path, NOT the column list.
@@ -254,7 +254,7 @@ type PlanRow = {
   last_done_date: string | null;
   last_done_km: number | null;
   workshop: string | null;
-  est_cost_centi: number | null;
+  est_cost_sen: number | null;
   notes: string | null;
   active: boolean | null;
 };
@@ -290,7 +290,7 @@ function shapePlan(row: PlanRow, currentKm: number | null, today: string) {
     lastDoneDate: iso(row.last_done_date),
     lastDoneKm: row.last_done_km,
     workshop: row.workshop,
-    estCostCenti: row.est_cost_centi,
+    estCostSen: row.est_cost_sen,
     notes: row.notes,
     active: row.active ?? true,
     nextDueKm: due.nextDueKm,
@@ -329,7 +329,7 @@ type BreakdownRow = {
   media_refs: string[] | null;
   driver_description: string | null;
   towing_company: string | null;
-  towing_cost_centi: number | null;
+  towing_cost_sen: number | null;
   workshop: string | null;
   breakdown_start: string | null;
   recovery_time: string | null;
@@ -351,7 +351,7 @@ function shapeBreakdown(row: BreakdownRow, nowIso: string) {
     mediaRefs: row.media_refs ?? [],
     driverDescription: row.driver_description,
     towingCompany: row.towing_company,
-    towingCostCenti: row.towing_cost_centi,
+    towingCostSen: row.towing_cost_sen,
     workshop: row.workshop,
     breakdownStart: row.breakdown_start,
     recoveryTime: row.recovery_time,
@@ -378,10 +378,10 @@ type WorkOrderRow = {
   invoice_no?: string | null;
   advisor?: string | null;
   document_date?: string | null;
-  labour_centi: number | null;
-  outside_service_centi: number | null;
-  towing_centi: number | null;
-  tax_centi: number | null;
+  labour_sen: number | null;
+  outside_service_sen: number | null;
+  towing_sen: number | null;
+  tax_sen: number | null;
   warranty_until: string | null;
   invoice_refs: string[] | null;
   quote_refs: string[] | null;
@@ -405,9 +405,9 @@ type WorkOrderPartRow = {
   part_no: string | null;
   uom?: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
+  unit_price_sen: number | null;
   discount_pct?: number | null;
-  amount_centi?: number | null;
+  amount_sen?: number | null;
   line_no?: number | null;
   serial: string | null;
 };
@@ -415,15 +415,15 @@ type WorkOrderPartRow = {
 /** Every column the line model needs, in ONE place — the dashboard and the
  *  vehicle detail both read this table and must not drift apart. */
 const WO_PART_COLS =
-  "id, work_order_id, section, name, part_no, uom, qty, unit_price_centi, discount_pct, amount_centi, line_no, serial";
+  "id, work_order_id, section, name, part_no, uom, qty, unit_price_sen, discount_pct, amount_sen, line_no, serial";
 
 /** DB row -> the calculator's line shape. The single conversion point, so a
  *  discount can never be dropped on one read path and honoured on another. */
 const partToLine = (p: WorkOrderPartRow): WorkOrderLineInput => ({
   qty: p.qty,
-  unitPriceCenti: p.unit_price_centi,
+  unitPriceSen: p.unit_price_sen,
   discountPct: p.discount_pct,
-  amountCenti: p.amount_centi,
+  amountSen: p.amount_sen,
 });
 
 function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
@@ -434,13 +434,13 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
     partNo: p.part_no,
     uom: p.uom ?? null,
     qty: p.qty ?? 0,
-    unitPriceCenti: p.unit_price_centi ?? 0,
+    unitPriceSen: p.unit_price_sen ?? 0,
     discountPct: p.discount_pct ?? 0,
     lineNo: p.line_no ?? null,
     /* The printed amount when the document had one, else qty x unit x (1-disc).
        This used to be a bare qty x unit, which silently overcharged every
        discounted line — 14 of the 19 on the invoice that prompted mig 0241. */
-    lineCenti: workOrderLineCenti(partToLine(p)),
+    lineSen: workOrderLineSen(partToLine(p)),
     serial: p.serial,
   }));
   const state = row.status as WorkOrderState;
@@ -462,15 +462,15 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
     invoiceNo: row.invoice_no ?? null,
     advisor: row.advisor ?? null,
     documentDate: iso(row.document_date ?? null),
-    labourCenti: row.labour_centi ?? 0,
-    outsideServiceCenti: row.outside_service_centi ?? 0,
-    towingCenti: row.towing_centi ?? 0,
-    taxCenti: row.tax_centi ?? 0,
-    totalCenti: workOrderTotalCenti({
-      labourCenti: row.labour_centi,
-      outsideServiceCenti: row.outside_service_centi,
-      towingCenti: row.towing_centi,
-      taxCenti: row.tax_centi,
+    labourSen: row.labour_sen ?? 0,
+    outsideServiceSen: row.outside_service_sen ?? 0,
+    towingSen: row.towing_sen ?? 0,
+    taxSen: row.tax_sen ?? 0,
+    totalSen: workOrderTotalSen({
+      labourSen: row.labour_sen,
+      outsideServiceSen: row.outside_service_sen,
+      towingSen: row.towing_sen,
+      taxSen: row.tax_sen,
       parts: parts.map(partToLine),
     }),
     warrantyUntil: iso(row.warranty_until),
@@ -498,7 +498,7 @@ type ComponentRow = {
   serial: string | null;
   fitted_date: string | null;
   fitted_km: number | null;
-  purchase_price_centi: number | null;
+  purchase_price_sen: number | null;
   tread_depth: number | null;
   removed_date: string | null;
   removed_km: number | null;
@@ -514,7 +514,7 @@ type ComponentEventRow = {
   event_date: string | null;
   odometer_km: number | null;
   to_position: string | null;
-  cost_centi: number | null;
+  cost_sen: number | null;
   note: string | null;
 };
 
@@ -524,7 +524,7 @@ function shapeComponent(row: ComponentRow, currentKm: number | null, today: stri
       status: row.status,
       fittedKm: row.fitted_km,
       removedKm: row.removed_km,
-      purchasePriceCenti: row.purchase_price_centi,
+      purchasePriceSen: row.purchase_price_sen,
       warrantyUntil: iso(row.warranty_until),
     },
     currentKm,
@@ -542,7 +542,7 @@ function shapeComponent(row: ComponentRow, currentKm: number | null, today: stri
     serial: row.serial,
     fittedDate: iso(row.fitted_date),
     fittedKm: row.fitted_km,
-    purchasePriceCenti: row.purchase_price_centi,
+    purchasePriceSen: row.purchase_price_sen,
     treadDepth: row.tread_depth,
     removedDate: iso(row.removed_date),
     removedKm: row.removed_km,
@@ -550,7 +550,7 @@ function shapeComponent(row: ComponentRow, currentKm: number | null, today: stri
     status: row.status,
     notes: row.notes,
     kmUsed: life.kmUsed,
-    costPerKmCenti: life.costPerKmCenti,
+    costPerKmSen: life.costPerKmSen,
     underWarranty: life.underWarranty,
     events: events.map((e) => ({
       id: e.id,
@@ -558,7 +558,7 @@ function shapeComponent(row: ComponentRow, currentKm: number | null, today: stri
       eventDate: iso(e.event_date),
       odometerKm: e.odometer_km,
       toPosition: e.to_position,
-      costCenti: e.cost_centi,
+      costSen: e.cost_sen,
       note: e.note,
     })),
   };
@@ -577,7 +577,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*"),
     sb.from("lorry_maintenance").select("lorry_id, unavailable_from, unavailable_to, reason").lte("unavailable_from", today).gte("unavailable_to", today),
-    sb.from("lorry_service_records").select("lorry_id, service_date, odometer_km, next_service_km, next_service_date, cost_centi").order("service_date", { ascending: false }),
+    sb.from("lorry_service_records").select("lorry_id, service_date, odometer_km, next_service_km, next_service_date, cost_sen").order("service_date", { ascending: false }),
     sb.from("lorry_maintenance_plans").select("*").eq("active", true),
     sb.from("lorry_mileage_readings").select("lorry_id, reading_date, odometer_km, source, flagged").order("reading_date", { ascending: false }).order("created_at", { ascending: false }),
     // Phase 3: active (non-resolved) breakdown cases feed the BREAKDOWN seam + downtime.
@@ -611,7 +611,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   for (const s of svcR.data ?? []) {
     const lid = s.lorry_id as string;
     if (!latestSvc.has(lid)) latestSvc.set(lid, { odometer_km: s.odometer_km as number | null, next_service_km: s.next_service_km as number | null, next_service_date: iso(s.next_service_date) });
-    if (iso(s.service_date) && iso(s.service_date)! >= monthStart) monthSpend.set(lid, (monthSpend.get(lid) ?? 0) + Number(s.cost_centi ?? 0));
+    if (iso(s.service_date) && iso(s.service_date)! >= monthStart) monthSpend.set(lid, (monthSpend.get(lid) ?? 0) + Number(s.cost_sen ?? 0));
   }
   // Active preventive-maintenance plans per lorry.
   const plansByLorry = new Map<string, PlanRow[]>();
@@ -648,11 +648,11 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     woByLorry.set(w.lorry_id, list);
     const done = iso(w.actual_complete);
     if (done && done >= monthStart) {
-      const total = workOrderTotalCenti({
-        labourCenti: w.labour_centi,
-        outsideServiceCenti: w.outside_service_centi,
-        towingCenti: w.towing_centi,
-        taxCenti: w.tax_centi,
+      const total = workOrderTotalSen({
+        labourSen: w.labour_sen,
+        outsideServiceSen: w.outside_service_sen,
+        towingSen: w.towing_sen,
+        taxSen: w.tax_sen,
         parts: (partsByWo.get(w.id) ?? []).map(partToLine),
       });
       woMonthSpend.set(w.lorry_id, (woMonthSpend.get(w.lorry_id) ?? 0) + total);
@@ -765,10 +765,10 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   for (const [lid, v] of monthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
   for (const [lid, v] of woMonthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
   let costliestVehicle: string | null = null;
-  let costliestCenti = 0;
+  let costliestSen = 0;
   const plateById = new Map(lorries.map((l) => [l.id, l.plate]));
-  for (const [lid, spent] of combinedSpend) if (spent > costliestCenti) { costliestCenti = spent; costliestVehicle = plateById.get(lid) ?? null; }
-  const repairSpendThisMonthCenti = [...combinedSpend.values()].reduce((a, b) => a + b, 0);
+  for (const [lid, spent] of combinedSpend) if (spent > costliestSen) { costliestSen = spent; costliestVehicle = plateById.get(lid) ?? null; }
+  const repairSpendThisMonthSen = [...combinedSpend.values()].reduce((a, b) => a + b, 0);
 
   return c.json({
     today,
@@ -778,9 +778,9 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       activeBreakdowns: breakdowns, complianceBlocked, cantDispatch,
       openWorkOrders,
       fleetSize: rows.length,
-      repairSpendThisMonthCenti: combinedSpend.size ? repairSpendThisMonthCenti : null,
+      repairSpendThisMonthSen: combinedSpend.size ? repairSpendThisMonthSen : null,
       costliestVehicle,
-      costliestVehicleCenti: costliestVehicle ? costliestCenti : null,
+      costliestVehicleSen: costliestVehicle ? costliestSen : null,
     },
     statusCounts,
     vehicles: rows,
@@ -809,7 +809,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
 
   const { data: l, error } = await sb
     .from("lorries")
-    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft, manufacture_date, registration_date, in_service_date, purchase_date, purchase_price_centi")
+    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft, manufacture_date, registration_date, in_service_date, purchase_date, purchase_price_sen")
     .eq("id", id)
     .maybeSingle();
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
@@ -826,7 +826,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
        on the whole drawer. */
     sb.from("lorry_compliance_attachments").select("id, document_id, r2_key, file_name, mime_type, size_bytes, created_at").order("created_at"),
     sb.from("lorry_maintenance").select("unavailable_from, unavailable_to, reason").eq("lorry_id", id).order("unavailable_from", { ascending: false }),
-    sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_centi, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
+    sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_sen, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
     sb.from("lorry_maintenance_plans").select("*").eq("lorry_id", id),
     sb.from("lorry_mileage_readings").select("id, lorry_id, reading_date, odometer_km, source, photo_ref, flagged, note").eq("lorry_id", id).order("reading_date", { ascending: false }).order("created_at", { ascending: false }).limit(30),
     sb.from("lorry_breakdown_cases").select("*").eq("lorry_id", id).order("occurred_at", { ascending: false }).limit(50),
@@ -949,7 +949,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       registrationDate: iso((lorry as Record<string, unknown>).registration_date as string | null),
       inServiceDate: iso((lorry as Record<string, unknown>).in_service_date as string | null),
       purchaseDate: iso((lorry as Record<string, unknown>).purchase_date as string | null),
-      purchasePriceCenti: ((lorry as Record<string, unknown>).purchase_price_centi as number | null) ?? null,
+      purchasePriceSen: ((lorry as Record<string, unknown>).purchase_price_sen as number | null) ?? null,
       capacityM3: lorry.capacity_m3 ?? null,
       lengthFt: lorry.length_ft ?? null,
       widthFt: lorry.width_ft ?? null,
@@ -1036,7 +1036,7 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
      inHouseLorries. This stamp can disagree with the parent lorry's and it does
      not matter: none of the 7 read sites of lorry_compliance_documents selects,
      filters or groups on company_id — every one keys on lorry_id — and
-     cost_centi is never rolled up per company. A predicate here would hide a
+     cost_sen is never rolled up per company. A predicate here would hide a
      HOUZS-registered lorry's road tax from the 2990 dispatcher driving it. */
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
@@ -1052,7 +1052,7 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
   if (!expiry.ok) return c.json({ error: "invalid_expiry_date" }, 400);
   const reinspect = dateOrNull(body.reinspectionDeadline);
   if (!reinspect.ok) return c.json({ error: "invalid_reinspection_deadline" }, 400);
-  const cost = intOrNull(body.costCenti);
+  const cost = intOrNull(body.costSen);
   if (!cost.ok) return c.json({ error: "invalid_cost" }, 400);
   let result: string | null = null;
   if (docType === "PUSPAKOM" && body.result != null && body.result !== "") {
@@ -1075,7 +1075,7 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
       document_ref: (body.documentRef as string)?.trim() || null,
       issue_date: issue.value,
       expiry_date: expiry.value,
-      cost_centi: cost.value,
+      cost_sen: cost.value,
       owner: (body.owner as string)?.trim() || null,
       result,
       reinspection_deadline: reinspect.value,
@@ -1231,7 +1231,7 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
   if (!lastDoneDate.ok) return c.json({ error: "invalid_last_done_date" }, 400);
   const lastDoneKm = intOrNull(body.lastDoneKm);
   if (!lastDoneKm.ok) return c.json({ error: "invalid_last_done_km" }, 400);
-  const estCost = intOrNull(body.estCostCenti);
+  const estCost = intOrNull(body.estCostSen);
   if (!estCost.ok) return c.json({ error: "invalid_est_cost" }, 400);
   const active = body.active === undefined ? true : Boolean(body.active);
 
@@ -1248,7 +1248,7 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
     last_done_date: lastDoneDate.value,
     last_done_km: lastDoneKm.value,
     workshop: (body.workshop as string)?.trim() || null,
-    est_cost_centi: estCost.value,
+    est_cost_sen: estCost.value,
     notes: (body.notes as string)?.trim() || null,
     active,
     updated_at: new Date().toISOString(),
@@ -1296,10 +1296,10 @@ fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async 
     if (!v.ok) return c.json({ error: "invalid_last_done_km" }, 400);
     patch.last_done_km = v.value;
   }
-  if ("estCostCenti" in body) {
-    const v = intOrNull(body.estCostCenti);
+  if ("estCostSen" in body) {
+    const v = intOrNull(body.estCostSen);
     if (!v.ok) return c.json({ error: "invalid_est_cost" }, 400);
-    patch.est_cost_centi = v.value;
+    patch.est_cost_sen = v.value;
   }
   if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
   if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
@@ -1424,7 +1424,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
   if (!lat.ok) return c.json({ error: "invalid_gps_lat" }, 400);
   const lng = floatOrNull(body.gpsLng);
   if (!lng.ok) return c.json({ error: "invalid_gps_lng" }, 400);
-  const towingCost = numOrNull(body.towingCostCenti);
+  const towingCost = numOrNull(body.towingCostSen);
   if (!towingCost.ok) return c.json({ error: "invalid_towing_cost" }, 400);
   const breakdownStart = tsOrNull(body.breakdownStart);
   if (!breakdownStart.ok) return c.json({ error: "invalid_breakdown_start" }, 400);
@@ -1453,7 +1453,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
       media_refs: media.value,
       driver_description: (body.driverDescription as string)?.trim() || null,
       towing_company: (body.towingCompany as string)?.trim() || null,
-      towing_cost_centi: towingCost.value,
+      towing_cost_sen: towingCost.value,
       workshop: (body.workshop as string)?.trim() || null,
       breakdown_start: breakdownStart.value,
       recovery_time: recoveryTime.value,
@@ -1547,10 +1547,10 @@ fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), a
   if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
   if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
   if ("driverDescription" in body) patch.driver_description = (body.driverDescription as string)?.trim() || null;
-  if ("towingCostCenti" in body) {
-    const v = numOrNull(body.towingCostCenti);
+  if ("towingCostSen" in body) {
+    const v = numOrNull(body.towingCostSen);
     if (!v.ok) return c.json({ error: "invalid_towing_cost" }, 400);
-    patch.towing_cost_centi = v.value;
+    patch.towing_cost_sen = v.value;
   }
   if ("breakdownStart" in body) {
     const v = tsOrNull(body.breakdownStart);
@@ -1578,7 +1578,7 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
 
   const money: Record<string, number> = {};
-  for (const [k, col] of [["labourCenti", "labour_centi"], ["outsideServiceCenti", "outside_service_centi"], ["towingCenti", "towing_centi"], ["taxCenti", "tax_centi"]] as const) {
+  for (const [k, col] of [["labourSen", "labour_sen"], ["outsideServiceSen", "outside_service_sen"], ["towingSen", "towing_sen"], ["taxSen", "tax_sen"]] as const) {
     const v = numOrNull(body[k]);
     if (!v.ok) return c.json({ error: `invalid_${col}` }, 400);
     money[col] = v.value ?? 0;
@@ -1617,10 +1617,10 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
       invoice_no: (body.invoiceNo as string)?.trim() || null,
       advisor: (body.advisor as string)?.trim() || null,
       document_date: docDate.value,
-      labour_centi: money.labour_centi,
-      outside_service_centi: money.outside_service_centi,
-      towing_centi: money.towing_centi,
-      tax_centi: money.tax_centi,
+      labour_sen: money.labour_sen,
+      outside_service_sen: money.outside_service_sen,
+      towing_sen: money.towing_sen,
+      tax_sen: money.tax_sen,
       warranty_until: warranty.value,
       invoice_refs: invoiceRefs.value,
       quote_refs: quoteRefs.value,
@@ -1650,7 +1650,7 @@ fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), as
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const [k, col] of [["labourCenti", "labour_centi"], ["outsideServiceCenti", "outside_service_centi"], ["towingCenti", "towing_centi"], ["taxCenti", "tax_centi"]] as const) {
+  for (const [k, col] of [["labourSen", "labour_sen"], ["outsideServiceSen", "outside_service_sen"], ["towingSen", "towing_sen"], ["taxSen", "tax_sen"]] as const) {
     if (k in body) {
       const v = numOrNull(body[k]);
       if (!v.ok) return c.json({ error: `invalid_${col}` }, 400);
@@ -1739,7 +1739,7 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   if (!name) return c.json({ error: "name_required" }, 400);
   const qty = numOrNull(body.qty);
   if (!qty.ok || (qty.value !== null && qty.value <= 0)) return c.json({ error: "invalid_qty" }, 400);
-  const unit = numOrNull(body.unitPriceCenti);
+  const unit = numOrNull(body.unitPriceSen);
   if (!unit.ok) return c.json({ error: "invalid_unit_price" }, 400);
   /* A workshop invoice discounts PER LINE, not per document, and prints its own
      line total. Both are optional: a line with neither is the pre-0241 shape and
@@ -1748,24 +1748,24 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   if (!discount.ok || (discount.value !== null && (discount.value < 0 || discount.value > 100))) {
     return c.json({ error: "invalid_discount_pct" }, 400);
   }
-  const amount = numOrNull(body.amountCenti);
+  const amount = numOrNull(body.amountSen);
   if (!amount.ok || (amount.value !== null && amount.value < 0)) return c.json({ error: "invalid_amount" }, 400);
   const lineNo = numOrNull(body.lineNo);
   if (!lineNo.ok) return c.json({ error: "invalid_line_no" }, 400);
   const section = String(body.section ?? "PART").toUpperCase();
   if (section !== "PART" && section !== "LABOUR") return c.json({ error: "invalid_section" }, 400);
 
-  const { data: wo, error: woErr } = await scopeToCompany(sb.from("lorry_work_orders").select("id, labour_centi").eq("id", woId), c).maybeSingle();
+  const { data: wo, error: woErr } = await scopeToCompany(sb.from("lorry_work_orders").select("id, labour_sen").eq("id", woId), c).maybeSingle();
   if (woErr) return c.json({ error: "load_failed", reason: woErr.message }, 500);
   if (!wo) return c.json({ error: "work_order_not_found" }, 404);
 
   /* The one rule the DB cannot express (mig 0241): labour lives EITHER in the
      header scalar OR in LABOUR-section lines, never both, or the total counts
      it twice. The route is the single writer, so it is enforced here. */
-  if (section === "LABOUR" && Number(wo.labour_centi ?? 0) > 0) {
+  if (section === "LABOUR" && Number(wo.labour_sen ?? 0) > 0) {
     return c.json({
       error: "labour_already_on_header",
-      reason: "This record already carries labour in labourCenti. Clear it before adding labour lines, or keep using the header figure.",
+      reason: "This record already carries labour in labourSen. Clear it before adding labour lines, or keep using the header figure.",
     }, 409);
   }
 
@@ -1779,9 +1779,9 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
       part_no: (body.partNo as string)?.trim() || null,
       uom: (body.uom as string)?.trim()?.toUpperCase() || null,
       qty: qty.value ?? 1,
-      unit_price_centi: unit.value ?? 0,
+      unit_price_sen: unit.value ?? 0,
       discount_pct: discount.value ?? 0,
-      amount_centi: amount.value,
+      amount_sen: amount.value,
       line_no: lineNo.value,
       serial: (body.serial as string)?.trim() || null,
       created_by: c.get("houzsUser")?.id ?? null,
@@ -1826,7 +1826,7 @@ fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"
   if (!fittedDate.ok) return c.json({ error: "invalid_fitted_date" }, 400);
   const fittedKm = intOrNull(body.fittedKm);
   if (!fittedKm.ok) return c.json({ error: "invalid_fitted_km" }, 400);
-  const price = numOrNull(body.purchasePriceCenti);
+  const price = numOrNull(body.purchasePriceSen);
   if (!price.ok) return c.json({ error: "invalid_purchase_price" }, 400);
   const tread = numOrNull(body.treadDepth);
   if (!tread.ok) return c.json({ error: "invalid_tread_depth" }, 400);
@@ -1850,7 +1850,7 @@ fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"
       serial: (body.serial as string)?.trim() || null,
       fitted_date: fittedDate.value,
       fitted_km: fittedKm.value,
-      purchase_price_centi: price.value,
+      purchase_price_sen: price.value,
       tread_depth: tread.value,
       warranty_until: warranty.value,
       status: "ACTIVE",
@@ -1935,7 +1935,7 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
   if (!eventDate.ok) return c.json({ error: "invalid_event_date" }, 400);
   const odo = intOrNull(body.odometerKm);
   if (!odo.ok) return c.json({ error: "invalid_odometer" }, 400);
-  const cost = numOrNull(body.costCenti);
+  const cost = numOrNull(body.costSen);
   if (!cost.ok) return c.json({ error: "invalid_cost" }, 400);
   let toPosition: string | null = null;
   if (body.toPosition != null && body.toPosition !== "") {
@@ -1956,7 +1956,7 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
       event_date: eventDate.value ?? todayMyt(),
       odometer_km: odo.value,
       to_position: toPosition,
-      cost_centi: cost.value,
+      cost_sen: cost.value,
       note: (body.note as string)?.trim() || null,
       created_by: c.get("houzsUser")?.id ?? null,
     })

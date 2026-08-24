@@ -2,10 +2,11 @@
 // doc: goods land at a warehouse, PO's received_qty rolls up. Aside hero =
 // Received value + qty landed, tinted green once posted.
 
-import { lazy, Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -37,13 +38,15 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
+import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
-type GrnHeader = {
+type GrnHeader = HoldFields & {
   id: string;
   grn_number: string;
   status: GrnStatus;
@@ -51,7 +54,7 @@ type GrnHeader = {
   delivery_note_ref: string | null;
   warehouse_code?: string | null;
   warehouse_id?: string | null;
-  total_centi: number;
+  total_sen: number;
   currency: string;
   /* Multi-currency / landed cost (Phase 1-A). exchange_rate = MYR per 1 unit of
      `currency` (1 for an MYR receipt); allocation_method = the freight "平摊"
@@ -78,7 +81,6 @@ type GrnHeader = {
 
 type GrnItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   /* Supplier's own code, snapshotted per line at receipt (backend returns it). */
   supplier_sku?: string | null;
@@ -95,44 +97,42 @@ type GrnItem = {
   qty_received?: number | null;
   qty_accepted?: number | null;
   ordered_qty?: number | null;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   warehouse_code?: string | null;
   /* Per-line delivery date (mig 0101) — the ETA the supplier's shipment landed
      under. Nullable; falls back to the header receive date when unset. */
   delivery_date?: string | null;
   /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
-  allocated_charge_centi?: number | null;
+  allocated_charge_sen?: number | null;
 };
 
 /* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
 const poOf = (h: GrnHeader): string => h.purchase_order?.po_number || "—";
 
-type Effective = "draft" | "posted" | "cancelled";
+type Effective = "draft" | "posted" | "cancelled" | "on_hold";
+/* ON_HOLD named explicitly (mig 0319). The fall-through is "draft", so a HELD
+   goods receipt would have read as an un-posted DRAFT — which is the opposite
+   of what it is: a held GRN has already posted, and its stock IN already
+   fired. A hold is a paperwork pause, never a stock event. */
 const effectiveOf = (h: GrnHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
+  if (s === "ON_HOLD") return "on_hold";
   if (s === "POSTED") return "posted";
   return "draft";
 };
 
 const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Posted", blurb: "Posted · inventory received" },
+  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
 };
 
@@ -202,7 +202,7 @@ function PersonRow({ initials, name, role, tone = "accent" }: { initials: string
 function ReceivedHeroCard({ header, items }: { header: GrnHeader; items: GrnItem[] }) {
   const eff = effectiveOf(header);
   const t = EFFECTIVE_TONE[eff];
-  const total = header.total_centi ?? 0;
+  const total = header.total_sen ?? 0;
   const { orderedQty, receivedQty } = receivedOf(items);
   const isPosted = eff === "posted";
   // Multi-currency (Phase 1-A) — MYR-equivalent for a foreign receipt (no-op for MYR).
@@ -263,18 +263,25 @@ const GoodsReceivedDetailInlineEditor = lazy(() =>
   import("./GoodsReceivedDetail").then((m) => ({ default: m.GoodsReceivedDetail })),
 );
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and the
    lazy inline editor (the two children have different hook counts). */
 export function GoodsReceivedDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`grn-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <GoodsReceivedDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <GoodsReceivedDetailV2ReadOnly />;
@@ -354,8 +361,8 @@ function GoodsReceivedDetailV2ReadOnly() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!grn);
-  const goConvertToPi = () => id && navigate(`/scm/purchase-invoices/from-grn?grn=${id}`);
-  const goConvertToPr = () => id && navigate(`/scm/purchase-returns/new?fromGrn=${id}`);
+  const goConvertToPi = () => id && navigate(convertToLink('grnToPi', id));
+  const goConvertToPr = () => id && navigate(convertToLink('grnToPr', id));
   const doPost = () => {
     if (!grn) return;
     if (window.confirm(`Post GRN ${grn.grn_number}? Inventory will be received into the warehouse.`)) {
@@ -374,7 +381,7 @@ function GoodsReceivedDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary: this
          was the pre-#647 SalesOrderDetailV2 cell exactly (bold description, then
@@ -383,7 +390,7 @@ function GoodsReceivedDetailV2ReadOnly() {
          variant is present. The code still BINDS via getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -412,14 +419,14 @@ function GoodsReceivedDetailV2ReadOnly() {
       width: "132px",
       getValue: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         return code === "—" ? "" : code;
       },
       render: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         if (code === "—") return <span className="text-ink-muted">—</span>;
@@ -471,9 +478,9 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Unit cost",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi ?? 0,
+      getValue: (l) => l.unit_price_sen ?? 0,
       render: (l) => (
-        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_centi ?? 0, grn?.currency)}</span>
+        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_sen ?? 0, grn?.currency)}</span>
       ),
     },
     {
@@ -481,12 +488,12 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi ?? 0,
+      getValue: (l) => l.line_total_sen ?? 0,
       render: (l) => {
-        const freight = Number(l.allocated_charge_centi ?? 0);
+        const freight = Number(l.allocated_charge_sen ?? 0);
         return (
           <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_centi ?? 0, grn?.currency)}</span>
+            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_sen ?? 0, grn?.currency)}</span>
             {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
             {freight > 0 && (
               <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
@@ -544,7 +551,11 @@ function GoodsReceivedDetailV2ReadOnly() {
         <div className="px-4 pb-4 pt-3">
           <h1 className="font-display text-[19px] font-bold leading-tight text-white">{supplierNameOf(grn)}</h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -558,7 +569,11 @@ function GoodsReceivedDetailV2ReadOnly() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">{supplierNameOf(grn)}</h1>
-                <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-primary-ink">{grn.grn_number}</span>
@@ -569,7 +584,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 {poOf(grn) !== "—" && (
                   <>
                     <Divider />
-                    <span>From PO <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
+                    <span>{transferFromColumnLabel('po')} <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
                   </>
                 )}
                 {grn.delivery_note_ref && (
@@ -586,8 +601,8 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
-            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>Convert to PI</Button>}
-            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>Convert to PR</Button>}
+            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>{transferToLabel('pi')}</Button>}
+            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>{transferToLabel('pr')}</Button>}
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
@@ -597,7 +612,7 @@ function GoodsReceivedDetailV2ReadOnly() {
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Received value</div>
           <div className={cn("mt-1 font-money text-[26px] font-bold leading-none tracking-tight", effectiveOf(grn) === "posted" ? "text-synced" : "text-ink")}>
-            {fmtMoney(grn.total_centi, grn.currency)}
+            {fmtMoney(grn.total_sen, grn.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
             {items.length} line{items.length === 1 ? "" : "s"} · {EFFECTIVE_TONE[effectiveOf(grn)].blurb}
@@ -620,7 +635,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title="Receipt info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field label="Received at" value={fmtDate(grn.received_at)} />
-                <Field label="From PO" value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
+                <Field label={transferFromColumnLabel('po')} value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
                 <Field label="Delivery note" value={grn.delivery_note_ref || "—"} muted={!grn.delivery_note_ref} mono={!!grn.delivery_note_ref} />
                 <Field label="Warehouse" value={grn.warehouse_code || "—"} muted={!grn.warehouse_code} mono={!!grn.warehouse_code} />
                 <Field label="Currency" value={grn.currency} />
@@ -695,7 +710,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             </button>
           ) : canConvertToPi ? (
             <button type="button" onClick={goConvertToPi} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
-              <Receipt size={16} /> Convert to PI
+              <Receipt size={16} /> {transferToLabel('pi')}
             </button>
           ) : (
             <button type="button" onClick={goEdit} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
@@ -720,7 +735,7 @@ function GoodsReceivedDetailV2ReadOnly() {
           { label: "Against PO", value: poOf(grn) },
           { label: "Received", value: fmtDate(grn.received_at) },
           { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
-          { label: "Receipt value", value: fmtMoney(grn.total_centi, grn.currency) },
+          { label: "Receipt value", value: fmtMoney(grn.total_sen, grn.currency) },
         ]}
         {...print.handlers}
       />

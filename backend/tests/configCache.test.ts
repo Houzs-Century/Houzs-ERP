@@ -31,6 +31,7 @@ import {
   createChangeHandler,
 } from "../src/scm/routes/maintenance-config";
 import {
+  CONFIG_CACHE_TTL_SECONDS,
   bannerCacheKey,
   bumpConfigVersion,
   bustBannerForUser,
@@ -83,6 +84,15 @@ describe("version segment + key construction", () => {
   test("an EMPTY scope key refuses to mint a shared key", () => {
     expect(configCacheKeyUrl("https://erp.test", "branding", "", 7)).toBeNull();
   });
+
+  test("banner TTL stays COMFORTABLY above the 60s frontend poll (never == poll)", () => {
+    // A TTL == poll expires the entry exactly as the next poll arrives, so every
+    // poll misses and rebuilds the full feed (measured live ~900ms/60s on
+    // 2026-08-18). Guard against a re-lowering back to 60.
+    const POLL_MS = 60; // useAnnouncementBanner.ts POLL_MS / 1000
+    expect(CONFIG_CACHE_TTL_SECONDS.banner).toBeGreaterThan(POLL_MS);
+    expect(CONFIG_CACHE_TTL_SECONDS.banner).toBeGreaterThanOrEqual(POLL_MS * 2);
+  });
 });
 
 // ── Storage layer: Cache API never crosses scope keys ───────────────────────
@@ -107,16 +117,27 @@ describe("Cache API storage layer", () => {
     expect(await hitB!.json()).toEqual({ co: "two" });
   });
 
-  test("banner keys are per-user and bust hits ONLY the target user", async () => {
-    expect(bannerCacheKey(5, 101)).not.toBe(bannerCacheKey(5, 202));
-    expect(bannerCacheKey(5, 101)).not.toBe(bannerCacheKey(6, 101));
+  test("banner keys are per-user AND per-scope; a human entry never answers system", () => {
+    // per-user
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(5, 202, "human"));
+    // per-version
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(6, 101, "human"));
+    // per-SCOPE — the same user/version, different slice, must key apart, or
+    // one scope's payload could be served for the other.
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(5, 101, "system"));
+  });
 
+  test("bust hits ONLY the target user — and ALL of that user's scopes", async () => {
     const v = await configCacheVersion(kvEnv, "banner");
-    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101), "payload-A");
-    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 202), "payload-B");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101, "human"), "A-human");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101, "system"), "A-system");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 202, "human"), "B-human");
     await bustBannerForUser(kvEnv, 101);
-    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101))).toBeNull();
-    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 202))).toBe("payload-B");
+    // both of user 101's slices are gone
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101, "human"))).toBeNull();
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101, "system"))).toBeNull();
+    // user 202 is untouched
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 202, "human"))).toBe("B-human");
   });
 });
 
@@ -380,7 +401,7 @@ const USER_A = { id: 101, department_id: null, position_id: null, permissions: [
 const USER_B = { id: 202, department_id: null, position_id: null, permissions: [] as string[], permissions_set: new Set<string>() };
 const MANAGER = { id: 300, department_id: null, position_id: null, permissions: ["*"], permissions_set: new Set(["*"]) };
 
-async function getBanner(user: any, scope?: "system") {
+async function getBanner(user: any, scope?: "human" | "system") {
   bannerState.user = user;
   const path = scope
     ? `/api/announcements/banner?scope=${scope}`
@@ -439,9 +460,19 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(a2.cache).toBe("miss"); // busted → rebuilt
     expect(a2.ids).toEqual([]); // ...but the pop-up slice excludes it
     const aSys = await getBanner(USER_A, "system");
-    expect(aSys.cache).toBe("bypass"); // bell slice is a live read
+    expect(aSys.cache).toBe("miss"); // bell slice is cached now — first read misses
     expect(aSys.ids.length).toBe(1);
     const privateId = aSys.ids[0];
+
+    // The bell slice is now cached, keyed on scope: a 2nd system read HITS...
+    const aSys2 = await getBanner(USER_A, "system");
+    expect(aSys2.cache).toBe("hit");
+    expect(aSys2.ids).toEqual([privateId]);
+    // ...and that system entry NEVER answers the human slice for the same user:
+    // A's human read still hits its OWN (empty) entry, not the 1-id system one.
+    const aHuman = await getBanner(USER_A, "human");
+    expect(aHuman.cache).toBe("hit");
+    expect(aHuman.ids).toEqual([]);
 
     // Direction check: B's banner (cached or rebuilt) NEVER shows A's private
     // notice — and B's entry was untouched by A's bust.
@@ -489,5 +520,70 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(a4.ids).not.toContain(privateId);
     expect(b4.ids).not.toContain(privateId);
     expect((await getBanner(USER_A, "system")).ids).toContain(privateId);
+  });
+});
+
+
+// ── The banner bust is WIRED into every targeting-change route ───────────────
+//
+// The 300s banner TTL (> the 60s poll) is only correct if an edit that moves a
+// user between audiences clears their snapshot. bustBannerForUser (both scopes)
+// is proven above; this pins that the production ROUTES actually call it at
+// every targeting-change site. It is a SOURCE-STRUCTURE test, on purpose: the
+// users / departments routes use getDb (drizzle -> postgres), and this vitest
+// harness has NO postgres binding (DATABASE_URL is empty), so those handlers
+// cannot be executed here — the same reason mailAliasRevocation.test.ts asserts
+// the users PATCH by reading its source. The behavioural both-scope clear lives
+// in the bustBannerForUser test above.
+
+const routeSrc = import.meta.glob(
+  ["../src/routes/users.ts", "../src/routes/departments.ts"],
+  { query: "?raw", import: "default", eager: true },
+) as Record<string, string>;
+const usersSrc = Object.entries(routeSrc).find(([k]) => k.includes("users.ts"))![1];
+const deptsSrc = Object.entries(routeSrc).find(([k]) => k.includes("departments.ts"))![1];
+
+describe("banner bust is wired into every targeting-change route", () => {
+  test("users PATCH busts the banner whenever a targeting field changes", () => {
+    const start = usersSrc.indexOf('app.patch("/:id"');
+    const end = usersSrc.indexOf("app.", start + 1);
+    const handler = usersSrc.slice(start, end === -1 ? undefined : end);
+    // The predicate covers every field the banner filters on (dept / position /
+    // company grants) PLUS role/status, and gates a bustBannerForUser call.
+    expect(handler).toContain("bannerTargetingChanged");
+    for (const field of [
+      '"department_id" in set',
+      '"position_id" in set',
+      '"role_id" in set',
+      '"status" in set',
+      "finalDeptIds !== null",
+      "hasCompanyChange",
+    ]) {
+      expect(handler).toContain(field);
+    }
+    expect(handler).toMatch(/if \(bannerTargetingChanged\)\s*{\s*await bustBannerForUser\(c\.env, id\);/);
+  });
+
+  test("users PUT /:id/companies busts the banner after changing grants", () => {
+    const start = usersSrc.indexOf('app.put("/:id/companies"');
+    const end = usersSrc.indexOf("app.", start + 1);
+    const handler = usersSrc.slice(start, end === -1 ? undefined : end);
+    expect(handler).toContain("setUserCompanies(");
+    expect(handler).toContain("bustBannerForUser(c.env, id)");
+  });
+
+  test("users DELETE busts the banner for the removed user", () => {
+    const start = usersSrc.indexOf('app.delete("/:id"');
+    const handler = usersSrc.slice(start);
+    expect(handler).toContain("bustBannerForUser(c.env, id)");
+  });
+
+  test("departments DELETE bumps the banner family version after un-assigning members", () => {
+    const start = deptsSrc.indexOf('app.delete("/:id"');
+    const handler = deptsSrc.slice(start);
+    const nullAt = handler.indexOf("UPDATE users SET department_id = NULL");
+    const bumpAt = handler.indexOf('bumpConfigVersion(c.env, "banner")');
+    expect(nullAt).toBeGreaterThan(-1);
+    expect(bumpAt).toBeGreaterThan(nullAt); // bump AFTER the members are un-assigned
   });
 });

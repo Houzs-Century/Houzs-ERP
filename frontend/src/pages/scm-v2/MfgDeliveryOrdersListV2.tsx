@@ -11,6 +11,11 @@
 //       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
+import { deliveryOrderRowMenu } from "./row-menus";
+import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -26,10 +31,12 @@ import {
   Printer,
   CheckCircle2,
   Receipt,
-  RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { deliveryOrderPrintChain } from "../../lib/printChain";
+import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -47,6 +54,12 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  doAdvanceBlockReason,
+  doAdvanceStep,
+  siTransferBlockReason,
+} from "../../vendor/scm/lib/do-next-step";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
@@ -62,21 +75,23 @@ import {
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { useHoldAction } from "./use-hold-action";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
 // shape). Fields not listed here still exist on the API payload — they just
 // aren't rendered by this V2 chrome.
 
-type DoRow = {
+type DoRow = HoldFields & {
   id: string;
   do_number: string;
   so_doc_no: string | null;
@@ -105,6 +120,8 @@ type DoRow = {
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
   ref: string | null;
+  /** POD, as stored — the list select is HEADER, which carries both. */
+  signature_data?: string | null; pod_r2_key?: string | null;
   branding: string | null;
   driver_name: string | null;
   vehicle: string | null;
@@ -117,7 +134,7 @@ type DoRow = {
   customer_state: string | null;
   status: string;
   currency: string;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count?: number;
   lifecycle_state?: "shipped" | "invoiced" | "returned";
   /** Transfer-to relations (display-only, audit R8): the SI number(s) this DO
@@ -133,36 +150,29 @@ type DoRow = {
   building_type: string | null;
   // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
   //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
-type StatusTab = "all" | "open" | "in_transit" | "delivered" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref. Same fallback chain as the SO V2 template.
 const refOf = (r: DoRow): string =>
@@ -173,44 +183,11 @@ const refOf = (r: DoRow): string =>
 const soOf = (r: DoRow): string => r.so_doc_no || "—";
 
 const brandOf = (r: DoRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home. This copy had lost the BEDFRAME
+   arm too. */
+const brandTone = brandingToneForLabel;
 
-// DO lifecycle: LOADED → DISPATCHED → IN_TRANSIT → SIGNED → DELIVERED →
-// INVOICED, plus CANCELLED. Compress into 4 buckets for the filter pills
-// (open / in_transit / delivered / cancelled) so the row of tabs stays
-// scannable — the full status shows in each row's Badge.
-const STATUS_TONE: Record<
-  string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
-> = {
-  draft:       { tone: "warning", label: "Draft",       bucket: "open" },
-  loaded:      { tone: "warning", label: "Loaded",      bucket: "open" },
-  // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
-  // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Dispatched",  bucket: "in_transit" },
-  in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
-  signed:      { tone: "success", label: "Signed",      bucket: "delivered" },
-  delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
-  invoiced:    { tone: "success", label: "Invoiced",    bucket: "delivered" },
-  completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
-  cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-  cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
-};
-
-const statusFor = (
-  s: string
-): { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab } =>
-  STATUS_TONE[(s || "").toLowerCase()] ?? {
-    tone: "neutral",
-    label: s || "—",
-    bucket: "open",
-  };
 
 // ─── Split-menu dropdown (mirrors SO V2) ───────────────────────────────────
 
@@ -347,7 +324,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.do_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {r.debtor_name || "—"}
@@ -361,14 +338,14 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  From SO
+                  {transferFromColumnLabel('so')}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">
                   {soOf(r)}
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.local_total_centi)}
+                {fmtRm(r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -386,9 +363,8 @@ function DetailDrawer({
   onOpenFull,
   onEdit,
   onPrint,
-  onMarkSigned,
+  onAdvance,
   onConvertToSi,
-  onReopen,
   salespersonName,
   canWrite,
 }: {
@@ -397,44 +373,50 @@ function DetailDrawer({
   onOpenFull: () => void;
   onEdit: () => void;
   onPrint: () => void;
-  onMarkSigned: () => void;
+  /** Advance THIS document one status step — see do-next-step.ts for the verb. */
+  onAdvance: () => void;
   onConvertToSi: () => void;
-  onReopen: () => void;
   canWrite: boolean;
   salespersonName: string;
 }) {
   const detailQ = useMfgDeliveryOrderDetail(row?.id ?? null);
   const items: Array<{
-    product_code?: string;
-    product_name?: string;
     item_code?: string;
+    product_name?: string;
     description?: string;
     description2?: string;
     item_group?: string;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_centi?: number;
-    amount_centi?: number;
-    total_centi?: number;
+    unit_price_sen?: number;
+    amount_sen?: number;
+    total_sen?: number;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
-      product_code?: string;
-      product_name?: string;
       item_code?: string;
+      product_name?: string;
       description?: string;
       description2?: string;
       item_group?: string;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_centi?: number;
-      amount_centi?: number;
-      total_centi?: number;
+      unit_price_sen?: number;
+      amount_sen?: number;
+      total_sen?: number;
     }>) ?? [];
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  const totalCenti = row?.local_total_centi ?? 0;
+  /* Both status questions come from the SAME module the detail page and the
+     mobile shell import, so this drawer and the page it opens can no longer
+     answer them differently. See vendor/scm/lib/do-next-step.ts. */
+  const advanceStep = doAdvanceStep(row?.status);
+  const advanceReason = doAdvanceBlockReason(row?.status);
+  const siReason = siTransferBlockReason(row?.status);
+  const canConvertToSi = siReason === null;
+
+  const totalSen = row?.local_total_sen ?? 0;
 
   return (
     <ResizableDetailDrawer
@@ -483,12 +465,12 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
                 <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
-                <MetaItem k="Delivery date" v={fmtDate(row.customer_delivery_date)} />
+                <MetaItem k="Delivery Date" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem k="Expected at" v={fmtDate(row.expected_delivery_at)} />
                 <MetaItem k="Driver" v={row.driver_name || "—"} />
                 <MetaItem k="Vehicle" v={row.vehicle || "—"} />
@@ -548,11 +530,11 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const amt =
-                    l.amount_centi ??
-                    l.total_centi ??
-                    (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+                    l.amount_sen ??
+                    l.total_sen ??
+                    (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.item_code || l.product_code,
+                    code: l.item_code || l.item_code,
                     description: l.description || l.product_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -577,7 +559,7 @@ function DetailDrawer({
                         {l.qty ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_centi ?? 0)}
+                        {fmtRm(l.unit_price_sen ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
@@ -588,11 +570,18 @@ function DetailDrawer({
               </div>
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="DO total" v={fmtRm(totalCenti)} strong />
+                <TotalRow k="DO total" v={fmtRm(totalSen)} strong />
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <div className="shrink-0 border-t border-border bg-surface px-5 py-3">
+            {canWrite && (
+              <div className="mb-2 flex flex-col gap-0.5">
+                <NextStepNote id="do-drawer-advance-reason" reason={advanceReason} />
+                <NextStepNote id="do-drawer-si-reason" reason={siReason} />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
               {canWrite && (
                 <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>
                   Edit
@@ -602,45 +591,37 @@ function DetailDrawer({
                 Print
               </Button>
               <div className="flex-1" />
-              {canWrite && (() => {
-                const s = (row.status || "").toLowerCase();
-                if (["loaded", "dispatched", "in_transit"].includes(s)) {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<CheckCircle2 size={14} />}
-                      onClick={onMarkSigned}
-                    >
-                      Mark signed
-                    </Button>
-                  );
-                }
-                if (["signed", "delivered"].includes(s)) {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<Receipt size={14} />}
-                      onClick={onConvertToSi}
-                    >
-                      Convert to SI
-                    </Button>
-                  );
-                }
-                // Reopen a cancelled DO back to LOADED (2990
-                // MfgDeliveryOrdersList "Reopen DO" parity).
-                if (s === "cancelled" || s === "cancel") {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<RotateCcw size={14} />}
-                      onClick={onReopen}
-                    >
-                      Reopen
-                    </Button>
-                  );
-                }
-                return null;
-              })()}
+              {/* TWO FIXED SLOTS, NEVER ONE SLOT WITH THREE VERBS. This footer
+                  is the screen the owner was looking at on 2026-08-18: one green
+                  button said "Mark signed" on a dispatched row and "Transfer to
+                  Sales Invoice" on a signed one — same pixels, different action,
+                  status badge the only clue. Advance and transfer now each keep
+                  one meaning, disabled with a reason rather than swapped out.
+                  The third verb, "Reopen", is gone entirely: the server refuses
+                  every transition out of CANCELLED (`do_cancelled_final`), so it
+                  could not once have worked. Full account: do-next-step.ts. */}
+              {canWrite && advanceStep && (
+                <Button
+                  variant="secondary"
+                  icon={<CheckCircle2 size={14} />}
+                  onClick={onAdvance}
+                >
+                  {advanceStep.label}
+                </Button>
+              )}
+              {canWrite && (
+                <Button
+                  variant="primary"
+                  icon={<Receipt size={14} />}
+                  onClick={onConvertToSi}
+                  disabled={!canConvertToSi}
+                  title={siReason ?? undefined}
+                  aria-describedby={siReason ? "do-drawer-si-reason" : undefined}
+                >
+                  {transferToLabel('si')}
+                </Button>
+              )}
+            </div>
             </div>
           </>
         )}
@@ -735,7 +716,6 @@ const SORT_COL_MAP: Record<string, string> = {
 
 type DoDrillItem = {
   item_code?: string;
-  product_code?: string;
   product_name?: string;
   description?: string;
   /* Variant fields — the SAME payload the quick-view drawer above already
@@ -746,9 +726,9 @@ type DoDrillItem = {
   variants?: Record<string, unknown> | null;
   description2?: string | null;
   qty?: number;
-  unit_price_centi?: number;
-  amount_centi?: number;
-  total_centi?: number;
+  unit_price_sen?: number;
+  amount_sen?: number;
+  total_sen?: number;
   /* Source PO(s) this DO line's shipped goods came from (owner 2026-07-31) — the
      durable batch_no = source-PO hard link resolved by the DO detail endpoint
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
@@ -771,12 +751,12 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     [];
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.item_code || l.product_code || null,
+    code: l.item_code || l.item_code || null,
     description: l.description || l.product_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
+    amountSen: l.amount_sen ?? l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0),
     sourcePos: l.source_pos ?? [],
     sourceAdj: l.source_adj ?? false,
   }));
@@ -802,8 +782,9 @@ export function MfgDeliveryOrdersListV2() {
   const queryClient = useQueryClient();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const askChoice = useChoice();
+  const holdAction = useHoldAction("do");
   const askConfirm = useConfirm();
+  const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
@@ -873,13 +854,7 @@ export function MfgDeliveryOrdersListV2() {
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
   // Full-set status-tab counts from the server (stable while paging / searching).
-  const counts = data?.statusCounts ?? {
-    all: 0,
-    open: 0,
-    in_transit: 0,
-    delivered: 0,
-    cancelled: 0,
-  };
+  const counts: Record<string, number> = data?.statusCounts ?? {};
 
   /* The rows the TABLE is showing — the server page minus whatever the
      per-column funnels hide (owner 2026-08-13, following the Purchase Orders
@@ -889,9 +864,9 @@ export function MfgDeliveryOrdersListV2() {
 
   // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
   // not full-set money sums), so the card and the table can never disagree.
-  const revenueCenti = useMemo(() => {
+  const revenueSen = useMemo(() => {
     let sum = 0;
-    for (const r of visible.rows) sum += r.local_total_centi ?? 0;
+    for (const r of visible.rows) sum += r.local_total_sen ?? 0;
     return sum;
   }, [visible.rows]);
 
@@ -901,13 +876,15 @@ export function MfgDeliveryOrdersListV2() {
      handful of rows, which is the exact contradiction this change exists to
      remove. So while a funnel is narrowing the page, they describe the visible
      set instead; with no funnel they are byte-identical to before. */
+  /* The TABS split one-per-status; these two cards must NOT — an invoiced
+     delivery was delivered, and en-route is dispatched + in transit. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;
     for (const r of visible.rows) {
       const b = statusFor(r.status).bucket;
-      if (b === "in_transit") inTransit += 1;
-      if (b === "delivered") delivered += 1;
+      if (b === "dispatched" || b === "in_transit") inTransit += 1;
+      if (b === "delivered" || b === "invoiced") delivered += 1;
     }
     return { inTransit, delivered };
   }, [visible.rows]);
@@ -966,50 +943,73 @@ export function MfgDeliveryOrdersListV2() {
   const goSoList = () => navigate("/scm/sales-orders");
   const goPlanning = () => navigate("/scm/delivery-planning");
   const goEdit = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?edit=1`);
-  const goPrint = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
-  const doMarkSigned = (r: DoRow) =>
+  /* One advance handler, target status supplied by do-next-step.ts — so this
+     drawer walks the same ladder as the detail page and the mobile shell. */
+  const doAdvance = (r: DoRow) => {
+    const step = doAdvanceStep(r.status);
+    if (!step) return;
+    /* Only DRAFT → Confirm remains (owner 2026-08-21 removed "Mark signed"), so
+       there is no delivery-close to warn about here — the driver's Proof-of-
+       Delivery screen is what closes a delivery with its signature. */
     updateStatus.mutate(
-      { id: r.id, status: "DELIVERED" },
+      { id: r.id, status: step.status },
       { onSuccess: () => setSelected(null) }
     );
-  const doConvertToSi = (r: DoRow) =>
-    navigate(`/scm/sales-invoices/from-do?do=${r.id}`);
-  // Reopen a cancelled DO → LOADED (2990 MfgDeliveryOrdersList "Reopen DO"
-  // parity; reuses the status PATCH endpoint).
-  const doReopen = async (r: DoRow) => {
-    if (
-      !(await askConfirm({
-        title: `Reopen ${r.do_number} back to LOADED?`,
-        confirmLabel: "Reopen",
-      }))
-    )
-      return;
-    updateStatus.mutate(
-      { id: r.id, status: "LOADED" },
-      {
-        onSuccess: () => setSelected(null),
-        onError: (e) =>
-          notify({
-            title: "Reopen failed",
-            body: e instanceof Error ? e.message : "Something went wrong.",
-            tone: "error",
-          }),
-      }
-    );
   };
+  const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
+  const doConvertToDr = (r: DoRow) => navigate(convertToLink('doToDr', r.id));
+  /* Cancel REVERSES STOCK, so it asks first — the same in-app confirm the Sales
+     Order list's cancel uses, and the same endpoint the detail page posts. */
+  const doCancelDo = async (r: DoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.do_number}?`,
+      body: "Stock allocated to this delivery order is released back to the Sales Order, and a cancelled delivery order cannot be reactivated — raise a new one to deliver again.",
+      confirmLabel: "Cancel Delivery Order",
+      danger: true,
+    }))) return;
+    updateStatus.mutate({ id: r.id, status: "CANCELLED" });
+  };
+  // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
+  const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
+  /* Every predicate here is a SHARED one, not a status list typed at this call
+     site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
+     LOADED delivery may be invoiced (「不要拦 —— 人自己知道」);
+     doCountsAsDelivered is the same rule the server's returnable-DO picker
+     applies (do-line-remaining.ts) — goods still on the lorry never left, so
+     nothing can come back; doAdvanceStep supplies the one DRAFT rung.
+     THE HOLD IS A SECOND AXIS (mig 0324), ANDed with them rather than folded in:
+     those answer "where has this delivery got to", the marker answers "did
+     somebody stop it". A held DO's stage is still its real stage. */
+  const doContextMenu = deliveryOrderRowMenu<DoRow>({
+    open: goFullPage, edit: goEdit, print: printDocument,
+    transferToSi: doConvertToSi, transferToDr: doConvertToDr,
+    confirm: doAdvance, cancel: doCancelDo, setHold: setDoHold,
+    setStatus: (r, status) => updateStatus.mutate({ id: r.id, status }, { onSuccess: () => setSelected(null) }),
+    canInvoice: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsInvoiceable(r.status),
+    canReturn: (r) => canWriteDo && !rowIsHeld(r) && doCountsAsDelivered(r.status),
+    canConfirm: (r) => canWriteDo && !rowIsHeld(r) && doAdvanceStep(r.status) !== null,
+    canSetStatus: (r) => canWriteDo && !rowIsHeld(r),
+    canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
+  });
+  /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
+     never succeed: PATCH /:id/status refuses every transition out of CANCELLED
+     with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
+     un-cancelling leaves the cancel's stock add-back standing while the
+     re-deduct no-ops — the DO's whole quantity is then permanently added to
+     stock. The drawer showed it as the green PRIMARY action on every cancelled
+     row. A control whose only possible outcome is a 409 is not a capability to
+     explain, so do-next-step.ts states the real next step instead: raise a new
+     delivery order. */
 
   // ─── Batch PDF export (ported from MfgDeliveryOrdersList) ─────────────────
-  // One DO's full detail for the PDF generator. Reads via the vendored
-  // authedFetch (→ /api/scm); same endpoint + shape as the single-row path.
-  const fetchDoBundle = async (
-    row: DoRow
-  ): Promise<{ header: unknown; items: unknown[] }> => {
-    const json = await authedFetch<{ deliveryOrder: unknown; items: unknown[] }>(
-      `/delivery-orders-mfg/${row.id}`
-    );
-    return { header: json.deliveryOrder, items: json.items };
-  };
+  /* Delegated to lib/printDocumentPdf, which is now the ONE place that knows a
+     DO's detail endpoint and that its header must carry `loadScanId` to arm the
+     print's "scan to mark loaded" QR. The row menu's print reads the same
+     function, so batch and single cannot drift apart. */
+  const fetchDoBundle = (row: DoRow): Promise<{ header: unknown; items: unknown[] }> =>
+    fetchPrintBundle({ doc: "do", docNo: row.do_number, key: row.id });
 
   const clearSelection = () => setSelectedIds(new Set());
 
@@ -1111,7 +1111,7 @@ export function MfgDeliveryOrdersListV2() {
       // the parent SO). The useful cross-doc fact for a shipped DO is its Source
       // PO, in the next column.
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "150px",
       disableSort: true,
       /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the
@@ -1230,7 +1230,7 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "delivery_date",
-      label: "Delivery date",
+      label: "Delivery Date",
       width: "128px",
       getValue: (r) => r.customer_delivery_date ?? "",
       render: (r) => (
@@ -1270,11 +1270,8 @@ export function MfgDeliveryOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -1285,10 +1282,10 @@ export function MfgDeliveryOrdersListV2() {
       // DO backend sort whitelist has no total column — keep for CSV export but
       // disable the header sort so we never send an unsupported sort key.
       disableSort: true,
-      getValue: (r) => r.local_total_centi,
+      getValue: (r) => r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_centi)}
+          {fmtRm(r.local_total_sen)}
         </span>
       ),
     },
@@ -1500,147 +1497,147 @@ export function MfgDeliveryOrdersListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_centi",
+            key: "service_sen",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_centi ?? 0,
+            getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_centi",
+            key: "service_cost_sen",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_centi ?? 0,
+            getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1659,13 +1656,12 @@ export function MfgDeliveryOrdersListV2() {
       : ([] satisfies Column<DoRow>[])),
   ];
 
-  const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
-    { value: "all", label: `All · ${counts.all}` },
-    { value: "open", label: `Open · ${counts.open}` },
-    { value: "in_transit", label: `In transit · ${counts.in_transit}` },
-    { value: "delivered", label: `Delivered · ${counts.delivered}` },
-    { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
-  ];
+  const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
+    // `on_hold` sits before Cancelled, as on the other four lists. Mig 0324.
+    [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Shipped"],
+     ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
+     ["on_hold", "On Hold"], ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
+  ).map(([value, label]) => ({ value, label: `${label} · ${counts[value] ?? 0}` }));
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
@@ -1686,7 +1682,7 @@ export function MfgDeliveryOrdersListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} order{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(revenueCenti)}</span>
+            <span className="font-money">{fmtRm(revenueSen)}</span>
           </div>
         </div>
       </div>
@@ -1707,7 +1703,7 @@ export function MfgDeliveryOrdersListV2() {
                     icon={<ArrowRightLeft size={14} />}
                     onClick={goFromSo}
                   >
-                    From Sales Order
+                    {transferFromLabel('so')}
                   </Button>
                   <div className="flex items-stretch">
                     <Button
@@ -1750,7 +1746,7 @@ export function MfgDeliveryOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Revenue"
-              value={fmtRm(revenueCenti)}
+              value={fmtRm(revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
@@ -1759,9 +1755,9 @@ export function MfgDeliveryOrdersListV2() {
               label="In transit"
               value={(visible.filtered
                 ? visibleBucketCounts.inTransit
-                : counts.in_transit
+                : counts.dispatched + counts.in_transit
               ).toLocaleString("en-MY")}
-              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
+              subtitle={visible.filtered ? "En route · filtered" : "Shipped · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
@@ -1770,10 +1766,10 @@ export function MfgDeliveryOrdersListV2() {
               label="Delivered"
               value={(visible.filtered
                 ? visibleBucketCounts.delivered
-                : counts.delivered
+                : counts.delivered + counts.invoiced
               ).toLocaleString("en-MY")}
               subtitle={
-                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+                visible.filtered ? "Delivered · filtered" : "Delivered · including invoiced"
               }
               tone="success"
               rail="bg-synced"
@@ -1910,7 +1906,8 @@ export function MfgDeliveryOrdersListV2() {
                     return next;
                   }),
               }}
-              exportName="delivery-orders"
+              contextMenu={doContextMenu}
+            exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={
@@ -1988,10 +1985,9 @@ export function MfgDeliveryOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
-        onMarkSigned={() => selected && doMarkSigned(selected)}
+        onPrint={() => selected && printDocument(deliveryOrderPrintChain(selected).own)}
+        onAdvance={() => selected && doAdvance(selected)}
         onConvertToSi={() => selected && doConvertToSi(selected)}
-        onReopen={() => selected && void doReopen(selected)}
         canWrite={canWriteDo}
         salespersonName={
           selected ? salespersonNameOf(null, selected.salesperson_id) : "—"

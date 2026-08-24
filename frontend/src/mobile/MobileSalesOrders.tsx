@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { brandingToneForCategory, type BrandTone } from "../lib/brandingTone";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -8,13 +9,16 @@ import { normalizeJobs, type ScanJobsResp } from "./MobileScan";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { confirmSoWithFreshVersion } from "./mobile-so-concurrency";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
+import { brandingLabel } from "../vendor/shared/so-branding-label";
+import { getBrandingCompanyCode } from "../lib/branding";
 import { resolveSoLocation } from "../lib/soLocation";
 import { formatDate } from "../lib/utils";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
 import { poCellChips } from "../lib/soPoChips";
+import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -24,14 +28,16 @@ type SoRow = {
   sales_location: string | null; warehouse_name: string | null;
   customer_state: string | null; ref: string | null; po_doc_no: string | null;
   customer_so_no: string | null;
-  /* Branding — header `branding`, falling back to `first_item_branding` for
-     mixed / bedframe-only SOs. Already in the list payload (backend
-     mfg-sales-orders.ts select); drives the card brand pill (desktop parity). */
+  /* Branding — header `branding`, falling back to the derived label built from
+     `first_item_category` + `first_item_branding`. All three are already in the
+     list payload (backend mfg-sales-orders.ts:1782/1793); drives the card brand
+     pill (desktop parity). */
   branding: string | null; first_item_branding: string | null;
+  first_item_category: string | null;
   customer_delivery_date: string | null; processing_date: string | null;
   so_date: string | null; created_at: string | null;
-  local_total_centi: number | null; total_revenue_centi: number | null; paid_total_centi: number | null;
-  balance_centi: number | null; balance_centi_live: number | null;
+  local_total_sen: number | null; total_revenue_sen: number | null; paid_total_sen: number | null;
+  balance_sen: number | null; balance_sen_live: number | null;
   /* Fulfilment status the list endpoint derives per SO (only rendered when the
      row actually carries it — a Draft/Cancelled SO has none). */
   planning_state: string | null;
@@ -52,9 +58,9 @@ type SoRow = {
    month names). Delegates to the shared helper so YYYY-MM-DD strings render in
    Asia/Kuala_Lumpur and never drift a day on an off-zone device. */
 const dm = (d: string | null | undefined) => formatDate(d);
-const total = (r: SoRow) => r.local_total_centi ?? r.total_revenue_centi ?? 0;
-const paid = (r: SoRow) => r.paid_total_centi ?? 0;
-const balance = (r: SoRow) => r.balance_centi_live ?? r.balance_centi ?? (total(r) - paid(r));
+const total = (r: SoRow) => r.local_total_sen ?? r.total_revenue_sen ?? 0;
+const paid = (r: SoRow) => r.paid_total_sen ?? 0;
+const balance = (r: SoRow) => r.balance_sen_live ?? r.balance_sen ?? (total(r) - paid(r));
 const isCancelled = (r: SoRow) => (r.status ?? "").toLowerCase() === "cancelled";
 const isDraft = (r: SoRow) => (r.status ?? "").toLowerCase() === "draft";
 const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
@@ -63,15 +69,17 @@ const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
    brandOf/brandTone) so both surfaces resolve the same tone from the same
    payload. 2990/SOFA = success, BEDFRAME = accent, AKEMI/blank = neutral, any
    other brand = warning. Mirrored, not paraphrased. */
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("BEDFRAME")) return "accent";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Desktop parity, and the same fix: the trailing `|| "—"` printed a dash on
+   every order whose first line carries no brand TEXT — which is every sofa —
+   while the rule that turns a category into a label lived on other pages. One
+   shared rule now, and it cannot return blank (owner 2026-08-17). */
+const brandOf = (r: SoRow): string =>
+  (r.branding ?? "").trim() ||
+  brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
+/* This surface carries the line's CATEGORY, so it uses the accurate entry
+   point: colour and label then share one bucket rule and cannot disagree.
+   ../../lib/brandingTone has the whole story. */
+const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
 /* ── Draft-created notifier — localStorage ack set ─────────────────────────
    Owner 2026-07-04: "after a scan creates a draft, next time I open the app tell
@@ -227,7 +235,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     if (debouncedQ) p.set("q", debouncedQ);
     return p.toString();
   };
-  type SoListPage = { salesOrders?: SoRow[]; total?: number; page?: number; pageSize?: number; statusCounts?: Record<string, number>; aggregates?: { revenueCenti: number; outstandingCenti: number; paidCenti: number } };
+  type SoListPage = { salesOrders?: SoRow[]; total?: number; page?: number; pageSize?: number; statusCounts?: Record<string, number>; aggregates?: { revenueSen: number; outstandingSen: number; paidSen: number } };
   const {
     data, isLoading, isFetching, isPlaceholderData, error, refetch,
     fetchNextPage, hasNextPage, isFetchingNextPage,
@@ -252,6 +260,10 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   });
   const listLoading = isLoading || searchTransition.isSearching;
   const rows = useMemo(() => data?.pages.flatMap((p) => p.salesOrders ?? []) ?? [], [data]);
+  // Deferred MRP enrichment for every loaded card (READY chips + readiness /
+  // planning badges), healed a beat later. Shared with desktop; the hook chunks
+  // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
+  const enrichedRows = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
   /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0
@@ -267,12 +279,17 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
      simply omits the numbers instead of showing fake zeros. */
   const statusCounts = data?.pages[0]?.statusCounts;
   const summary = useMemo(() => {
-    if (aggregates) return { rev: aggregates.revenueCenti, out: aggregates.outstandingCenti, fullSet: true };
+    if (aggregates) return { rev: aggregates.revenueSen, out: aggregates.outstandingSen, fullSet: true };
     let rev = 0, out = 0;
     for (const r of rows) {
       if (isCancelled(r)) continue;
       rev += total(r);
-      const b = balance(r); if (b > 0) out += b;
+      /* Signed, matching the server's `aggregates.outstandingSen` (which sums
+         balance_sen_live straight). Dropping negatives here made the fallback
+         path disagree with the primary one the moment over-collection became
+         possible — the same figure reading differently depending on whether the
+         backend answered with aggregates. */
+      out += balance(r);
     }
     return { rev, out, fullSet: false };
   }, [aggregates, rows]);
@@ -525,10 +542,14 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", fontSize: 11.5, color: "var(--mut)", margin: "0 2px 11px" }}>
             <span><b style={{ color: "var(--ink)" }}>{totalCount}</b> orders</span>
             <span style={{ opacity: .4 }}>·</span>
-            <span className="money">{fmtCenti(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
-            {summary.out > 0 && <>
+            <span className="money">{fmtSen(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
+            {/* Non-zero either way — a net over-collection is not "nothing to
+                show", and it is red for the same reason a debt is. */}
+            {summary.out !== 0 && <>
               <span style={{ opacity: .4 }}>·</span>
-              <span className="money" style={{ color: "var(--red)" }}>{fmtCenti(summary.out)} outstanding{summary.fullSet ? "" : " (loaded)"}</span>
+              <span className="money" style={{ color: "var(--red)" }}>
+                {fmtSen(summary.out)} {summary.out < 0 ? "over-collected" : "outstanding"}{summary.fullSet ? "" : " (loaded)"}
+              </span>
             </>}
           </div>
         )}
@@ -557,7 +578,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <>
             {rows.length > 0 && (
               <MobileVirtualList
-                items={rows}
+                items={enrichedRows}
                 getKey={(r) => r.doc_no}
                 estimateHeight={140}
                 renderItem={(r) => {
@@ -586,7 +607,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                     {/* Struck through when cancelled — same doc-number-only strike as
                         the desktop lists' dt-cancel-strike (owner 2026-08-02). */}
                     <span className="money" style={{ fontWeight: 700, color: "var(--brand-d)", flex: "none", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{r.doc_no}</span>
-                    {brand !== "—" && <BrandPill brand={brand} />}
+                    {brand !== "—" && <BrandPill brand={brand} row={r} />}
                     {r.customer_so_no && <><span style={{ opacity: .4, flex: "none" }}>·</span><span className="money" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customer_so_no}</span></>}
                   </div>
                   {/* Line 2b — warehouse on its own line so it never crowds the ids */}
@@ -619,7 +640,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                   {/* Line 5 — created / total */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 9, borderTop: "1px solid var(--line2)" }}>
                     <span style={{ fontSize: 10, color: "var(--mut2)" }}>{dm(soDate(r))} · created</span>
-                    <span className="money" style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{fmtCenti(total(r))}</span>
+                    <span className="money" style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{fmtSen(total(r))}</span>
                   </div>
                 </div>
               );
@@ -777,9 +798,14 @@ function StatusPill({ status }: { status: string | null }) {
    colour is the secondary cue. Sits inline on the doc_no row: flex:none so it
    never shrinks, and a maxWidth+ellipsis so a long brand truncates itself
    instead of crowding the customer ref beside it. */
-function BrandPill({ brand }: { brand: string }) {
-  const tone = brandTone(brand);
-  const cls = tone === "success" ? "b-green" : tone === "neutral" ? "b-grey" : "b-amber";
+function BrandPill({ brand, row }: { brand: string; row: SoRow }) {
+  const tone = brandTone(row);
+  /* Four tones, four classes. This map had only three, so a BEDFRAME chip
+     (accent) fell through to the mattress amber — the desktop and the phone
+     showed the same order in two different colours. `b-brand` is the fourth
+     colour mobile.css already ships; no new class was needed. */
+  const cls = tone === "success" ? "b-green" : tone === "neutral" ? "b-grey"
+    : tone === "accent" ? "b-brand" : "b-amber";
   return (
     <span className={`badge ${cls}`} style={{ flex: "none", maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis" }}>{brand}</span>
   );

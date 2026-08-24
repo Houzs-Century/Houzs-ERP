@@ -24,27 +24,36 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
    variant | compartment | combo matcher shared with the POS, used at BOTH
    recompute sites (create + cross-category re-detect). */
+import {
+  deriveCountryFromState, deriveSalesLocationFromState, senOrZero, snapshotUnitCostSen,
+} from '../lib/sales-doc-derive';
+export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
+import { dateOrNull, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
+import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { mountHoldRoute } from './document-hold-routes';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, type SoPaymentRowInput } from '../lib/so-payment-row';
-import { reverseSoPayment } from '../../acc/payments';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
+import { resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
    and the amendment allow-list below are DERIVED from it so the three lists
@@ -66,8 +75,14 @@ import {
   SVC_DELIVERY_ADD,
 } from '../shared/service-sku';
 import {
+  applyDeliveryFeeRebuild,
+  buildDeliveryRebuildRows,
+  DELIVERY_REBUILD_MAX_ATTEMPTS,
+} from '../lib/so-delivery-fee-rebuild';
+import {
   buildDeliveryFeeServiceLines,
   computeAddonServiceLines,
+  recoverOperatorDeliveryState,
   type AddonSelectionInput,
   type ServiceLineSpec,
 } from '../shared/service-lines';
@@ -81,25 +96,29 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidSen, soBalanceSen, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
 import { buildOneShotMints, type OneShotMintReq } from '../lib/one-shot-mint';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { canonicalizeMyState } from '../lib/canonical-state';
-import { deriveLineBrandingFromProduct } from '../lib/derive-line-branding';
+import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
-  scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  scopeToCompany, activeCompanyId, activeCompanySql, stampCompany, companyDocPrefix,
   isMirroredDocNo, mintsIntoMirroredNamespace, houzsOwns2990,
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
-import { paginateAll } from '../lib/paginate-all';
+import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
+import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
+import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
@@ -143,10 +162,12 @@ import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
+import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
   recomputeFromSnapshot,
+  erpLineTrust,
   loadProductByCode,
   loadProductsByCodes,
   loadFabricByCode,
@@ -177,13 +198,27 @@ import {
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
-import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+/* The gate's DB reads and its refusals. Lifted out of this file (2026-08-18)
+   when the proceed refusal grew the per-condition detail it now carries — this
+   router is at its file-size ceiling, and the three helpers were already a
+   coherent unit: docNo in, gate FACTS out, judged by the shared pure rules.
+
+   Only ONE of the three is imported now. `soProceedGateBlocked` lost both of
+   its call sites here on the same day, with the second Processing-Date storage;
+   `soDepositFacts` is reached through the helper below. Where the proceed rule
+   is actually enforced after that, and what it leaves orphaned, is written at
+   soProceedGateBlocked itself in that module. */
+import {
+  soProcessingDateProblemsForDoc,
+} from '../lib/so-proceed-gate';
 import {
   SO_PROCESSING_DATE_COLUMN,
   readSoProcessingDateFromBody,
   soDatePairCascadeColumns,
   soDatePairRefusal,
 } from '../shared/so-processing-date';
+import { ATTRIBUTE_OTHER_REFUSAL, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -215,8 +250,10 @@ import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
-import { summariseReadiness } from '../lib/so-readiness';
-import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
+import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
+import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
+import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
@@ -315,6 +352,31 @@ async function queueAcSoEdit(
     touchedFields,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
+}
+
+/* -- SO line coverage (the Stock column) ------------------------------------
+   The MRP allocation is GLOBAL by design: a line's coverage depends on what
+   every higher-priority line already claimed, so asking it for ONE order would
+   answer a different question, not the same one faster. It therefore cannot be
+   narrowed — but it also does not DEPEND on the per-line reads that follow it in
+   both handlers below, so it is returned as a promise and awaited ALONGSIDE
+   them instead of in front of them. Same reads, same result, one wait instead
+   of two. `mrp` is handed on to soLineReadySourcePos, which genuinely needs it
+   and so genuinely stays behind it.
+
+   `sb` is `unknown` rather than the file's usual `any`: nothing here does more
+   than hand it straight to computeMrp, so there is no reason to turn the
+   checker off for it. */
+type SoCoverage = { coverage: Map<string, { source: string; po: string | null; eta: string | null }>; mrp: MrpResult | null };
+async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+  /* Best-effort, exactly as before: a failed allocation drops every line to
+     Pending and the page still loads. */
+  try {
+    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    return { coverage: mrpLineCoverage(mrp), mrp };
+  } catch {
+    return { coverage: new Map(), mrp: null };
+  }
 }
 
 /* The same, for a route whose body runs inside runScmPgCommand: queue only
@@ -454,7 +516,7 @@ export function scopeSoItemToDocument<T>(
    the CONTROLLED replacement_disposal field with the SAME predicate, so the
    two surfaces can never disagree about when the lock is on. */
 export function soProcessingLocked(
-  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; status: string | null } | null | undefined,
 ): boolean {
   if (!header) return false;
   const proc = header.processing_date ?? null;
@@ -465,10 +527,12 @@ export function soProcessingLocked(
      Locked strictly AFTER the processing day — procYmd === today stays open. */
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   if (!(procYmd < todayMY)) return false;
-  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
+  /* "THE PAIR RULE" + "RETIRING THE SECOND STORAGE" in so-processing-date.ts.
+     `status` is REQUIRED on the parameter type, and that requirement is what
+     replaced the `Boolean(header.proceeded_at)` fallback. */
   const status = String(header.status ?? '').toUpperCase();
-  if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
-  return Boolean(header.proceeded_at);
+  if (!status) return false;
+  return status !== 'DRAFT' && status !== 'CANCELLED';
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
@@ -477,9 +541,9 @@ async function soProcessingLockBlocked(
   docNo: string,
 ): Promise<typeof SO_PROCESSING_LOCKED_RESPONSE | typeof SO_PO_LOCKED_RESPONSE | null> {
   const { data } = await sb.from('mfg_sales_orders')
-    .select('processing_date, proceeded_at, status')
+    .select('processing_date, status')
     .eq('doc_no', docNo).maybeSingle();
-  if (soProcessingLocked(data as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+  if (soProcessingLocked(data as { processing_date?: string | null; status: string | null } | null)) {
     return SO_PROCESSING_LOCKED_RESPONSE;
   }
   return (await soPoLocked(sb, docNo)) ? SO_PO_LOCKED_RESPONSE : null;
@@ -491,113 +555,13 @@ async function soProcessingLockBlocked(
 async function soEditLocked(
   sb: any,
   docNo: string,
-  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; status: string | null } | null | undefined,
 ): Promise<boolean> {
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
 
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-const SO_PROCEED_GATE_RESPONSE = {
-  error: 'proceed_gate_unmet',
-  reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
-} as const;
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soDepositFacts(
-  sb: any,
-  docNo: string,
-): Promise<{ paidCenti: number; totalCenti: number }> {
-  const [{ data: totRow }, { data: pays }] = await Promise.all([
-    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
-  ]);
-  return {
-    totalCenti: Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0),
-    paidCenti: ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-      .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0),
-  };
-}
-
-async function soProceedGateBlocked(
-  sb: any,
-  docNo: string,
-  /* No `email` — the unified gate dropped it (owner 2026-07-31). Left OUT of
-     this shape rather than accepted-and-ignored, so a caller cannot believe it
-     still matters. */
-  eff: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
-     looser 30% — see processingDateThresholdFor for why never the stricter. */
-  companyCode?: string | null,
-): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
-  const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
-  const ok = meetsProceedGate({
-    hasCustomerName: !!eff.customerName?.trim(),
-    hasAddress: !!eff.address1?.trim(),
-    hasPostcode: !!eff.postcode?.trim(),
-    hasDeliveryDate: !!eff.deliveryDate?.trim(),
-    paid: paidCenti,
-    total: totalCenti,
-    companyCode,
-  });
-  return ok ? null : SO_PROCEED_GATE_RESPONSE;
-}
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soProcessingDateProblemsForDoc(
-  sb: any,
-  docNo: string,
-  procDate: string,
-  header: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  companyCode?: string | null,
-): Promise<SaveProblem[]> {
-  const [{ data: liveItems }, deposit] = await Promise.all([
-    sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo),
-    soDepositFacts(sb, docNo),
-  ]);
-  const lines = ((liveItems ?? []) as Array<{
-    id: string; item_code: string; item_group: string;
-    variants: Record<string, unknown> | null; cancelled: boolean;
-  }>)
-    .filter((it) => !it.cancelled)
-    .map((it) => ({ id: it.id, itemCode: it.item_code, group: it.item_group, variants: it.variants }));
-  return collectProcessingGateProblems({
-    companyCode,
-    procDate,
-    delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
-    todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-    /* No orig* dates: this helper only runs when the order has NO stored
-       Processing Date, so the date is new and nothing can be grandfathered. */
-    variantOffenders: findIncompleteVariantLines(lines),
-    kivOffenders: findColourKivLines(lines),
-    completeness: {
-      hasCustomerName: !!header.customerName?.trim(),
-      hasAddress: !!header.address1?.trim(),
-      hasPostcode: !!header.postcode?.trim(),
-    },
-    deposit,
-  });
-}
-
-/* Owner 2026-05-31 — Identity + value columns a downstream DO / SI snapshots.
-   These are frozen on the SO header once a non-cancelled child exists; payment,
-   remark and scheduling columns are intentionally NOT in this set so the shop
-   can still record payment after delivery. Keyed by DB column name. */
-const SO_IDENTITY_LOCK_COLS = new Set<string>([
-  'debtor_code', 'debtor_name', 'agent', 'sales_location', 'ref', 'po_doc_no',
-  'venue', 'venue_id', 'branding', 'address1', 'address2', 'address3', 'address4',
-  'phone', 'currency', 'so_date', 'customer_id', 'customer_state', 'customer_po',
-  'customer_po_id', 'customer_po_date', 'customer_po_image_b64', 'customer_so_no',
-  'hub_id', 'hub_name', 'ship_to_address', 'bill_to_address', 'install_to_address',
-  'email', 'customer_type', 'salesperson_id', 'city', 'postcode', 'building_type',
-  'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
-]);
+/* The identity lock (which columns freeze once a DO / SI exists, and why
+   `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCK_COLS = soProcessingLockColumns();
@@ -654,6 +618,16 @@ function norm(v: unknown): string {
    `X-Client: pos-tablet` header, which a hostile client escaped by simply not
    sending it. That escape is now closed: a caller cannot shed what it never
    sent.
+
+   DOES NOT DEFEND, AND THIS IS THE BIG ONE (Owner 2026-08-16): the SSO door,
+   POST /api/pos/exchange-web-session, mints an ORIGIN-LESS session for the same
+   person. Anyone who can pass the PIN gate can therefore obtain a token that
+   reads as not-POS here, open the ERP web app with it, and price freely on
+   every route below. The owner ruled it: 「进了这个 ERP 就跟这个 ERP 的规矩」 —
+   the amount must be editable in the ERP. So this gate now binds the POS APP,
+   not the tablet and not the person: it holds requests made with the token the
+   PIN door issued, and nothing else. Do not read anything stronger into it, and
+   do not re-tighten that door without an owner ruling reversing this one.
 
    DOES NOT DEFEND — and this is a POLICY boundary, not an oversight: a person
    who knows their own Houzs PASSWORD can log in at the desktop/mobile door,
@@ -793,7 +767,7 @@ function stripFreeItem(v: unknown): unknown {
 
 /* POS line quantity (Loo 2026-06-12) — line qty is a money input the
    unit-price drift gate does NOT cover: qty 0 zeroes a line for free, a
-   fraction / NaN corrupts total_centi math, and the discount ceiling is
+   fraction / NaN corrupts total_sen math, and the discount ceiling is
    qty × unit. An absent qty (defaults to 1 downstream) is fine; anything
    else must be a positive integer. Returns the 422 payload, or null when
    valid. Shared by POST /, POST /:docNo/items and PATCH /:docNo/items/:itemId. */
@@ -844,31 +818,6 @@ function unexplainedExtraAddonResponse(
     itemCode: String(itemCode ?? ''),
     extraAddonAmountRM: amountRM,
   };
-}
-
-/* MAIN-mix composition (the PR #519 create rule, extended to line add / swap,
-   Loo 2026-06-11): SOFA is exclusive among the MAIN categories. Returns true
-   when replacing `excludeItemId`'s line (null = a pure add) with `newCode`
-   INTRODUCES a sofa × (bedframe | mattress) mix that did not exist before —
-   a pre-rule SO that already mixes stays editable (grandfathered). */
-async function soMainMixIntroduced(sb: any, docNo: string, excludeItemId: string | null, newCode: string, companyId?: number | null): Promise<boolean> {
-  const { data: lines } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code')
-    .eq('doc_no', docNo).eq('cancelled', false);
-  const rows = ((lines ?? []) as Array<{ id: string; item_code: string }>);
-  const cats = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode), companyId);
-  const mix = (codeList: string[]): boolean => {
-    let sofa = false, bedOrMatt = false;
-    for (const code of codeList) {
-      const cat = String(cats.get(code)?.category ?? '').toUpperCase();
-      if (cat === 'SOFA') sofa = true;
-      else if (cat === 'BEDFRAME' || cat === 'MATTRESS') bedOrMatt = true;
-    }
-    return sofa && bedOrMatt;
-  };
-  const beforeCodes = rows.map((r) => r.item_code);
-  const afterCodes = rows.filter((r) => r.id !== excludeItemId).map((r) => r.item_code).concat(newCode);
-  return mix(afterCodes) && !mix(beforeCodes);
 }
 
 /* PR — Commander 2026-05-28 — Server-side combo recompute.
@@ -945,20 +894,20 @@ function extractSofaComboLookupArgs(
    through it. Adding a column here REQUIRES a same-PR migration that recreates
    the view (CREATE OR REPLACE VIEW … AS SELECT so.* …) — else the SO LIST 500s
    ("Failed to load") in prod. For a field only the detail needs, append it on
-   the detail SELECT (see slip_image_key/receipt_image_key/proceeded_at at the
+   the detail SELECT (see slip_image_key/receipt_image_key at the
    `/:docNo` handler), NOT here. 2990 hit this 2026-06-26 (their mig 0200). */
 const HEADER =
-  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
+  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi, local_total_centi, balance_centi, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, local_total_sen, balance_sen, ' +
   /* Task #114 — per-category cost columns (migration 0079). Mirrors the
      four category revenue columns above so the SO list grid + Totals card
      can show category-level margins without per-item rollups. */
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi, ' +
-  'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen, ' +
+  'total_cost_sen, total_revenue_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   /* PR #35 + #46 — extended PO + POS handover fields */
-  'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
+  'customer_id, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   /* Task #121 — customer_country snapshot auto-derived from customer_state
      via my_localities lookup on POST/PATCH (migration 0082). */
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
@@ -967,10 +916,15 @@ const HEADER =
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
   /* PR #143 + #150 + #157 — Payment (migrations 0068 + 0069 + 0070) */
-  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
+  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_sen, paid_sen, ' +
   /* Delivery fee snapshot (migration 0133) — folded into local_total/revenue/margin. */
-  'delivery_fee_centi, ' +
-  'created_at, created_by, updated_at';
+  'delivery_fee_sen, ' +
+  'created_at, created_by, updated_at, ' +
+  /* Migration 0324 — the HOLD MARKER, rendered BESIDE the status pill. The list
+     reads the payment-totals VIEW, which had to be taught these four columns
+     separately (mig 0325); a base-table column the view does not enumerate is
+     invisible to the list. */
+  HOLD_COLUMNS;
 /* FINANCE-GATED keys — cost / margin / per-category revenue+cost subtotals +
    deposit (header) and unit/line cost+margin (line). The lists moved to
    lib/finance-keys.ts so /reports shares this EXACT vocabulary: it had no copy
@@ -995,8 +949,8 @@ function gateSoFinance(
 
 const ITEM =
   'id, doc_no, line_date, debtor_code, debtor_name, agent, item_group, item_code, description, description2, ' +
-  'uom, location, qty, unit_price_centi, discount_centi, total_centi, tax_centi, total_inc_centi, balance_centi, ' +
-  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_centi, line_cost_centi, line_margin_centi, ' +
+  'uom, location, qty, unit_price_sen, discount_sen, total_sen, tax_sen, total_inc_sen, balance_sen, ' +
+  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_sen, line_cost_sen, line_margin_sen, ' +
   /* PR-E — per-item delivery date + cascade override flag (migration 0074) */
   'line_delivery_date, line_delivery_date_overridden, ' +
   /* PR-F — per-line photo keys (migration 0076) */
@@ -1018,27 +972,6 @@ const ITEM =
    postcode set. ─────────────────────────────────────────────────────── */
 /* Exported (2026-07-16) so the amendment apply engine (lib/so-revision.ts) runs
    the SAME State cascade the header PATCH does, instead of re-deriving it. */
-export const deriveCountryFromState = async (
-  sb: any,
-  state: string | null | undefined,
-): Promise<string | null> => {
-  if (!state) return null;
-  /* Mig 0175 (owner 2026-07-22) — canonicalize BEFORE the my_localities lookup
-     so "PENANG" or "Penang" both resolve to "Pulau Pinang" and the lookup
-     returns Malaysia cleanly. The 2026-05-28 tolerant fallback below is kept
-     as a second safety net (a genuinely unknown foreign state name should
-     still not leave Country blank when the caller obviously typed something),
-     but with canonicalization in front it should almost never fire. */
-  const probe = canonicalizeMyState(state) ?? state;
-  const { data } = await sb
-    .from('my_localities')
-    .select('country')
-    .eq('state', probe)
-    .limit(1)
-    .maybeSingle();
-  const country = (data as { country?: string } | null)?.country;
-  return country ?? 'Malaysia';
-};
 
 /* Commander 2026-05-29 — the Sales/shipping Location (warehouse) follows the
    customer's State. The create FORM resolves it via state_warehouse_mappings
@@ -1046,32 +979,6 @@ export const deriveCountryFromState = async (
    that set a State but no salesLocation (e.g. API/import) so Location is bound
    to the address everywhere, not only through the form. Returns the warehouse
    code for the state, or null when unmapped. */
-export const deriveSalesLocationFromState = async (
-  sb: any,
-  state: string | null | undefined,
-  c: any,
-): Promise<string | null> => {
-  if (!state) return null;
-  // state_warehouse_mappings keys on the canonical state name; map the common
-  // WP-KL alias the locality table doesn't carry under the WP prefix.
-  const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await scopeToCompany(
-    sb
-      .from('state_warehouse_mappings')
-      .select('warehouse_id')
-      .eq('state', key),
-    c,
-  ).maybeSingle();
-  const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
-  if (!whId) return null;
-  const { data: w } = await sb
-    .from('warehouses')
-    .select('name, code')
-    .eq('id', whId)
-    .maybeSingle();
-  const wh = w as { name?: string; code?: string } | null;
-  return warehouseLabel(wh);
-};
 
 /* Commander 2026-05-31 (MRP/Supply-Chain rebuild) — the per-LINE warehouse_id
    UUID (migration 0118) drives MRP + auto-allocation, which run strictly
@@ -1129,7 +1036,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
 
 /* ─────────────────────────── Cost snapshot ────────────────────────────
    Task #114 — Pull cost_price_sen off mfg_products on line create so the
-   header's total_cost_centi / category cost columns get populated even
+   header's total_cost_sen / category cost columns get populated even
    when the client doesn't snapshot the cost themselves. Falls through in
    order: explicit client value (when > 0) → mfg_products.cost_price_sen
    → 0. Returns sen (integer). itemCode is matched on mfg_products.code
@@ -1141,7 +1048,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
 /* Money guard (2026-07-16) — every sen figure that enters the totals arithmetic
    passes through here first. The roll-up accumulators used to take `unitCost *
    qty` on trust: a single non-finite input (an unknown cost arriving as
-   undefined / NaN, or a 0/0 percentage) poisoned totalCost → total_margin_centi
+   undefined / NaN, or a 0/0 percentage) poisoned totalCost → total_margin_sen
    → margin_pct_basis in one go, because NaN is contagious across +, -, * and /.
    A cost the ERP does not know is 0 — never NaN. Postgres would reject the NaN
    anyway (these columns are `integer NOT NULL`, and supabase-js serializes NaN
@@ -1160,28 +1067,77 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    STALE-totals outcome described above is real and remains the DESIGNED failure
    mode — it is what the function does deliberately when it cannot vouch for its
    inputs. */
-const senOrZero = (n: unknown): number => {
-  const v = Number(n);
-  return Number.isFinite(v) ? v : 0;
-};
 
-const snapshotUnitCostSen = async (
-  sb: any,
-  itemCode: string,
-  explicit: number,
-  c: any,
-): Promise<number> => {
-  if (explicit > 0) return senOrZero(explicit);
-  if (!itemCode) return 0;
-  const { data } = await scopeToCompany(
+type SoListMoneyKpis = { revenueSen: number; outstandingSen: number; paidSen: number };
+
+/* Full-set money KPIs (Revenue / Outstanding / Paid) for the SO list's
+   paginated path. ONE grouped PostgREST aggregate — three server-side SUMs over
+   the SAME filtered set the page query pages, WITHOUT `.range()` — replaces
+   paging the WHOLE filtered set in 1000-row chunks and summing in JS. So an
+   unfiltered "All" tab at N orders goes from ceil(N/1000) sequential round trips
+   plus N rows over the wire down to ONE round trip returning three numbers.
+
+   `applyMoneyFilters` is the single filter closure the aggregate fast path AND
+   the paginateAll fallback share, so the two totals apply byte-identical
+   predicates and cannot drift.
+
+   Byte-identical to the old paginateAll JS reduce: `local_total_sen` is
+   `integer DEFAULT 0 NOT NULL` (backend/scripts/scm-schema/2990s-full-schema.sql),
+   and the view's `paid_total_sen` (= COALESCE(Σ payments, 0)) and
+   `balance_sen_live` (= local_total − paid) are never null when the view
+   exposes them — so SQL SUM (which skips nulls) equals the `?? 0` reduce over
+   the same rows, and SUM over zero rows is NULL, coalesced to 0 exactly like the
+   empty reduce. Both summed columns are view-COMPUTED, so this stays VIEW-TRAP
+   safe (see backend/docs/scm-view-trap-coe.md). If the view LACKS them
+   (old/absent view) the aggregate errors on the missing column and we fall
+   through to the paginateAll path, which reads `balance_sen` as its own
+   absent-`balance_sen_live` fallback — identical to the prior behaviour. */
+export async function soListMoneyKpis(
+  sb: { from(table: string): { select(columns: string): unknown } },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the dynamic aggregate `.select('...sum()')` defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+  applyMoneyFilters: (q: any) => any,
+): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
+  /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
+     Idiom: outstanding.ts /summary. */
+  const agg = await applyMoneyFilters(
     sb
-      .from('mfg_products')
-      .select('cost_price_sen')
-      .eq('code', itemCode),
-    c,
-  ).maybeSingle();
-  return senOrZero((data as { cost_price_sen?: number } | null)?.cost_price_sen ?? 0);
-};
+      .from('mfg_sales_orders_with_payment_totals')
+      .select('rev:local_total_sen.sum(),outLive:balance_sen_live.sum(),paid:paid_total_sen.sum()'),
+  );
+  if (!agg.error) {
+    const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
+    return {
+      data: {
+        revenueSen: Number(row.rev ?? 0),
+        outstandingSen: Number(row.outLive ?? 0),
+        paidSen: Number(row.paid ?? 0),
+      },
+      error: null,
+    };
+  }
+  /* FALLBACK — aggregates disabled, or the computed columns absent from the
+     view: page the int cols and reduce in JS. Slower, never wrong. */
+  const fb = await paginateAll<{
+    local_total_sen: number | null;
+    balance_sen: number | null;
+    balance_sen_live: number | null;
+    paid_total_sen: number | null;
+  }>((mfrom, mto) =>
+    applyMoneyFilters(
+      sb
+        .from('mfg_sales_orders_with_payment_totals')
+        .select('local_total_sen, balance_sen, balance_sen_live, paid_total_sen'),
+    ).range(mfrom, mto),
+  );
+  if (fb.error) return { data: null, error: fb.error };
+  let revenueSen = 0, outstandingSen = 0, paidSen = 0;
+  for (const m of fb.data ?? []) {
+    revenueSen += m.local_total_sen ?? 0;
+    outstandingSen += m.balance_sen_live ?? m.balance_sen ?? 0;
+    paidSen += m.paid_total_sen ?? 0;
+  }
+  return { data: { revenueSen, outstandingSen, paidSen }, error: null };
+}
 
 mfgSalesOrders.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -1198,15 +1154,16 @@ mfgSalesOrders.get('/', async (c) => {
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
   /* Dashboard summary mode (`?summary=1`): the landing page only needs to bucket
-     SOs by status/proceeded_at and count "new today" — it does NOT need the
-     payment-totals view join or the per-line stock-status second query. Return
-     just those 6 columns so the Dashboard isn't paying for 500 fully-hydrated
-     rows + a line-item aggregation on first paint. Bucketing stays in the
-     frontend (single source of truth — no SQL duplication). */
+     SOs by status and count "new today" — it does NOT need the payment-totals
+     view join or the per-line stock-status second query. Return just those 5
+     columns so the Dashboard isn't paying for 500 fully-hydrated rows + a
+     line-item aggregation on first paint. Bucketing stays in the frontend.
+     `proceeded_at` rode along until 2026-08-18 and nothing read it —
+     useMfgSalesOrdersSummary has zero callers. */
   if (c.req.query('summary')) {
     let sq = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, proceeded_at, local_total_centi, created_at, so_date')
+      .select('doc_no, status, local_total_sen, created_at, so_date')
       .neq('status', 'DRAFT')
       .order('so_date', { ascending: false })
       .limit(500);
@@ -1219,25 +1176,25 @@ mfgSalesOrders.get('/', async (c) => {
 
   /* Follow-up #83 — read from the view that joins payments ledger totals so
      Balance column is live (= local_total − sum(payments)). Header column
-     `balance_centi` is still in the SELECT for backward compat (the grid
-     falls back to it if the view's `balance_centi_live` is absent). */
+     `balance_sen` is still in the SELECT for backward compat (the grid
+     falls back to it if the view's `balance_sen_live` is absent). */
   /* VIEW-TRAP (see backend/docs/scm-view-trap-coe.md): this select hits the
      VIEW `mfg_sales_orders_with_payment_totals`, which has a FROZEN column set
      captured at CREATE VIEW time (2990 mig 0155, `SELECT so.*`). Any column you
      add to HEADER above MUST already exist in the view — else this query 500s
      the whole SO list page in prod. If you're adding a new base-table column,
      ship a recreate-view migration in the SAME PR FIRST, or keep the col out
-     of HEADER (detail-only). proceeded_at + paid_total_centi + balance_centi_live
-     are all view-native (paid_total_centi/balance_centi_live are the view's
-     computed cols; proceeded_at was added to the base table BEFORE the view
-     was last recreated by the 2990-views script, so it IS present). */
+     of HEADER (detail-only). paid_total_sen + balance_sen_live are the
+     view's own computed columns, so they are always present. The view still
+     projects proceeded_at; the follow-up drop must clear that WITHOUT dropping
+     the view ("RETIRING…" carries the 0189/0190/0191 ACL trap). */
   /* customer_po_image_b64 is a base64 PO-slip image that ONLY the SO detail
      page renders (SalesOrderDetail.tsx) — it is never a list-grid column.
      Streaming it per row (up to 500 rows) bloated the SO-list payload for every
      POS-origin SO that carries one. Strip it from the LIST projection only; the
      detail select (~L2241) still reads full HEADER, so nothing the detail shows
      changes. Dropping a column from a SELECT is always VIEW-TRAP safe. */
-  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, proceeded_at, paid_total_centi, balance_centi_live`;
+  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_sen, balance_sen_live`;
 
   /* Opt-in server-side pagination + search + sort + status-counts.
      WHY: keep this endpoint flat as the SO table grows — the legacy path streams
@@ -1257,18 +1214,25 @@ mfgSalesOrders.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: Record<string, number> | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
   /* Full-set money KPIs (Revenue / Outstanding / Paid). Pre-pagination the FE
      summed these three view columns over the whole status+search-filtered set;
      paging broke that (the client could only sum the current page → "on this
      page"). We recompute the identical full-set sums server-side here. */
-  let aggregates: { revenueCenti: number; outstandingCenti: number; paidCenti: number } | undefined;
+  let aggregates: { revenueSen: number; outstandingSen: number; paidSen: number } | undefined;
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS).order('so_date', { ascending: false }).limit(500);
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    const status = c.req.query('status'); if (status) q = q.eq('status', status);
+    const status = effectiveStatusFilter(c.req.query('status'));
+    /* A tab may cover more than one status — SHIPPED folds into DELIVERED
+       (owner 2026-08-22). Read the bucket so the fold is one fact, not a
+       spelling repeated at each of the three query sites below. */
+    /* The ON_HOLD tab reads the mig-0324 MARKER, not the status. */
+    if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
+    else if (status) { const vals = soStatusesForTab(status); q = vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals); }
     const debtor = c.req.query('debtor'); if (debtor) q = q.ilike('debtor_name', `%${debtor}%`);
     const res = await q;
     data = res.data;
@@ -1280,7 +1244,7 @@ mfgSalesOrders.get('/', async (c) => {
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
     /* sort whitelist — map to the view's columns; anything else → so_date. */
-    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_centi', 'customer_delivery_date']);
+    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen', 'customer_delivery_date']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'so_date:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
@@ -1294,9 +1258,10 @@ mfgSalesOrders.get('/', async (c) => {
        spellings / blanks). It exists so the list's "Other" pill — shown only
        when such rows exist — can actually be opened; every real status stays
        the exact-match it always was. */
-    const status = c.req.query('status');
+    const status = effectiveStatusFilter(c.req.query('status'));
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
-    if (status) q = status === 'OTHER' ? q.or(otherStatusOr) : q.eq('status', status);
+    if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
+    else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
     /* free-text search replaces the legacy `debtor` param in this branch.
        One term matches customer NAME (debtor_name), PHONE, or the SO
        REFERENCE (ref) — plus doc_no / debtor_code / agent / location /
@@ -1319,104 +1284,136 @@ mfgSalesOrders.get('/', async (c) => {
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts over the SAME scope + company filters but WITHOUT the status
-       filter, search, or pagination. ONE grouped PostgREST aggregate against the
-       base table (status + count per bucket) replaces the old four head-only
-       counts. The old shape (all/draft/confirmed/cancelled) HID every other live
-       status — READY_TO_SHIP, DELIVERED, ... — so the strip's buckets stopped
-       summing to All the moment an SO advanced past CONFIRMED and orders looked
-       lost (owner 2026-07-24: "ALL 68 but CONFIRMED 35 — where did they go?").
-       If the aggregate errors (aggregates disabled), fall back to paging the
-       status column and reducing in JS — never wrong, worst case slower
-       (precedent: outstanding.ts /summary). */
-    const scopedCountQ = (q0: any): any => {
-      let cq = q0;
-      if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
-      return scopeToCompany(cq, c);
-    };
-    const countsProm = (async (): Promise<Record<string, number>> => {
-      const byStatus: Record<string, number> = {};
-      const bump = (raw: string | null | undefined, n: number) => {
-        const key = String(raw ?? '').toUpperCase() || 'UNKNOWN';
-        byStatus[key] = (byStatus[key] ?? 0) + n;
-      };
+       filter, search, or pagination. ONE grouped PostgREST aggregate (status +
+       count per bucket) replaced the old four head-only counts, whose shape
+       (all/draft/confirmed/cancelled) HID every other live status and stopped
+       the buckets summing to All once an SO passed CONFIRMED (owner 2026-07-24:
+       "ALL 68 but CONFIRMED 35 — where did they go?"). Aggregates disabled →
+       fall back to paging the status column and reducing in JS (precedent:
+       outstanding.ts /summary). BOTH reads failing is NOT "no orders": `fb.error`
+       was dropped and `fb.data ?? []` read as zero rows, so every pill — and
+       `all`, which is their SUM — served 0 beside a full page of orders. That is
+       a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
+    const scopedCountQ = (q0: any): any =>
+      scopeToCompany(scopeIds ? q0.in('salesperson_id', scopeIds) : q0, c);
+    /* The held count is its own head-only read because the marker is a COLUMN,
+       not a status, so the grouped status aggregate above cannot produce it.
+       Same scope + company predicates, no status filter, no search, no paging —
+       the strip's other numbers are computed the same way. */
+    const heldProm = (async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
+      const r = await scopedCountQ(
+        sb.from('mfg_sales_orders').select('*', { count: 'exact', head: true }),
+      ).or(HELD_OR_TERM);
+      if (r.error) return { ok: false, reason: `on-hold count failed: ${r.error.message}` };
+      return { ok: true, n: r.count ?? 0 };
+    })();
+    const countsProm = (async (): Promise<StatusTally> => {
       const agg = await scopedCountQ(sb.from('mfg_sales_orders').select('status, cnt:doc_no.count()'));
-      if (!agg.error) {
-        for (const r of (agg.data ?? []) as Array<{ status: string | null; cnt: number }>) bump(r.status, Number(r.cnt ?? 0));
-        return byStatus;
-      }
+      if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
         scopedCountQ(sb.from('mfg_sales_orders').select('status')).range(cfrom, cto));
-      for (const r of (fb.data ?? [])) bump(r.status, 1);
-      return byStatus;
+      /* Named separately from tallyStatusRows' own error branch so the 500 says
+         which of the TWO reads died, not just that the second one did. */
+      if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
+      return tallyStatusRows(fb, () => 1);
     })();
 
-    /* Full-set money KPIs — sum local_total_centi / balance_centi_live /
-       paid_total_centi over the SAME scope + company + status + search (+
-       optional so_date window) filters as the page query, but WITHOUT
-       `.range()`/pagination. paginateAll pages the int cols so the 1000-row
-       PostgREST cap can't truncate the total.
+    /* Full-set money KPIs — Revenue / Outstanding / Paid over the SAME scope +
+       company + status + search (+ optional so_date window) filters as the page
+       query, but WITHOUT `.range()`/pagination.
+
+       `applyMoneyFilters` is that predicate set, built ONCE, so the aggregate
+       fast path and its paginateAll fallback (both inside soListMoneyKpis) apply
+       byte-identical filters and cannot drift. These are the identical money
+       predicates this path applied before; the only change is that the SUM now
+       happens in ONE server-side grouped aggregate instead of paging the whole
+       filtered set and summing in JS.
 
        Paid + Outstanding read the view's LEDGER-DERIVED columns, not the stored
-       `paid_centi` / `balance_centi` this used to sum. Those two are not the
-       truth: `paid_centi` has no writer that maintains it (it is deprecated and
-       scheduled for drop), and `balance_centi` is set to the GROSS grandTotal
-       by recomputeTotals on every edit, so it never reflects a payment — the
-       old Outstanding tile was just Revenue restated. paid_total_centi
-       (= Σ payments) and balance_centi_live (= local_total − Σ payments) are
-       the same source-of-truth the row grid, the mobile SO list and
-       delivery-planning.ts already read. Both are view-COMPUTED columns, so
-       this select stays VIEW-TRAP safe (see backend/docs/scm-view-trap-coe.md);
-       `balance_centi` is kept in the select only as the absent-view fallback,
-       mirroring delivery-planning's. */
-    const moneyProm = paginateAll<{ local_total_centi: number | null; balance_centi: number | null; balance_centi_live: number | null; paid_total_centi: number | null }>((mfrom, mto) => {
-      let moneyQ = sb
-        .from('mfg_sales_orders_with_payment_totals')
-        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi');
+       `paid_sen` / `balance_sen`. Those two are not the truth: `paid_sen`
+       has no writer that maintains it (deprecated, scheduled for drop), and
+       `balance_sen` is set to the GROSS grandTotal by recomputeTotals on every
+       edit, so it never reflects a payment — the old Outstanding tile was just
+       Revenue restated. paid_total_sen (= Σ payments) and balance_sen_live
+       (= local_total − Σ payments) are the same source-of-truth the row grid,
+       the mobile SO list and delivery-planning.ts already read, and both are
+       view-COMPUTED columns, so this stays VIEW-TRAP safe (see
+       backend/docs/scm-view-trap-coe.md). */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+    const applyMoneyFilters = (moneyQ0: any): any => {
+      let moneyQ = moneyQ0;
       if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
-      if (status) moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : moneyQ.eq('status', status);
+      if (status === 'ON_HOLD') moneyQ = moneyQ.or(HELD_OR_TERM);
+      else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
         if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,branding.ilike.%${ms}%`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
-      return moneyQ.range(mfrom, mto);
-    });
+      return moneyQ;
+    };
+    const moneyProm = soListMoneyKpis(sb, applyMoneyFilters);
 
     /* One concurrent wave. The page rows, the grouped status counts and the
        full-set money KPIs are mutually independent — each keys off scopeIds +
        the same filter params, none reads the page result — yet they were paying
        three sequential DB round-trips. Fire them together; only the per-doc
        enrichment below actually needs the page rows, so it still follows. */
-    const [res, byStatus, moneyRes] = await Promise.all([q, countsProm, moneyProm]);
+    const [res, counted, moneyRes, heldCount] = await Promise.all([q, countsProm, moneyProm, heldProm]);
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
+    /* A page whose offset is at/beyond the row count is an EMPTY PAGE, not a
+       failure. PostgREST answers it PGRST103 / 416 "Requested range not
+       satisfiable" instead of an empty 200, and this handler turned that into a
+       500 — which the grid masked as "No sales orders yet" (the 2026-08-18
+       incident: `?status=all` matched zero rows, so page 1 exceeded the count).
+       Empty status tab, no-match search, last page + 1 all land here; `res.count`
+       still carries the true total via PostgREST's `Content-Range` header. */
+    if (error && isRangeNotSatisfiable(error)) {
+      data = [];
+      total = res.count ?? 0;
+      error = null;
+    }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
        spellings, blanks) — so the visible buckets ALWAYS sum to `all` and no
        order can silently fall between tabs again. */
-    const bucket = (k: string) => byStatus[k] ?? 0;
-    const allCount = Object.values(byStatus).reduce((s, n) => s + n, 0);
-    statusCounts = { all: allCount };
-    let known = 0;
-    for (const s of SO_STATUSES) {
-      statusCounts[s.toLowerCase()] = bucket(s);
-      known += bucket(s);
-    }
-    statusCounts.other = allCount - known;
+    if (!counted.ok) countError = counted.reason;
+    else {
+      const allCount = Object.values(counted.byStatus).reduce((s, n) => s + n, 0);
+      let known = 0;
+      statusCounts = { all: allCount };
+      /* Counted per TAB, not per status, so a folded status is counted under
+         the tab that shows it instead of falling into `other`. */
+      for (const [tab, members] of Object.entries(SO_TAB_STATUSES)) {
+        const cnt = members.reduce((n, m) => n + (counted.byStatus[m] ?? 0), 0);
+        statusCounts[tab.toLowerCase()] = cnt; known += cnt;
+      }
+      statusCounts.other = allCount - known;
+      /* THE On Hold PILL IS AN OVERLAY, NOT A BUCKET (mig 0324), and it is the
+         one number on this strip that does not partition the set. A held order
+         keeps its real status, so it is counted under that status AND here —
+         the same deliberate overlap the Purchase Order list's `outstanding`
+         pill has carried since 2026-07-31.
 
-    if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-    let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
-    for (const m of (moneyRes.data ?? [])) {
-      revenueCenti += m.local_total_centi ?? 0;
-      outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
-      paidCenti += m.paid_total_centi ?? 0;
+         `known` is NOT adjusted, and that is what protects the invariant the
+         owner bought in 2026-07-24 ("ALL 68 but CONFIRMED 35 — where did they
+         go?"): every order is still counted exactly once by the status walk
+         above, so `other` stays exact and no order can fall between tabs.
+         Overwriting the value afterwards is deliberate — the walk's ON_HOLD
+         entry counts LEGACY rows only, and this count covers both. */
+      if (heldCount.ok) statusCounts.on_hold = heldCount.n;
+      else countError = heldCount.reason;
     }
-    aggregates = { revenueCenti, outstandingCenti, paidCenti };
+
+    if (moneyRes.error || !moneyRes.data) return c.json({ error: 'load_failed', reason: moneyRes.error?.message ?? 'money_kpis_failed' }, 500);
+    aggregates = moneyRes.data;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   /* PR — Commander 2026-05-28: Stock Status chip column.
      Per-SO aggregate computed from mfg_sales_order_items.stock_status grouped
@@ -1436,16 +1433,15 @@ mfgSalesOrders.get('/', async (c) => {
        off now; each is awaited at its original use-site below, so results and
        error propagation are unchanged. This was the SO list's dominant cost
        (~390ms desktop / ~650ms mobile, almost all serial DB latency). */
+    /* chunkIn on every `docNos` read below — the LEGACY arm reads `.limit(500)`, so each URL carried 500 doc numbers (~9.5KB). All feed doc-keyed maps. */
     const payRowsProm = (async () =>
-      (await sb
-        .from('mfg_sales_order_payments')
-        .select('so_doc_no, method, online_type')
-        .in('so_doc_no', docNos)).data ?? [])();
+      (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_order_payments')
+        .select('so_doc_no, method, online_type').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
-      sb.from('delivery_orders').select('so_doc_no, do_number, do_date, created_at').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('so_doc_no').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
+      chunkIn(docNos, (batch, from, to) => sb.from('delivery_orders').select('id, so_doc_no, do_number, do_date, created_at').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
+      chunkIn(docNos, (batch, from, to) => sb.from('sales_invoices').select('id, so_doc_no, invoice_number').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
     ]);
     const deliverableProm = soDeliverableRemaining(sb, docNos);
     const lifecycleProm = Promise.all([
@@ -1455,10 +1451,8 @@ mfgSalesOrders.get('/', async (c) => {
     const whRowsProm = (async () =>
       (await sb.from('warehouses').select('id, code, name')).data ?? [])();
     const baseRowsProm = (async () =>
-      (await sb
-        .from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date')
-        .in('doc_no', docNos)).data ?? [])();
+      (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
+        .select('doc_no, delivery_state, amended_delivery_date').in('doc_no', batch).order('doc_no').range(from, to))).data)();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -1466,20 +1460,15 @@ mfgSalesOrders.get('/', async (c) => {
        chips come from source_po_union below. */
     const convertedPoProm = soConvertedPoNumbers(sb, docNos);
     /* Source-PO union (owner 2026-08-02, "他拿的货是谁的货"): the list "PO No."
-       column renders the SAME union of per-line source chips the drill shows —
-       SHIPPED/DELIVERED consumed batches ∪ READY projections — via the shared
-       resolver (lib/source-po-trace.ts). The READY side needs the MRP allocation;
-       ONE computeMrp per list load (the same engine one drill open already
-       costs), fired here so it overlaps the whole enrichment wave. Fail-soft:
-       a failed MRP just drops READY chips, shipped chips still render. */
-    const mrpForListProm: Promise<MrpResult | null> = (async () => {
-      try {
-        return await computeMrp(sb, {
-          catFilter: null, whFilter: null, includeUndated: true,
-          companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB),
-        });
-      } catch { return null; }
-    })();
+       column shows the union of per-line source chips the drill shows —
+       SHIPPED/DELIVERED consumed batches ∪ READY projections. Only the SHIPPED
+       arm is computed HERE (cheap real-batch reads); the READY arm needs the
+       GLOBAL MRP allocation (`computeMrp`), which paginates the company's whole
+       products / balances / PO-lines / SO-lines tables and was the dominant cost
+       of opening this list. It — and the readiness/planning fields it also fed
+       (see below) — are no longer on this path. The client fetches them a beat
+       later from GET /mfg-sales-orders/list-mrp-enrichment and merges them in
+       (lib/so-list-mrp-enrichment.ts). */
 
     /* Order deterministically so the FIRST line per doc_no is the earliest
        one created (matches the detail endpoint's `.order('created_at')`). We
@@ -1487,12 +1476,15 @@ mfgSalesOrders.get('/', async (c) => {
        the mattress brand source for the first-item rule below; item_code lets
        us fall back to mfg_products.branding when a mattress line's own branding
        is blank; created_at drives the first-line pick. */
-    const { data: itemRows } = await paginateAll<{ id: string; doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string; qty: number | null; allocated_batch_no: string | null }>((from, to) => sb
+    /* chunkIn, not paginateAll: the latter bounded the ROWS and re-sent all 500 doc numbers
+       in every page's URL. Splitting on doc_no keeps each SO's lines together and ordered
+       as before, so the "first line per doc_no" rule below picks the same row. */
+    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string; qty: number | null; allocated_batch_no: string | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       // id / qty / allocated_batch_no ride along for the source-PO union below
       // (per-line shipped trace + READY projection — the drill's exact inputs).
       .select('id, doc_no, item_group, stock_status, cancelled, branding, item_code, warehouse_id, created_at, qty, allocated_batch_no')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
       .order('doc_no')
       .order('line_no', { ascending: true, nullsFirst: false })
@@ -1501,7 +1493,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* Per-line SHIPPED source trace for the whole page — the same resolver call
        the drill makes per SO, batched once (chunked internally). Fired now so it
        overlaps the remaining enrichment reads; awaited at the union below. */
-    const shippedTraceProm = soLineShippedSources(sb, (itemRows ?? []).map((it) => it.id));
+    const shippedTraceProm = soLineShippedSources(sb, itemRows.map((it) => it.id));
     const agg = new Map<string, Map<string, { total: number; ready: number }>>();
     /* Branding auto-derive (Commander 2026-05-28, refined PR #266): the SO list
        grid derives its Branding pill from the SO's FIRST line item — no longer
@@ -1512,8 +1504,12 @@ mfgSalesOrders.get('/', async (c) => {
        The header revenue columns merge mattress + sofa into one bucket, so the
        grid can't tell SOFA from MATTRESS at the header level — hence this
        per-line first-item read (from the same fetch already running for stock
-       status). The UI maps SOFA → "2990 Sofa", BEDFRAME → "Bedframe", MATTRESS
-       → first_item_branding (its own brand) ?? "2990 Mattress", else → "2990". */
+       status). The UI maps these through shared/so-branding-label (owner
+       2026-08-18): SOFA → the COMPANY's house sofa brand ("ZANOTTI" for Houzs,
+       "2990s Sofa" for 2990 — the line's own text is not consulted), BEDFRAME →
+       "Bedframe", MATTRESS → first_item_branding, which is the SKU's brand
+       (resolved SKU-first below), falling back to "Mattress" when the SKU
+       carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
     const firstCat = new Map<string, string>();
     const firstBranding = new Map<string, string | null>();
@@ -1532,7 +1528,7 @@ mfgSalesOrders.get('/', async (c) => {
       if (g.includes('SERVICE')) return 'SERVICE'; // SO-SKU spec P2 — synced with normCat below
       return 'OTHERS';
     };
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; stock_status: string; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; stock_status: string; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string | null }>) {
       let perGroup = agg.get(it.doc_no);
       if (!perGroup) { perGroup = new Map(); agg.set(it.doc_no, perGroup); }
       const g = (it.item_group ?? '').trim().toUpperCase() || 'OTHERS';
@@ -1596,7 +1592,7 @@ mfgSalesOrders.get('/', async (c) => {
     const repCat = new Map<string, string>();
     const repBranding = new Map<string, string | null>();
     const repCode = new Map<string, string | null>();
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
       if (repCat.has(it.doc_no)) continue;
       const cat = resolveLineCat(it.item_code, it.item_group);
       if (MAIN_CATS.has(cat)) {
@@ -1615,7 +1611,7 @@ mfgSalesOrders.get('/', async (c) => {
        brand. Non-branded ACCESSORY / SERVICE / OTHERS lines carry no brand and
        may legitimately ride along, so they don't disqualify. */
     const resolvedCatsByDoc = new Map<string, Set<string>>();
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
       let s = resolvedCatsByDoc.get(it.doc_no);
       if (!s) { s = new Set(); resolvedCatsByDoc.set(it.doc_no, s); }
       s.add(resolveLineCat(it.item_code, it.item_group));
@@ -1638,7 +1634,7 @@ mfgSalesOrders.get('/', async (c) => {
     const paymentMethods = new Map<string, Set<string>>();
     {
       const payRows = await payRowsProm;
-      for (const p of (payRows ?? []) as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
+      for (const p of payRows as unknown as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
         const m = (p.method ?? '').trim().toLowerCase();
         let label: string;
         if (m === 'cash') label = 'Cash';
@@ -1655,27 +1651,31 @@ mfgSalesOrders.get('/', async (c) => {
     /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
        non-cancelled DO/SI that points back to a listed SO and mark has_children
        on the row. The list grid uses this to hide Edit / Cancel from SOs that
-       are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
+       are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
     const [doRowsRes, siRowsRes] = await downstreamProm;
-    const doNosBySo = doNosBySalesOrder((doRowsRes.data ?? []) as DeliveryOrderNoRow[]);
-    const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data ?? [], siRowsRes.data ?? []);
+    const doNosBySo = doNosBySalesOrder(doRowsRes.data as unknown as DeliveryOrderNoRow[]);
+    const downRefsBySo = soDownstreamRefs(doRowsRes.data as unknown as DeliveryOrderNoRow[], siRowsRes.data); // do_refs + si_refs: the row menu prints by ADDRESS, not by number
+    const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data, siRowsRes.data);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
-       "Stock Remark" the operator's existing ERP shows: READY when everything
-       in, READY (PARTIAL) when MAIN done + ACC outstanding, else list the
-       categories still pending. */
+       "Stock Remark" the operator's existing ERP shows: READY, PARTIAL
+       (every MAIN line in, an accessory not), or the "/"-joined list of
+       groups that ARE in — blank when none is, because it names what IS
+       ready (owner 2026-08-16). `category` rides along from the catalog map
+       already built above (productCategory, zero extra reads): it is
+       isServiceLine's strongest signal, so a delivery/dispose SKU whose line
+       item_group was saved as 'others' is still recognised as a SERVICE line
+       and cannot masquerade as a short accessory. */
+    /* FIRST PAINT uses the STORED stock_status alone (`null` live coverage —
+       so-line-effective-stock.ts's fail-soft path: the stored value stands).
+       The MRP-corrected verdict — which can flip a stale-stored line to READY,
+       the 2026-08-17 union — arrives with the deferred enrichment fetch and the
+       client overlays stock_remark / is_main_ready / planning_state then. Not
+       running computeMrp here is the whole point of the deferral. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    {
-      const linesByDoc = new Map<string, Array<{ item_group: string | null; item_code: string | null; stock_status: string; cancelled: boolean }>>();
-      for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>) {
-        const arr = linesByDoc.get(it.doc_no) ?? [];
-        arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: it.cancelled });
-        linesByDoc.set(it.doc_no, arr);
-      }
-      for (const [docNo, ls] of linesByDoc) {
-        readinessByDoc.set(docNo, summariseReadiness(ls));
-      }
-    }
+    const linesByDoc = readinessLinesByDoc(itemRows, null);
+    attachLineCategories(linesByDoc.values(), productCategory);
+    for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
     /* "Has undelivered qty" per SO (Wei Siang 2026-05-30) — drives the Issue
        Delivery Order menu gate. Recomputed LIVE (remaining = qty − delivered +
@@ -1733,7 +1733,7 @@ mfgSalesOrders.get('/', async (c) => {
     const amendedDDByDoc = new Map<string, string | null>();
     {
       const baseRows = await baseRowsProm;
-      for (const b of (baseRows ?? []) as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
+      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
         if (!b.doc_no) continue;
         overrideByDoc.set(b.doc_no, b.deliveryState ?? b.delivery_state ?? null);
         amendedDDByDoc.set(b.doc_no, b.amendedDeliveryDate ?? b.amended_delivery_date ?? null);
@@ -1744,21 +1744,22 @@ mfgSalesOrders.get('/', async (c) => {
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
     const convertedPoByDoc = await convertedPoProm;
 
-    /* Source-PO union per SO (defect 2026-08-02-A): shipped trace ∪ READY
-       projection, via the SAME per-line resolvers the drill reads, then the
-       pure per-doc union. Accessories/CS SOs fulfilled from stock bought under
-       other POs finally show "谁的货" instead of a dash. */
+    /* Source-PO union per SO (defect 2026-08-02-A): SHIPPED arm only on this
+       path — shipped trace from `shippedTraceProm` (cheap real-batch reads),
+       run through the SAME pure union the drill uses with an EMPTY ready map.
+       The READY arm (`soLineReadySourcePos`, which needs the global MRP run)
+       arrives via GET /mfg-sales-orders/list-mrp-enrichment and the client
+       unions its chips into this column. Union(shipped-only, ready-only) per
+       doc equals the old combined union (set union is associative), so the
+       final displayed chips are unchanged; they just fill in a beat later. */
     const sourceUnionByDoc = await (async () => {
       try {
-        const pageItems = (itemRows ?? []) as Array<{ id: string; doc_no: string; item_group: string | null; item_code: string | null; stock_status: string | null; qty: number | null; allocated_batch_no: string | null }>;
-        const [shippedByItem, readyByItem] = await Promise.all([
-          shippedTraceProm,
-          (async () => soLineReadySourcePos(sb, activeCompanyId(c) ?? null, await mrpForListProm, pageItems))(),
-        ]);
+        const pageItems = itemRows as unknown as Array<{ id: string; doc_no: string }>;
+        const shippedByItem = await shippedTraceProm;
         return unionSoLineChips(
           pageItems.map((it) => ({ id: it.id, docNo: it.doc_no })),
           shippedByItem,
-          readyByItem,
+          new Map(),
           fullyShippedItemIds,
         );
       } catch {
@@ -1776,7 +1777,14 @@ mfgSalesOrders.get('/', async (c) => {
          union of per-line source chips the drill shows). */
       (r as Record<string, unknown>).converted_po_nos = convertedPoByDoc.get(docNo) ?? [];
       /* Union of per-line source-PO chips (shipped ∪ READY projection) — the
-         drill's exact visible set, rolled up per SO. */
+         drill's exact visible set, rolled up per SO.
+         C16 CONTRACT: source_po_union / source_po_adj / stock_remark /
+         is_main_ready / planning_state are the MRP-DERIVED fields emitted here
+         as stored-status placeholders and HEALED by GET /list-mrp-enrichment. If
+         you add another field whose value depends on the MRP allocation, add it
+         to the enrichment path too — MRP_DERIVED_LIST_FIELD_MAP
+         (frontend/src/lib/soListEnrichment.ts) + SO_LIST_MRP_ENRICHMENT_KEYS
+         (scm/lib/so-list-mrp-enrichment.ts); the parity tests fail otherwise. */
       (r as Record<string, unknown>).source_po_union = sourceUnionByDoc.get(docNo)?.pos ?? [];
       (r as Record<string, unknown>).source_po_adj = sourceUnionByDoc.get(docNo)?.adj ?? false;
       (r as Record<string, unknown>).has_children = downstreamDocNos.has(docNo);
@@ -1787,6 +1795,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
+      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS);
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';
@@ -1806,12 +1815,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).planning_state = derivePlanningState({
         storedOverride: overrideByDoc.get(docNo) ?? null,
         status: (r as Record<string, unknown>).status as string | null,
-        readiness: {
-          mainCount: readiness?.mainCount ?? 0,
-          isMainReady: readiness?.isMainReady ?? false,
-          isFullyReady: readiness?.isFullyReady ?? false,
-          isShipReady: readiness?.isShipReady ?? false,
-        },
+        readiness: { isShipReady: readiness?.isShipReady ?? false },
         delivered: dDelivered,
         remaining: dRemaining,
         effectiveDD,
@@ -1822,9 +1826,17 @@ mfgSalesOrders.get('/', async (c) => {
       const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
       (r as Record<string, unknown>).first_item_category = fCat ?? null;
       let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      if (fCat === 'MATTRESS' && (!fBranding || !fBranding.trim())) {
+      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
+         «mattress follow SKU branding»). The line's own text only survives when
+         the catalog has none. Six live 2990 lines carry the loose spellings
+         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
+         blank-only borrow they kept the loose text and the label rule needed a
+         normalisation regex to recover from it. Reading the catalog first makes
+         that regex unnecessary — and it is deleted, not left dormant. */
+      if (fCat === 'MATTRESS') {
         const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        fBranding = (code && productBranding.get(code)) || fBranding;
+        const skuBrand = code ? productBranding.get(code) : undefined;
+        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
       }
       /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
          is present, so an AKEMI/2990 line always wins). */
@@ -1885,7 +1897,7 @@ type CustomerSoRow = {
   status: string;
   debtor_name: string | null;
   phone: string | null;
-  local_total_centi: number | null;
+  local_total_sen: number | null;
   created_at: string | null;
   so_date: string | null;
   line_count: number | null;
@@ -1895,7 +1907,7 @@ type CustomerOrder = {
   status: string;
   so_date: string | null;
   created_at: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
 };
 type CustomerEntry = {
@@ -1903,7 +1915,7 @@ type CustomerEntry = {
   name: string;
   phone: string | null;
   order_count: number;
-  lifetime_value_centi: number;
+  lifetime_value_sen: number;
   last_order_at: string;
   orders: CustomerOrder[];
 };
@@ -1920,7 +1932,7 @@ mfgSalesOrders.get('/customers', async (c) => {
   const { data, error } = await paginateAll<CustomerSoRow>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, debtor_name, phone, local_total_centi, created_at, so_date, line_count')
+      .select('doc_no, status, on_hold, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
       .order('so_date', { ascending: false });
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -1931,25 +1943,27 @@ mfgSalesOrders.get('/customers', async (c) => {
   const map = new Map<string, CustomerEntry>();
   for (const o of (data ?? [])) {
     // CANCELLED + ON_HOLD don't count toward LTV / the directory (2990 parity).
-    if (o.status === 'CANCELLED' || o.status === 'ON_HOLD') continue;
+    /* `on_hold` since mig 0324 — a held order's status is its real status, so
+       the two labels below stopped being able to see a hold on their own. */
+    if (isDocumentHeld(o) || o.status === 'CANCELLED' || o.status === 'ON_HOLD') continue;
     const key = o.phone?.trim() || `name:${(o.debtor_name ?? '').toLowerCase().trim()}`;
     if (!key || key === 'name:') continue;
 
-    const totalCenti = o.local_total_centi ?? 0;
+    const totalSen = o.local_total_sen ?? 0;
     const when = customerSoDateOf(o);
     const order: CustomerOrder = {
       doc_no: o.doc_no,
       status: o.status,
       so_date: o.so_date,
       created_at: o.created_at,
-      local_total_centi: totalCenti,
+      local_total_sen: totalSen,
       line_count: o.line_count ?? 0,
     };
 
     const existing = map.get(key);
     if (existing) {
       existing.order_count += 1;
-      existing.lifetime_value_centi += totalCenti;
+      existing.lifetime_value_sen += totalSen;
       existing.orders.push(order);
       // Denormalised name/phone snapshots can drift — keep the most recent.
       if (when > existing.last_order_at) {
@@ -1963,7 +1977,7 @@ mfgSalesOrders.get('/customers', async (c) => {
         name: o.debtor_name || 'Walk-in',
         phone: o.phone ?? null,
         order_count: 1,
-        lifetime_value_centi: totalCenti,
+        lifetime_value_sen: totalSen,
         last_order_at: when,
         orders: [order],
       });
@@ -1992,7 +2006,7 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
      returned the SAME (system-attributed) orders for every caller instead
      of the person's own. No sync row → zero stats, not someone else's. */
   const myStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
-  if (!myStaffId) return c.json({ mtd_orders: 0, mtd_sales_centi: 0 });
+  if (!myStaffId) return c.json({ mtd_orders: 0, mtd_sales_sen: 0 });
   // Current month in Malaysia time → UTC [start, end) bounds for created_at.
   const ymd = todayMyt();
   const { startUtc, endUtc } = monthBoundsMy(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1);
@@ -2002,7 +2016,7 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
   const { data, error } = await scopeToCompany(
     sb
       .from('mfg_sales_orders')
-      .select('local_total_centi, total_revenue_centi')
+      .select('local_total_sen, total_revenue_sen')
       .eq('salesperson_id', myStaffId)
       .not('status', 'in', '("CANCELLED","DRAFT")')
       .gte('created_at', startUtc)
@@ -2010,12 +2024,12 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
     c,
   ).limit(1000);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<{ local_total_centi: number | null; total_revenue_centi: number | null }>;
-  const mtd_sales_centi = rows.reduce(
-    (sum, r) => sum + Number(r.local_total_centi ?? r.total_revenue_centi ?? 0),
+  const rows = (data ?? []) as Array<{ local_total_sen: number | null; total_revenue_sen: number | null }>;
+  const mtd_sales_sen = rows.reduce(
+    (sum, r) => sum + Number(r.local_total_sen ?? r.total_revenue_sen ?? 0),
     0,
   );
-  return c.json({ mtd_orders: rows.length, mtd_sales_centi });
+  return c.json({ mtd_orders: rows.length, mtd_sales_sen });
 });
 
 /* POS "My orders" board — the salesperson's OWN Sales Orders, lightweight
@@ -2028,11 +2042,10 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
    captured as a doc-no param. */
 mfgSalesOrders.get('/mine', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
-  /* Read the BASE table (NOT the mfg_sales_orders_with_payment_totals view):
-     a Postgres view fixes its column list at creation, and that view predates
-     proceeded_at (migration 0110) — selecting proceeded_at from the view 500s
-     at runtime. The base table has every column incl. proceeded_at +
-     deposit_centi. Paid is summed from the payments ledger separately below. */
+  /* Read the BASE table (NOT the mfg_sales_orders_with_payment_totals view): a
+     Postgres view fixes its column list at creation, so any column newer than
+     the last recreation is missing and selecting one 500s at runtime. Paid is
+     summed from the payments ledger separately below. */
   /* Board filters (POS My-orders toolbar):
        ?q=   free-text → searches doc_no / debtor_name / phone across ALL dates
              (the period is intentionally ignored — search is a global lookup).
@@ -2051,7 +2064,6 @@ mfgSalesOrders.get('/mine', async (c) => {
      (so RLS can't clip another salesperson's rows/items/payments). Everyone
      else: the param is ignored and they stay self-scoped on their own client. */
   const wantSalesperson = c.req.query('salesperson') ?? null;
-  let client = sb;
   /* Self = the caller's REAL scm.staff uuid (mig 0066) — never user.id, the
      bridge's pinned system row shared by every caller (see /my-mtd note). The
      old `?? user.id` handed an unresolved caller every order ever mis-stamped
@@ -2062,16 +2074,14 @@ mfgSalesOrders.get('/mine', async (c) => {
      value. Only a view-all caller asking for ?salesperson=all earns the second. */
   let viewingAll = false;
   if (wantSalesperson) {
-    // Houzs-flavoured: gate on the flat permission key `scm.so.view_all`
-    // against the REAL caller (the 2990 staff_role lookup is dead in Houzs —
-    // the SCM bridge pins every caller to one super_admin row). Owner + IT
-    // Admin pass via `*`; grant to other positions via the Team > Positions
-    // matrix.
-    if (hasHouzsPerm(c, 'scm.so.view_all')) {
-      const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      client = admin;
+    // Same view-all tier as the rest of this file (:772, :1161, :1877):
+    // `scm.so.view_all` OR a director position, via canViewAllSales.
+    // No client swap here: `sb` IS the service-role client already
+    // (getSupabaseService), pointed at db.schema 'scm'. The ported 2990 branch
+    // built a raw createClient() for RLS bypass — which defaults to the PUBLIC
+    // schema, where mfg_sales_orders has no company_id, so the first caller to
+    // ever pass this gate got a 500 instead of a board.
+    if (canViewAllSales(c)) {
       viewingAll = wantSalesperson === 'all';
       targetSalespersonId = viewingAll ? null : wantSalesperson;
     }
@@ -2082,21 +2092,24 @@ mfgSalesOrders.get('/mine', async (c) => {
   if (!targetSalespersonId && !viewingAll) return c.json({ salesOrders: [] });
 
   let query = scopeToCompany(
-    client
+    sb
       .from('mfg_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
-        'proceeded_at, total_revenue_centi, line_count, deposit_centi',
+        'total_revenue_sen, line_count, deposit_sen',
       )
-      .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")'),
+      /* `on_hold` since mig 0324 — the status arm below can no longer see a
+         hold, because a held order keeps the status it was on. */
+      .eq('on_hold', false)
+      .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
   );
   /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
-     The view_all branch above swaps in a SERVICE-ROLE client and clears
+     `sb` is the SERVICE-ROLE client, and the view_all branch above clears
      targetSalespersonId, so without this wrap the query degrades to "every
      non-cancelled SO in the database" — both companies, RLS bypassed, with
-     customer PII and total_revenue_centi. */
+     customer PII and total_revenue_sen. */
   if (targetSalespersonId) query = query.eq('salesperson_id', targetSalespersonId);
 
   if (q) {
@@ -2123,27 +2136,27 @@ mfgSalesOrders.get('/mine', async (c) => {
   // Cast via `unknown` first — supabase-js types a view select as
   // GenericStringError[] until the schema cache materialises (same pattern as
   // the list route's joined-select casts above).
-  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_centi?: number } & Record<string, unknown>>;
+  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_sen?: number } & Record<string, unknown>>;
 
   /* Attach the line items so the drawer can render the cart without a second
      fetch. Group non-cancelled lines by doc_no → each item the board needs:
-     { item_code, description, qty, total_centi, variants }. */
+     { item_code, description, qty, total_sen, variants }. */
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
   /* TBC fill-in (Loo 2026-06-11) — the editor needs the line id (mutation
      target), item_group (which picker set to render) and unit/discount (the
      floor-rule preview), so they ride the same fetch. */
-  const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>>();
+  const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>>();
   if (docNos.length > 0) {
-    const { data: itemRows } = await client
+    /* chunkIn — `docNos` is this board's whole page (LIMIT 300) and the read had neither batching nor paging, so past the 1000-row cap a later order's drawer rendered empty. */
+    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
-      .select('id, doc_no, item_code, item_group, description, qty, unit_price_centi, discount_centi, total_centi, variants, remark')
-      .in('doc_no', docNos)
-      .eq('cancelled', false)
-      .order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true });
-    for (const it of (itemRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>) {
+      .select('id, doc_no, item_code, item_group, description, qty, unit_price_sen, discount_sen, total_sen, variants, remark')
+      .in('doc_no', batch).eq('cancelled', false)
+      .order('doc_no').order('line_no', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }).range(from, to));
+    for (const it of itemRows) {
       const arr = itemsByDoc.get(it.doc_no) ?? [];
-      arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_centi: it.unit_price_centi, discount_centi: it.discount_centi, total_centi: it.total_centi, variants: it.variants, remark: it.remark ?? null });
+      arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_sen: it.unit_price_sen, discount_sen: it.discount_sen, total_sen: it.total_sen, variants: it.variants, remark: it.remark ?? null });
       itemsByDoc.set(it.doc_no, arr);
     }
   }
@@ -2153,30 +2166,30 @@ mfgSalesOrders.get('/mine', async (c) => {
      the SO create path writes the deposit as an is_deposit ledger row (and
      0155 backfilled history), so adding the header column on top would double
      count — the is_deposit marker tells the two worlds apart. The header
-     `paid_centi` is deprecated; not read. One batched ledger query. */
+     `paid_sen` is deprecated; not read. One batched ledger query. */
   const paidLedgerByDoc = new Map<string, number>();
   const depositInLedger = new Set<string>();
   if (docNos.length > 0) {
-    const { data: payRows } = await client
+    const { data: payRows } = await chunkIn<{ so_doc_no: string; amount_sen: number; is_deposit?: boolean | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_payments')
-      .select('so_doc_no, amount_centi, is_deposit')
-      .in('so_doc_no', docNos);
-    for (const p of (payRows ?? []) as Array<{ so_doc_no: string; amount_centi: number; is_deposit?: boolean | null }>) {
-      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_centi ?? 0));
+      .select('so_doc_no, amount_sen, is_deposit')
+      .in('so_doc_no', batch).order('so_doc_no').range(from, to));
+    for (const p of payRows) {
+      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_sen ?? 0));
       if (p.is_deposit) depositInLedger.add(p.so_doc_no);
     }
   }
 
   const salesOrders = rows.map((r) => {
     const docNo = r.doc_no ?? '';
-    const deposit = typeof r.deposit_centi === 'number' ? r.deposit_centi : 0;
+    const deposit = typeof r.deposit_sen === 'number' ? r.deposit_sen : 0;
     const ledger = paidLedgerByDoc.get(docNo) ?? 0;
     const soItems = itemsByDoc.get(docNo) ?? [];
     return {
       ...r,
       // Total received = ledger payments (+ header deposit only when the
       // ledger doesn't already carry it as an is_deposit row).
-      paid_centi_total: (depositInLedger.has(docNo) ? 0 : deposit) + ledger,
+      paid_sen_total: (depositInLedger.has(docNo) ? 0 : deposit) + ledger,
       items: soItems,
     };
   });
@@ -2209,10 +2222,13 @@ function mimeFromKey(key: string): SlipMime {
 mfgSalesOrders.get('/:docNo/slip-url', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
-  const { data: row, error } = await sb
+  /* This route does not return a row, it streams the R2 OBJECT the row points
+     at — so an unscoped lookup hands over the other company's payment slip
+     itself, not a field of it. */
+  const { data: row, error } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('slip_key')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .maybeSingle();
   if (error) return c.json({ error: 'db_fetch_failed', detail: error.message }, 500);
   if (!row) return c.json({ error: 'not_found' }, 404);
@@ -2246,15 +2262,20 @@ type CrossCatEligibility = {
 };
 
 async function checkCrossCategorySource(
+  c: any,
   sb: any,
   docNo: string,
   newPhoneRaw: string | null,
   newCustomerId: string | null = null,
 ): Promise<CrossCatEligibility> {
-  const { data: srcRow, error: srcErr } = await sb
+  /* Both reads below are keyed on a caller-supplied doc_no. Unscoped, the
+     eligibility probe answered for the OTHER company's order and handed back
+     its debtor_name — a customer identity, from a GET that needs only a doc
+     number. `c` is threaded in for exactly this. */
+  const { data: srcRow, error: srcErr } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('doc_no, status, phone, debtor_name, customer_id')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .maybeSingle();
   /* Loo 2026-06-06 (SO-2606-025 incident) — a FAILED query is not a missing
      order. This used to swallow the error and report "Order was not found"
@@ -2278,10 +2299,10 @@ async function checkCrossCategorySource(
     const srcPhone = src.phone ? (normalizePhone(src.phone) ?? src.phone) : null;
     if (newPhone && srcPhone && newPhone !== srcPhone) return { eligible: false, reason: 'different_customer' };
   }
-  const { count, error: countErr } = await sb
+  const { count, error: countErr } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('doc_no', { count: 'exact', head: true })
-    .eq('cross_category_source_doc_no', docNo);
+    .eq('cross_category_source_doc_no', docNo), c);
   // Same honesty rule as above — a failed count must not silently pass the
   // already-used gate (fail-open) nor masquerade as another reason.
   if (countErr) {
@@ -2309,7 +2330,7 @@ mfgSalesOrders.get('/cross-category-eligibility', async (c) => {
   const docNo = (c.req.query('docNo') ?? '').trim();
   const phone = (c.req.query('phone') ?? '').trim();
   if (!docNo) return c.json({ eligible: false });
-  const result = await checkCrossCategorySource(sb, docNo, phone || null);
+  const result = await checkCrossCategorySource(c, sb, docNo, phone || null);
   return c.json({
     eligible:  result.eligible,
     debtorName: result.debtorName ?? null,
@@ -2529,9 +2550,12 @@ mfgSalesOrders.get('/active-venue', async (c) => {
        that gets stamped is the text either way. */
     let venueId: string | null = null;
     try {
+      /* Company-scoped (mig 0093): venue NAMES are not unique across the two
+         masters, so an unscoped match hands this company the OTHER company's
+         venue id — and that id is what the SO stores. See projects-pms.md. */
       const row = await c.env.DB.prepare(
         `SELECT id FROM project_venues
-          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1 LIMIT 1`,
+          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1${activeCompanySql(c)} LIMIT 1`,
       )
         .bind(binding.venueName)
         .first<{ id?: number | null }>();
@@ -2555,16 +2579,13 @@ mfgSalesOrders.get('/active-venue', async (c) => {
 mfgSalesOrders.get('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const [h, i] = await Promise.all([
-    /* `${HEADER}, proceeded_at` — proceeded_at lives ONLY on the base table,
-       NOT the mfg_sales_orders_with_payment_totals view that the LIST route
-       (LIST_COLS = HEADER + …) reads. Keeping it out of the shared HEADER and
-       appending it only here means the detail page still gets the Proceed Date
-       while the list view query stays valid. amend_date_from_customer /
-       amended_delivery_date / amend_reason (mig 0053, port of 2990 0199 + 0201)
-       are in the SAME boat — the payment-totals view's frozen column set
-       (see VIEW-TRAP note above) does NOT carry them, so they're appended on
-       the base-table detail read only. POST/PATCH persist them. */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, proceeded_at, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
+    /* amend_date_from_customer / amended_delivery_date / amend_reason (mig 0053)
+       are appended here rather than in the shared HEADER: the payment-totals
+       view's frozen column set (see VIEW-TRAP above) does not carry them and the
+       LIST route reads that view, so the base-table detail read is the only
+       place they are valid. (`proceeded_at` was appended here until 2026-08-18,
+       feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2604,30 +2625,30 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      response so the page can show "Customer has RM X available" without a
      second round-trip. 0 when no debtor / no credit history. */
   const debtorCode = (h.data as { debtor_code?: string | null }).debtor_code ?? null;
-  const customerCreditCenti = debtorCode ? await getCustomerCreditBalance(sb, debtorCode) : 0;
+  const customerCreditSen = debtorCode ? await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null) : 0;
   /* Live paid rollup — same rule as the LIST route (lines ~678): sum the
      payments ledger, and add the header deposit ONLY for legacy SOs whose
      deposit never reached the ledger (is_deposit marker distinguishes them).
      Without this the single-SO response carried only the deprecated
-     `paid_centi` (0 for a balance payment recorded via the drawer), so the
+     `paid_sen` (0 for a balance payment recorded via the drawer), so the
      customer-facing print showed "Deposit paid 0.00" + a wrong balance even
      though money had been collected (Loo 2026-06-09). */
-  let paidLedgerCenti = 0;
+  let paidLedgerSen = 0;
   let depositInLedger = false;
   {
     const { data: payRows } = await sb
       .from('mfg_sales_order_payments')
-      .select('amount_centi, is_deposit')
+      .select('amount_sen, is_deposit')
       .eq('so_doc_no', docNo);
-    for (const p of (payRows ?? []) as Array<{ amount_centi: number; is_deposit?: boolean | null }>) {
-      paidLedgerCenti += p.amount_centi ?? 0;
+    for (const p of (payRows ?? []) as Array<{ amount_sen: number; is_deposit?: boolean | null }>) {
+      paidLedgerSen += p.amount_sen ?? 0;
       if (p.is_deposit) depositInLedger = true;
     }
   }
   /* ONE rule, shared with the AutoCount write-back's BALANCE UDF so the account
-     book and this page cannot disagree. Why not `balance_centi`: so-outstanding.ts. */
-  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerCenti, depositInLedger);
-  const paidCentiTotal = soPaidCenti(paidInputs);
+     book and this page cannot disagree. Why not `balance_sen`: so-outstanding.ts. */
+  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerSen, depositInLedger);
+  const paidSenTotal = soPaidSen(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead
      go through the amendment request flow: the SO IS processing-locked (already
@@ -2638,7 +2659,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      Reuses the SAME soProcessingLocked helper the edit endpoints use + the
      doCount/siCount already computed above for the hard-lock signal. */
   const amendDateLocked = soProcessingLocked(
-    h.data as { processing_date?: string | null; proceeded_at?: string | null },
+    h.data as { processing_date?: string | null; status: string | null },
   );
   /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so a 2990 SO with a live
      PO flips the FE's Save into "Submit amendment request" exactly as an elapsed
@@ -2700,11 +2721,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
     open_amendments: openAmendments,
-    customer_credit_centi: customerCreditCenti,
+    customer_credit_sen: customerCreditSen,
     // Authoritative received-to-date + remaining balance for the detail page
-    // and the customer-facing print (so-doc.ts reads paid_centi_total).
-    paid_centi_total: paidCentiTotal,
-    balance_centi: soOutstandingCenti(paidInputs),
+    // and the customer-facing print (so-doc.ts reads paid_sen_total).
+    paid_sen_total: paidSenTotal,
+    /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
+       detail page, the mobile detail and the SO print. The write-back keeps the
+       CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
+       money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
+    balance_sen: soBalanceSen(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -2758,61 +2783,49 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      covers mains-first + mattress-brand fallback + bedframe-only in one place,
      so both surfaces resolve the identical value. */
   {
-    const derived = await deriveDisplayBrandingByDoc(sb, c, [docNo]);
-    const b = derived.get(docNo);
-    if (b) (salesOrder as Record<string, unknown>).first_item_branding = b;
+    /* 2026-08-18: emit the CATEGORY too. The detail page used to render
+       `branding || first_item_branding || "—"` — its own rule, not the list's —
+       so it printed a dash for any order whose rep line carries no brand text,
+       which is every sofa. It now calls the shared brandingLabel, and that needs
+       both inputs. */
+    const derived = await deriveDisplayBrandingRowByDoc(sb, c, [docNo]);
+    const row = derived.get(docNo);
+    if (row) {
+      (salesOrder as Record<string, unknown>).first_item_category = row.category;
+      if (row.branding) (salesOrder as Record<string, unknown>).first_item_branding = row.branding;
+    }
   }
-  /* Brand letterhead resolution (owner 2026-07) — stamp the R2 key of the
-     brand logo the SO PDF should print IN PLACE OF the company logo (the
-     company letterhead stays the fallback when this is null). Brands +
-     their logos live in public.project_brands (Project Maintenance →
-     Brands; logo_r2_key, migration-pg 0069), read via c.env.DB — same
-     public-schema hop as the venue lookup above. Rules:
-       1. Any line whose item_group contains SOFA → the brand named
-          "ZANOTTI" (case-insensitive), but only if it has a logo.
-       2. Else match the FIRST item's description prefix against the
-          active brand names (longest name wins) → that brand's logo key.
-       3. Else null.
+  /* Brand letterhead resolution (owner 2026-07; company-scoped 2026-08-21) —
+     stamp the R2 key of the brand logo the SO PDF should print IN PLACE OF the
+     company logo (the company letterhead stays the fallback when this is
+     null). Brands + their logos live in public.project_brands (Project
+     Maintenance → Brands; logo_r2_key, migration-pg 0069), read via c.env.DB —
+     same public-schema hop as the venue lookup above.
+
+     COMPANY-SCOPED, and that is the whole point of the 2026-08-21 change: this
+     read had NO company predicate and the sofa rule hardcoded the name
+     'ZANOTTI', so a "2990 HOME SDN. BHD." Sales Order printed HOUZS's mark
+     (doc 2990-SO-2607-026; 69 orders in that state). `activeCompanySql`
+     degrades to no predicate only on a genuinely unresolved / single-company
+     context, and the rule itself refuses to attribute a house brand it cannot
+     identify — see lib/brand-letterhead.ts, which carries the rule and its
+     tests, and shared/so-branding-label.ts, which is where the owner's
+     equations live for BOTH this and the grid label.
+
      Best-effort: any failure stamps null and the PDF keeps the company
      letterhead — a PDF must never fail because of a logo. */
   {
     let brandLogoKey: string | null = null;
     try {
       const brandRows = await c.env.DB.prepare(
-        `SELECT name, logo_r2_key FROM project_brands WHERE active = 1`
+        `SELECT name, logo_r2_key FROM project_brands WHERE active = 1${activeCompanySql(c)}`
       ).all<{ name: string; logo_r2_key: string | null }>();
-      /* Dual-read logoR2Key ?? logo_r2_key — the pg driver camelCases
-         result columns (#1 recurring bug). */
-      const brands = ((brandRows.results ?? []) as Array<Record<string, unknown>>)
-        .map((r) => ({
-          name: String(r.name ?? '').trim(),
-          logoKey: (() => {
-            const v = (r.logoR2Key ?? r.logo_r2_key) as string | null | undefined;
-            const s = typeof v === 'string' ? v.trim() : '';
-            return s || null;
-          })(),
-        }))
-        .filter((b) => b.name);
-      const hasSofa = itemRows.some((it) =>
-        String((it as { item_group?: string | null }).item_group ?? '').toUpperCase().includes('SOFA'),
-      );
-      if (hasSofa) {
-        const zanotti = brands.find((b) => b.name.toUpperCase() === 'ZANOTTI' && b.logoKey);
-        if (zanotti) brandLogoKey = zanotti.logoKey;
-      }
-      if (!brandLogoKey) {
-        const firstDesc = String(
-          ((itemRows[0] ?? {}) as { description?: string | null }).description ?? '',
-        ).trim().toUpperCase();
-        if (firstDesc) {
-          let best: { name: string; logoKey: string | null } | null = null;
-          for (const b of brands) {
-            if (!firstDesc.startsWith(b.name.toUpperCase())) continue;
-            if (!best || b.name.length > best.name.length) best = b;
-          }
-          brandLogoKey = best?.logoKey ?? null;
-        }
-      }
+      brandLogoKey = resolveBrandLetterheadKey({
+        brands: (brandRows.results ?? []) as Array<Record<string, unknown>>,
+        itemGroups: itemRows.map((it) => (it as { item_group?: string | null }).item_group ?? null),
+        firstDescription: ((itemRows[0] ?? {}) as { description?: string | null }).description ?? null,
+        companyCode: c.get('companyCode') ?? null,
+      });
     } catch { brandLogoKey = null; }
     (salesOrder as Record<string, unknown>).resolvedBrandLogoKey = brandLogoKey;
   }
@@ -2822,16 +2835,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      link), so genuinely-ordered lines showed "—". Running the MRP allocation
      here keeps the Stock column and the MRP page in lock-step. Best-effort: if
      the allocation fails the page still loads, lines just fall back to Pending. */
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2840,13 +2844,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        keep showing the incoming/source PO even after the line is delivered
        (MRP coverage drops off once the demand is satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
-       resolves the PO(s) it WILL draw from — sofa via its stored
-       allocated_batch_no, non-sofa by projecting the SAME FIFO order the
-       engine consumes at DO time over the bucket's open lots, earlier claims
-       first. Read-time derivation, no writes. */
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
+     resolves the PO(s) it WILL draw from — sofa via its stored
+     allocated_batch_no, non-sofa by projecting the SAME FIFO order the
+     engine consumes at DO time over the bucket's open lots, earlier claims
+     first. Read-time derivation, no writes. */
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -2886,6 +2892,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          allocation outcome (stock / po / shortage). coverage_po + eta are only
          set when an outstanding PO covers the line, so the UI shows PO·ETA. */
       stock_state: stockState,
+      // What the PILL renders, decided here so it and the board agree (§0.4).
+      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       /* Source PO(s) the delivered goods actually shipped from (from the DO OUT
@@ -2981,21 +2989,14 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -3028,6 +3029,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
+      // What the PILL renders, decided here so it and the board agree (§0.4).
+      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,
@@ -3048,8 +3051,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
 mfgSalesOrders.get('/customer-credit/:debtorCode', async (c) => {
   const sb = c.get('supabase');
   const debtorCode = c.req.param('debtorCode');
-  const balance = await getCustomerCreditBalance(sb, debtorCode);
-  return c.json({ debtorCode, balanceCenti: balance });
+  const balance = await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null);
+  return c.json({ debtorCode, balanceSen: balance });
 });
 
 /* Loo 2026-06-05 — 409 gate for the maintained SO dropdown header fields.
@@ -3313,9 +3316,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (createPairRefusal) return c.json(createPairRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
-       (Commander 2026-05-29 — a Processing Date means "ready to build", so every
-       line must carry its variants; the CREATE path once skipped this, letting a
-       direct POST slip through), the past-date rule (Malaysia UTC+8 "today" so an
+       (Commander 2026-05-29 — a Processing Date means purchasing is released to
+       ORDER these goods, so every line must carry the variants that say WHAT to
+       order; the CREATE path once skipped this, letting a direct POST slip
+       through), the past-date rule (Malaysia UTC+8 "today" so an
        early-UTC request near midnight isn't wrongly rejected), and
        processing-≤-delivery (Owner 2026-06-03). The 30% deposit gate can't join
        here — the order total isn't priced until later — so it emits the SAME
@@ -3328,10 +3332,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       variants: (it.variants as Record<string, unknown> | null) ?? null,
     }));
     const createProblems = collectProcessingGateProblems({
-      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-         Undefined on the synthetic-context path (:5332) and that is fine —
-         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-      companyCode: c.get('companyCode') ?? null,
       procDate,
       delivDate,
       todayMY,
@@ -3341,49 +3341,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       kivOffenders: procDate ? findColourKivLines(linesForVariantCheck) : [],
     });
     if (createProblems.length > 0) return c.json(validationFailedBody(createProblems), 422);
-    if (items.length > 0) {
-      const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
-      const metaByCode = new Map<string, { category: string }>();
-      if (lineCodes.length > 0) {
-        // SoCreateContext is not a Hono Context, so scopeToCompany can't type-
-        // check here; add the company predicate directly from the local companyId
-        // (mfg_products is per-company; shared `code` collides across companies).
-        let metaQ = sb.from('mfg_products').select('code, category').in('code', lineCodes);
-        if (companyId != null) metaQ = metaQ.eq('company_id', companyId);
-        const { data: meta } = await metaQ;
-        for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
-          metaByCode.set(m.code, { category: m.category });
-        }
-      }
-      const normCat = (raw: string): string => {
-        const g = (raw ?? '').trim().toUpperCase();
-        if (g.includes('BEDFRAME')) return 'BEDFRAME';
-        if (g.includes('SOFA'))     return 'SOFA';
-        if (g.includes('MATTRESS')) return 'MATTRESS';
-        if (g.includes('ACCESSOR')) return 'ACCESSORY';
-        if (g.includes('SERVICE'))  return 'SERVICE';
-        return 'OTHERS';
-      };
-      // MAIN products carry the mixing constraints; SERVICE / ACCESSORY /
-      // OTHERS are universal add-ons that ride on any SO.
-      const MAIN = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-      const cats = items.map((it) =>
-        normCat(metaByCode.get(String(it.itemCode ?? ''))?.category ?? (it.itemGroup as string) ?? ''),
-      );
-      // Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
-      // alongside a sofa. Service / accessory add-ons are always fine.
-      if (cats.includes('SOFA') && cats.some((cat) => cat !== 'SOFA' && MAIN.has(cat))) {
-        return c.json({
-          error: 'so_sofa_no_other_main',
-          reason: 'A sofa Sales Order cannot also contain a bedframe or mattress. Service and accessory items are fine.',
-        }, 400);
-      }
-      /* Loo 2026-06-07 — mattress lines MAY mix brands on one SO. The old
-         Rule 3 (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S +
-         2990 mattress in one order at the POS counter; the owner never set
-         that rule. Sofa exclusivity above is the only MAIN-mix gate.
-         Don't re-add a brand gate here. */
-    }
+    /* Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
+       alongside a sofa. SERVICE / ACCESSORY / OTHERS ride on any SO. The rule
+       and its classifier live in lib/main-mix.ts and are shared with the three
+       SO line paths and the three CO paths — it used to be a closure here, which
+       is exactly why the CO line routes were written without it.
+       Loo 2026-06-07 — mattress lines MAY mix BRANDS on one SO. The old Rule 3
+       (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S + 2990 mattress in
+       one order at the POS counter; the owner never set that rule. Sofa
+       exclusivity is the only MAIN-mix gate. Don't re-add a brand gate here. */
+    const mainMix = await createMixRefusal(sb, items, companyId);
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   let docNo = await nextDocNo(sb, c);
@@ -3568,7 +3536,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
      the venue TEXT column (resolvedVenueName) carries the venue. See
@@ -3611,7 +3578,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      customer_delivery_date on create unless the client explicitly
      supplies a per-line lineDeliveryDate. Override flag mirrors the
      client's choice (defaults false → cascade-tracked). */
-  const headerDeliveryDate = (body.customerDeliveryDate as string | null | undefined) ?? null;
+  const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
   /* MFG-PRICING-ENGINE — Server-side recompute (Commander 2026-05-27
      non-negotiable; the honest-pricing red line). Load the master
      maintenance config once, then for each line item recompute the
@@ -3686,6 +3653,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      PWP voucher binding below — all of which previously saw a permanently-null
      customer_id (the POS never sent one). */
   let orderCustomerId: string | null = null;
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* Scan blank-draft shell (owner 2026-07-04) — a scan that could not read the
      customer's name/phone still lands a draft the rep completes by hand, but it
      carries PLACEHOLDER name/phone. Resolving a customer identity off those
@@ -3697,7 +3665,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       p_name:  customerName,
       p_phone: normPhone,
       p_email: typeof body.email === 'string' && body.email.trim() ? body.email.trim() : null,
-      p_company_id: activeCompanyId(c) ?? null,  // mig 0164 — scope resolve to the active company
+      p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
     });
     if (customerErr) {
       console.error('[mfg-so] customer resolve failed:', customerErr.message ?? customerErr);
@@ -3741,13 +3709,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       .map((it) => String((it?.variants as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim())
       .filter(Boolean),
   ));
+  // mig 0188 re-keyed pwp_codes on (company_id, code): a caller-supplied `code` alone matches whichever company's row comes back first, so the prefetch/burn/rollback below all carry pwpCompanyId (matches add-line ~L3828). BUG-HISTORY 2026-08-19.
+  const pwpCompanyId = activeCompanyId(c);
+  if (allPwpCodes.length > 0 && pwpCompanyId == null) return c.json({ error: 'company_unresolved', message: 'Cannot tell which company this order belongs to right now. Reload and try again.' }, 409);
   const pwpRowByCode = new Map<string, Record<string, any>>();
   let pwpPrefetchFailed = false;
   if (allPwpCodes.length > 0) {
     const { data: codeRows, error: codeReadErr } = await sb
       .from('pwp_codes')
       .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, reward_size_codes, reward_compartments, customer_id, source_doc_no, redeemed_doc_no, type')
-      .in('code', allPwpCodes);
+      .in('code', allPwpCodes).eq('company_id', pwpCompanyId);
     if (codeReadErr) {
       // A failed read is NOT "code not found" (same honesty rule as the
       // cross-category lookup) — reject as retryable, burn nothing.
@@ -3762,12 +3733,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!code) continue;
     const reject = (reason: string) =>
       pwpRejections.push({ idx, itemCode: String(it?.itemCode ?? ''), code, reason });
+    // HAZARD 2 (see the guide): claiming nothing is safe; claiming theirs is not.
+    if (companyId == null) { reject('cannot tell which company this order belongs to — reload and try again'); continue; }
+    const pwpCompanyId: number = companyId;
     if (seenPwpCodes.has(code)) { reject('code is already applied to another line on this order'); continue; }
     seenPwpCodes.add(code);
-    /* One code = one redemption = ONE unit (Loo 2026-06-12, POS line-quantity).
-       A reward line with qty > 1 would price every unit at the PWP grant off a
-       single voucher. The POS stepper + cart store pin reward lines to 1; this
-       is the authority. */
+    /* One code = one redemption = ONE unit (Loo 2026-06-12); qty>1 would price every unit off one voucher. POS pins reward lines to 1. */
     if (Number(it?.qty ?? 1) !== 1) { reject('a PWP reward line must be quantity 1'); continue; }
     const product = lineProducts[idx];
     if (!product) { reject('unknown item code'); continue; }
@@ -3877,19 +3848,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
-      .eq('code', code);
-    // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
-    // dead doc_no) so a parallel legitimate redemption can't be hijacked.
+      // HAZARD 2 (see the guide) — both halves of the key
+      .eq('code', code).eq('company_id', pwpCompanyId);
+    // Orphaned-USED re-claim matches the orphan row exactly (USED + same dead doc_no) so a live redemption can't be hijacked.
     claimQ = orphanedUsed
       ? claimQ.eq('status', 'USED').eq('redeemed_doc_no', cRow.redeemed_doc_no)
       : claimQ.in('status', ['RESERVED', 'AVAILABLE']);
     const { data: claimed } = await claimQ.select('code').maybeSingle();
     if (!claimed) { reject('code was just claimed by another order — try again'); continue; }
-    /* prevStatus drives the rollback restore. For an orphan re-claim the true
-       pre-incident status is unknown (the dead attempt never rolled back), so
-       restore to the most plausible redeemable state — RESERVED when the code
-       has an owner (same-cart voucher), else AVAILABLE — never back to the
-       bricked USED. */
+    /* prevStatus drives the rollback restore. An orphan re-claim's true prior status is unknown, so restore the plausible redeemable state — RESERVED when owned, else AVAILABLE — never the bricked USED. */
     const prevStatus = orphanedUsed
       ? (cRow.owner_staff_id ? 'RESERVED' : 'AVAILABLE')
       : cRow.status;
@@ -3897,9 +3864,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (grantSofaComboIds) pwpSofaByIdx.set(idx, grantSofaComboIds);
     else pwpBaseByIdx.set(idx, grantPwpPrice);
   }
-  /* Restore claimed codes to their prior state when the request is rejected
-     after the claim (drift 400 / insert failure) so a failed order never
-     silently burns a voucher. */
+  /* Restore claimed codes to their prior state on a post-claim rejection (drift 400 / insert failure) so a failed order never burns a voucher. */
   const rollbackPwpClaims = async () => {
     for (const { code, prevStatus } of claimedPwpCodes) {
       const patch: Record<string, unknown> = {
@@ -3907,14 +3872,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED');
+      await sb.from('pwp_codes').update(patch)  // HAZARD 2: code alone un-burns theirs
+        .eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId);
     }
   };
 
-  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05). Without
-     this the refused line silently repriced at full price and the order died
-     later as a bare pricing_drift — undebuggable from the tablet. Codes that
-     DID claim for other lines are rolled back so nothing burns. */
+  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05); otherwise the line silently repriced full and died later as a bare pricing_drift. Claimed codes are rolled back so nothing burns. */
   if (pwpRejections.length > 0) {
     await rollbackPwpClaims();
     return c.json({
@@ -4095,11 +4058,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Audit 2026-06-11 C2 — module COST rows, memoized per base_model (the
   // per-line seat size + fabric tier resolution happens inside the recompute).
   const sofaModuleCostRowsMemo = new Map<string, Promise<SofaModuleCostRowLite[] | null>>();
-  /* Owner ruling — a non-POS (web/mobile office/sales) author prices freely, so
-     their hand-entered selling price is persisted as-is (see the trust boundary
-     below + recomputeFromSnapshot). POS tablet callers stay authoritative +
-     drift-rejected. */
-  const trustOperatorSelling = !(await isPosTabletCaller(c));
+  /* Owner ruling — a non-POS author prices freely, so their hand-entered selling
+     price is persisted as-is. Trust is decided PER LINE by the same `erpLineTrust`
+     the two line writes use: this was one boolean for the whole request, which
+     cannot express "THIS line is deliberately free", so `zeroPriceIntended` was
+     never read on create and a line marked RM 0 on a NEW order silently took the
+     catalogue price. The POS lookup does I/O and cannot vary per line — resolved
+     once here. POS callers stay authoritative + drift-rejected. */
+  const createPosTablet = await isPosTabletCaller(c);
   const recomputes: Array<RecomputedLine | null> = await Promise.all(items.map(async (it, idx) => {
     const itemCode = String(it.itemCode ?? '');
     if (!itemCode) return null;
@@ -4135,7 +4101,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       itemCode,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty:            Number(it.qty ?? 1),
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       (it.variants as MfgItemForRecompute['variants']) ?? null,
     };
     // PWP grant for this line when its code was claimed: a per-SKU base (non-
@@ -4145,7 +4111,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, trustOperatorSelling);
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended));
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
@@ -4154,8 +4120,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      the line's selling price with a cheaper whole-build combo total, or
      clamped/rejected an out-of-band client price) is therefore retired — it
      would clobber or reject the operator's manual selling price. The COST
-     path (computeMfgLineCost → unit_cost_centi / line_cost_centi /
-     line_margin_centi) is untouched; combos never fed it.
+     path (computeMfgLineCost → unit_cost_sen / line_cost_sen /
+     line_margin_sen) is untouched; combos never fed it.
 
      Combos DO feed the COST side now (Commander 2026-05-29): recomputeTotals
      applies the master sofa-combo price to a matched sofa set's cost. They are
@@ -4177,14 +4143,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           reason:   'The price for this item is out of date — please refresh and try again.',
           lineIdx:  i,
           itemCode: r.itemCode,
-          client:   Number(items[i]?.unitPriceCenti ?? 0),
+          client:   Number(items[i]?.unitPriceSen ?? 0),
           server:   r.unit_price_sen,
           breakdown: r.breakdown,
         }, 400);
       }
     }
   }
-  /* Audit 2026-06-11 C-2 — discountCenti is client-authored and was NOT covered
+  /* Audit 2026-06-11 C-2 — discountSen is client-authored and was NOT covered
      by the drift gate: a tampered POS could submit the correct catalog unit
      price (passing drift) then zero the line out with an arbitrary discount —
      or inflate the total with a negative one. Reject any discount outside
@@ -4194,13 +4160,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!it) continue;
     const r = recomputes[i];
     const qtyI = Number(it.qty ?? 1);
-    const unitI = freeItemByIdx.has(i) ? 0 : (r ? r.unit_price_sen : Number(it.unitPriceCenti ?? 0));
-    const discI = Number(it.discountCenti ?? 0);
+    const unitI = freeItemByIdx.has(i) ? 0 : (r ? r.unit_price_sen : Number(it.unitPriceSen ?? 0));
+    const discI = Number(it.discountSen ?? 0);
     if (!Number.isFinite(discI) || discI < 0 || discI > qtyI * unitI) {
       await rollbackPwpClaims();  // don't burn a voucher on a rejected order
       return c.json({
         error:    'invalid_discount',
-        reason:   'discountCenti must be between 0 and qty × unit price.',
+        reason:   'discountSen must be between 0 and qty × unit price.',
         lineIdx:  i,
         itemCode: String(it.itemCode ?? ''),
         discount: discI,
@@ -4262,10 +4228,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // buildUnitPriceSen below, every sofa module row of the build.
     const unit = freeItemByIdx.has(idx)
       ? 0
-      : (recomputed ? recomputed.unit_price_sen : Number(it.unitPriceCenti ?? 0));
-    const discount = Number(it.discountCenti ?? 0);
+      : (recomputed ? recomputed.unit_price_sen : Number(it.unitPriceSen ?? 0));
+    const discount = Number(it.discountSen ?? 0);
     /* senOrZero at the DEFINITION, not just at the accumulator: lineTotal also
-       lands on the persisted row (total_centi / total_inc_centi / balance_centi)
+       lands on the persisted row (total_sen / total_inc_sen / balance_sen)
        and feeds the per-category buckets, so guarding only the roll-up would
        still write a non-finite figure onto the line itself. */
     const lineTotal = senOrZero((qty * unit) - discount);
@@ -4277,13 +4243,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const unitCost = senOrZero(
       recomputed && recomputed.unit_cost_sen > 0
         ? recomputed.unit_cost_sen
-        : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostCenti ?? 0), c),
+        : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostSen ?? 0), c),
     );
     const lineCost = senOrZero(unitCost * qty);
     const group = String(it.itemGroup ?? '').toLowerCase();
     /* lineTotal / lineCost are senOrZero'd above. recomputeTotals (the
-       re-derive path) has always folded with `it.total_centi || 0` /
-       `it.line_cost_centi || 0`, so a stray non-finite there collapses to 0;
+       re-derive path) has always folded with `it.total_sen || 0` /
+       `it.line_cost_sen || 0`, so a stray non-finite there collapses to 0;
        this CREATE path folded raw — the one totals accumulator in the file with
        no guard. The two are now in lockstep: one non-finite line must never
        decide the whole header. */
@@ -4305,9 +4271,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Task 5 — the per-line declared extra add-on (whole RM), only honoured when
        the auto-SKU flag is ON. Drives whether this line mints a one-shot SKU. */
     const extraRM = autoSkuEnabled ? extraRMof(it) : 0;
-    /* PR-E — Per-line cascade defaults. If the client sent a
-       lineDeliveryDate it wins (and overridden=true unless explicitly
-       false). Otherwise inherit the header date with overridden=false. */
+    /* PR-E — a sent lineDeliveryDate wins (overridden=true unless explicitly
+       false), else inherit the header date. "" is stored as NULL, not "". */
     const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
     const lineDeliveryDate = hasExplicitLineDate
       ? (it.lineDeliveryDate as string | null)
@@ -4316,18 +4281,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
       : Boolean(it.lineDeliveryDateOverridden ?? false);
     const baseRow = {
-      line_date: (it.lineDate as string) ?? todayMyt(),
+      line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: agentToStamp,
-      item_group: it.itemGroup ?? 'others',
+      item_group: (productRowByCode.get(String(it.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase() || String(it.itemGroup ?? '').trim() || 'others', // SKU wins — lib/sku-category.ts, docs/bugs/0514
       item_code: it.itemCode,
       description: correctedSizeDescription(itemCode, it.description as string | null, sizeSkuMap)
         ?? ((it.description as string) ?? null),
       /* Commander 2026-05-28 — "Description 2" is the auto-combined variant
          summary (the long attribute string). Server-generated from the line's
          variants so it stays the single source of truth. */
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      description2: buildVariantSummary((productRowByCode.get(String(it.itemCode ?? '').trim())?.category ?? '').trim().toLowerCase() || String(it.itemGroup ?? '').trim() || 'others', (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Spec 2026-06-06 — per-line operator remark from the POS product page.
          Same column SoLineCard edits (mfg_sales_order_items.remark). */
       remark: (() => {
@@ -4336,11 +4301,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       })(),
       uom: (it.uom as string) ?? 'UNIT',
       qty,
-      unit_price_centi: unit,
-      discount_centi: discount,
-      total_centi: lineTotal,
-      total_inc_centi: lineTotal,
-      balance_centi: lineTotal,
+      unit_price_sen: unit,
+      discount_sen: discount,
+      total_sen: lineTotal,
+      total_inc_sen: lineTotal,
+      balance_sen: lineTotal,
       /* Variants-vocabulary unification (port of 2990 73aeeb1e) — canonicalize
          at the LAST step before the DB write. Every depth-keyed read
          (recompute, split, fabricCode/fabricId loads) above ran on the raw
@@ -4348,9 +4313,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
          canonical Backend keys (seatHeight/legHeight/fabricCode) and the read
          seams in DO/SI/PO/GRN/PI/PR editors never render blank dropdowns. */
       variants: canonicalizeVariants(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null),
-      unit_cost_centi: unitCost,
-      line_cost_centi: lineCost,
-      line_margin_centi: lineTotal - lineCost,
+      unit_cost_sen: unitCost,
+      line_cost_sen: lineCost,
+      line_margin_sen: lineTotal - lineCost,
       // MFG-PRICING-ENGINE — Persist the line-level breakdown columns from
       // the server recompute so the SO detail page + cost reports show the
       // canonical surcharge mix without re-deriving from the variants blob.
@@ -4358,7 +4323,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       leg_price_sen:           recomputed?.leg_price_sen ?? 0,
       special_order_price_sen: recomputed?.special_order_sen ?? 0,
       custom_specials:         recomputed?.custom_specials ?? null,
-      line_delivery_date: lineDeliveryDate,
+      line_delivery_date: dateOrNull(lineDeliveryDate),
       line_delivery_date_overridden: lineDeliveryDateOverridden,
       // Commander 2026-05-31 — per-line ship-from warehouse (migration 0118).
       // Explicit per-line override wins; else the SO state's default.
@@ -4452,21 +4417,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             item_code: s.itemCode,
             description: s.description,
             description2: buildVariantSummary('sofa', moduleVariants) || null,
-            unit_price_centi: s.unitPriceSen,
-            discount_centi: moduleDiscounts[i] ?? 0,
-            total_centi: moduleLineTotal,
-            total_inc_centi: moduleLineTotal,
-            balance_centi: moduleLineTotal,
+            unit_price_sen: s.unitPriceSen,
+            discount_sen: moduleDiscounts[i] ?? 0,
+            total_sen: moduleLineTotal,
+            total_inc_sen: moduleLineTotal,
+            balance_sen: moduleLineTotal,
             variants: moduleVariants,
-            unit_cost_centi: s.unitCostSen,
-            line_cost_centi: moduleLineCost,
-            line_margin_centi: moduleLineTotal - moduleLineCost,
+            unit_cost_sen: s.unitCostSen,
+            line_cost_sen: moduleLineCost,
+            line_margin_sen: moduleLineTotal - moduleLineCost,
             divan_price_sen:         i === 0 ? (recomputed?.divan_price_sen ?? 0) : 0,
             leg_price_sen:           i === 0 ? (recomputed?.leg_price_sen ?? 0) : 0,
             special_order_price_sen: i === 0 ? (recomputed?.special_order_sen ?? 0) : 0,
             /* Loo 2026-06-13 — custom_specials is the DISPLAY composition of the
                line's specials (incl. the POS special add-on note), NOT a money
-               figure: the money lives in unit_price_centi (split across modules)
+               figure: the money lives in unit_price_sen (split across modules)
                + the i===0 breakdown columns above. So, like the remark below, it
                rides EVERY module line of a split sofa — each row of the internal
                Detail Listing then shows the same specials, matching the per-module
@@ -4515,7 +4480,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       }
     }
     /* Task 5 — non-sofa (or non-splittable) line: mint a single one-shot SKU
-       when an extra charge was declared. unit_price_centi already carries the
+       when an extra charge was declared. unit_price_sen already carries the
        D9 list price (base + extra, N=1) from the recompute, so reuse it as the
        minted SKU's sell price. */
     if (extraRM > 0 && lineProducts[idx]) {
@@ -4530,7 +4495,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         branding: (product as { branding?: string | null }).branding ?? null,
         compartment: '',
         remarkText: remarkTextOf(it),
-        sellPriceSen: Number(baseRow.unit_price_centi ?? 0), // base + extra (N=1)
+        sellPriceSen: Number(baseRow.unit_price_sen ?? 0), // base + extra (N=1)
       });
     }
     {
@@ -4551,7 +4516,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   /* ── Delivery fee (migration 0133) — POS handover path only ──────────────
      Activates the dormant delivery fee on the LIVE SO. Gated on the explicit
      applyDeliveryFee flag the POS handover sends, so backend-authored SOs are
-     untouched (delivery_fee_centi stays 0). Fully server-recomputed via the
+     untouched (delivery_fee_sen stays 0). Fully server-recomputed via the
      pure computeSoDeliveryFee — the only client value trusted is the free-form
      additionalDeliveryFee (clamped >= 0). Categories are the cart's distinct
      DELIVERABLE item_groups (sofa/mattress/bedframe); accessories/others don't
@@ -4560,7 +4525,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      into the grand totals + margin like the fabric-tier add-on; the per-
      category revenue buckets stay goods-only. (Phase 1 special-model fees +
      Phase 2 cross-order follow-up plug into the same call.) */
-  let deliveryFeeCenti = 0;
+  let deliveryFeeSen = 0;
   let deliveryFee: SoDeliveryFeeResult | null = null;
   let crossCategorySourceDocNo: string | null = null;
   if (body.applyDeliveryFee) {
@@ -4626,7 +4591,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const rawLink = String((body.crossCategorySourceDocNo as string | undefined) ?? '').trim();
     if (rawLink) {
       const elig = await checkCrossCategorySource(
-        sb, rawLink, typeof body.phone === 'string' ? body.phone : null, orderCustomerId,
+        c, sb, rawLink, typeof body.phone === 'string' ? body.phone : null, orderCustomerId,
       );
       if (!elig.eligible) {
         await rollbackPwpClaims();  // don't burn a voucher on a rejected order
@@ -4640,15 +4605,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       { categoryIds, specialModels, isCrossCategoryFollowup, additionalFee: additionalSen },
       cfgSen,
     );
-    deliveryFeeCenti = deliveryFee.total;
+    deliveryFeeSen = deliveryFee.total;
   }
 
   /* ── SO-SKU spec P2 (§4.1 + §4.2, D2/D6/D9 final) — every charge is a SKU
      line. The delivery fee just computed decomposes into SVC-DELIVERY* lines
-     (Σ lines === deliveryFeeCenti always); POS handover add-ons (dispose /
+     (Σ lines === deliveryFeeSen always); POS handover add-ons (dispose /
      lift) are re-priced server-side from the addons table — the client's
      amounts are never trusted — and become SVC-DISPOSE-* / SVC-LIFT-CARRY
-     lines. The header delivery_fee_centi keeps being written (dual-write
+     lines. The header delivery_fee_sen keeps being written (dual-write
      transition; recomputeTotals only folds it back in when NO fee lines
      exist, so nothing double-counts). Lines ride the whole SO→DO→SI chain;
      they are not goods — P1 guards keep them out of allocation / inventory /
@@ -4680,7 +4645,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     );
   }
   const serviceSpecs = [...feeServiceSpecs, ...addonServiceSpecs];
-  const serviceCenti = serviceSpecs.reduce((s, l) => s + senOrZero(l.totalSen), 0);
+  const serviceSen = serviceSpecs.reduce((s, l) => s + senOrZero(l.totalSen), 0);
   if (serviceSpecs.length > 0) {
     /* Same Edge #4 contract as goods lines: a SERVICE line's SKU must exist in
        the catalog (seeded by migration 0155). A 409 here means the seed is
@@ -4707,15 +4672,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         remark: spec.remark ?? null,
         uom: 'UNIT',
         qty: spec.qty,
-        unit_price_centi: spec.unitPriceSen,
-        discount_centi: 0,
-        total_centi: spec.totalSen,
-        total_inc_centi: spec.totalSen,
-        balance_centi: spec.totalSen,
+        unit_price_sen: spec.unitPriceSen,
+        discount_sen: 0,
+        total_sen: spec.totalSen,
+        total_inc_sen: spec.totalSen,
+        balance_sen: spec.totalSen,
         variants: null,
-        unit_cost_centi: 0,
-        line_cost_centi: 0,
-        line_margin_centi: spec.totalSen,
+        unit_cost_sen: 0,
+        line_cost_sen: 0,
+        line_margin_sen: spec.totalSen,
         divan_price_sen: 0,
         leg_price_sen: 0,
         special_order_price_sen: 0,
@@ -4738,10 +4703,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-  const grandTotal          = total + serviceCenti;
-  /* Service lines carry zero cost, so the whole serviceCenti is margin —
+  const grandTotal          = total + serviceSen;
+  /* Service lines carry zero cost, so the whole serviceSen is margin —
      same treatment the header-only delivery fee got before. */
-  const grandMargin         = margin + serviceCenti;
+  const grandMargin         = margin + serviceSen;
   const grandMarginPctBasis = grandTotal > 0 ? Math.round((grandMargin / grandTotal) * 10000) : 0;
 
   /* SO-SKU spec P3 — Edge #4 for the ASSEMBLED rows. The payload-level gate
@@ -4865,9 +4830,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      A handover deposit can now arrive as SEVERAL transactions (e.g. half
      cash + half card). Validated STRICTLY (unlike the tolerant single-deposit
      fallback below, a money row must never be silently dropped) and booked
-     atomically with the order: deposit_centi on the header = Σ rows, each row
+     atomically with the order: deposit_sen on the header = Σ rows, each row
      lands in mfg_sales_order_payments as an is_deposit row. Absent payments[]
-     → the legacy single depositCenti/paymentMethod path runs unchanged, so
+     → the legacy single depositSen/paymentMethod path runs unchanged, so
      old PWA clients keep working.
 
      Each row's `uploadSessionId` is OPTIONAL (Owner 2026-08-13) — schema and
@@ -4881,8 +4846,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
     posPayments = parsed.data;
   }
-  const posPaymentsTotalCenti = posPayments
-    ? posPayments.reduce((acc, p) => acc + p.amountCenti, 0)
+  const posPaymentsTotalSen = posPayments
+    ? posPayments.reduce((acc, p) => acc + p.amountSen, 0)
     : null;
 
   /* Resolve each split payment's slip session → R2 key up front, for the rows
@@ -4928,86 +4893,86 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 
      A HANDOVER WITH NO PROCESSING DATE IS NOT PROCEEDED, however complete it is
      (owner, pinned 2026-08-13: *"没有 processing date 就代表没有 proceed"*). This
-     used to stamp proceeded_at anyway, minting exactly the order the rule says
-     cannot exist: proceeded, in production, with no day the factory starts. The
-     create refuses nothing extra for it — the order is simply created un-
-     proceeded, and gets its date (and its Proceed) when someone picks one. */
-  /* Read through the shared helper, not a literal. This line said
+     used to stamp a separate Proceed marker anyway, minting exactly the order
+     the rule says cannot exist: proceeded, released, with no day it was released
+     ON. That marker is gone entirely (2026-08-18): the order is simply created
+     un-proceeded and gets its Proceed when someone picks a date.
+
+     Read through the shared helper, not a literal. This said
      `body.internalExpectedDd`, a key NO client sends — desktop New SO, both
      mobile surfaces, from-products and this route's own INSERT all send
-     `processingDate` — so `autoProceed` was always false and an order created
-     WITH a Processing Date was created UN-proceeded, the inverse of the owner's
-     pinned rule. An absent property is `undefined`, not an error, so nothing
-     said a word. The helper accepts the legacy spelling too. */
+     `processingDate` — so the create's auto-proceed test was always false and an
+     order created WITH a Processing Date was created UN-proceeded, the inverse
+     of the owner's pinned rule. An absent property is `undefined`, not an error,
+     so nothing said a word. The helper accepts the legacy spelling too. */
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
-  const depositTotalCenti = posPaymentsTotalCenti
-    ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
-  const autoProceed = !!procDateOnCreate && meetsProceedGate({
-    hasCustomerName: !!customerName?.trim(),
-    hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
-    hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
-    hasDeliveryDate: typeof body.customerDeliveryDate === 'string' && !!body.customerDeliveryDate.trim(),
-    paid: depositTotalCenti,
-    total: grandTotal,
-    companyCode: c.get('companyCode') ?? null,
-  });
+  /* `depositTotalSen` stood here and is GONE with the deposit gate (owner
+     2026-08-20). It was the create's read of the money — the POS deposit, else
+     `body.depositSen` — and the gate below was its only reader. The value that
+     is actually STORED is computed independently at the INSERT
+     (`deposit_sen: posPaymentsTotalSen ?? ...`), so removing this changes what
+     the create REFUSES and nothing about what it WRITES. */
+  /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
+     here — is GONE with the stamp (2026-08-18), and with it this file's last
+     `meetsProceedGate` call. #2383 had just documented this site as "THE ONE
+     meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST", because it REFUSES
+     NOTHING: a handover that missed the gate was simply created un-proceeded for
+     the salesperson to complete manually. That is exactly why it can go —
+     `autoProceed` could only ever be true when a Processing Date was ALSO being
+     written, and the create already refuses (422, below) to write that date
+     unless the same conditions pass. "Proceeded at create" is now the date
+     landing on the row, and the 422 block below is the gate that refuses. */
 
-  /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
-     production's "ready to build" signal: once set, the backend orders materials
-     / starts the build when the date arrives. So it must NOT be set until the
-     company's deposit is collected (processingDateThresholdFor — Houzs 30%,
-     2990 50%). The SAME deposit rule autoProceed weighs above, because they are
-     the same act. depositTotalCenti = the POS deposit on this create;
-     grandTotal = order total — both in scope from the autoProceed block. */
+  /* Processing-Date gate, post-pricing half — a Processing Date RELEASES the
+     order to purchasing (owner 2026-08-18: "Processing Date 就代表这张单可以
+     安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"), so the order
+     must be one purchasing can actually act on: a customer, a delivery address
+     line 1, a postcode and a delivery date.
+
+     It used to be the DEPOSIT gate as well (Loo 2026-06-30 — the company's
+     fraction, Houzs 30% / 2990 50%). The owner removed that condition on
+     2026-08-20 (「以电脑为准 —— 两边都不查」); see the block below. The block
+     stays because the four completeness conditions still need the priced order's
+     own header, and it still cannot live in the early gate block above. */
   {
-    const procDateOnCreate = (body.processingDate as string | null | undefined) || null;
+    /* Same helper as the INSERT, or a legacy create writes an unjudged date. */
+    const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
     /* Emits the SAME aggregated `validation_failed` shape as the early gate block
        (owner 2026-07-18) so the client renders every Processing-Date failure the
        same way — this gate simply can't live up there because the order total
        isn't priced until now. Single-problem list here, but consistent shape.
        rollbackPwpClaims first: a rejected order must not burn a voucher (matches
        every other bail in this pricing block). */
-    /* GATE-ONLY money, never booked (owner 2026-07-31). The desktop New-SO screen
-       books a manually-added payment through the strict per-payment route AFTER
-       the order exists, so at CREATE time `depositTotalCenti` sees only a
-       receipt-backed deposit (SalesOrderNew.tsx requires `receiptImageKey`) and
-       reads 0 for a hand-entered one. The operator then gets
-       "Deposit RM 0 of RM X needed" with the money plainly on screen, the create
-       422s, and the post-create payment flush never runs — a DEADLOCK: an SO with
-       a Processing Date and a hand-entered deposit could not be saved at all.
-       `pendingDepositCenti` is the total the client is about to post; the client
-       only sends it for drafts that already carry a verified slip session, and it
-       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in autoProceed,
-       not in any ledger — so it cannot double-book and cannot mark an order
-       proceeded against money that has not landed. */
-    const pendingDepositCenti = Math.max(
-      0,
-      typeof body.pendingDepositCenti === 'number' && Number.isFinite(body.pendingDepositCenti)
-        ? Math.trunc(body.pendingDepositCenti)
-        : 0,
-    );
-    const depositProblems = procDateOnCreate
+    /* NO DEPOSIT CONDITION ON THIS CREATE — owner ruling, 2026-08-20:
+       「以电脑为准 —— 两边都不查」.
+
+       What stood here was the money half of the gate plus the machinery that had
+       grown around it: a `pendingDepositSen` read, and a `manualEntry` flag the
+       desktop New-SO screen set to `true` on EVERY create so the condition would
+       be dropped for it. The phone sent no such flag, so the identical order was
+       accepted on the desk and refused on the phone — the rule depended on the
+       screen, not on the order. Both are gone; the condition itself was removed
+       from collectProcessingGateProblems, so this call site cannot re-introduce
+       it and neither can the phone's.
+
+       The four remaining conditions still apply on create, unchanged. */
+    const pricedGateProblems = procDateOnCreate
       ? collectProcessingGateProblems({
-          /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-             Undefined on the synthetic-context path and that is fine —
-             processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-          companyCode: c.get('companyCode') ?? null,
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-          /* The SAME facts autoProceed reads a few lines above — one rule
-             (owner 2026-07-31: Processing Date IS Proceed). No email. */
+          /* One rule (owner 2026-07-31: Processing Date IS Proceed), and since
+             2026-08-18 one place that applies it on this path. No email. */
           completeness: {
             hasCustomerName: !!customerName?.trim(),
             hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
             hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
           },
-          deposit: { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
         })
       : [];
-    if (depositProblems.length > 0) {
+    if (pricedGateProblems.length > 0) {
       await rollbackPwpClaims();
-      return c.json(validationFailedBody(depositProblems), 422);
+      return c.json(validationFailedBody(pricedGateProblems), 422);
     }
   }
 
@@ -5031,16 +4996,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     (dn) => sb.from('mfg_sales_orders').insert({
     company_id: companyId, // multi-company: stamp the active company
     doc_no: dn,
-    proceeded_at: autoProceed ? new Date().toISOString() : null,
     transfer_to: (body.transferTo as string) ?? null,
-    so_date: (body.soDate as string) ?? todayMyt(),
+    so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
     agent: agentToStamp,
     sales_location: derivedSalesLocation ?? null,
     ref: (body.ref as string) ?? null,
-    po_doc_no: (body.poDocNo as string) ?? null,
     /* SO-SKU spec P5 — the resolved venue NAME (explicit body.venue wins,
        else looked up from the stamped venue_id) so the column finally lights. */
     venue: resolvedVenueName,
@@ -5070,29 +5033,29 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        holds a half-typed format. Falls back to the raw value if normalize
        returns null (e.g. non-MY international numbers we don't recognise). */
     phone: normPhone,
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
     // Task #114 — per-category cost (migration 0079).
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
     /* SO-SKU spec P2 (D1, migration 0155) — SERVICE bucket = fee + addon
        lines (cost 0). Keeps Finance's "Others" goods-only. */
-    service_centi: serviceCenti,
-    service_cost_centi: 0,
-    local_total_centi: grandTotal,
-    balance_centi: grandTotal,
-    total_cost_centi: totalCost,
-    total_revenue_centi: grandTotal,
-    total_margin_centi: grandMargin,
+    service_sen: serviceSen,
+    service_cost_sen: 0,
+    local_total_sen: grandTotal,
+    balance_sen: grandTotal,
+    total_cost_sen: totalCost,
+    total_revenue_sen: grandTotal,
+    total_margin_sen: grandMargin,
     margin_pct_basis: grandMarginPctBasis,
     // Delivery fee snapshot (migration 0133) — DUAL-WRITE transition (P2):
     // still written for view/report back-compat, but recomputeTotals now folds
     // it in ONLY when no SVC-DELIVERY* lines exist (they are the new truth).
-    delivery_fee_centi: deliveryFeeCenti,
+    delivery_fee_sen: deliveryFeeSen,
     // Cross-category follow-up link (migration 0141) — null unless sales linked
     // this SO back to an earlier one for the reduced delivery rate.
     cross_category_source_doc_no: crossCategorySourceDocNo,
@@ -5114,7 +5077,20 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
-    target_date: (body.targetDate as string) ?? null,
+    /* NOT DEAD — measured on prod 2026-08-18, and the census that called it dead
+       was wrong. `probe-rename-preconditions.mjs` section F: 46 of 2826 SO rows
+       carry a target_date and ALL 46 were CREATED inside the last 90 days, the
+       newest 6.75 days ago. No client in THIS repo sends the key (`grep -rn
+       targetDate frontend/src native e2e` = 0 hits), so the producer is the POS
+       handover, outside this deploy — and `routes/reports.ts` selects the column
+       into the sales-report export, so it has a live reader too.
+
+       A sweep removed this line on 2026-08-18 and put it back the same day: with
+       the door shut the POS keeps POSTing `targetDate`, the create returns 201,
+       and the value is silently dropped — the exact failure class the
+       Processing-Date work exists to end. Do not remove it again without a fresh
+       section-F run showing zero rows BORN with one. */
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     /* Mig 0175 — canonicalize MY state at write so 'PENANG' / 'Kl' / 'W.P.
        Kuala Lumpur' land as the exact my_localities spelling. Foreign state
@@ -5126,15 +5102,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        hidden (never surfaced on SO/PDF/UI). 2990 kept these on the customers
        table; owner ruled they slot onto the SO here. Capture-only at create. */
     customer_race: (body.customerRace as string) ?? null,
-    customer_birthday: (body.customerBirthday as string) ?? null,
+    customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
        on the POST (create) — so the New SO form's Processing Date field
        never persisted; reopening the SO showed an empty field. */
-    processing_date: (body.processingDate as string) ?? null,
+    /* The SAME helper the create gate reads; this said
+       `dateOrNull(body.processingDate)`, so a legacy create wrote NO date. */
+    processing_date: dateOrNull(procDateOnCreate),
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
        ORIGINAL `customer_delivery_date` above is NEVER overwritten by an
        amend; the customer's REQUESTED-changed date lands here, the date WE
@@ -5143,12 +5121,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        amended_delivery_date ?? customer_delivery_date. Persisted on CREATE so
        an amend captured at SO entry (e.g. customer asked for a date change
        between quote + sign-off) doesn't get lost waiting for a follow-up PATCH. */
-    amend_date_from_customer: (body.amendDateFromCustomer as string) ?? null,
-    amended_delivery_date: (body.amendedDeliveryDate as string) ?? null,
+    amend_date_from_customer: dateOrNull(body.amendDateFromCustomer),
+    amended_delivery_date: dateOrNull(body.amendedDeliveryDate),
     amend_reason: (body.amendReason as string) ?? null,
     // PR #121 — POS-aligned Order Details fields
     customer_so_no: (body.customerSoNo as string) ?? null,
-    customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
     hub_name: (body.hubName as string) ?? null,
     /* P1 (Owner 2026-06-03) — billing address from the POS handover, sent only
@@ -5174,23 +5151,23 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        proof. null for manually-keyed orders / scans with no receipt photo. */
     receipt_image_key: receiptImageKey,
     /* PR #148 + #150 — Payment fields on create (mirror PATCH handler).
-       Lets commander set payment_method + deposit_centi straight from the
+       Lets commander set payment_method + deposit_sen straight from the
        New SO form, including approval_code for merchant transactions. */
     payment_method:     (body.paymentMethod as string) ?? null,
     installment_months: typeof body.installmentMonths === 'number' ? body.installmentMonths : null,
     merchant_provider:  (body.merchantProvider as string) ?? null,
     approval_code:      (body.approvalCode as string) ?? null,
-    payment_date:       (body.paymentDate as string) ?? null,
+    payment_date:       dateOrNull(body.paymentDate),
     // Clamped ≥ 0 — a negative deposit would deflate the live paid rollup.
     // Split payment (Loo 2026-06-06): with payments[] the deposit IS the sum
     // of the validated rows (each positive by schema), not the legacy field.
-    deposit_centi:      posPaymentsTotalCenti ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0),
+    deposit_sen:      posPaymentsTotalSen ?? Math.max(0, typeof body.depositSen === 'number' ? body.depositSen : 0),
     /* SERVER-OWNED — never the client's number. Paid is derived from the
-       payments ledger (the view's paid_total_centi); taking body.paidCenti here
+       payments ledger (the view's paid_total_sen); taking body.paidSen here
        let a create book an order as already-paid with zero payment rows. A
        deposit does NOT belong here either: it posts an is_deposit ledger row
        below, which is what the rollups read. Always 0 at birth. */
-    paid_centi:         0,
+    paid_sen:         0,
     /* PR #154 — Commander 2026-05-27: "我们的整个系统是没有 Draft 功能的，
        把 Draft 的功能去除掉, 我们 create 的全部都是 confirm 的". 2990 is a
        trading company; we don't need a DRAFT staging step. Every new SO is
@@ -5217,7 +5194,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
      payments-ledger row at create, so Paid / Last Payment / Account Sheet /
      Collected By / Balance derive live instead of sitting dead in the
-     deposit_centi header. is_deposit=true marks it so the list paid-rollup
+     deposit_sen header. is_deposit=true marks it so the list paid-rollup
      doesn't ALSO add the header column (double count) and Finance can tell
      deposits from balance payments. Method-scoped fields mirror the manual
      POST /:docNo/payments route. Best-effort: a ledger failure must never
@@ -5226,7 +5203,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Split payment — book EVERY validated row. Best-effort like the single
        path (the header already carries the Σ, so a ledger hiccup never blocks
        the order); rows are schema-validated so nothing is silently dropped. */
-    const paidAt = (body.paymentDate as string) ?? todayMyt();
+    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
     for (let i = 0; i < posPayments.length; i++) {
       const p = posPayments[i]!;
       const merchantLike = p.method === 'merchant' || p.method === 'installment';
@@ -5251,7 +5228,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
            onlineType, so transfer falls back to 'Bank transfer'. */
         account_sheet:      deriveAccountSheet(p.method, merchantProvider, null),
-        amount_centi:       p.amountCenti,
+        amount_sen:       p.amountSen,
         /* Who took the money. The fallback was the bridge's pinned system uuid,
            so an unnamed collector recorded as "System" on the money ledger; the
            column is a NULLABLE FK to staff (the /payments writer stamps null
@@ -5306,7 +5283,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         fieldChanges: [
           { field: 'paidAt',      from: null, to: paidAt },
           { field: 'method',      from: null, to: p.method },
-          { field: 'amountCenti', from: null, to: p.amountCenti },
+          { field: 'amountSen', from: null, to: p.amountSen },
           ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
           ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
           ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
@@ -5314,14 +5291,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       });
     }
   } else {
-    const depositCenti = typeof body.depositCenti === 'number' ? body.depositCenti : 0;
+    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
     /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
        string must not reach Finance reports. Unknown method → header-only
        (the deposit still shows via the legacy fallback), no ledger row. */
     const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
     const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
     const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
-    if (depositCenti > 0 && depositMethod) {
+    if (depositSen > 0 && depositMethod) {
       /* 'installment' is a merchant transaction with a term — both keep the
          provider/months fields (prod uses both method values). */
       const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
@@ -5329,7 +5306,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
         ? body.installmentMonths : null;
-      const paidAt = (body.paymentDate as string) ?? todayMyt();
+      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
       const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
@@ -5341,7 +5318,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
         /* Account Sheet auto-fill (Loo 2026-06-07). */
         account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
-        amount_centi:       depositCenti,
+        amount_sen:       depositSen,
         // Same as the split-payment row above: never the pin on the money ledger.
         collected_by:       (body.salespersonId as string) ?? callerStaffId,
         created_by:         user.id,
@@ -5362,7 +5339,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           fieldChanges: [
             { field: 'paidAt',      from: null, to: paidAt },
             { field: 'method',      from: null, to: depositMethod },
-            { field: 'amountCenti', from: null, to: depositCenti },
+            { field: 'amountSen', from: null, to: depositSen },
             ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
             ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
           ],
@@ -5435,8 +5412,30 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        Runs BEFORE stampCo so we can find the per-row company_id via the
        active-user fallback; stampCo then adds it. */
     await deriveLineBrandingFromProduct(sb, rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+    signalNullWarehouseRows('POST /mfg-sales-orders (create)', docNo, rowsWithDoc as unknown as Array<Record<string, unknown>>); // logs only, never blocks
     const { error: iErr } = await sb.from('mfg_sales_order_items').insert(stampCo(rowsWithDoc));
     if (iErr) { await rollbackPwpClaims(); await sb.from('mfg_sales_orders').delete().eq('doc_no', docNo); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+    /* Stamp the HEADER branding from the representative line's SKU (owner
+       2026-08-18, "我要表头啊"). The insert above wrote `body.branding ?? null`
+       and no shipped client sends that field, so every ERP-created order landed
+       with a blank header — which is exactly the hole the 2990 backfill had to
+       fill for 100 orders, and would have re-opened on the next order created.
+       Only ever fills a BLANK header: an explicit body.branding is the caller's
+       decision and is not second-guessed. A null result leaves it blank rather
+       than inventing one. */
+    if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      const headerBrand = await deriveHeaderBrandingFromLines(
+        sb,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        activeCompanyId(c) ?? null,
+      );
+      if (headerBrand) {
+        await scopeToCompany(
+          sb.from('mfg_sales_orders').update({ branding: headerBrand }).eq('doc_no', docNo),
+          c,
+        );
+      }
+    }
     /* Commander 2026-05-29 — re-roll the header through recomputeTotals so a
        matched sofa SET picks up its MASTER combo cost (spread across the lines).
        The inline rollup above set per-module costs; this corrects them + the
@@ -5512,10 +5511,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         codesByLead.set(lead, arr);
       }
     }
+    // HAZARD 2 (mig 0188 re-keyed pwp_codes on (company_id, code)): `code`
+    // alone re-stamps whichever company's voucher sorts first. The rows being
+    // re-stamped are this order's, so the active company IS their company —
+    // the same pairing the claim/burn/rollback sites above already carry.
+    const restampCompanyId = activeCompanyId(c);
     for (const [lead, codes] of codesByLead) {
+      if (restampCompanyId == null) break; // unresolved company: skip, never write half-keyed
       const { error: stampErr } = await sb.from('pwp_codes')
         .update({ trigger_item_code: lead, updated_at: new Date().toISOString() })
-        .in('code', codes);
+        .in('code', codes).eq('company_id', restampCompanyId);
       // eslint-disable-next-line no-console
       if (stampErr) console.error('[so-create] pwp trigger restamp failed:', lead, stampErr.message);
     }
@@ -5536,12 +5541,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   captureIfSet('email', body.email);
   captureIfSet('soDate', body.soDate);
   captureIfSet('lineCount', items.length);
-  captureIfSet('localTotalCenti', total);
+  captureIfSet('localTotalSen', total);
   captureIfSet('paymentMethod', body.paymentMethod);
-  captureIfSet('depositCenti', body.depositCenti);
+  captureIfSet('depositSen', body.depositSen);
   captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
-  captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
     docNo,
     action: 'CREATE',
@@ -5571,11 +5575,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      NOT for a DRAFT. A draft is the scan job's guess awaiting an operator's
      verdict; it may be rewritten or thrown away, and neither belongs in a live
      account book. The DRAFT -> live transition below queues it instead. */
-  if ((body as { asDraft?: unknown }).asDraft !== true) {
-    await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null });
-  }
+  /* AND THE REFUSAL COMES BACK OUT — never as a 422 (the order is committed by
+     now); lib/ac-preflight.ts holds the block-or-warn ruling for every cause. */
+  const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
+    : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
 
-  return c.json({ docNo }, 201);
+  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
@@ -5677,7 +5682,7 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // Status transition with audit row. Reads the prior status, updates, then
 // inserts to mfg_so_status_changes — best-effort (audit failure does NOT
 // roll back the status change).
-mfgSalesOrders.patch('/:docNo/status', async (c) => {
+export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
      WITH, for a caller proceeding an order that does not carry one yet.
@@ -5695,14 +5700,17 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      lowercase-persist bug and lets the transition table judge a canonical value. */
   const toStatus = String(body.status).trim().toUpperCase();
 
-  /* Audit 2026-06-20 — self-scoped sales (sales / sales_executive) must NOT
-     transition or cancel another salesperson's SO by doc_no — a cancel even
-     converts that SO's deposit into a customer credit. Mirror the
-     line-mutation endpoints' self-scope guard. */
+  /* Company scope made STRICT, 2026-08-18. selfScopedSalesBlocked below already
+     refuses a doc outside the active company — that is its step 1, not the
+     salesperson half — but it does so through scopeToCompany, which DEGRADES to
+     NO predicate when the company is unresolved, and only on a READ. This table
+     is cross-company with a guessable `text PRIMARY KEY` doc_no and the client is
+     service-role, so: refuse on unresolved, and predicate the UPDATE too. */
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  const { data: prev } = await sb.from('mfg_sales_orders')
-    .select('status, version, edit_lease_token, edit_lease_expires_at, linked_ac_docno')
+  const { data: prev } = await scopeToCompanyId(sb.from('mfg_sales_orders')
+    .select('status, version, edit_lease_token, edit_lease_expires_at, linked_ac_docno'), co.companyId)
     .eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
@@ -5772,11 +5780,9 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     if (txErr) return c.json({ error: txErr.error, reason: txErr.reason }, txErr.code);
   }
 
-  /* POS "Proceed" → stamp proceeded_at ONCE, on the first move into
-     IN_PRODUCTION. Read the existing value first so re-entering IN_PRODUCTION
-     (or toggling status back and forth) never overwrites the original Proceed
-     date the coordinator sees on the SO detail page. (Merged with main's
-     CANCELLED downstream-lock guard above — both apply.) */
+  /* POS "Proceed" → stamp ONCE, on the first move into IN_PRODUCTION: the
+     existing value is read first so a re-entry never overwrites it. (Merged
+     with main's CANCELLED downstream-lock guard above — both apply.) */
   if (fromNorm === toStatus) {
     return c.json({ salesOrder: prev, version: currentVersion, unchanged: true });
   }
@@ -5799,38 +5805,31 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      moment the draft becomes a real order and gets enqueued for AutoCount (see
      the enqueueSoCreate below), so it is the second and last place a create is
      queued, and a draft that never got a State has to be resolved HERE rather
-     than refused by the account book afterwards.
-
-     Condition mirrors that enqueue exactly: out of DRAFT, and not a cancel (a
-     cancelled draft queues no create, so gating it would only strand junk scan
-     drafts that the operator is trying to throw away). */
+     than refused by the account book. Condition mirrors that enqueue exactly:
+     out of DRAFT, not a cancel (a cancelled draft queues no create). */
   if (fromNorm === 'DRAFT' && toStatus !== 'CANCELLED') {
     const locationProblem = await soLocationProblemForDoc(sb, docNo, c.get('companyCode') ?? null);
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
-  const patch: Record<string, unknown> = {
-    status: toStatus,
-    version: currentVersion + 1,
-    updated_at: new Date().toISOString(),
-  };
+  const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
-    const { data: cur } = await sb.from('mfg_sales_orders')
-      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`)
+    const { data: cur } = await scopeToCompanyId(sb.from('mfg_sales_orders')
+      .select(`${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; processing_date?: string | null;
+      processing_date?: string | null;
       debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
     /* PROCEED IS THE DATE (owner, pinned 2026-08-13: *"只要有 Processing Date,
        就代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。"*).
-       This route used to stamp proceeded_at with the click time and write NO
-       date, so an order could sit IN_PRODUCTION with no start date — production
-       queues by that date, so those orders were in the factory queue nowhere.
-       The date the proceed proceeds WITH is either already on the order or comes
-       in on this request; there is no third source, and today is a guess. */
+       This route used to stamp a Proceed marker with the click time and write NO
+       date, so an order could sit IN_PRODUCTION with no release date at all —
+       nothing ever told purchasing it was theirs to order. The date the proceed
+       proceeds WITH is either already on the order or comes in on this request;
+       there is no third source, and today is a guess. */
     const resolved = resolveProceedProcessingDate({
       /* Both spellings — the canonical `processingDate` every live client
          actually sends, and the legacy `internalExpectedDd` this route's
@@ -5847,20 +5846,25 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
       const lock = await soProcessingLockBlocked(sb, docNo);
       if (lock) return c.json(lock, 409);
       /* Setting the date here must clear what setting it on the header clears —
-         variants, colour-KIV, deposit, completeness, the date rules — or this
-         route is the way around them. Supersedes soProceedGateBlocked below on
-         this branch: the aggregated list already carries both its conditions. */
+         variants, colour-KIV, completeness, the date rules — or this route is
+         the way around them, and it supersedes the proceed gate below (the
+         aggregated list already carries both of that gate's conditions).
+
+         The deposit is no longer among them (owner 2026-08-20), and the
+         `companyCode` argument went with it — it only ever picked the deposit
+         fraction. Proceeding through /status is the third surface of the same
+         act, so leaving the money condition here would have re-created the
+         split the ruling closes, one screen further along. */
       const problems = await soProcessingDateProblemsForDoc(sb, docNo, resolved.date, {
         customerName: curRow?.debtor_name,
         address1: curRow?.address1, postcode: curRow?.postcode,
         deliveryDate: curRow?.customer_delivery_date,
-      }, c.get('companyCode') ?? null);
+      });
       if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
       /* The pair rule, on the one write path that reaches the date without a
-         header patch. soProcessingDateProblemsForDoc above already refuses a
-         missing delivery date through the completeness gate; this is the same
-         invariant stated where the WRITE is, so a future edit to that helper's
-         facts cannot quietly re-open the hole. */
+         header patch. The helper above already refuses a missing delivery date
+         through completeness; stating it again at the WRITE is what stops a
+         future edit to that helper quietly re-opening the hole. */
       const pairRefusal = soDatePairRefusal({
         nextProc: resolved.date,
         nextDeliv: curRow?.customer_delivery_date ?? null,
@@ -5870,23 +5874,19 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
       if (pairRefusal) return c.json(pairRefusal, 400);
       patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;
     }
-    if (!curRow?.proceeded_at) {
-      /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
-         address rule as CREATE auto-proceed. An already-stamped SO re-entering
-         IN_PRODUCTION is a no-op and is NOT re-gated. */
-      if (!resolved.write) {
-        const gate = await soProceedGateBlocked(sb, docNo, {
-          customerName: curRow?.debtor_name,
-          address1: curRow?.address1, postcode: curRow?.postcode,
-          deliveryDate: curRow?.customer_delivery_date,
-        }, c.get('companyCode') ?? null);
-        if (gate) return c.json(gate, 422);
-      }
-      /* Kept, not replaced by the date (task scope + the stock allocator reads
-         it): the date says WHEN the factory starts, this says when a human said
-         go. Stamp-once, so re-entering IN_PRODUCTION never rewrites it. */
-      patch.proceeded_at = new Date().toISOString();
-    }
+    /* NO STAMP, AND NO SECOND GATE (2026-08-18). This ended
+       `if (!curRow?.proceeded_at) { …gate…; patch.proceeded_at = now }`, and
+       both halves go with the second storage:
+       · the stamp had exactly ONE consumer, the allocator, and #2396 moved that
+         onto `processing_date`. Nothing reads the value as a timestamp — the
+         desktop Proceed Date field was deleted 2026-06-05, no export, PDF or
+         AutoCount payload names it — so writing it recorded nothing.
+       · the gate inside it fired only when `!resolved.write`, i.e. when the
+         order ALREADY carried a Processing Date. Under the owner's rule that
+         order is already proceeded, so this re-gated a state that had passed —
+         and inconsistently, since an order that also had a stamp was NOT
+         re-gated. The first proceed IS `resolved.write`, and that branch above
+         already runs soProcessingDateProblemsForDoc, a superset of this gate. */
   }
   /* PWP settlement on cancel (2026-07-29) — a cancel must also settle the
      vouchers the order touched, and it must do so in the SAME unit of work as
@@ -5905,17 +5905,17 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     const voucherPlan = isCancel ? await planSoCancelVouchers(sbx, docNo) : null;
     if (voucherPlan?.blocked) return c.json(voucherPlan.blocked, 409);
 
-    const { data, error } = await sbx.from('mfg_sales_orders').update(patch)
-      .eq('doc_no', docNo)
+    const { data, error } = await scopeToCompanyId(sbx.from('mfg_sales_orders').update(patch)
       .eq('version', currentVersion)
       .eq('status', fromStatus)
-      .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`)
-      .select('doc_no, status, proceeded_at, version').maybeSingle();
+      .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`), co.companyId)
+      .eq('doc_no', docNo)
+      .select('doc_no, status, version').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     // Stale/missing docNo (deleted, wrong tab) matches 0 rows → a clean 404
     // ("no longer found, refresh") instead of an opaque 500 (bug-hunt 2026-06-20).
     if (!data) {
-      const { data: latest } = await sbx.from('mfg_sales_orders').select('version').eq('doc_no', docNo).maybeSingle();
+      const { data: latest } = await scopeToCompanyId(sbx.from('mfg_sales_orders').select('version'), co.companyId).eq('doc_no', docNo).maybeSingle();
       if (!latest) return c.json({ error: 'not_found' }, 404);
       return c.json(soVersionConflict(Number((latest as { version?: number }).version ?? currentVersion)), 409);
     }
@@ -6011,7 +6011,7 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      credit. Idempotent on (source_type, source_doc_no). Best-effort. */
   if (toStatus === 'CANCELLED' && fromNorm !== 'CANCELLED' && fromNorm !== 'DRAFT') {
     try {
-      const { data: so } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name').eq('doc_no', docNo).maybeSingle();
+      const { data: so } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('debtor_code, debtor_name'), co.companyId).eq('doc_no', docNo).maybeSingle();
       const s = so as { debtor_code: string | null; debtor_name: string | null } | null;
       if (s?.debtor_code) {
         await creditFromCancelledSo(sb, {
@@ -6027,7 +6027,11 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   // The committed response (incl. any pwpVouchers summary) was built inside the
   // command; the effects above are best-effort and never change it.
   return statusResponse;
-});
+};
+mfgSalesOrders.patch('/:docNo/status', patchMfgSalesOrderStatusHandler);
+
+/* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
+mountHoldRoute(mfgSalesOrders, 'so');
 
 // ── DELETE /mfg-sales-orders/:docNo — discard a DRAFT ───────────────────────
 // Owner 2026-07-20 — a DRAFT (especially a junk scan / OCR draft) had NO way out
@@ -6145,13 +6149,17 @@ mfgSalesOrders.delete('/:docNo', async (c) => {
 //                  field_changes, status_snapshot, source, note, created_at }] }
 mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_audit_log')
+  /* so_doc_no is the ONLY key here and doc numbers are unique per company by
+     PREFIX, not by constraint — so a 2990 number pasted into the Houzs URL used
+     to return 2990's history. Same predicate the /:docNo/revisions read below
+     already carries; mfg_so_audit_log took company_id in mig 0083. */
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_audit_log')
     .select('id, so_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, note, created_at')
-    .eq('so_doc_no', docNo)
+    .eq('so_doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   /* The audit HISTORY is a finance read too — this route's own line PATCH does
-     `cmp('unitCostCenti', prev.unit_cost_centi, unitCost)`, so field_changes
+     `cmp('unitCostSen', prev.unit_cost_sen, unitCost)`, so field_changes
      carries the old AND new unit cost. gateSoFinance strips the DETAIL, so
      leaving this open just moves the leak one endpoint over. Shared vocabulary
      (lib/finance-keys) — the consignment audit-log reads this SAME table. */
@@ -6163,9 +6171,9 @@ mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
 // GET — list status change history for the SO detail timeline.
 mfgSalesOrders.get('/:docNo/status-changes', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_status_changes')
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_status_changes')
     .select('id, doc_no, from_status, to_status, changed_by, notes, auto_actions, created_at')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ statusChanges: data ?? [] });
@@ -6190,9 +6198,9 @@ mfgSalesOrders.get('/:docNo/revisions', async (c) => {
 // GET — list line price overrides for the audit panel.
 mfgSalesOrders.get('/:docNo/price-overrides', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_price_overrides')
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_price_overrides')
     .select('id, doc_no, item_id, item_code, original_price_sen, override_price_sen, reason, approved_by, created_at')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ overrides: data ?? [] });
@@ -6232,25 +6240,25 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
   if (!Number.isFinite(newPrice) || newPrice < 0) return c.json({ error: 'invalid_price' }, 400);
 
   const { data: item } = await sb.from('mfg_sales_order_items')
-    .select('id, doc_no, item_code, unit_price_centi, qty, discount_centi')
+    .select('id, doc_no, item_code, unit_price_sen, qty, discount_sen')
     .eq('id', itemId).maybeSingle();
   if (!item) return c.json({ error: 'item_not_found' }, 404);
-  const i = item as { id: string; doc_no: string; item_code: string; unit_price_centi: number; qty: number; discount_centi: number };
+  const i = item as { id: string; doc_no: string; item_code: string; unit_price_sen: number; qty: number; discount_sen: number };
   if (i.doc_no !== docNo) return c.json({ error: 'item_doc_mismatch' }, 400);
   /* Audit 2026-06-11 C-2 — the override recomputes total as qty × newPrice −
      stored discount; reject an override price that would push the line total
      negative (discount invariant: 0 ≤ discount ≤ qty × unit). */
-  if (Number(i.discount_centi ?? 0) > i.qty * newPrice) {
+  if (Number(i.discount_sen ?? 0) > i.qty * newPrice) {
     return c.json({
       error:    'invalid_discount',
       reason:   'Stored line discount exceeds qty × override price — the line total would go negative.',
-      discount: Number(i.discount_centi ?? 0),
+      discount: Number(i.discount_sen ?? 0),
       max:      i.qty * newPrice,
     }, 422);
   }
 
   // Audit first (so we don't lose original even if the update fails)
-  const originalPriceSen = i.unit_price_centi;
+  const originalPriceSen = i.unit_price_sen;
   const overridePriceSen = newPrice;
   await sb.from('mfg_so_price_overrides').insert({
     company_id: activeCompanyId(c), // multi-company: match the SO's company
@@ -6263,25 +6271,25 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     approved_by: user.id,
   });
 
-  const newLineTotal = (i.qty * newPrice) - i.discount_centi;
-  /* Task #114 — pull current line_cost_centi so the price override
-     recomputes line_margin_centi correctly. Previous code used `- 0`
+  const newLineTotal = (i.qty * newPrice) - i.discount_sen;
+  /* Task #114 — pull current line_cost_sen so the price override
+     recomputes line_margin_sen correctly. Previous code used `- 0`
      which silently broke margin tracking on every override. */
   const { data: costRow } = await sb.from('mfg_sales_order_items')
-    .select('line_cost_centi')
+    .select('line_cost_sen')
     .eq('id', itemId)
     .maybeSingle();
-  const currentLineCost = Number((costRow as { line_cost_centi?: number } | null)?.line_cost_centi ?? 0);
+  const currentLineCost = Number((costRow as { line_cost_sen?: number } | null)?.line_cost_sen ?? 0);
   const { error } = await sb.from('mfg_sales_order_items').update({
-    unit_price_centi: newPrice,
-    total_centi: newLineTotal,
-    total_inc_centi: newLineTotal,
-    balance_centi: newLineTotal,
-    line_margin_centi: newLineTotal - currentLineCost,
+    unit_price_sen: newPrice,
+    total_sen: newLineTotal,
+    total_inc_sen: newLineTotal,
+    balance_sen: newLineTotal,
+    line_margin_sen: newLineTotal - currentLineCost,
   }).eq('id', itemId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   /* Task #114 — also refresh the header totals after the override so
-     total_cost_centi / total_margin_centi / category cost columns stay
+     total_cost_sen / total_margin_sen / category cost columns stay
      consistent with the new line revenue + margin. */
   await recomputeTotals(sb, docNo, c);
 
@@ -6293,12 +6301,12 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: [
-      { field: 'unitPriceCenti', from: originalPriceSen, to: overridePriceSen },
+      { field: 'unitPriceSen', from: originalPriceSen, to: overridePriceSen },
     ],
     note: (body.reason as string) || undefined,
   });
 
-  /* ERP -> AutoCount edit. This route writes unit_price_centi, which IS an
+  /* ERP -> AutoCount edit. This route writes unit_price_sen, which IS an
      AutoCount field (UnitPrice on SODTL) — so an override that never reached
      the account book left the two sides quoting different money for the same
      order line. It was missed because it is the one price path that does not go
@@ -6319,6 +6327,12 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
        customer_id is re-pointed to the new customer.
      • the cross-category DELIVERY fee (a SERVICE line whose rate depends on the
        customer's other orders) is RE-DETECTED — see redetectCrossCategoryDelivery. */
+/* A rebuild the 0314 RPC REFUSED because the SVC-DELIVERY* lines moved between
+   the derivation's read and the function's advisory lock. Neither an error nor
+   "no fee": the inputs went stale, so the whole derivation is re-run. */
+const STALE_DERIVATION = Symbol('so-delivery-stale-derivation');
+type DeliveryFeeCoreResult = { isFollowup: boolean; sourceDocNo: string | null; total: number } | null;
+
 /* Core delivery-fee recompute — re-derives the authoritative delivery FEE from
    the SO's CURRENT items, for a CALLER-SUPPLIED cross-category sourceDocNo. It
    does NOT auto-match a source: the caller decides whether to re-run the
@@ -6328,20 +6342,22 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
    (recovered from the existing SVC-DELIVERY-ADD line), recomputes on the
    authoritative computeSoDeliveryFee, and rebuilds the SVC-DELIVERY* lines. Only
    runs when the SO already carries a delivery fee — as SVC-DELIVERY* LINES, or
-   as an orphaned header delivery_fee_centi that lost its lines (see the bail
+   as an orphaned header delivery_fee_sen that lost its lines (see the bail
    below); a genuinely fee-less SO returns null BEFORE recomputeTotals (the
    caller is responsible for any totals refresh), so nothing here ever STARTS a
    fee on a backend-authored SO. Best-effort: logs DB errors, never throws. */
-async function recomputeDeliveryFeeCore(
+async function recomputeDeliveryFeeAttempt(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
-): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
+): Promise<DeliveryFeeCoreResult | typeof STALE_DERIVATION> {
+  /* `id` is selected because it KEYS the staleness expectation (0314): the RPC
+     re-reads these same rows under its lock and compares by row id. */
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_centi, line_no, variants')
+    .select('id, item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_centi: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ id: string; item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
-     ringgit on a Sales Order is a LINE. The header delivery_fee_centi is a
+     ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
      dual-write MIRROR of the SVC-DELIVERY* lines, never money of its own — but
      2990-SO-2608-006 proved the mirror could outlive the lines: delete (or
      cancel) every fee line and the old `length === 0 → return null` bail turned
@@ -6356,7 +6372,7 @@ async function recomputeDeliveryFeeCore(
      here ever STARTS a fee — only the create path's applyDeliveryFee does). */
   if (deliveryLines.length === 0) {
     const { data: feeHdr, error: feeHdrErr } = await sb.from('mfg_sales_orders')
-      .select('delivery_fee_centi').eq('doc_no', docNo).maybeSingle();
+      .select('delivery_fee_sen').eq('doc_no', docNo).maybeSingle();
     /* Fail CLOSED (the 2026-07-17 zeroing lesson): a failed read is not "no
        fee". Bail without writing — the shape self-heals on the next edit. */
     if (feeHdrErr) {
@@ -6364,8 +6380,8 @@ async function recomputeDeliveryFeeCore(
       console.error('[so-redetect] header fee read failed — delivery derivation skipped:', docNo, feeHdrErr.message);
       return null;
     }
-    const headerFeeCenti = Number((feeHdr as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
-    if (headerFeeCenti <= 0) return null; // no lines AND no header fee → genuinely fee-less
+    const headerFeeSen = Number((feeHdr as { delivery_fee_sen?: number } | null)?.delivery_fee_sen ?? 0);
+    if (headerFeeSen <= 0) return null; // no lines AND no header fee → genuinely fee-less
   }
 
   // The rebuilt SVC-DELIVERY* lines append AFTER the kept lines (services sort
@@ -6376,10 +6392,8 @@ async function recomputeDeliveryFeeCore(
       .map((l) => (typeof l.line_no === 'number' ? l.line_no : -1)),
   );
 
-  // Operator free-form fee — preserved across the recompute.
-  const additionalSen = deliveryLines
-    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
+  // Operator-owned state (free-form fee + discounts) — see recoverOperatorDeliveryState.
+  const { additionalSen, discountByCode } = recoverOperatorDeliveryState(deliveryLines);
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6455,93 +6469,49 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  /* Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed,
-     stamp the header — as ONE atomic RPC (migration 0214, ported from 2990
-     migration 0211). The Backend SO Detail Save fires one line PATCH per changed
-     line IN PARALLEL, and each PATCH ends here; when this was two statements
-     (delete, then insert) two rebuilds could interleave as
-     delete/delete/insert/insert and double the delivery fee on the bill
-     (SO-2606-043 2026-06-28, SO-2607-010 2026-07-12). Being inside the
-     atomic-command transaction does not fix it — under READ COMMITTED the second
-     DELETE cannot see the first transaction's new rows. The RPC takes a per-doc_no
-     advisory xact lock, so concurrent rebuilds serialize and the last writer
-     leaves exactly one consistent set. */
-  {
-    const lineDateToday = todayMyt();
-    const rows = specs.map((spec, i) => ({
-      doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
-      line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
-      line_date: lineDateToday,
-      debtor_name: h.debtor_name ?? null,
-      item_group: 'service',
-      item_code: spec.itemCode,
-      description: spec.description,
-      description2: null,
-      remark: spec.remark ?? null,
-      uom: 'UNIT',
-      qty: spec.qty,
-      unit_price_centi: spec.unitPriceSen,
-      discount_centi: 0,
-      total_centi: spec.totalSen,
-      total_inc_centi: spec.totalSen,
-      balance_centi: spec.totalSen,
-      variants: null,
-      unit_cost_centi: 0,
-      line_cost_centi: 0,
-      line_margin_centi: spec.totalSen,
-      divan_price_sen: 0,
-      leg_price_sen: 0,
-      special_order_price_sen: 0,
-      custom_specials: null,
-      line_delivery_date: h.customer_delivery_date ?? null,
-      line_delivery_date_overridden: false,
-      warehouse_id: null,
-      branding: null,
+  /* The write half lives in lib/so-delivery-fee-rebuild.ts — it owns the 0214
+     lock contract, the 0310 line reuse and the 0314 staleness refusal, and it
+     is the reason this function is an ATTEMPT rather than the whole job. */
+  const outcome = await applyDeliveryFeeRebuild(sb, {
+    docNo,
+    sourceDocNo,
+    rows: buildDeliveryRebuildRows(specs, {
+      docNo,
+      keptMaxLineNo,
+      discountByCode,
+      debtorName: h.debtor_name ?? null,
       venue: h.venue ?? null,
-      stock_status: 'READY',
-    }));
-    /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
-       line can never land in another company (mig 0083 made it NOT NULL). */
-    const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
-      p_doc_no: docNo,
-      p_source_doc_no: sourceDocNo,
-      p_delivery_fee_centi: fee.total,
-      p_rows: rows,
-    });
-    if (rebuildErr) {
-      if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);
-      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line rebuild failed:', rebuildErr.message);
-    } else {
-      /* Owner 2026-08-12 — this rebuild ADDS, REPRICES and DELETES SVC-DELIVERY*
-         lines on a live order, and until now it did so with no trace whatsoever.
-         2990-SO-2608-017 grew a RM250 delivery line at 01:38 and its History
-         showed only the SO's creation: the money moved and the timeline stayed
-         silent. It is automation, not a person, so it logs as source
-         'automation' exactly like the POS deposit and the free-gift reconcile —
-         "nobody did it" is a legitimate audit answer, "it never happened" is
-         not.
-
-         Only a real move is recorded (an unchanged re-derivation runs on every
-         line edit and would otherwise flood the timeline). Best-effort by
-         recordSoAudit's design; the fee is already committed either way. */
-      const priorFeeCenti = deliveryLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-      if (priorFeeCenti !== fee.total) {
-        await recordSoAudit(sb, {
-          docNo,
-          action: priorFeeCenti === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
-          source: 'automation',
-          note: 'Auto: delivery fee lines re-derived',
-          fieldChanges: [
-            { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeCenti', from: priorFeeCenti, to: fee.total },
-          ],
-        });
-      }
-    }
-  }
+      customerDeliveryDate: h.customer_delivery_date ?? null,
+    }),
+    liveLines: deliveryLines,
+  });
+  if (outcome.status === 'stale') return STALE_DERIVATION;
 
   await recomputeTotals(sb, docNo, c);
   return { isFollowup, sourceDocNo, total: fee.total };
+}
+
+/* READ, THEN LOCK was the defect. `recomputeDeliveryFeeAttempt` reads the fee
+   lines and only then calls the RPC that takes the per-doc_no advisory lock, so
+   two line PATCHes from ONE Save (runSoLineWrites fans the dirty-line stage out
+   with Promise.allSettled) could both derive from the same pre-edit snapshot and
+   the second write put the operator's reduction back — quoted RM 125, invoiced
+   RM 250. Migration 0314 makes the RPC refuse a derivation whose inputs moved;
+   this loop is the other half, re-reading and deriving again.
+
+   Exhaustion writes NOTHING, deliberately: the same posture as the failed
+   header read above ("a failed read is not 'no fee'"). Something else is
+   actively rewriting these lines and will re-derive after itself. */
+async function recomputeDeliveryFeeCore(
+  sb: any, docNo: string, sourceDocNo: string | null, c: any,
+): Promise<DeliveryFeeCoreResult> {
+  for (let attempt = 1; attempt <= DELIVERY_REBUILD_MAX_ATTEMPTS; attempt += 1) {
+    const res = await recomputeDeliveryFeeAttempt(sb, docNo, sourceDocNo, c);
+    if (res !== STALE_DERIVATION) return res;
+  }
+  /* eslint-disable-next-line no-console */
+  console.error('[so-redetect] delivery fee NOT re-derived — the fee lines moved under every attempt:', docNo);
+  return null;
 }
 
 /* Re-detect the cross-category delivery fee against a (re-resolved) customer —
@@ -6592,7 +6562,7 @@ async function redetectCrossCategoryDelivery(
    pinned cross-category source link. Only the FEE re-derives (special-delivery
    triggers + sofa↔mattress cross-category mix follow the current items). When
    the SO carries no delivery fee — no SVC-DELIVERY* lines AND no header
-   delivery_fee_centi (the core checks both; an orphaned header fee is
+   delivery_fee_sen (the core checks both; an orphaned header fee is
    re-materialised as lines, never left header-only) — the core early-bails
    (null) before recomputeTotals, so we still refresh the header totals for
    the edit. Best-effort. */
@@ -6618,7 +6588,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   const map: Array<[string, string]> = [
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
-    ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
+    ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
@@ -6626,8 +6596,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['soDate', 'so_date'], ['currency', 'currency'],
     // PR #35 — new header fields
     ['customerId', 'customer_id'], ['customerState', 'customer_state'],
-    ['customerPo', 'customer_po'], ['customerPoId', 'customer_po_id'],
-    ['customerPoDate', 'customer_po_date'], ['customerPoImageB64', 'customer_po_image_b64'],
+    ['customerPoImageB64', 'customer_po_image_b64'],
     // PR #121 — customer's own SO number (their ERP ref)
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
@@ -6643,8 +6612,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['amendDateFromCustomer', 'amend_date_from_customer'],
     ['amendedDeliveryDate', 'amended_delivery_date'],
     ['amendReason', 'amend_reason'],
-    /* POS "Proceed" — sales-side done marker; stamp-once guard below. */
-    ['proceededAt', 'proceeded_at'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -6655,6 +6622,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['emergencyContactName', 'emergency_contact_name'],
     ['emergencyContactPhone', 'emergency_contact_phone'],
     ['emergencyContactRelationship', 'emergency_contact_relationship'],
+    /* POS handover, still live — see the create path's note. */
     ['targetDate', 'target_date'],
     /* PR #143 + #150 — Payment fields */
     ['paymentMethod', 'payment_method'],
@@ -6662,14 +6630,14 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['merchantProvider', 'merchant_provider'],
     ['approvalCode', 'approval_code'],
     ['paymentDate', 'payment_date'],
-    ['depositCenti', 'deposit_centi'],
-    /* `paidCenti` is deliberately NOT mapped — paid is SERVER-OWNED. It is
+    ['depositSen', 'deposit_sen'],
+    /* `paidSen` is deliberately NOT mapped — paid is SERVER-OWNED. It is
        derived from the mfg_sales_order_payments ledger (the view's
-       paid_total_centi); the stored `paid_centi` column has no writer that
+       paid_total_sen); the stored `paid_sen` column has no writer that
        keeps it true and is already documented deprecated + scheduled for drop
        (see the /:docNo/payments PAYMENT_COLS note and the list rollup). While
        it was mapped here, a self-scoped salesperson could PATCH
-       {paidCenti: <order total>} onto their OWN order and book it fully paid
+       {paidSen: <order total>} onto their OWN order and book it fully paid
        with zero payment rows. Record a payment; never set a total. */
   ];
   /* Task #91 — phone columns get normalized to E.164 storage form before any
@@ -6677,12 +6645,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      misbehaving client could still PATCH a raw "+60 12 345 6789". */
   const PHONE_FIELDS = new Set(['phone', 'emergencyContactPhone']);
   /* A caller who cannot READ deposit must not WRITE it. gateSoFinance strips
-     deposit_centi (an SO_FINANCE_KEY since #574) from the detail payload, and
+     deposit_sen (an SO_FINANCE_KEY since #574) from the detail payload, and
      this map accepts ANY defined value — so a client that seeded its header
      draft off that stripped payload would round-trip the missing field as a
      genuine 0 and wipe the deposit (the #632 trap). consignment-orders.ts
      already carries this exact guard; the SO it was CLONED FROM never got it.
-     No Houzs caller sends depositCenti on PATCH today (SalesOrderNew posts it
+     No Houzs caller sends depositSen on PATCH today (SalesOrderNew posts it
      on CREATE only), so this is defence-in-depth that keeps the strip safe by
      construction rather than by the frontend's current shape. A finance caller
      is unaffected. */
@@ -6690,7 +6658,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const updates: Record<string, unknown> = {};
   for (const [from, to] of map) {
     if (body[from] === undefined) continue;
-    if (from === 'depositCenti' && !canFinance) continue;
+    if (from === 'depositSen' && !canFinance) continue;
     if (PHONE_FIELDS.has(from) && typeof body[from] === 'string') {
       const raw = body[from] as string;
       updates[to] = normalizePhone(raw) ?? raw;
@@ -6716,13 +6684,13 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         continue;
       }
       updates[to] = venueIdValue;
-    } else if (from === 'depositCenti') {
+    } else if (from === 'depositSen') {
       /* Clamp >= 0, matching the create path: the header deposit is still added
          on top of the ledger for legacy SOs whose deposit never landed as an
          is_deposit row, so a negative value would deflate that paid rollup. */
       updates[to] = Math.max(0, typeof body[from] === 'number' ? (body[from] as number) : 0);
     } else {
-      updates[to] = body[from];
+      updates[to] = isDateColumn(to) ? dateOrNull(body[from]) : body[from]; // "" -> NULL
     }
   }
   /* Mig 0175 (owner 2026-07-22) — canonicalize customer_state at write so a
@@ -6738,7 +6706,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   /* `agent` follows a reassigned salesperson; a PATCH naming `agent` still wins.
      scm/lib/so-agent.ts says why this must precede the read below. */
+  const agentBeforeFollow = updates['agent'];
   await followSalespersonToAgent(sb as never, updates, body);
+  /* Did `agent` change ONLY because it followed the salesperson? It is an
+     identity-locked column — see the carve-out in shared/so-identity-lock.ts. */
+  const agentFollowedSalesperson = updates['agent'] !== agentBeforeFollow;
   /* A PATCH is a real mutation only when at least one recognised, normalised
      field differs from storage. Compare before validation or derivation so an
      unchanged phone/dropdown/date cannot demand a version, bump it, or fire a
@@ -6755,15 +6727,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
-  }
-
-  /* Stamp-once filtering is part of normalisation, not an afterthought. A
-     repeated Proceed timestamp is a true no-op and must not demand/bump a
-     version merely because the incoming timestamp string differs. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null
-      && beforeRecord['proceeded_at']) {
-    delete updates['proceeded_at'];
-    delete body['proceededAt'];
   }
 
   const reserveForLineWrites = body['reserveLineWrites'] === true;
@@ -6931,7 +6894,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      problems, and each carries a distinct HTTP status. */
   let variantOffenders: VariantOffender[] = [];
   let kivOffenders: ColourKivOffender[] = [];
-  let depositFacts: { paidCenti: number; totalCenti: number } | null = null;
 
   /* PR — Commander 2026-05-28 — Server-side variant rule enforcement.
      When the caller sets processingDate (Processing Date) to a non-null
@@ -7019,7 +6981,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      rejection and a future CONTROLLED-column change cannot land on one and miss
      the other. */
   const patchDateLocked = soProcessingLocked(
-    before as unknown as { processing_date?: string | null; proceeded_at?: string | null } | null,
+    before as unknown as { processing_date?: string | null; status: string | null } | null,
   );
   const patchPoLocked = patchDateLocked ? false : await soPoLocked(sb, docNo);
   if (patchDateLocked || patchPoLocked) {
@@ -7054,69 +7016,34 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
-  /* Processing-Date payment gate (Loo 2026-06-30) — the same ≥30%-collected rule
-     the CREATE path enforces, applied when a header PATCH SETS or CHANGES the
-     Processing Date to a non-null value. The date is production's "ready to build"
-     signal, so it can't go in until ≥30% of the money is in. Fires ONLY on a genuine
-     change (clearing it, or an unchanged re-save, passes — so an unrelated edit on
-     an already-dated, since-refunded SO isn't blocked). Money-only — customer-info
-     / address are deliberately not gated (they resolve later in Proceed). `paid` =
-     sum(mfg_sales_order_payments.amount_centi), mirroring the paid_total_centi the
-     payment view computes; `total` = the header local_total_centi. */
-  {
-    const proc = body['processingDate'];
-    if (typeof proc === 'string' && proc) {
-      const origProc = String(
-        ((before as unknown as Record<string, unknown> | null)?.['processing_date'] as string | null) ?? '',
-      ).slice(0, 10);
-      if (proc.slice(0, 10) !== origProc) {
-        const [{ data: totRow }, { data: pays }] = await Promise.all([
-          sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-          sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
-        ]);
-        const totalCenti = Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0);
-        const paidCenti = ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-          .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
-        // Collected (not returned) — the aggregated report weighs this alongside
-        // any variant / date problems and reports the concrete amount + threshold.
-        depositFacts = { paidCenti, totalCenti };
-      }
-    }
-  }
+  /* THE EDIT PATH'S DEPOSIT GATE IS GONE — owner ruling, 2026-08-20:
+     「以电脑为准 —— 两边都不查」.
 
-  /* FIX 2 (2026-07-16) — gate a genuine forward Proceed on the header PATCH path
-     too (mobile / API set proceededAt directly here). After the stamp-once drop
-     above, a still-present non-null proceeded_at means the SO had NONE before →
-     this is the first Proceed, so it must pass the SAME paid + full-address
-     gate the /status → IN_PRODUCTION path and CREATE auto-proceed use. An explicit
-     null (un-proceed) and an already-proceeded re-save (dropped above) are
-     unaffected. Effective header values = the patch value when this request sets
-     the field, else the stored `before` value. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null) {
-    const beforeProceed = before as unknown as Record<string, unknown> | null;
-    const effOf = (snake: string): string | null => {
-      const v = updates[snake] !== undefined ? updates[snake] : beforeProceed?.[snake];
-      return v == null ? null : String(v);
-    };
-    const gate = await soProceedGateBlocked(sb, docNo, {
-      customerName: effOf('debtor_name'),
-      address1: effOf('address1'),
-      postcode: effOf('postcode'),
-      deliveryDate: effOf('customer_delivery_date'),
-    }, c.get('companyCode') ?? null);
-    if (gate) return c.json(gate, 422);
-    /* And it must land ON a Processing Date — proceeding IS setting that date
-       (owner, pinned 2026-08-13). This PATCH is the one proceed path that can
-       set both in the same request, so the date may come from this patch or
-       already be on the row; what it may not do is mark an order proceeded with
-       no day the factory starts. A date arriving in THIS patch is gated by the
-       aggregated Processing-Date block below, which runs before any write. */
-    /* Bound to the constant — this read named `internal_expected_dd`, which
-       migration 0286 renamed away, so `effOf` resolved undefined for EVERY
-       order and this line refused every proceed that came through the header
-       PATCH, including ones whose date arrived in the same request. */
-    if (!effOf(SO_PROCESSING_DATE_COLUMN)?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
-  }
+     What stood here (Loo 2026-06-30) read the order total and summed
+     `mfg_sales_order_payments` whenever a header PATCH SET or CHANGED the
+     Processing Date, and handed the result to the aggregated report as
+     `depositFacts`. It had NO waiver — the create path had one and this did not
+     — so the two halves of one order's life disagreed: a hand-keyed RM 0 order
+     was accepted at create and then REFUSED the moment anyone rescheduled it,
+     naming a deposit the operator had been told was fine the day before. That
+     asymmetry is what the owner's ruling closes, and it is closed by removing
+     the condition rather than by copying the create's waiver down here.
+
+     Two DB round-trips per dated header PATCH go with it — this block existed
+     only to feed the condition, and the aggregated report below no longer has a
+     money term to weigh. Everything else that block reports (variants, KIV,
+     completeness, the date rules) is untouched. */
+
+  /* THE `proceededAt` PROCEED PATH IS GONE (2026-08-18), not merely ungated.
+     `['proceededAt','proceeded_at']` left the map above, so no request body can
+     reach the column at all — which DELETES this block rather than loosening it.
+     What stood here gated a "genuine forward Proceed" arriving as a bare
+     timestamp from mobile / API. Nothing ever sent one: `grep -rn proceededAt`
+     over frontend/src, native/ and e2e/ returns type declarations and comments,
+     never a request body. Proceeding through this route now means one thing —
+     setting `processingDate` — and that is gated by the aggregated
+     Processing-Date block below, which carries the same deposit + completeness
+     conditions this did, plus the variant / KIV / date rules it did not. */
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
      only be today or a future date, BUT an already-past value the edit does NOT
@@ -7131,8 +7058,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const deliv = body['customerDeliveryDate'];
     const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
-    /* Owner 2026-06-03 — Process Date ≤ Delivery Date (factory start can't be
-       after the promised delivery). Use the EFFECTIVE values: the patch value
+    /* Owner 2026-06-03 — Process Date ≤ Delivery Date (purchasing cannot be
+       released to buy AFTER the goods were promised). Use the EFFECTIVE values: the patch value
        when this request sets the key, else the stored value — so editing only
        one date still validates against the other already on the row. */
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
@@ -7160,6 +7087,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDeliv,
     });
     for (const col of cascadeCols) updates[col] = null;
+    /* THE ORPHAN-STAMP LEAK was here: this cleared the date and LEFT
+       `proceeded_at`, which the stamp-once filter then froze permanently — the
+       shape 25 company-2 rows carry today, and the one live path that made new
+       ones. It is closed by there being no stamp at all rather than by a second
+       clear: since 2026-08-18 nothing on this route reads or writes that column,
+       so a removed Processing Date can no longer leave anything behind. */
     /* The header column is only half the write: apply_so_header_cas cascades a
        delivery-date change down to every line_delivery_date behind
        p_apply_delivery_date, which keys off the request body. A cascade the
@@ -7175,17 +7108,17 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDeliv,
     });
     if (pairRefusal) return c.json(pairRefusal, 400);
-    /* The aggregated report — variants (collected above), the 30% deposit
-       (collected above), and the past-date / processing-≤-delivery date rules,
-       ALL in one response so the coordinator fixes them in a single pass. The
-       helper re-derives the past-date grandfather + processing-≤-delivery from the
+    /* The aggregated report — variants (collected above), the customer/delivery
+       completeness, and the past-date / processing-≤-delivery date rules, ALL in
+       one response so the coordinator fixes them in a single pass. The helper
+       re-derives the past-date grandfather + processing-≤-delivery from the
        effective + original dates, exactly matching the checks this block used to
-       `return` on one at a time. */
+       `return` on one at a time.
+
+       No deposit term and no `companyCode` any more (owner 2026-08-20): the
+       company code was here only to pick the deposit fraction, and the deposit
+       is no longer a condition of this gate. */
     const problems = collectProcessingGateProblems({
-      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-         Undefined on the synthetic-context path (:5332) and that is fine —
-         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-      companyCode: c.get('companyCode') ?? null,
       procDate: effProc,
       /* Post-cascade, so the aggregated report judges the row this save will
          actually leave behind rather than the one the body described. */
@@ -7196,11 +7129,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       variantOffenders,
       kivOffenders,
       /* Effective header values — the patch value when THIS request sets the
-         field, else the stored one. Identical semantics to the `effOf` in the
-         proceed block above; it cannot be reused because that one is scoped
-         inside `if (updates['proceeded_at'] ...)`, and this gate runs whether or
-         not the request also proceeds. One rule, one set of facts (owner
-         2026-07-31: Processing Date IS Proceed). Email is deliberately absent. */
+         field, else the stored one. Since 2026-08-18 this is the ONLY proceed
+         gate on the route: the separate `proceededAt` branch that carried its
+         own copy of these facts went with the second storage. One rule, one set
+         of facts (owner 2026-07-31: Processing Date IS Proceed). Email is
+         deliberately absent. */
       completeness: (() => {
         const beforeRow = before as unknown as Record<string, unknown> | null;
         const eff = (snake: string): string => {
@@ -7213,7 +7146,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
           hasPostcode: !!eff('postcode'),
         };
       })(),
-      deposit: depositFacts,
     });
     if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
   }
@@ -7256,9 +7188,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      not falsely trip the lock — only a genuine change to a locked field blocks. */
   if (before) {
     const beforeRow = before as unknown as Record<string, unknown>;
-    const changedLocked = [...SO_IDENTITY_LOCK_COLS].filter(
-      (col) => col in updates && norm(updates[col]) !== norm(beforeRow[col]),
-    );
+    /* Re-attribution gate (Owner 2026-08-17) — shared/so-identity-lock.ts says
+       why the UI disabling the select was never the control. */
+    if (salespersonReattributed(updates, beforeRow) && !hasHouzsPerm(c, 'scm.so.attribute_other')) {
+      return c.json(ATTRIBUTE_OTHER_REFUSAL, 403);
+    }
+    const changedLocked = changedIdentityLockCols(updates, beforeRow, { agentFollowedSalesperson });
     if (changedLocked.length > 0) {
       const lock = await soHasDownstream(sb, docNo);
       if (lock) {
@@ -7279,6 +7214,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   updates.edit_lease_token = operationLeaseToken;
   updates.edit_lease_expires_at = leaseExpiryIso;
 
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* The header CAS and every version-bound follower commit in ONE PostgreSQL
      transaction. A follower exception rolls the header back as well; there is
      no longer a committed-header / failed-cascade split brain. */
@@ -7296,12 +7232,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
-    p_delivery_date: cascadedDeliveryClear
-      ? null
-      : (body['customerDeliveryDate'] as string | null | undefined) ?? null,
+    p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
-    p_company_id: activeCompanyId(c) ?? null,
+    p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
   });
   if (casError) return c.json({ error: 'update_failed', reason: casError.message }, 500);
   const cas = (Array.isArray(casRows) ? casRows[0] : casRows) as
@@ -7415,7 +7349,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       deliveryRedetected: true,
       crossCategory: crossCategoryRedetect.isFollowup,
       crossCategorySourceDocNo: crossCategoryRedetect.sourceDocNo,
-      deliveryFeeCenti: crossCategoryRedetect.total,
+      deliveryFeeSen: crossCategoryRedetect.total,
     } : {}),
   });
 };
@@ -7447,7 +7381,7 @@ mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 // so-revision.ts already wraps this path in.
 export async function recomputeTotals(sb: any, docNo: string, c: any) {
   const { data: items, error: itemsErr } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, variants, qty, total_centi, line_cost_centi')
+    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen')
     .eq('doc_no', docNo).eq('cancelled', false);
   /* A failed READ is not an empty SO — and `?? []` cannot tell them apart.
      supabase-js resolves a failed select to { data: null, error } and does NOT
@@ -7466,7 +7400,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     console.error('[so-recompute] item read failed — header left unchanged:', docNo, itemsErr.message);
     return;
   }
-  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_centi: number; line_cost_centi: number };
+  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread (Commander 2026-05-29) ──────────────────
@@ -7474,7 +7408,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
      match a MASTER combo (sofa_combo_pricing where supplier_id IS NULL — the
      Product-Maintenance combo), the set's COST = the combo price, spread across
      the matched lines (mirror of the PO side, but master-scoped). We spread off
-     the stored per-line line_cost_centi (the per-module base cost). Idempotent:
+     the stored per-line line_cost_sen (the per-module base cost). Idempotent:
      spreadComboTotal re-normalises an already-spread group to the same total. */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
@@ -7537,7 +7471,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
         if (!match) continue;
         const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is Row => !!m);
         if (matched.length === 0) continue;
-        /* Audit 2026-06-11 I1 — the combo price is ONE set; line_cost_centi is
+        /* Audit 2026-06-11 I1 — the combo price is ONE set; line_cost_sen is
            a LINE total (unit × qty). Owner rule: combo cost MUST multiply by
            qty. Uniform qty q across the matched lines → q sets → comboTotal×q.
            Mixed qtys → no clean set count → SKIP the combo and keep the
@@ -7545,16 +7479,16 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
         const qtySet = new Set(matched.map((m) => Math.max(1, m.qty || 1)));
         if (qtySet.size !== 1) continue;
         const uniformQty = [...qtySet][0]!;
-        const comboTotal = match.comboPriceCenti * uniformQty;
+        const comboTotal = match.comboPriceSen * uniformQty;
         if (comboTotal <= 0) continue;
-        const spread = spreadComboTotal(matched.map((m) => m.line_cost_centi || 0), comboTotal);
+        const spread = spreadComboTotal(matched.map((m) => m.line_cost_sen || 0), comboTotal);
         for (let i = 0; i < matched.length; i++) {
           const m = matched[i]!; const newLineCost = spread[i] ?? 0; const q = Math.max(1, m.qty || 1);
-          m.line_cost_centi = newLineCost; // mutate in place so the rollup below sees it
+          m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
           const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
-            line_cost_centi:   newLineCost,
-            unit_cost_centi:   Math.round(newLineCost / q),
-            line_margin_centi: (m.total_centi || 0) - newLineCost,
+            line_cost_sen:   newLineCost,
+            unit_cost_sen:   Math.round(newLineCost / q),
+            line_margin_sen: (m.total_sen || 0) - newLineCost,
           }).eq('id', m.id);
           /* The in-memory mutation above already fed this cost to the roll-up,
              so a failed line write would have the header assert a cost its own
@@ -7577,13 +7511,13 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
 
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, service = 0, total = 0, totalCost = 0;
   // Task #114 — per-category cost mirrors the revenue accumulators. Each
-  // bucket below tracks both revenue (total_centi) and cost (line_cost_centi)
+  // bucket below tracks both revenue (total_sen) and cost (line_cost_sen)
   // so the SO header's cost columns (migration 0079 + 0155) stay in sync
   // with the revenue columns.
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0, serviceCost = 0;
   for (const it of rows) {
-    const lineTotal = it.total_centi || 0;
-    const lineCost  = it.line_cost_centi || 0;
+    const lineTotal = it.total_sen || 0;
+    const lineCost  = it.line_cost_sen || 0;
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -7611,7 +7545,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // LINES are the truth when they exist (their amounts are already inside
   // `service`/`total` above — folding the header snapshot back in would
   // double-count); only a line-less legacy SO still reads the header back.
-  // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_centi
+  // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_sen
   // header column itself (SO-SKU spec §5 P6 — Loo decides the retirement).
   //
   // ⚠️ This fallback is for LEGACY line-less SOs ONLY, and it is the half of
@@ -7626,11 +7560,11 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // backend/scripts/check-so-fee-line-integrity.mjs and repaired (DRY-RUN
   // gated) by repair-so-fee-line-integrity.mjs.
   const hasDeliveryFeeLines = rows.some((r) => isDeliveryFeeServiceCode(r.item_code));
-  let deliveryCenti = 0;
+  let deliverySen = 0;
   if (!hasDeliveryFeeLines) {
     const { data: hdrFee, error: hdrErr } = await sb
       .from('mfg_sales_orders')
-      .select('delivery_fee_centi')
+      .select('delivery_fee_sen')
       .eq('doc_no', docNo)
       .maybeSingle();
     /* A failed read here reads as "this legacy SO carries no delivery fee" and
@@ -7641,28 +7575,28 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
       console.error('[so-recompute] delivery fee read failed — header left unchanged:', docNo, hdrErr.message);
       return;
     }
-    deliveryCenti = Number((hdrFee as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
+    deliverySen = Number((hdrFee as { delivery_fee_sen?: number } | null)?.delivery_fee_sen ?? 0);
   }
-  const grandTotal  = total + deliveryCenti;
+  const grandTotal  = total + deliverySen;
   const grandMargin = grandTotal - totalCost;
   const { error: updErr } = await sb.from('mfg_sales_orders').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
     /* SO-SKU spec P2 (D1, migration 0155). */
-    service_centi: service,
-    service_cost_centi: serviceCost,
+    service_sen: service,
+    service_cost_sen: serviceCost,
     // Task #114 — per-category cost (migration 0079).
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
-    local_total_centi: grandTotal,
-    balance_centi: grandTotal,
-    total_cost_centi: totalCost,
-    total_revenue_centi: grandTotal,
-    total_margin_centi: grandMargin,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
+    local_total_sen: grandTotal,
+    balance_sen: grandTotal,
+    total_cost_sen: totalCost,
+    total_revenue_sen: grandTotal,
+    total_margin_sen: grandMargin,
     margin_pct_basis: grandTotal > 0 ? Math.round((grandMargin / grandTotal) * 10000) : 0,
     line_count: rows.length,
     updated_at: new Date().toISOString(),
@@ -7717,25 +7651,20 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      violation is rejected — a pre-rule SO that already mixes is left
      editable (grandfathered). */
   {
-    const introduced = await soMainMixIntroduced(sb, docNo, null, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, null, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
-  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, proceeded_at, status, customer_id').eq('doc_no', docNo).maybeSingle();
+  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
-  if (soProcessingLocked(header as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
     return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
   if (await soPoLocked(sb, docNo)) {
@@ -7756,7 +7685,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const badExtra = unexplainedExtraAddonResponse(it.variants, it.itemCode);
   if (badExtra) return c.json(badExtra, 422);
   const qty = Number(it.qty ?? 1);
-  const discount = Number(it.discountCenti ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   // MFG-PRICING-ENGINE — Recompute unit price server-side. Same path as
   // POST /. Drift > 0.5% returns HTTP 400 with the breakdown so the UI can
   // show what went wrong.
@@ -7778,7 +7707,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      POST/PATCH already blocks setting a Processing Date while any line has
      blank category-mandatory variants (findIncompleteVariantLines), but a line
      ADDED to an already processing-dated SO skipped that check — so a fabric
-     could be blanked on a build that's already "ready to build". Re-run the
+     could be blanked on an order purchasing was already released to buy. Re-run the
      shared guard on this added line when the SO carries a Processing Date
      (processing_date). Same 409 shape the header path returns. */
   if ((header as { processing_date?: string | null }).processing_date) {
@@ -7946,12 +7875,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     addLineFreeItem = { campaignId: addLineChosen.id, campaignName: addLineChosen.name };
   }
 
+  const addLinePosTablet = await isPosTabletCaller(c);
   const recomputed = recomputeFromSnapshot(
     {
       itemCode:       itemCodeStr,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty,
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       variantsObj,
     },
     productLite,
@@ -7967,7 +7897,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
-    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
+    // owner ruling — non-POS author prices freely; see erpLineTrust.
+    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended),
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -7983,7 +7914,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       error:    'pricing_drift',
       reason:   'The price for this item is out of date — please refresh and try again.',
       itemCode: itemCodeStr,
-      client:   Number(it.unitPriceCenti ?? 0),
+      client:   Number(it.unitPriceSen ?? 0),
       server:   recomputed.unit_price_sen,
       breakdown: recomputed.breakdown,
     }, 400);
@@ -7999,7 +7930,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     if (addLinePwpClaimed) await rollbackSinglePwpClaim(sb, addLinePwpClaimed);
     return c.json({
       error:    'invalid_discount',
-      reason:   'discountCenti must be between 0 and qty × unit price.',
+      reason:   'discountSen must be between 0 and qty × unit price.',
       itemCode: itemCodeStr,
       discount,
       max:      qty * unit,
@@ -8011,7 +7942,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   // client cost only when the recompute produced no cost.
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
-    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0), c);
+    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostSen ?? 0), c);
   const lineCost = unitCost * qty;
   /* Same size-variant description guard the create path runs — an added line
      must not be able to smuggle in another size's SKU name either. */
@@ -8043,7 +7974,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      template for each sofa module row (create-path convention: baseRow). */
   const baseRow = {
     doc_no: docNo,
-    line_date: (it.lineDate as string) ?? todayMyt(),
+    line_date: dateOrNull(it.lineDate) ?? todayMyt(),
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
@@ -8053,11 +7984,11 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       ?? ((it.description as string) ?? null),
     uom: (it.uom as string) ?? 'UNIT',
     qty,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    total_centi: lineTotal,
-    total_inc_centi: lineTotal,
-    balance_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    total_sen: lineTotal,
+    total_inc_sen: lineTotal,
+    balance_sen: lineTotal,
     venue: header.venue,
     branding: header.branding,
     /* Anti-tamper (Task 6) — strip any client-supplied freeItem marker from a
@@ -8077,15 +8008,15 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         ? { ...(stripFreeItem(it.variants) as Record<string, unknown> | null ?? {}), freeItem: addLineFreeItem }
         : ((stripFreeItem(it.variants) as Record<string, unknown> | null) ?? null),
     ),
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
     // MFG-PRICING-ENGINE — Persist breakdown columns (same as POST /).
     divan_price_sen:         recomputed.divan_price_sen,
     leg_price_sen:           recomputed.leg_price_sen,
     special_order_price_sen: recomputed.special_order_sen,
     custom_specials:         recomputed.custom_specials ?? null,
-    line_delivery_date: lineDeliveryDate,
+    line_delivery_date: dateOrNull(lineDeliveryDate),
     line_delivery_date_overridden: lineDeliveryDateOverridden,
     warehouse_id: addLineWarehouseId,
     /* SO-SKU spec P2 — a hand-added SERVICE line (Backend SoLineCard picks a
@@ -8159,15 +8090,15 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
           item_code: s.itemCode,
           description: s.description,
           description2: buildVariantSummary('sofa', moduleVariants) || null,
-          unit_price_centi: s.unitPriceSen,
-          discount_centi: moduleDiscounts[i] ?? 0,
-          total_centi: moduleLineTotal,
-          total_inc_centi: moduleLineTotal,
-          balance_centi: moduleLineTotal,
+          unit_price_sen: s.unitPriceSen,
+          discount_sen: moduleDiscounts[i] ?? 0,
+          total_sen: moduleLineTotal,
+          total_inc_sen: moduleLineTotal,
+          balance_sen: moduleLineTotal,
           variants: moduleVariants,
-          unit_cost_centi: s.unitCostSen,
-          line_cost_centi: moduleLineCost,
-          line_margin_centi: moduleLineTotal - moduleLineCost,
+          unit_cost_sen: s.unitCostSen,
+          line_cost_sen: moduleLineCost,
+          line_margin_sen: moduleLineTotal - moduleLineCost,
           /* Breakdown columns (divan/leg/special) on first row only; custom_specials + remark on every row (display, same as create). */
           divan_price_sen:         i === 0 ? (recomputed.divan_price_sen ?? 0) : 0,
           leg_price_sen:           i === 0 ? (recomputed.leg_price_sen ?? 0) : 0,
@@ -8181,6 +8112,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       /* Owner 2026-07-23 — auto-derive branding from product catalog on the
          add-line path, same rule as SO CREATE (see createSalesOrderCore). */
       await deriveLineBrandingFromProduct(sb, moduleRows as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+      signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (sofa split)', docNo, moduleRows as unknown as Array<Record<string, unknown>>); // logs only, never blocks
       const { data: moduleData, error: moduleError } = await sb
         .from('mfg_sales_order_items')
         .insert(stampCompany(moduleRows, c))
@@ -8206,8 +8138,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         fieldChanges: [
           { field: 'itemCode', to: String(firstRow.item_code ?? itemCodeStr) },
           { field: 'qty', to: qty },
-          { field: 'unitPriceCenti', to: unit },
-          { field: 'totalCenti', to: lineTotal },
+          { field: 'unitPriceSen', to: unit },
+          { field: 'totalSen', to: lineTotal },
         ],
       });
 
@@ -8236,6 +8168,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* Owner 2026-07-23 — auto-derive branding on the single-row add-line path. */
   const rowWithCid = { ...row, company_id: activeCompanyId(c) };
   await deriveLineBrandingFromProduct(sb, [rowWithCid] as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+  signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (single row)', docNo, [rowWithCid] as unknown as Array<Record<string, unknown>>); // logs only, never blocks
   const { data, error } = await sb.from('mfg_sales_order_items').insert(rowWithCid).select('*').single();
   if (error) {
     /* Don't burn a PWP code on a failed insert — mirror create's rollbackPwpClaims. */
@@ -8260,8 +8193,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     fieldChanges: [
       { field: 'itemCode', to: row.item_code },
       { field: 'qty', to: row.qty },
-      { field: 'unitPriceCenti', to: row.unit_price_centi },
-      { field: 'totalCenti', to: row.total_centi },
+      { field: 'unitPriceSen', to: row.unit_price_sen },
+      { field: 'totalSen', to: row.total_sen },
     ],
   });
 
@@ -8318,13 +8251,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* Composition guard (Loo 2026-06-11) — a product swap must not INTRODUCE a
      sofa × (bedframe | mattress) mix (PR #519 create rule, now on swap too). */
   if (it.itemCode !== undefined) {
-    const introduced = await soMainMixIntroduced(sb, docNo, itemId, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). */
@@ -8334,7 +8262,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   // human-facing columns (item_code, description, uom) for the audit diff.
   const { data: prev } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items')
-      .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, description2, uom, variants, remark, cancelled'),
+      .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, description2, uom, variants, remark, cancelled'),
     docNo,
     itemId,
   ).maybeSingle();
@@ -8369,11 +8297,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       reason: 'A PWP reward line redeems one unit per code — quantity stays 1.',
     }, 422);
   }
-  const clientUnit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;
+  const clientUnit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
 
   /* MFG-PRICING-ENGINE — Server-side recompute on PATCH. Triggered when
-     the caller touches variants OR unitPriceCenti (qty alone doesn't move
+     the caller touches variants OR unitPriceSen (qty alone doesn't move
      the unit price). For variant-driven edits we use the merged item shape
      (prev + patch) so omitted variants stay sticky. The manual-override
      audit path (POST /:docNo/items/:itemId/override → mfg_so_price_overrides)
@@ -8406,7 +8334,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const variantsChanged = it.variants !== undefined
     && canonJson(variantsAfter ?? null) !== canonJson((prev as { variants?: unknown }).variants ?? null);
   const itemCodeChangedOnPatch = it.itemCode !== undefined && String(it.itemCode) !== prev.item_code;
-  const priceChanged = it.unitPriceCenti !== undefined && Number(it.unitPriceCenti) !== prev.unit_price_centi;
+  const priceChanged = it.unitPriceSen !== undefined && Number(it.unitPriceSen) !== prev.unit_price_sen;
   const shouldRecompute = variantsChanged || itemCodeChangedOnPatch || priceChanged;
 
   /* PR #216 — allowed_options check on PATCH. Only when the caller actually
@@ -8426,7 +8354,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        SO already carries a Processing Date (processing_date) the header
        guard (findIncompleteVariantLines) has already vouched every line is
        complete; a later line edit must not be able to blank a category-mandatory
-       variant (e.g. clear a fabric) on that "ready to build" order. Only checked
+       variant (e.g. clear a fabric) on an order already released for ordering.
+       Only checked
        when the caller actually CHANGED variants / item code (same grandfather as
        the allowed-options gate above) so an untouched re-save is never rejected. */
     const { data: soHdr } = await sb.from('mfg_sales_orders')
@@ -8490,7 +8419,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
         itemCode:       itemCodeAfter,
         itemGroup:      itemGroupAfter,
         qty,
-        unitPriceCenti: clientUnit,
+        unitPriceSen: clientUnit,
         variants:       variantsAfter,
       },
       prodLite,
@@ -8506,7 +8435,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      !posTablet, // owner ruling — non-POS author prices freely
+      // owner ruling — non-POS author prices freely; see erpLineTrust.
+      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended),
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -8540,7 +8470,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        Backend, not being a POS tablet, would save that silently — turning a
        RM490 加购 into RM990 with no warning (Loo 2026-06-28). */
     : prevIsReward
-    ? prev.unit_price_centi
+    ? prev.unit_price_sen
     : (recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit);
   /* Audit 2026-06-11 C-2 — same discount gate as POST /: the effective
      (patch-else-stored) discount must sit in [0, qty × unit] against the
@@ -8548,41 +8478,25 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (!Number.isFinite(discount) || discount < 0 || discount > qty * unit) {
     return c.json({
       error:    'invalid_discount',
-      reason:   'discountCenti must be between 0 and qty × unit price.',
+      reason:   'discountSen must be between 0 and qty × unit price.',
       itemCode: itemCodeAfter,
       discount,
       max:      qty * unit,
     }, 422);
   }
-  /* Total floor (Loo 2026-06-11) — a POS sales caller may never save a line
-     change that lowers the bill below the original sales order total. The
-     header total is Σ line totals, so per line: the new total (0 when
-     cancelling) must be ≥ the stored one. Backend / office roles stay free
-     to discount or correct downward. */
-  if (posTablet) {
-    const prevLineTotal = prev.cancelled ? 0 : ((prev.qty * prev.unit_price_centi) - prev.discount_centi);
-    const cancelledAfter = it.cancelled !== undefined ? Boolean(it.cancelled) : Boolean(prev.cancelled);
-    const newLineTotal = cancelledAfter ? 0 : ((qty * unit) - discount);
-    if (newLineTotal < prevLineTotal) {
-      return c.json({
-        error:    'so_total_below_original',
-        reason:   'Changes cannot reduce the bill below the original sales order total.',
-        itemCode: itemCodeAfter,
-        previous: prevLineTotal,
-        next:     newLineTotal,
-      }, 422);
-    }
-  }
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18: a POS caller may lower a line. `posTablet` still gates
+     the pricing_drift check below, which is a different rule and stays. */
   /* Commander 2026-05-28 — cost snapshot on PATCH. Order of precedence:
-       1. Client sent unitCostCenti > 0 → use it (explicit override).
+       1. Client sent unitCostSen > 0 → use it (explicit override).
        2. A recompute ran (variants/itemCode/price touched) AND produced a
           cost > 0 → use the server-computed cost (base + Σ backend priceSen
           surcharges via computeMfgLineCost). This is the source of truth.
        3. Client changed itemCode but recompute had no cost → re-snapshot
           mfg_products under the new code.
-       4. Otherwise keep the prior unit_cost_centi unchanged. */
+       4. Otherwise keep the prior unit_cost_sen unchanged. */
   let unitCost: number;
-  const explicitCost = it.unitCostCenti !== undefined ? Number(it.unitCostCenti) : 0;
+  const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
   const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
   if (explicitCost > 0) {
     unitCost = explicitCost;
@@ -8591,19 +8505,19 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   } else if (itemCodeChanged) {
     unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0, c);
   } else {
-    /* Case 4 "keep the prior cost" — a legacy row whose unit_cost_centi was
+    /* Case 4 "keep the prior cost" — a legacy row whose unit_cost_sen was
        never stamped reads back null/undefined here, and `undefined * qty` is
-       NaN, which then rides into line_cost_centi / line_margin_centi and the
+       NaN, which then rides into line_cost_sen / line_margin_sen and the
        header roll-up. Unknown prior cost = 0. */
-    unitCost = senOrZero(prev.unit_cost_centi);
+    unitCost = senOrZero(prev.unit_cost_sen);
   }
   const lineTotal = senOrZero((qty * unit) - discount);
   const lineCost = senOrZero(unitCost * qty);
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unit, discount_centi: discount, unit_cost_centi: unitCost,
-    total_centi: lineTotal, total_inc_centi: lineTotal, balance_centi: lineTotal,
-    line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
+    qty, unit_price_sen: unit, discount_sen: discount, unit_cost_sen: unitCost,
+    total_sen: lineTotal, total_inc_sen: lineTotal, balance_sen: lineTotal,
+    line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
   };
   // MFG-PRICING-ENGINE — Refresh the persisted breakdown columns when we
   // ran a recompute. Without this they'd drift from `variants` over time.
@@ -8662,7 +8576,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      forget. A separate lineDeliveryDateOverridden=false reset path lets
      the UI deliberately rejoin the header cascade. */
   if (it.lineDeliveryDate !== undefined) {
-    updates['line_delivery_date'] = it.lineDeliveryDate as string | null;
+    updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }
   if (it.lineDeliveryDateOverridden !== undefined) {
@@ -8759,26 +8673,16 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   // the row is the source of truth for which keys belong to this line.
   const { data: prev } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items')
-      .select('item_code, qty, unit_price_centi, total_centi, photo_urls, cancelled'),
+      .select('item_code, qty, unit_price_sen, total_sen, photo_urls, cancelled'),
     docNo,
     itemId,
   ).maybeSingle();
   const prevTyped = prev as
-    | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null; cancelled?: boolean }
+    | { item_code: string; qty: number; unit_price_sen: number; total_sen: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
 
-  /* Total floor (Loo 2026-06-11) — removing a priced line lowers the bill
-     below the original sales order total, so POS sales callers may not
-     delete one (a cancelled / zero line is fine). Backend roles stay free. */
-  if (prevTyped && !prevTyped.cancelled && prevTyped.total_centi > 0
-      && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Removing a line would reduce the bill below the original sales order total.',
-      itemCode: prevTyped.item_code,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A POS caller may delete a priced line. */
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
      afterwards the row is gone and its DtlKey with it, and an edit that does not
      NAME the removal leaves the line live and outstanding in the account book. */
@@ -8827,8 +8731,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
       fieldChanges: [
         { field: 'itemCode', from: prevTyped.item_code },
         { field: 'qty', from: prevTyped.qty },
-        { field: 'unitPriceCenti', from: prevTyped.unit_price_centi },
-        { field: 'totalCenti', from: prevTyped.total_centi },
+        { field: 'unitPriceSen', from: prevTyped.unit_price_sen },
+        { field: 'totalSen', from: prevTyped.total_sen },
         // Task #93 — note the photo cleanup so the timeline shows
         // "deleted N photos" alongside the line removal.
         ...(photoKeys.length > 0
@@ -8911,7 +8815,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   }
 
   const { data: prev } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants, cancelled')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants, cancelled')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
@@ -8967,7 +8871,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         itemCode:       prev.item_code,
         itemGroup:      String(prev.item_group ?? 'others'),
         qty:            Number(prev.qty),
-        unitPriceCenti: Number(prev.unit_price_centi),
+        unitPriceSen: Number(prev.unit_price_sen),
         variants:       variants as MfgItemForRecompute['variants'],
       },
       prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
@@ -9008,31 +8912,21 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     }
   }
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
-  const tierDeltaCenti = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
+  const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)
      - fabricTierAddon(category, (category === 'SOFA' ? tiersPrev?.sofaTier : tiersPrev?.bedframeTier) ?? null, addonCfg, tbcOverride)) * 100
     : 0;
-  const sellingDeltaCenti = (after.breakdown.unitPriceSen - before.breakdown.unitPriceSen) + tierDeltaCenti;
-  const costDeltaCenti = after.unit_cost_sen - before.unit_cost_sen;
+  const sellingDeltaSen = (after.breakdown.unitPriceSen - before.breakdown.unitPriceSen) + tierDeltaSen;
+  const costDeltaSen = after.unit_cost_sen - before.unit_cost_sen;
 
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
-     Treat it as a no-price-change TBC edit (the variant picks still land).
-     Also skip the POS floor check — a zero-priced line can never lower the
-     bill further; the check is meaningless and would compare 0 vs 0. */
+     Treat it as a no-price-change TBC edit (the variant picks still land). */
   const isFreeItemGrandfathered = isFreeItemLine(prevVariants);
-  const posTablet = await isPosTabletCaller(c);
-  if (!isFreeItemGrandfathered && posTablet && sellingDeltaCenti < 0) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: prev.item_code,
-      deltaCenti: sellingDeltaCenti * Number(prev.qty),
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A TBC edit may lower the line. */
   const qty = Number(prev.qty);
-  const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
+  const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_sen) + sellingDeltaSen);
   /* The unit price just MOVED and the stored discount did not. newUnit is
      clamped at 0, newTotal is not, so a variant edit that LOWERS the price drives
      the line total NEGATIVE — and downstream Math.max(0, ...) then deletes the
@@ -9040,7 +8934,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      in this file already sets that house rule (discount invariant:
      0 <= discount <= qty * unit), and silently shrinking a discount changes the
      money without telling anyone. */
-  const prevDiscount = Number(prev.discount_centi ?? 0);
+  const prevDiscount = Number(prev.discount_sen ?? 0);
   if (prevDiscount > qty * newUnit) {
     return c.json({
       error: 'discount_exceeds_new_price',
@@ -9052,17 +8946,17 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     }, 422);
   }
   const newTotal = (qty * newUnit) - prevDiscount;
-  const newUnitCost = Math.max(0, Number(prev.unit_cost_centi ?? 0) + costDeltaCenti);
+  const newUnitCost = Math.max(0, Number(prev.unit_cost_sen ?? 0) + costDeltaSen);
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     variants: nextVariants,
     description2: buildVariantSummary(String(prev.item_group ?? ''), nextVariants) || null,
-    unit_price_centi: newUnit,
-    total_centi: newTotal,
-    total_inc_centi: newTotal,
-    balance_centi: newTotal,
-    unit_cost_centi: newUnitCost,
-    line_cost_centi: newUnitCost * qty,
-    line_margin_centi: newTotal - (newUnitCost * qty),
+    unit_price_sen: newUnit,
+    total_sen: newTotal,
+    total_inc_sen: newTotal,
+    balance_sen: newTotal,
+    unit_cost_sen: newUnitCost,
+    line_cost_sen: newUnitCost * qty,
+    line_margin_sen: newTotal - (newUnitCost * qty),
     divan_price_sen: after.breakdown.divanSurchargeSen,
     leg_price_sen: after.breakdown.legSurchargeSen,
     special_order_price_sen: after.breakdown.specialsSurchargeSen,
@@ -9117,14 +9011,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         from: buildVariantSummary(String(prev.item_group ?? ''), (prev.variants ?? null) as Record<string, unknown> | null) || null,
         to: buildVariantSummary(String(prev.item_group ?? ''), nextVariants) || null,
       },
-      ...(sellingDeltaCenti !== 0
-        ? [{ field: 'unitPriceCenti', from: prev.unit_price_centi, to: newUnit } satisfies FieldChange]
+      ...(sellingDeltaSen !== 0
+        ? [{ field: 'unitPriceSen', from: prev.unit_price_sen, to: newUnit } satisfies FieldChange]
         : []),
     ],
   });
 
   await scheduleStockAllocationAfterCommand(c, sb, `tbc-update:${docNo}`);
-  return c.json({ ok: true, unitPriceCenti: newUnit, deltaCenti: sellingDeltaCenti, totalCenti: newTotal });
+  return c.json({ ok: true, unitPriceSen: newUnit, deltaSen: sellingDeltaSen, totalSen: newTotal });
 }
 mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', async (c) => {
   const company = requireActiveCompanyId(c);
@@ -9167,7 +9061,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   const { data: prev } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, total_centi, variants, cancelled')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, total_sen, variants, cancelled')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
@@ -9218,8 +9112,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   };
   type SwapRewardRevertLine = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; variants: Record<string, unknown> | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; variants: Record<string, unknown> | null;
   };
   let triggerCodesToRestamp: string[] = [];
   const pwpDeleteCodes: string[] = [];
@@ -9231,9 +9125,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     if (!rewardPwpCode) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type')
-      .eq('code', rewardPwpCode).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type').eq('code', rewardPwpCode), c).maybeSingle();
     const codeTyped = codeRow as { code: string; reward_category: string; eligible_reward_model_ids: string[] | null; reward_size_codes: string[] | null; reward_compartments: string[] | null; type: string } | null;
     if (!codeTyped) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);
@@ -9331,7 +9223,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
         }
         if (pwpRevertCodes.length > 0) {
           const { data: pwpLines } = await sb.from('mfg_sales_order_items')
-            .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants')
+            .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants')
             .eq('doc_no', docNo).eq('cancelled', false)
             .filter('variants->>pwp', 'eq', 'true');
           const revertSet = new Set(pwpRevertCodes);
@@ -9366,15 +9258,13 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   /* Composition — a swap must not INTRODUCE a sofa × (bedframe|mattress) mix. */
-  if (await soMainMixIntroduced(sb, docNo, itemId, newCode, activeCompanyId(c))) {
-    return c.json({
-      error: 'so_sofa_no_other_main',
-      reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-    }, 400);
+  {
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, newCode, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   const qty = Number(prev.qty);
-  const discount = Number(prev.discount_centi ?? 0);
+  const discount = Number(prev.discount_sen ?? 0);
   // Same invariant as the price-override path and the variant edit above: a SWAP
   // to a cheaper SKU must not strand a discount that no longer fits, because the
   // negative total is then clamped away downstream.
@@ -9389,17 +9279,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     }, 422);
   }
   const newTotal = (qty * unitSen) - discount;
-  const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
-  if (newTotal < prevTotal && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: newCode,
-      previous: prevTotal,
-      next:     newTotal,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A swap may land on a cheaper product. */
   const newCost = Math.max(0, Math.round(Number(prod.cost_price_sen ?? 0)));
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     item_code: newCode,
@@ -9407,13 +9288,13 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     description: prod.name,
     description2: null,
     variants: variantsAfterSwap,
-    unit_price_centi: unitSen,
-    total_centi: newTotal,
-    total_inc_centi: newTotal,
-    balance_centi: newTotal,
-    unit_cost_centi: newCost,
-    line_cost_centi: newCost * qty,
-    line_margin_centi: newTotal - (newCost * qty),
+    unit_price_sen: unitSen,
+    total_sen: newTotal,
+    total_inc_sen: newTotal,
+    balance_sen: newTotal,
+    unit_cost_sen: newCost,
+    line_cost_sen: newCost * qty,
+    line_margin_sen: newTotal - (newCost * qty),
     divan_price_sen: 0,
     leg_price_sen: 0,
     special_order_price_sen: 0,
@@ -9422,18 +9303,28 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   if (upErr) return c.json({ error: 'update_failed', reason: upErr.message }, 500);
 
   /* Re-stamp the voucher audit columns so the codes keep pointing at the
-     line's CURRENT SKU (best-effort — the line is already correct). */
+     line's CURRENT SKU (best-effort — the line is already correct).
+
+     HAZARD 2 (mig 0188): pwp_codes is keyed on (company_id, code), so every
+     statement below carries BOTH halves. `redeemed_doc_no = docNo` on the first
+     one proves the voucher is ON this order — it does not prove the order is in
+     this caller's books, which is a different question and the one company_id
+     answers. */
+  const voucherCompanyId = activeCompanyId(c);
+  if (voucherCompanyId == null) {
+    return c.json({ error: 'company_unresolved', message: 'Cannot tell which company this order belongs to right now. Reload and try again.' }, 409);
+  }
   if (rewardPwpCode) {
     const { error: e1 } = await sb.from('pwp_codes')
       .update({ redeemed_item_code: newCode })
-      .eq('code', rewardPwpCode).eq('redeemed_doc_no', docNo);
+      .eq('code', rewardPwpCode).eq('redeemed_doc_no', docNo).eq('company_id', voucherCompanyId);
     throwAtomicCommandWrite(sb, e1, 'TBC reward code restamp failed');
     if (e1) console.error('[tbc-swap] reward code restamp failed:', e1.message); // eslint-disable-line no-console
   }
   if (triggerCodesToRestamp.length > 0) {
     const { error: e2 } = await sb.from('pwp_codes')
       .update({ trigger_item_code: newCode, updated_at: new Date().toISOString() })
-      .in('code', triggerCodesToRestamp);
+      .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId);
     throwAtomicCommandWrite(sb, e2, 'TBC trigger code restamp failed');
     if (e2) console.error('[tbc-swap] trigger code restamp failed:', e2.message); // eslint-disable-line no-console
   }
@@ -9446,8 +9337,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     const { id: uid, ...cols } = u;
     const { error } = await sb.from('mfg_sales_order_items').update({
       ...cols,
-      total_inc_centi: cols.total_centi,
-      balance_centi: cols.total_centi,
+      total_inc_sen: cols.total_sen,
+      balance_sen: cols.total_sen,
     }).eq('id', uid);
     throwAtomicCommandWrite(sb, error, `TBC sofa reward revert failed for ${uid}`);
     if (error) console.error('[tbc-swap] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
@@ -9473,22 +9364,22 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);
       const rec = recomputeFromSnapshot(
-        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
+        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceSen: 0, variants: v as MfgItemForRecompute['variants'] },
         rp, rfab, cfgX, null, null, rtiers, addonCfgX, null, null, specialDefsX, null, modelOverridesX, compartmentOverridesX,
       );
-      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
+      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_sen);
       const lqty = Number(line.qty);
-      const ldisc = Number(line.discount_centi ?? 0);
+      const ldisc = Number(line.discount_sen ?? 0);
       const lTotal = (lqty * revertUnit) - ldisc;
-      const lCost = Number(line.unit_cost_centi ?? 0);
+      const lCost = Number(line.unit_cost_sen ?? 0);
       const { error } = await sb.from('mfg_sales_order_items').update({
         variants: v,
         description2: buildVariantSummary(String(line.item_group ?? ''), v) || null,
-        unit_price_centi: revertUnit,
-        total_centi: lTotal,
-        total_inc_centi: lTotal,
-        balance_centi: lTotal,
-        line_margin_centi: lTotal - (lCost * lqty),
+        unit_price_sen: revertUnit,
+        total_sen: lTotal,
+        total_inc_sen: lTotal,
+        balance_sen: lTotal,
+        line_margin_sen: lTotal - (lCost * lqty),
         divan_price_sen: rec.breakdown.divanSurchargeSen,
         leg_price_sen: rec.breakdown.legSurchargeSen,
         special_order_price_sen: rec.breakdown.specialsSurchargeSen,
@@ -9498,9 +9389,11 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
       if (error) console.error('[tbc-swap] reward revert failed for', line.id, error.message); // eslint-disable-line no-console
     }
     // 2. Dead vouchers go (un-redeemed + reverted ones - Loo: delete).
+    //    HAZARD 2: this DESTROYS a voucher. Half a key deletes theirs.
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete().in('code', toDelete);
+      const { error } = await sb.from('pwp_codes').delete()
+        .in('code', toDelete).eq('company_id', voucherCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC code delete failed');
       if (error) console.error('[tbc-swap] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -9515,7 +9408,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
          bridge's pin, which records every voucher as minted by "System". */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = triggerCodesToRestamp.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id').in('code', triggerCodesToRestamp)
+        ? await sb.from('pwp_codes').select('code, rule_id')
+            .in('code', triggerCodesToRestamp).eq('company_id', voucherCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {
@@ -9569,8 +9463,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: [
       { field: 'itemCode', from: prev.item_code, to: newCode },
-      { field: 'unitPriceCenti', from: prev.unit_price_centi, to: unitSen },
-      { field: 'totalCenti', from: prev.total_centi, to: newTotal },
+      { field: 'unitPriceSen', from: prev.unit_price_sen, to: unitSen },
+      { field: 'totalSen', from: prev.total_sen, to: newTotal },
       ...(rewardPwpCode ? [{ field: 'pwpCode', to: rewardPwpCode } satisfies FieldChange] : []),
       ...(pwpRevertCodes.length > 0
         ? [{ field: 'pwpRewardsReverted', to: pwpRevertCodes.join(', ') } satisfies FieldChange] : []),
@@ -9587,8 +9481,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   return c.json({
     ok: true,
     itemCode: newCode,
-    unitPriceCenti: unitSen,
-    totalCenti: newTotal,
+    unitPriceSen: unitSen,
+    totalSen: newTotal,
     pwp: {
       kept: triggerCodesToRestamp.length,
       reverted: pwpRevertCodes.length,
@@ -9619,9 +9513,9 @@ mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', async (c) => {
    mismatch) returns ok:false and the caller blocks for the coordinator. */
 type SofaRewardRevertUpdate = {
   id: string;
-  unit_price_centi: number;
-  total_centi: number;
-  line_margin_centi: number;
+  unit_price_sen: number;
+  total_sen: number;
+  line_margin_sen: number;
   variants: Record<string, unknown>;
   description2: string | null;
   divan_price_sen: number;
@@ -9636,13 +9530,13 @@ async function planSofaRewardRevert(
   c: any,
 ): Promise<{ ok: true; updates: SofaRewardRevertUpdate[] } | { ok: false }> {
   const { data } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, line_cost_centi, variants')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, line_cost_sen, variants')
     .eq('doc_no', docNo).eq('cancelled', false)
     .filter('variants->>pwpCode', 'eq', pwpCode);
   type Row = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; line_cost_centi: number | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; line_cost_sen: number | null;
     variants: Record<string, unknown> | null;
   };
   const lines = (((data ?? []) as Row[]))
@@ -9687,7 +9581,7 @@ async function planSofaRewardRevert(
   delete pricingVariants.buildKey; delete pricingVariants.cellIndex;
   delete pricingVariants.x; delete pricingVariants.y; delete pricingVariants.rot;
   const rec = recomputeFromSnapshot(
-    { itemCode: lead.item_code, itemGroup: 'sofa', qty: Number(lead.qty), unitPriceCenti: 0, variants: pricingVariants as MfgItemForRecompute['variants'] },
+    { itemCode: lead.item_code, itemGroup: 'sofa', qty: Number(lead.qty), unitPriceSen: 0, variants: pricingVariants as MfgItemForRecompute['variants'] },
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, addonCfg,
     null, null,   // NO pwp grant — this IS the revert
     specialDefs, null, modelOverridesLead,
@@ -9706,14 +9600,14 @@ async function planSofaRewardRevert(
     delete v.pwp; delete v.pwpCode; delete v.pwpTriggerLabel;
     const unitSenI = split[i]!.unitPriceSen;
     const lqty = Number(l.qty);
-    const ldisc = Number(l.discount_centi ?? 0);
+    const ldisc = Number(l.discount_sen ?? 0);
     const lTotal = (lqty * unitSenI) - ldisc;
-    const lCost = Number(l.line_cost_centi ?? (Number(l.unit_cost_centi ?? 0) * lqty));
+    const lCost = Number(l.line_cost_sen ?? (Number(l.unit_cost_sen ?? 0) * lqty));
     return {
       id: l.id,
-      unit_price_centi: unitSenI,
-      total_centi: lTotal,
-      line_margin_centi: lTotal - lCost,
+      unit_price_sen: unitSenI,
+      total_sen: lTotal,
+      line_margin_sen: lTotal - lCost,
       variants: v,
       description2: buildVariantSummary('sofa', v) || null,
       divan_price_sen: i === 0 ? rec.breakdown.divanSurchargeSen : 0,
@@ -9741,7 +9635,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const item = (body.item ?? null) as { itemCode?: unknown; qty?: unknown; unitPriceCenti?: unknown; description?: unknown; variants?: Record<string, unknown> | null } | null;
+  const item = (body.item ?? null) as { itemCode?: unknown; qty?: unknown; unitPriceSen?: unknown; description?: unknown; variants?: Record<string, unknown> | null } | null;
   const newCode = String(item?.itemCode ?? '').trim();
   if (!item || !newCode) return c.json({ error: 'item_code_required' }, 400);
 
@@ -9761,11 +9655,11 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   if (leaseBlocked) return leaseBlocked;
 
   const { data: prevRow } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, discount_centi, total_centi, variants, cancelled, line_date, debtor_code, debtor_name, agent, venue, branding, line_delivery_date, line_delivery_date_overridden, warehouse_id, remark')
+    .select('id, item_code, item_group, qty, discount_sen, total_sen, variants, cancelled, line_date, debtor_code, debtor_name, agent, venue, branding, line_delivery_date, line_delivery_date_overridden, warehouse_id, remark')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   const prev = prevRow as {
-    id: string; item_code: string; item_group: string; qty: number; discount_centi: number | null;
-    total_centi: number | null; variants: Record<string, unknown> | null; cancelled: boolean;
+    id: string; item_code: string; item_group: string; qty: number; discount_sen: number | null;
+    total_sen: number | null; variants: Record<string, unknown> | null; cancelled: boolean;
     line_date: string | null; debtor_code: string | null; debtor_name: string | null; agent: string | null;
     venue: string | null; branding: string | null; line_delivery_date: string | null;
     line_delivery_date_overridden: boolean | null; warehouse_id: string | null; remark: string | null;
@@ -9780,17 +9674,17 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
 
   /* The whole OLD build — every non-cancelled line sharing the buildKey
      (legacy single-line sofas have no buildKey → just the requested line). */
-  let oldLines: Array<{ id: string; item_code: string; total_centi: number | null; variants: Record<string, unknown> | null; photo_urls: string[] | null; line_no?: number | null }> = [];
+  let oldLines: Array<{ id: string; item_code: string; total_sen: number | null; variants: Record<string, unknown> | null; photo_urls: string[] | null; line_no?: number | null }> = [];
   if (buildKey) {
     const { data: rows } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, total_centi, variants, photo_urls, line_no')
+      .select('id, item_code, total_sen, variants, photo_urls, line_no')
       .eq('doc_no', docNo).eq('cancelled', false)
       .filter('variants->>buildKey', 'eq', buildKey);
     oldLines = ((rows ?? []) as typeof oldLines);
   }
   if (oldLines.length === 0) {
     const { data: solo } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, total_centi, variants, photo_urls, line_no').eq('id', itemId).maybeSingle();
+      .select('id, item_code, total_sen, variants, photo_urls, line_no').eq('id', itemId).maybeSingle();
     if (solo) oldLines = [solo as (typeof oldLines)[number]];
   }
   /* PWP REWARD build (Loo 2026-06-12) — exchangeable: the new build
@@ -9809,9 +9703,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (!codeStr) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_combo_ids, type, redeemed_doc_no')
-      .eq('code', codeStr).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_combo_ids, type, redeemed_doc_no').eq('code', codeStr), c).maybeSingle();
     const ct = codeRow as { code: string; reward_combo_ids: string[] | null; type: string | null; redeemed_doc_no: string | null } | null;
     if (!ct) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);
@@ -9867,7 +9759,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadCompartmentFabricTierOverrides(sb), // migration 0025 — per-compartment Δ
   ]);
   const qty = Math.max(1, Math.floor(Number(item.qty ?? 1)));
-  const clientUnit = Math.max(0, Math.round(Number(item.unitPriceCenti ?? 0)));
+  const clientUnit = Math.max(0, Math.round(Number(item.unitPriceSen ?? 0)));
   /* Does the NEW build match one of the voucher's reward combos? Same
      matcher the engine + POS use. Matched -> the recompute charges those
      combos' PWP prices (pwpSofaComboIds); unmatched -> normal selling. */
@@ -9883,7 +9775,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     });
   })();
   const recomputed = recomputeFromSnapshot(
-    { itemCode: newCode, itemGroup: 'sofa', qty, unitPriceCenti: clientUnit, variants: newVariants as MfgItemForRecompute['variants'] },
+    { itemCode: newCode, itemGroup: 'sofa', qty, unitPriceSen: clientUnit, variants: newVariants as MfgItemForRecompute['variants'] },
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, fabricAddonCfg,
     null,
     rewardComboMatch && rewardCtx ? rewardCtx.comboIds : null,
@@ -9908,7 +9800,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
     : await snapshotUnitCostSen(sb, newCode, 0, c);
-  const discount = Number(prev.discount_centi ?? 0);
+  const discount = Number(prev.discount_sen ?? 0);
   // Same invariant as :6199 / the variant edit / the product swap — a sofa
   // exchange to a cheaper build must not strand a discount that no longer fits.
   if (discount > qty * unit) {
@@ -9922,16 +9814,11 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     }, 422);
   }
   const newBuildTotal = (qty * unit) - discount;
-  const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-  if (posTablet && newBuildTotal < oldBuildTotal) {
-    return c.json({
-      error: 'so_total_below_original',
-      reason: 'Changes cannot reduce the bill below the original sales order total.',
-      previous: oldBuildTotal,
-      next: newBuildTotal,
-    }, 422);
-  }
-
+  const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A sofa may be exchanged for a cheaper build.
+     `posTablet` above still gates the pricing_drift check, which stays.
+     Both totals are still computed: the audit log reports the change. */
   /* A still-matched reward keeps its voucher markers — they ride every
      split line like at SO create. An unmatched one stays stripped (normal
      sale; the voucher releases below). */
@@ -9985,8 +9872,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   };
   type RewardRevertLine = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; variants: Record<string, unknown> | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; variants: Record<string, unknown> | null;
   };
   const pwpKeepCodes: string[] = [];
   const pwpDeleteCodes: string[] = [];
@@ -10062,7 +9949,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     }
     if (pwpRevertCodes.length > 0) {
       const { data: pwpLines } = await sb.from('mfg_sales_order_items')
-        .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants')
+        .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants')
         .eq('doc_no', docNo).eq('cancelled', false)
         .filter('variants->>pwp', 'eq', 'true');
       const revertSet = new Set(pwpRevertCodes);
@@ -10124,15 +10011,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         item_code: s.itemCode,
         description: s.description,
         description2: buildVariantSummary('sofa', moduleVariants) || null,
-        unit_price_centi: s.unitPriceSen,
-        discount_centi: moduleDiscounts[i] ?? 0,
-        total_centi: moduleLineTotal,
-        total_inc_centi: moduleLineTotal,
-        balance_centi: moduleLineTotal,
+        unit_price_sen: s.unitPriceSen,
+        discount_sen: moduleDiscounts[i] ?? 0,
+        total_sen: moduleLineTotal,
+        total_inc_sen: moduleLineTotal,
+        balance_sen: moduleLineTotal,
         variants: moduleVariants,
-        unit_cost_centi: s.unitCostSen,
-        line_cost_centi: moduleLineCost,
-        line_margin_centi: moduleLineTotal - moduleLineCost,
+        unit_cost_sen: s.unitCostSen,
+        line_cost_sen: moduleLineCost,
+        line_margin_sen: moduleLineTotal - moduleLineCost,
         divan_price_sen: i === 0 ? recomputed.breakdown.divanSurchargeSen : 0,
         leg_price_sen: i === 0 ? recomputed.breakdown.legSurchargeSen : 0,
         special_order_price_sen: i === 0 ? recomputed.breakdown.specialsSurchargeSen : 0,
@@ -10147,15 +10034,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       item_code: newCode,
       description: String(item.description ?? newCode),
       description2: buildVariantSummary('sofa', persistVariants) || null,
-      unit_price_centi: unit,
-      discount_centi: discount,
-      total_centi: lineTotal,
-      total_inc_centi: lineTotal,
-      balance_centi: lineTotal,
+      unit_price_sen: unit,
+      discount_sen: discount,
+      total_sen: lineTotal,
+      total_inc_sen: lineTotal,
+      balance_sen: lineTotal,
       variants: persistVariants,
-      unit_cost_centi: unitCost,
-      line_cost_centi: unitCost * qty,
-      line_margin_centi: lineTotal - (unitCost * qty),
+      unit_cost_sen: unitCost,
+      line_cost_sen: unitCost * qty,
+      line_margin_sen: lineTotal - (unitCost * qty),
       divan_price_sen: recomputed.breakdown.divanSurchargeSen,
       leg_price_sen: recomputed.breakdown.legSurchargeSen,
       special_order_price_sen: recomputed.breakdown.specialsSurchargeSen,
@@ -10239,23 +10126,31 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     const { id: uid, ...cols } = u;
     const { error } = await sb.from('mfg_sales_order_items').update({
       ...cols,
-      total_inc_centi: cols.total_centi,
-      balance_centi: cols.total_centi,
+      total_inc_sen: cols.total_sen,
+      balance_sen: cols.total_sen,
     }).eq('id', uid);
     throwAtomicCommandWrite(sb, error, `TBC sofa reward revert failed for ${uid}`);
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
   }
+  /* HAZARD 2 (mig 0188 re-keyed pwp_codes on (company_id, code)) — hoisted to
+     the whole voucher settlement, not just the RELEASE below. Everything in
+     this function that touches a voucher by `code` (release, re-point, restamp,
+     DELETE) needs both halves; four of them were carrying one, sixty lines
+     under the two that were correct. */
+  const rewardCompanyId = activeCompanyId(c);
+  if (rewardCompanyId == null) throw new Error('TBC sofa voucher write refused: company unresolved');
   if (rewardCtx) {
+    // HAZARD 2 again: these RELEASE a voucher — unfiltered hands theirs back to stock.
     if (rewardComboMatch) {
       const { error } = await sb.from('pwp_codes')
         .update({ redeemed_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code re-point failed');
       if (error) console.error('[tbc-swap-sofa] reward code re-point failed:', error.message); // eslint-disable-line no-console
     } else {
       const { error } = await sb.from('pwp_codes')
         .update({ status: 'AVAILABLE', redeemed_doc_no: null, redeemed_item_code: null, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code release failed');
       if (error) console.error('[tbc-swap-sofa] reward code release failed:', error.message); // eslint-disable-line no-console
       else pwpVoucherReleased = rewardCtx.code;
@@ -10266,7 +10161,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (pwpKeepCodes.length > 0) {
       const { error } = await sb.from('pwp_codes')
         .update({ trigger_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .in('code', pwpKeepCodes);
+        .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa keep-code restamp failed');
       if (error) console.error('[tbc-swap-sofa] keep-code restamp failed:', error.message); // eslint-disable-line no-console
     }
@@ -10283,22 +10178,22 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);
       const rec = recomputeFromSnapshot(
-        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
+        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceSen: 0, variants: v as MfgItemForRecompute['variants'] },
         rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap, compartmentOverridesSwap,
       );
-      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
+      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_sen);
       const lqty = Number(line.qty);
-      const ldisc = Number(line.discount_centi ?? 0);
+      const ldisc = Number(line.discount_sen ?? 0);
       const lTotal = (lqty * revertUnit) - ldisc;
-      const lCost = Number(line.unit_cost_centi ?? 0);
+      const lCost = Number(line.unit_cost_sen ?? 0);
       const { error } = await sb.from('mfg_sales_order_items').update({
         variants: v,
         description2: buildVariantSummary(String(line.item_group ?? ''), v) || null,
-        unit_price_centi: revertUnit,
-        total_centi: lTotal,
-        total_inc_centi: lTotal,
-        balance_centi: lTotal,
-        line_margin_centi: lTotal - (lCost * lqty),
+        unit_price_sen: revertUnit,
+        total_sen: lTotal,
+        total_inc_sen: lTotal,
+        balance_sen: lTotal,
+        line_margin_sen: lTotal - (lCost * lqty),
         divan_price_sen: rec.breakdown.divanSurchargeSen,
         leg_price_sen: rec.breakdown.legSurchargeSen,
         special_order_price_sen: rec.breakdown.specialsSurchargeSen,
@@ -10310,7 +10205,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     // 3. Dead vouchers go (un-redeemed + the reverted ones — Loo: delete).
     const toDelete = [...pwpDeleteCodes, ...pwpRevertCodes];
     if (toDelete.length > 0) {
-      const { error } = await sb.from('pwp_codes').delete().in('code', toDelete);
+      const { error } = await sb.from('pwp_codes').delete()
+        .in('code', toDelete).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa code delete failed');
       if (error) console.error('[tbc-swap-sofa] code delete failed:', error.message); // eslint-disable-line no-console
     }
@@ -10323,7 +10219,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
          swap above for why this must not be the bridge's pinned system uuid. */
       const mintOwnerStaffId = await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id);
       const { data: keptRows } = pwpKeepCodes.length > 0
-        ? await sb.from('pwp_codes').select('code, rule_id').in('code', pwpKeepCodes)
+        ? await sb.from('pwp_codes').select('code, rule_id')
+            .in('code', pwpKeepCodes).eq('company_id', rewardCompanyId)
         : { data: [] };
       const keptByRule = new Map<string, number>();
       for (const k of ((keptRows ?? []) as Array<{ rule_id: string | null }>)) {
@@ -10379,7 +10276,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     fieldChanges: [
       { field: 'itemCode', from: prev.item_code, to: split?.[0]?.itemCode ?? newCode },
       { field: 'sofaBuild', from: `${oldLines.length} lines`, to: `${rows.length} lines` },
-      { field: 'totalCenti', from: oldBuildTotal, to: newBuildTotal },
+      { field: 'totalSen', from: oldBuildTotal, to: newBuildTotal },
       ...(pwpRevertCodes.length > 0
         ? [{ field: 'pwpRewardsReverted', to: pwpRevertCodes.join(', ') } satisfies FieldChange] : []),
       ...(pwpDeleteCodes.length > 0
@@ -10402,7 +10299,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
 
   return c.json({
     ok: true,
-    totalCenti: newBuildTotal,
+    totalSen: newBuildTotal,
     lines: rows.length,
     soLinks: soLinkResult,
     pwp: {
@@ -10479,8 +10376,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
 
-  // Verify the line exists + belongs to this SO. Cheaper to fail here
-  // than after a multi-MB upload to R2.
+  // Verify the line exists + belongs to this SO. Cheaper to fail here than after a multi-MB upload to R2.
   const { data: item, error: itemErr } = await sb
     .from('mfg_sales_order_items')
     .select('id, doc_no, item_code, photo_urls')
@@ -10783,15 +10679,15 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
 //
 // HOOKKA-style transaction ledger per SO. Each row is one receipt /
 // auth slip. UI lists them, sums into a "Deposit Paid" total, and the
-// balance computes from header.local_total_centi − sum(amount_centi).
+// balance computes from header.local_total_sen − sum(amount_sen).
 //
 // Legacy single-row payment fields on mfg_sales_orders (payment_method,
 mfgSalesOrders.get('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('mfg_sales_order_payments')
     .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
-    .eq('so_doc_no', docNo)
+    .eq('so_doc_no', docNo), c)
     .order('paid_at', { ascending: false })
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -10827,7 +10723,7 @@ const paymentCreateSchema = z.object({
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
   approvalCode:       z.string().optional().nullable(),
-  amountCenti:        z.number().int().nonnegative(),
+  amountSen:        z.number().int().nonnegative(),
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
@@ -10844,8 +10740,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  // Ensure the SO exists before inserting a child row (gives a cleaner
-  // 404 than a deferred FK violation).
+  // Ensure the SO exists before inserting a child row (gives a cleaner 404 than a deferred FK violation).
   const { data: so } = await sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo).maybeSingle();
   if (!so) return c.json({ error: 'sales_order_not_found' }, 404);
 
@@ -10868,7 +10763,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
      legitimate one-shot card payment; the Plan is deliberately NOT gated. Slip
      stays optional (owner 2026-07-13). Only amount > 0 rows are checked, matching
      the desktop guard (a zeroed row carries no method commitment). */
-  if (p.amountCenti > 0) {
+  if (p.amountSen > 0) {
     let missing: string | null = null;
     let methodName = '';
     if (p.method === 'merchant' && !p.merchantProvider?.trim()) { missing = 'bank'; methodName = 'card / merchant'; }
@@ -10881,24 +10776,25 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }
   }
 
-  /* Spec D6 — server-side overpayment guard. The SO total is authoritative;
-     Σ(ledger) + this payment may never exceed it. Honest error: the client
-     shows the remaining balance. */
-  const { data: soTotalRow, error: totalErr } = await sb
-    .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-  if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-  const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-  const { data: paidRows, error: paidErr } = await sb
-    .from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo);
-  if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-  const paidCenti = (paidRows ?? []).reduce((s, r) => s + Number((r as { amount_centi: number }).amount_centi ?? 0), 0);
-  if (totalCenti > 0 && paidCenti + p.amountCenti > totalCenti) {
-    return c.json({
-      error: 'over_payment',
-      reason: `Payment exceeds the order total. Balance: ${((totalCenti - paidCenti) / 100).toFixed(2)}`,
-      balanceCenti: Math.max(0, totalCenti - paidCenti),
-    }, 400);
-  }
+  /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
+     refuse Σ(ledger) + this payment > total_revenue_sen. It is deleted, not
+     relaxed, and the two reads it needed went with it.
+
+     WHAT THE GUARD ACTUALLY COST. It never stopped an over-collection; it
+     redirected one. Refused at the till, the operator's only way to bank cash
+     already in hand was to go back and re-price the ORDER until the total
+     covered it — which is what happened to HC-SO-2608-002 on 2026-08-16:
+     UPDATE_LINE at 08:26:22 put RM 250 of "Right Drawer" special onto a
+     JAGER-(K) line (unitPriceSen 0 → 25000), and the RM 2,250 payment landed
+     76 seconds later at 08:27:38, accepted because the total was now exactly
+     425000. The receipt balanced and the customer's order silently grew a
+     drawer he never bought. Refusing money the business is holding does not
+     make the books truer, it makes the ITEMS lie — and an item is what gets
+     manufactured and delivered.
+
+     So the excess is simply recorded, and the balance goes negative (red on
+     the screen: soBalanceSen). Nothing here touches lines, prices or the
+     order total — a payment is a payment. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
      optional on EVERY SO path, so this route is no longer the loose end of a
@@ -10938,7 +10834,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     installmentMonths: p.installmentMonths,
     onlineType:        p.onlineType,
     approvalCode:      p.approvalCode,
-    amountCenti:       p.amountCenti,
+    amountSen:       p.amountSen,
     accountSheet:      p.accountSheet,
     slipKey:           paymentSlipKey,
     collectedBy:       p.collectedBy,
@@ -10983,7 +10879,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
    approval code, collected-by. The whole editable set is rewritten each call so
    a method change can't leave a stale sub-field behind. Paid / balance / status
    are DERIVED live from the payments ledger (the list/detail rollup + the
-   payment view sum amount_centi) — exactly as the DELETE path relies on — so no
+   payment view sum amount_sen) — exactly as the DELETE path relies on — so no
    header recompute is needed here; the amended amount flows straight through. */
 const paymentPatchSchema = z.object({
   version:           z.number().int().min(1).optional(),
@@ -10993,7 +10889,7 @@ const paymentPatchSchema = z.object({
   installmentMonths: z.number().int().min(0).max(60).optional().nullable(),
   onlineType:        z.string().trim().min(1).optional().nullable(),
   approvalCode:      z.string().optional().nullable(),
-  amountCenti:       z.number().int().nonnegative().optional(),
+  amountSen:       z.number().int().nonnegative().optional(),
   accountSheet:      z.string().optional().nullable(),
   collectedBy:       z.string().uuid().optional().nullable(),
 });
@@ -11046,7 +10942,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     method: 'merchant' | 'transfer' | 'cash' | 'installment';
     merchant_provider: string | null; installment_months: number | null;
     online_type: string | null; approval_code: string | null;
-    amount_centi: number; account_sheet: string | null; collected_by: string | null;
+    amount_sen: number; account_sheet: string | null; collected_by: string | null;
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
 
@@ -11102,7 +10998,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     : null;
   const rawOnline = p.onlineType !== undefined ? p.onlineType : before.online_type;
   const nextOnline = nextMethod === 'transfer' ? (rawOnline ?? null) : null;
-  const nextAmount = p.amountCenti ?? before.amount_centi;
+  const nextAmount = p.amountSen ?? before.amount_sen;
   const nextPaidAt = p.paidAt ?? before.paid_at;
   const nextApproval = p.approvalCode !== undefined ? (p.approvalCode ?? null) : before.approval_code;
   const nextCollectedBy = p.collectedBy !== undefined ? (p.collectedBy ?? null) : before.collected_by;
@@ -11159,28 +11055,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     }
   }
 
-  /* Overpayment guard (mirror POST) — Σ(other rows) + this row's new amount may
-     not exceed the SO total. Excludes THIS payment from the prior sum. */
-  if (p.amountCenti !== undefined) {
-    const { data: soTotalRow, error: totalErr } = await sb
-      .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-    if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-    const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-    const { data: paidRows, error: paidErr } = await sb
-      .from('mfg_sales_order_payments').select('id, amount_centi').eq('so_doc_no', docNo);
-    if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-    const othersCenti = (paidRows ?? []).reduce(
-      (s, r) => s + (String((r as { id: string }).id) === String(id) ? 0 : Number((r as { amount_centi: number }).amount_centi ?? 0)),
-      0,
-    );
-    if (totalCenti > 0 && othersCenti + nextAmount > totalCenti) {
-      return c.json({
-        error: 'over_payment',
-        reason: `Payment exceeds the order total. Balance: ${((totalCenti - othersCenti) / 100).toFixed(2)}`,
-        balanceCenti: Math.max(0, totalCenti - othersCenti),
-      }, 400);
-    }
-  }
+  /* Over-collection is allowed here too (owner 2026-08-16) — the POST's mirror
+     guard is gone, and a correction that lands above the total must not be
+     refused when the original could not be either. Amending RM 2,000 up to
+     RM 2,250 on a RM 2,000 order is exactly the correction the guard used to
+     push into a line re-price. See the POST for the full note. */
 
   const { data: updated, error: updErr } = await sb
     .from('mfg_sales_order_payments')
@@ -11191,7 +11070,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
       installment_months: nextInstallment,
       online_type:        nextOnline,
       approval_code:      nextApproval,
-      amount_centi:       nextAmount,
+      amount_sen:       nextAmount,
       account_sheet:      nextAccountSheet,
       collected_by:       nextCollectedBy,
       version:             expectedPaymentVersion + 1,
@@ -11219,7 +11098,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const changes: FieldChange[] = [];
   if (nextPaidAt !== before.paid_at) changes.push({ field: 'paidAt', from: before.paid_at, to: nextPaidAt });
   if (nextMethod !== before.method) changes.push({ field: 'method', from: before.method, to: nextMethod });
-  if (nextAmount !== before.amount_centi) changes.push({ field: 'amountCenti', from: before.amount_centi, to: nextAmount });
+  if (nextAmount !== before.amount_sen) changes.push({ field: 'amountSen', from: before.amount_sen, to: nextAmount });
   if ((nextMerchantProvider ?? null) !== (before.merchant_provider ?? null)) changes.push({ field: 'merchantProvider', from: before.merchant_provider, to: nextMerchantProvider });
   if ((nextInstallment ?? null) !== (before.installment_months ?? null)) changes.push({ field: 'installmentMonths', from: before.installment_months, to: nextInstallment });
   if ((nextOnline ?? null) !== (before.online_type ?? null)) changes.push({ field: 'onlineType', from: before.online_type, to: nextOnline });
@@ -11241,6 +11120,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      costs one queued edit, while deciding here which fields matter would put a
      second opinion about the balance rule next to so-outstanding.ts. */
   await queueAcSoEdit(c, docNo);
+  // An edited amount also moves what the invoices off this order have settled.
+  await recomputeSiPaidForOrder(sb, docNo, co.companyId);
 
   const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
@@ -11256,7 +11137,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   // mis-routed call from nuking another SO's payment.
   const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);
-  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_centi: number; approval_code: string | null; version: number };
+  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_sen: number; approval_code: string | null; version: number };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
   const currentVersion = Number(rowTyped.version ?? 1);
   const versionCheck = paymentVersionGuard(c.req.query('version'), currentVersion, soCasGrace(c));
@@ -11316,10 +11197,12 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  const { data: deleted, error } = await scopeToCompany(sb.from('mfg_sales_order_payments').delete()
+  // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
+  const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
+  const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)
-    .eq('version', expectedVersion), c)
+    .eq('version', expectedVersion), delCo.companyId)
     .select('id')
     .maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -11328,14 +11211,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
   }
 
-  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
-     deleted payment's ledger entry. A row that never booked no-ops; a failure
-     is logged, never blocks the delete the operator already made. */
-  const unbooked = await reverseSoPayment(sb, id, docNo);
-  if (!unbooked.ok) {
-    /* eslint-disable-next-line no-console */
-    console.error('[acc] SO payment reversal failed:', id, unbooked.status, unbooked.reason);
-  }
+  // Void the ledger entry AND re-roll the invoices this deposit was settling
+  // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
+  await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
@@ -11348,7 +11226,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
-      { field: 'amountCenti',  from: rowTyped.amount_centi,  to: null },
+      { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });
@@ -11409,7 +11287,7 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
    window exists because the day's cash-up settles the MONEY, and a settled
    amount must not move afterwards. This route moves no money: amount, method,
    date and collector are all untouched, and the paid/balance rollups (which sum
-   amount_centi) cannot shift. Gating it would defeat the entire point, since
+   amount_sen) cannot shift. Gating it would defeat the entire point, since
    the proof that arrives late is precisely the proof that arrives on a later
    day.
 
@@ -11608,12 +11486,28 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  // are OK. isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  //
+  // item_code + the catalog category ride the read (2026-08-16). Without them
+  // this path could not see a SERVICE line at all: it passed item_group alone,
+  // so a delivery-fee SKU saved with item_group 'others' counted as a short
+  // accessory and held the whole order back — while the list endpoint and the
+  // allocation sweep, which do pass the code, disagreed with it on the same SO.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
-    .select('item_group, stock_status, cancelled')
+    .select('item_group, item_code, stock_status, cancelled')
     .eq('doc_no', docNo);
-  const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
+  const liveRows: ReadinessLine[] = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>)
+    .filter((l) => !l.cancelled);
+  /* One bounded catalog read for THIS SO's codes (a single order — tens of rows
+     at most), through the same helper the list and the board use, so
+     isServiceLine gets its strongest signal here too.
+     Refuse on failure, do NOT fall through: this decides whether a line is a
+     SERVICE, i.e. whether it can hold the SO out of READY_TO_SHIP. The line flip
+     above is already committed and the allocation sweep re-derives the header
+     idempotently, so refusing costs the caller a retry, not the edit. */
+  const { error: catErr } = await resolveLineCategories(sb, [liveRows], (q) => scopeToCompany(q, c));
+  if (catErr) return c.json({ error: 'load_failed', reason: catErr.message }, 500);
   const readiness = summariseReadiness(liveRows);
   const allReady = readiness.isShipReady;
 
@@ -11708,11 +11602,11 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  // Guard 1 — SO exists. Pull the lock columns (processing-date + proceeded_at
-  // + status) plus salesperson_id for the ownership scope check below, plus the
-  // amendable header columns for the header-change snapshot / date checks.
+  // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
+  // salesperson_id for the ownership scope check below, plus the amendable
+  // header columns for the header-change snapshot / date checks.
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, processing_date, proceeded_at, salesperson_id, ' +
+    .select('doc_no, status, revision, processing_date, salesperson_id, ' +
       'customer_delivery_date, customer_state, postcode')
     .eq('doc_no', docNo), c).maybeSingle();
   if (!soRow) return c.json({ error: 'not_found' }, 404);
@@ -11740,7 +11634,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything
      at all. Keep the two definitions in lock-step. */
-  if (!await soEditLocked(sb, docNo, soRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (!await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
@@ -11799,13 +11693,15 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
     for (const [k, v] of Object.entries(rawHeaderChanges)) {
       if (v !== null && typeof v !== 'string') {
-        return c.json({
-          error: 'header_field_invalid',
-          reason: `The requested value for ${k} is not valid.`,
-        }, 400);
+        return c.json({ error: 'header_field_invalid', reason: `The requested value for ${k} is not valid.` }, 400);
       }
       const val = v === null ? null : v.trim();
       headerChanges[k] = val === '' ? null : val;
+    }
+    /* debtor_name is NOT NULL — refuse a blank requested name at SUBMIT so the
+       requester fixes it, not the approve failing on the constraint. */
+    if ('debtorName' in headerChanges && headerChanges['debtorName'] === null) {
+      return c.json({ error: 'header_field_invalid', reason: 'Customer name cannot be blank — enter the corrected name instead.' }, 400);
     }
   }
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;
@@ -11830,6 +11726,23 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       const codeCheck = await validateItemCodes(sb, requestedCodes, activeCompanyId(c), { requireActive: true });
       if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
     }
+  }
+
+  /* Composition, same rule and same home as every other line write (see
+     lib/main-mix.ts). This route is the one path that can ADD a line without
+     going through POST /:docNo/items, and it had no copy of the rule — nor does
+     applySoAmendment — so an amendment could put a sofa on a bedframe order.
+     Refused at SUBMIT for the same reason the code check above is: the requester
+     can fix it, the approver cannot. Grandfathered like every other edit path —
+     an order that already mixes is not made unamendable. */
+  {
+    const mixLines = submittedLines.map((l) => ({
+      salesOrderItemId: typeof l.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+      changeType:       typeof l.changeType === 'string' ? l.changeType : null,
+      newItemCode:      typeof l.newItemCode === 'string' ? l.newItemCode : null,
+    }));
+    const mainMix = await amendmentMixRefusal(sb, docNo, mixLines, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Date sanity on a requested schedule change (mirrors the create/edit form's

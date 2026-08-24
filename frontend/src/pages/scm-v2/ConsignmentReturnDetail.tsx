@@ -38,7 +38,7 @@ import {
   useDeleteConsignmentReturnItem,
 } from '../../vendor/scm/lib/consignment-return-queries';
 import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
 import {
@@ -56,13 +56,14 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const STATUS_FLOW = ['PENDING', 'RECEIVED', 'INSPECTED', 'REFUNDED', 'CREDIT_NOTED', 'REJECTED', 'CANCELLED'] as const;
 type CrnStatus = typeof STATUS_FLOW[number];
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const TOTALS_KPI_GRID_STYLE: CSSProperties = {
   display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)',
@@ -103,18 +104,18 @@ type CrnHeader = {
   /* FINANCE-gated (CRN_FINANCE_KEYS server-side) — the detail payload OMITS
      every one of these for a non-finance caller (canViewScmFinance), so they
      are optional on the wire. Only the finance-gated TotalsCard reads them.
-     local_total_centi is NOT finance: the returned value is shown to everyone. */
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  local_total_centi: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+     local_total_sen is NOT finance: the returned value is shown to everyone. */
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  local_total_sen: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
   line_count: number;
   currency: string;
@@ -130,17 +131,17 @@ type CrnItem = {
   uom: string;
   qty_returned: number;
   condition: string | null;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
   /* FINANCE-gated (CRN_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
      payload for a non-finance caller, hence optional. NOTE: draftFromItem
-     collapses a missing unit_cost_centi to 0 and the save echoes it back — the
+     collapses a missing unit_cost_sen to 0 and the save echoes it back — the
      route's line PATCH therefore IGNORES a client cost from a non-finance
      caller and keeps the stored one (#632's trap; see consignment-returns.ts). */
-  unit_cost_centi?: number;
-  line_cost_centi?: number;
-  line_margin_centi?: number;
+  unit_cost_sen?: number;
+  line_cost_sen?: number;
+  line_margin_sen?: number;
   variants: Record<string, unknown> | null;
   notes: string | null;
 };
@@ -151,9 +152,9 @@ const draftFromItem = (it: CrnItem): SoLineDraft => ({
   description: it.description ?? '',
   uom: it.uom ?? 'UNIT',
   qty: it.qty_returned ?? 1,
-  unitPriceCenti: it.unit_price_centi ?? 0,
-  discountCenti: it.discount_centi ?? 0,
-  unitCostCenti: it.unit_cost_centi ?? 0,
+  unitPriceSen: it.unit_price_sen ?? 0,
+  discountSen: it.discount_sen ?? 0,
+  unitCostSen: it.unit_cost_sen ?? 0,
   variants: (it.variants as Record<string, unknown>) ?? {},
   remark: it.notes ?? '',
 });
@@ -272,16 +273,16 @@ export const ConsignmentReturnDetail = () => {
     updateItem.mutateAsync({
       id: header!.id, itemId: lineId,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qtyReturned: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, notes: d.remark,
+      uom: d.uom, qtyReturned: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, notes: d.remark,
     });
 
   const commitAddLine = (d: SoLineDraft) =>
     addItem.mutateAsync({
       id: header!.id,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qtyReturned: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, notes: d.remark,
+      uom: d.uom, qtyReturned: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, notes: d.remark,
     });
 
   const saveEdit = () => {
@@ -317,6 +318,30 @@ export const ConsignmentReturnDetail = () => {
     });
   };
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     header; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!header) return;
+    // A consignment return has no money refund — show the goods value instead.
+    const pdfHeader = { ...header, refund_sen: header.local_total_sen };
+    const pdfItems = items.map((it) => ({ ...it, refund_sen: it.line_total_sen }));
+    return import('../../vendor/scm/lib/delivery-return-pdf')
+      .then(({ generateDeliveryReturnPdf }) =>
+        generateDeliveryReturnPdf(pdfHeader as never, pdfItems as never, {
+          docTitle: 'CONSIGNMENT RETURN', docNoLabel: 'CR No',
+          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
+        }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -336,20 +361,6 @@ export const ConsignmentReturnDetail = () => {
 
   const isLocked = lockedStatuses.includes(header.status);
   const isCancelled = header.status === 'CANCELLED';
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // A consignment return has no money refund — show the goods value instead.
-    const pdfHeader = { ...header, refund_centi: header!.local_total_centi };
-    const pdfItems = items.map((it) => ({ ...it, refund_centi: it.line_total_centi }));
-    return import('../../vendor/scm/lib/delivery-return-pdf')
-      .then(({ generateDeliveryReturnPdf }) =>
-        generateDeliveryReturnPdf(pdfHeader as never, pdfItems as never, {
-          docTitle: 'CONSIGNMENT RETURN', docNoLabel: 'CR No',
-          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
-        }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const handleCancel = async () => {
     if (!(await askConfirm({
@@ -380,7 +391,7 @@ export const ConsignmentReturnDetail = () => {
           <div className={styles.actions}>
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Returned</span>
-            <span className={styles.totalRailValue}>{fmtRm(header.local_total_centi, header.currency)}</span>
+            <span className={styles.totalRailValue}>{fmtRm(header.local_total_sen, header.currency)}</span>
           </div>
           <StatusPill docType="dr" status={header.status} />
           <RelationshipMapButton type="cdr" id={id} />
@@ -396,7 +407,7 @@ export const ConsignmentReturnDetail = () => {
               { label: 'Consignee', value: header.debtor_name || '—' },
               { label: 'Return date', value: fmtDateOrDash(header.return_date) },
               { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
-              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+              { label: 'Goods value', value: fmtRm(header.local_total_sen, header.currency) },
             ]}
             {...print.handlers}
           />
@@ -512,7 +523,7 @@ export const ConsignmentReturnDetail = () => {
                 <th className={styles.tableRight}>Total</th>
                 {/* Cost / Margin columns are CUT for a non-finance viewer (off,
                     not hidden — no column, no "—"). The server also strips
-                    unit_cost_centi / line_cost_centi / line_margin_centi from
+                    unit_cost_sen / line_cost_sen / line_margin_sen from
                     the detail payload for such a caller (canViewScmFinance). */}
                 {canFinance && <th className={styles.tableRight}>Unit Cost</th>}
                 {canFinance && <th className={styles.tableRight}>Line Cost</th>}
@@ -544,25 +555,25 @@ export const ConsignmentReturnDetail = () => {
                     {it.condition && <div className={styles.muted}>Condition: {it.condition}</div>}
                   </td>
                   <td className={styles.tableRight}>{it.qty_returned}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, header.currency)}</td>
-                  <td className={styles.tableRight}>{it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi, header.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, header.currency)}</td>
+                  <td className={styles.tableRight}>{it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen, header.currency)}</td>
                   {canFinance && (
                     <td className={styles.tableRight}>
-                      <span className={styles.muted}>{(it.unit_cost_centi ?? 0) > 0 ? fmtRm(it.unit_cost_centi ?? 0, header.currency) : '—'}</span>
+                      <span className={styles.muted}>{(it.unit_cost_sen ?? 0) > 0 ? fmtRm(it.unit_cost_sen ?? 0, header.currency) : '—'}</span>
                     </td>
                   )}
                   {canFinance && (
                     <td className={styles.tableRight}>
-                      <span className={styles.muted}>{(it.line_cost_centi ?? 0) > 0 ? fmtRm(it.line_cost_centi ?? 0, header.currency) : '—'}</span>
+                      <span className={styles.muted}>{(it.line_cost_sen ?? 0) > 0 ? fmtRm(it.line_cost_sen ?? 0, header.currency) : '—'}</span>
                     </td>
                   )}
                   {canFinance && (
                     <td className={styles.tableRight}>
-                      {it.line_total_centi > 0 ? (
-                        <span className={(it.line_margin_centi ?? 0) > 0 ? styles.marginGood : (it.line_margin_centi ?? 0) < 0 ? styles.marginBad : styles.muted}
+                      {it.line_total_sen > 0 ? (
+                        <span className={(it.line_margin_sen ?? 0) > 0 ? styles.marginGood : (it.line_margin_sen ?? 0) < 0 ? styles.marginBad : styles.muted}
                           style={{ fontWeight: 600 }}>
-                          {fmtRm(it.line_margin_centi ?? 0, header.currency)}
+                          {fmtRm(it.line_margin_sen ?? 0, header.currency)}
                         </span>
                       ) : <span className={styles.muted}>—</span>}
                     </td>
@@ -601,7 +612,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 }, ref) => {
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  const staffQ = usePickableStaff({ onlySales: true });
+  /* `include` carries the salesperson already ON this document, so someone the
+     onlySales narrowing hides is still named. "(former staff)" below is then
+     only reachable for a row that genuinely is gone. */
+  const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
@@ -730,14 +744,20 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
-                  disabled={inputsDisabled} onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {form.salespersonId && !staffList.some((s) => s.id === form.salespersonId) && (
-                    <option value={form.salespersonId}>(former staff)</option>
-                  )}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  disabled={inputsDisabled}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -752,8 +772,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date</span>
-              <input type="date" className={styles.fieldInput} value={form.returnDate}
-                disabled={inputsDisabled} onChange={(e) => set('returnDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.returnDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('returnDate', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>
@@ -906,8 +931,8 @@ const CustomerCard = memo(CustomerCardInner) as typeof CustomerCardInner;
    hidden). The server also strips every key it reads (canViewScmFinance).
    ════════════════════════════════════════════════════════════════════════ */
 const TotalsCard = ({ header }: { header: CrnHeader }) => {
-  const totalCost = header.total_cost_centi ?? 0;
-  const totalMargin = header.total_margin_centi ?? 0;
+  const totalCost = header.total_cost_sen ?? 0;
+  const totalMargin = header.total_margin_sen ?? 0;
   const marginPct = (header.margin_pct_basis ?? 0) / 100;
   const marginCls =
     totalMargin <= 0 ? styles.marginBad
@@ -916,16 +941,16 @@ const TotalsCard = ({ header }: { header: CrnHeader }) => {
     : styles.marginBad;
 
   const categories: Array<{ label: string; rev: number; cost: number }> = [
-    { label: 'Mattress / Sofa', rev: header.mattress_sofa_centi ?? 0, cost: header.mattress_sofa_cost_centi ?? 0 },
-    { label: 'Bedframe',        rev: header.bedframe_centi      ?? 0, cost: header.bedframe_cost_centi      ?? 0 },
-    { label: 'Accessories',     rev: header.accessories_centi   ?? 0, cost: header.accessories_cost_centi   ?? 0 },
-    { label: 'Others',          rev: header.others_centi        ?? 0, cost: header.others_cost_centi        ?? 0 },
+    { label: 'Mattress / Sofa', rev: header.mattress_sofa_sen ?? 0, cost: header.mattress_sofa_cost_sen ?? 0 },
+    { label: 'Bedframe',        rev: header.bedframe_sen      ?? 0, cost: header.bedframe_cost_sen      ?? 0 },
+    { label: 'Accessories',     rev: header.accessories_sen   ?? 0, cost: header.accessories_cost_sen   ?? 0 },
+    { label: 'Others',          rev: header.others_sen        ?? 0, cost: header.others_cost_sen        ?? 0 },
   ];
 
-  const fmtMarginClass = (rev: number, marginCenti: number) => {
+  const fmtMarginClass = (rev: number, marginSen: number) => {
     if (rev <= 0) return styles.muted;
-    if (marginCenti > 0) return styles.marginGood;
-    if (marginCenti < 0) return styles.marginBad;
+    if (marginSen > 0) return styles.marginGood;
+    if (marginSen < 0) return styles.marginBad;
     return styles.muted;
   };
 
@@ -936,7 +961,7 @@ const TotalsCard = ({ header }: { header: CrnHeader }) => {
         <div style={TOTALS_KPI_GRID_STYLE}>
           <div>
             <div className={styles.totalLabel}>Returned Value</div>
-            <div className={styles.grandTotal} style={TOTALS_KPI_VALUE_STYLE}>{fmtRm(header.local_total_centi, header.currency)}</div>
+            <div className={styles.grandTotal} style={TOTALS_KPI_VALUE_STYLE}>{fmtRm(header.local_total_sen, header.currency)}</div>
           </div>
           <div>
             <div className={styles.totalLabel}>Cost</div>
@@ -949,7 +974,7 @@ const TotalsCard = ({ header }: { header: CrnHeader }) => {
           <div>
             <div className={styles.totalLabel}>Margin %</div>
             <div className={`${styles.totalValue} ${marginCls}`} style={TOTALS_KPI_VALUE_STYLE}>
-              {header.local_total_centi > 0 ? `${marginPct.toFixed(1)}%` : '—'}
+              {header.local_total_sen > 0 ? `${marginPct.toFixed(1)}%` : '—'}
             </div>
           </div>
         </div>

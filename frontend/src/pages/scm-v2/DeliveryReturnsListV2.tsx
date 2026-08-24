@@ -16,9 +16,11 @@
 // about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
+import { brandingToneForLabel } from "../../lib/brandingTone";
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -65,6 +67,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
+import { deliveryReturnRowMenu } from "./row-menus";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { deliveryReturnPrintChain } from "../../lib/printChain";
+import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -98,7 +104,7 @@ type DrRow = {
   customer_state: string | null;
   status: string;
   currency: string;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count?: number;
   note: string | null;
   // ── Phase 2: NON-finance fields already on the DR list payload (HEADER).
@@ -108,16 +114,16 @@ type DrRow = {
   // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
   //    (canViewScmFinance), so each is optional. The DR header carries FOUR
   //    categories (no service_*). margin_pct_basis = basis points.
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -125,17 +131,11 @@ type StatusTab = "all" | "open" | "inspected" | "refunded" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref. Same fallback chain as SO / DO V2.
 const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
@@ -143,13 +143,10 @@ const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 
 const brandOf = (r: DrRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Colour says WHAT THE LINE IS; the label says whose brand it is.
+   ../../lib/brandingTone is the one home for both. This copy had also lost
+   the BEDFRAME arm — a THIRD spelling across the five lists. */
+const brandTone = brandingToneForLabel;
 
 // DR status flow: PENDING → RECEIVED (goods back, stock IN) → INSPECTED →
 // REFUNDED / CREDIT_NOTED, plus REJECTED / CANCELLED. Compress into 4
@@ -335,7 +332,7 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  From DO
+                  {transferFromColumnLabel('do')}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">
                   {doOf(r)}
@@ -346,7 +343,7 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
                   Refund
                 </div>
                 <div className="mt-0.5 font-money text-[15px] font-bold text-err">
-                  {fmtRm(r.local_total_centi)}
+                  {fmtRm(r.local_total_sen)}
                 </div>
               </div>
             </div>
@@ -389,8 +386,8 @@ function DetailDrawer({
     variants?: Record<string, unknown> | null;
     qty_returned?: number | null;
     condition?: string | null;
-    unit_price_centi?: number | null;
-    line_total_centi?: number | null;
+    unit_price_sen?: number | null;
+    line_total_sen?: number | null;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
       item_code?: string | null;
@@ -400,14 +397,14 @@ function DetailDrawer({
       variants?: Record<string, unknown> | null;
       qty_returned?: number | null;
       condition?: string | null;
-      unit_price_centi?: number | null;
-      line_total_centi?: number | null;
+      unit_price_sen?: number | null;
+      line_total_sen?: number | null;
     }>) ?? [];
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  const totalCenti = row?.local_total_centi ?? 0;
+  const totalSen = row?.local_total_sen ?? 0;
 
   return (
     <ResizableDetailDrawer
@@ -469,7 +466,7 @@ function DetailDrawer({
               )}
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Location" v={row.sales_location || "—"} />
                 <MetaItem k="Salesperson" v={salespersonName} />
@@ -529,8 +526,8 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const amt =
-                    l.line_total_centi ??
-                    (l.qty_returned ?? 0) * (l.unit_price_centi ?? 0);
+                    l.line_total_sen ??
+                    (l.qty_returned ?? 0) * (l.unit_price_sen ?? 0);
                   const { primary, secondary } = orderLineIdentity({
                     code: l.item_code,
                     description: l.description,
@@ -564,7 +561,7 @@ function DetailDrawer({
                         {l.qty_returned ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_centi ?? 0)}
+                        {fmtRm(l.unit_price_sen ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-err">
                         {fmtRm(amt)}
@@ -576,7 +573,7 @@ function DetailDrawer({
 
               {/* Refund total — err-tinted since money leaves the biz. */}
               <div className="mt-4 rounded-lg border-l-4 border-err bg-err-soft px-5 py-4">
-                <TotalRow k="Refund total" v={fmtRm(totalCenti)} strong tone="err" />
+                <TotalRow k="Refund total" v={fmtRm(totalSen)} strong tone="err" />
               </div>
             </div>
 
@@ -725,9 +722,9 @@ function DrLinesExpansion({ id }: { id: string }) {
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty_returned ?? 0),
-    amountCenti:
-      l.line_total_centi ??
-      Number(l.qty_returned ?? 0) * (l.unit_price_centi ?? 0),
+    amountSen:
+      l.line_total_sen ??
+      Number(l.qty_returned ?? 0) * (l.unit_price_sen ?? 0),
   }));
   return (
     <DocumentLinesExpansion
@@ -823,18 +820,18 @@ export function DeliveryReturnsListV2() {
   //   Total returns · Refund value · Pending (open+inspected, needs action)
   //   Refunded (loop closed)
   const stats = useMemo(() => {
-    let refundCenti = 0;
+    let refundSen = 0;
     let pendingCount = 0;
     let refundedCount = 0;
     for (const r of filtered) {
-      refundCenti += r.local_total_centi ?? 0;
+      refundSen += r.local_total_sen ?? 0;
       const b = statusFor(r.status).bucket;
       if (b === "open" || b === "inspected") pendingCount += 1;
       if (b === "refunded") refundedCount += 1;
     }
     return {
       total: filtered.length,
-      refundCenti,
+      refundSen,
       pendingCount,
       refundedCount,
     };
@@ -876,7 +873,7 @@ export function DeliveryReturnsListV2() {
   const goDoList = () => navigate("/scm/delivery-orders");
   const goInvoiceList = () => navigate("/scm/sales-invoices");
   const goEdit = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}?edit=1`);
-  const goPrint = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -896,51 +893,16 @@ export function DeliveryReturnsListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One DR's full detail shaped into the { header, items } bundle the generator
-  // expects — the SAME mapping the DR Detail page's Print PDF uses. Endpoint:
-  // GET /delivery-returns/:id → { deliveryReturn, items }.
-  const fetchDrBundle = async (
-    id: string
-  ): Promise<{ header: unknown; items: unknown[] }> => {
-    const data = await authedFetch<{
-      deliveryReturn: Record<string, unknown>;
-      items: Array<Record<string, unknown>>;
-    }>(`/delivery-returns/${id}`);
-    const h = data.deliveryReturn ?? {};
-    const items = (data.items ?? []).map((it) => ({
-      item_code: it.item_code as string,
-      description: (it.description as string | null) ?? null,
-      qty_returned: it.qty_returned as number,
-      condition: (it.condition as string | null) ?? null,
-      unit_price_centi: it.unit_price_centi as number,
-      refund_centi: it.line_total_centi as number,
-    }));
-    return {
-      header: {
-        return_number: h.return_number as string,
-        status: h.status as string,
-        return_date: h.return_date as string,
-        debtor_code: (h.debtor_code as string | null) ?? null,
-        debtor_name: h.debtor_name as string,
-        reason: (h.reason as string | null) ?? null,
-        refund_centi: h.local_total_centi as number,
-        notes: ((h.note as string | null) ?? (h.notes as string | null)) ?? null,
-        delivery_order_id: (h.delivery_order_id as string | null) ?? null,
-        sales_invoice_id: null,
-        /* Feed the DO-clone address block (migration 0102) into the unified
-           BILL TO block so batch-printed DRs carry the customer address, not
-           just the single-detail print path. Same fields as the detail page. */
-        address1: (h.address1 as string | null) ?? null,
-        address2: (h.address2 as string | null) ?? null,
-        city: (h.city as string | null) ?? null,
-        state: (h.customer_state as string | null) ?? (h.state as string | null) ?? null,
-        postcode: (h.postcode as string | null) ?? null,
-        phone: (h.phone as string | null) ?? null,
-        email: (h.email as string | null) ?? null,
-      },
-      items,
-    };
-  };
+  /* Delegated to lib/printDocumentPdf's `deliveryReturnPdfBundle`, the ONE home
+     for the DR-record → DR-generator mapping (the generator takes a shape the
+     record is not stored in, and migration 0102's address block has to be
+     threaded through by hand). The row menu's print reads the same function. */
+  const fetchDrBundle = async (id: string): Promise<{ header: unknown; items: unknown[] }> =>
+    deliveryReturnPdfBundle(
+      await authedFetch<{ deliveryReturn: Record<string, unknown>; items: Array<Record<string, unknown>> }>(
+        `/delivery-returns/${id}`,
+      ),
+    );
 
   // Batch "Print all" — one ticked DR downloads straight; several prompt
   // combined-vs-separate.
@@ -1045,6 +1007,53 @@ export function DeliveryReturnsListV2() {
     );
   };
 
+  /* Right-click (owner 2026-08-22): 「只要有 Cancel / On Hold 状态的，全部都可以
+     右键 Cancel」. This list had no cancel of any kind — cancelling a return
+     lived only on its detail page — but it needed no new endpoint: the status
+     PATCH it already uses for Inspected, Refunded and Reopen is the same one
+     the detail page's Cancel calls, with CANCELLED as the target.
+
+     The words match the detail page's, because the consequence is the same one
+     and the operator must read it in both places: creating the return put the
+     goods back INTO stock, so cancelling takes them out again.
+
+     Inspected and Refunded stay OFF the menu and on the drawer. Refunded in
+     particular is a money statement, and the drawer is where the refund figure
+     that justifies it is on screen. */
+  const doCancelDr = async (r: DrRow) => {
+    if (
+      !(await askConfirm({
+        title: `Cancel return ${r.return_number}?`,
+        body: "The stock added on create will be reversed via a negative ADJUSTMENT. A cancelled return cannot be reopened.",
+        confirmLabel: "Cancel return",
+        danger: true,
+      }))
+    )
+      return;
+    updateStatus.mutate(
+      { id: r.id, status: "CANCELLED" },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) =>
+          notify({
+            title: `Couldn't cancel ${r.return_number}`,
+            body: `${e instanceof Error ? e.message : "Something went wrong."} The return is unchanged — please try again.`,
+            tone: "error",
+          }),
+      }
+    );
+  };
+  /* No Confirm entry: a Delivery Return is RECEIVED on create and has no draft
+     step, so there is no confirm transition to offer. Cancelling is final — the
+     server refuses to un-cancel — so an already cancelled row gets no entry. */
+  const drContextMenu = deliveryReturnRowMenu<DrRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: printDocument,
+    cancel: doCancelDr,
+    canCancel: (r) => (r.status || "").toUpperCase() !== "CANCELLED",
+  });
+
   // Table columns — Reason gets a first-class spot (a DR-only signal).
   const columns: Column<DrRow>[] = [
     {
@@ -1072,7 +1081,7 @@ export function DeliveryReturnsListV2() {
     },
     {
       key: "do_doc_no",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       getValue: (r) => r.do_doc_no ?? "",
       render: (r) => (
@@ -1083,7 +1092,7 @@ export function DeliveryReturnsListV2() {
       /* Convert-from relation (audit R8): the Sales Order behind this return's
          DO. Server-resolved (so_doc_no); mirrors the DO/SI lists' "From SO". */
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
@@ -1154,10 +1163,10 @@ export function DeliveryReturnsListV2() {
       label: "Refund",
       width: "128px",
       align: "right",
-      getValue: (r) => r.local_total_centi,
+      getValue: (r) => r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-err">
-          {fmtRm(r.local_total_centi)}
+          {fmtRm(r.local_total_sen)}
         </span>
       ),
     },
@@ -1321,123 +1330,123 @@ export function DeliveryReturnsListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1483,7 +1492,7 @@ export function DeliveryReturnsListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {stats.total} return{stats.total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money text-err">{fmtRm(stats.refundCenti)}</span>
+            <span className="font-money text-err">{fmtRm(stats.refundSen)}</span>
           </div>
         </div>
       </div>
@@ -1502,7 +1511,7 @@ export function DeliveryReturnsListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromDo}
                 >
-                  From Delivery Order
+                  {transferFromLabel('do')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button
@@ -1539,7 +1548,7 @@ export function DeliveryReturnsListV2() {
             <StatCard
               pending={statsPending}
               label="Refund Value"
-              value={fmtRm(stats.refundCenti)}
+              value={fmtRm(stats.refundSen)}
               subtitle="Money owed back"
               tone="error"
               rail="bg-err"
@@ -1647,6 +1656,7 @@ export function DeliveryReturnsListV2() {
               columns={columns}
               getRowKey={(r) => r.id}
               onRowClick={(r) => setSelected(r)}
+              contextMenu={drContextMenu}
               expandable={{
                 render: (r) => <DrLinesExpansion id={r.id} />,
                 rowKey: (r) => r.id,
@@ -1712,7 +1722,7 @@ export function DeliveryReturnsListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(deliveryReturnPrintChain(selected).own)}
         onMarkInspected={() => selected && doMarkInspected(selected)}
         onMarkRefunded={() => selected && doMarkRefunded(selected)}
         onReopen={() => selected && void doReopen(selected)}

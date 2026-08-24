@@ -24,12 +24,14 @@ import { useInventoryBuckets } from '../../vendor/scm/lib/stock-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { variantKeyLabel } from '../../vendor/scm/lib/variant-key-label';
 import {
   useCreateStockTransfer,
   type StockTransferItemInput,
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -39,7 +41,7 @@ const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const blankLine = (): LineDraft => ({
   _key: newKey(),
-  productCode: '',
+  itemCode: '',
   productName: '',
   qty: 1,
   notes: '',
@@ -51,10 +53,15 @@ const todayISO = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-// Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
-// bucket label for the picker. '' = the unclassified / plain-SKU bucket.
-const humanizeVariantKey = (k: string): string =>
-  k ? k.split('|').map((s) => s.replace('=', ' ')).join(' · ') : '(unclassified)';
+/* Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
+   bucket label for the picker. '' = the unclassified / plain-SKU bucket, which
+   is a REAL pickable value, so it gets a word rather than a blank.
+
+   The rule itself moved to `vendor/scm/lib/variant-key-label.ts` on 2026-08-22:
+   the Stock Transfer and Stock Take PDFs print the same key, and a second
+   hand-written copy of a display rule is the drift `warehouse-label.ts` already
+   documents the cost of. */
+const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassified)');
 
 // Sentinel for the "no bucket picked yet" option — distinct from '' (which is a
 // real, pickable unclassified bucket).
@@ -74,7 +81,7 @@ function TransferLineRow({
   removeLine: (key: string) => void;
   canRemove: boolean;
 }) {
-  const bucketsQ = useInventoryBuckets(line.productCode || null, fromWarehouseId || null);
+  const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
   // The line stores only variant_key (the backend picks the batch FIFO), so sum
   // the (variant_key, batch) buckets up to one row per variant_key.
   const variantBuckets = useMemo(() => {
@@ -91,7 +98,7 @@ function TransferLineRow({
     ? undefined
     : variantBuckets.find((v) => v.variantKey === line.variantKey)?.qty;
   const isOverdrawn = avail != null && line.qty > avail;
-  const ready = Boolean(line.productCode && fromWarehouseId);
+  const ready = Boolean(line.itemCode && fromWarehouseId);
 
   return (
     <tr>
@@ -99,7 +106,7 @@ function TransferLineRow({
         <input
           type="text"
           list={`xfer-skus-${line._key}`}
-          value={line.productCode}
+          value={line.itemCode}
           onChange={(e) => onPickCode(line._key, e.target.value)}
           placeholder="Type code…"
           className={styles.fieldInput}
@@ -123,7 +130,7 @@ function TransferLineRow({
         >
           <option value={UNPICKED} disabled>
             {!fromWarehouseId ? 'Pick From warehouse first'
-              : !line.productCode ? 'Pick SKU first'
+              : !line.itemCode ? 'Pick SKU first'
               : bucketsQ.isLoading ? 'Loading…'
               : variantBuckets.length === 0 ? 'No stock at source'
               : 'Pick variant / bucket…'}
@@ -215,7 +222,7 @@ export const StockTransferNew = () => {
   const onPickCode = (key: string, code: string) => {
     const sku = skuByCode.get(code);
     setLine(key, {
-      productCode: code,
+      itemCode: code,
       productName: sku?.name ?? '',
       // A new SKU invalidates any previously picked variant bucket.
       variantKey: undefined,
@@ -232,8 +239,8 @@ export const StockTransferNew = () => {
   );
   // A line is valid only once its variant BUCKET is picked (variantKey set).
   // Transferring without it would move the unclassified bucket and desync stock.
-  const validLines = lines.filter((l) => l.productCode.trim() && l.qty > 0 && l.variantKey !== undefined);
-  const needsBucket = lines.some((l) => l.productCode.trim() && l.qty > 0 && l.variantKey === undefined);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey !== undefined);
+  const needsBucket = lines.some((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey === undefined);
 
   const canSave = Boolean(
     fromWarehouseId &&
@@ -340,12 +347,7 @@ export const StockTransferNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Transfer Date *</span>
-              <input
-                type="date"
-                value={transferDate}
-                onChange={(e) => setTransferDate(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={transferDate} onChange={(iso) => setTransferDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

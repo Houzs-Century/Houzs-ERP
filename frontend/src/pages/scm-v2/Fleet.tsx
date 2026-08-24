@@ -61,6 +61,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { LorryDetail } from './LorryDetail';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -497,7 +498,7 @@ const LorriesSection = () => {
   /* Map warehouse id → code/name for the column display. */
   const whName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const w of warehouses.data ?? []) m.set(w.id, w.code || w.name);
+    for (const w of warehouses.data ?? []) m.set(w.id, warehouseLabel(w) ?? "");
     return m;
   }, [warehouses.data]);
 
@@ -665,7 +666,7 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
       capacityM3: m3 !== null && Number.isFinite(m3) ? m3 : null,
       capacityKg: kg !== null && Number.isFinite(kg) ? kg : null,
       maxSets: sets !== null && Number.isInteger(sets) && sets >= 0 ? sets : null,
-      maxRevenueCenti: revRm !== null && Number.isFinite(revRm) && revRm >= 0 ? Math.round(revRm * 100) : null,
+      maxRevenueSen: revRm !== null && Number.isFinite(revRm) && revRm >= 0 ? Math.round(revRm * 100) : null,
       capacityLayer,
       notes: form.notes.trim() || undefined,
       active: true,
@@ -696,7 +697,7 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
               <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
                 <option value="">— None —</option>
                 {(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code || w.name}</option>
+                  <option key={w.id} value={w.id}>{warehouseLabel(w)}</option>
                 ))}
               </select>
             </label>

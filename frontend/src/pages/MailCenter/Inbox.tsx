@@ -128,6 +128,7 @@ import {
   PanelRight,
   Square,
 } from "lucide-react";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
 
 type MailThreadRow = {
   id: string;
@@ -234,9 +235,9 @@ function fmtTime(iso: string | number | null | undefined): string {
   if (Number.isNaN(d.getTime())) return "";
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
-  return sameDay
-    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
+  /* Today shows the clock, older rows show the date — one INBOX convention,
+     but both halves come from the one rule rather than the OS locale. */
+  return sameDay ? fmtClock(d) : fmtDate(d);
 }
 
 function senderLabel(t: MailThreadRow): string {
@@ -1373,7 +1374,8 @@ export function MailInbox() {
     try {
       await api.post("/api/mail-center/test-inject");
     } catch {
-      /* ignore — reload just shows nothing changed */
+      /* silent-write-ok: the developer-only test-mail injector. The reload
+         below shows nothing changed, which is the whole answer. */
     }
     reloadAll();
   }
@@ -1780,12 +1782,7 @@ function outboxStatusLabel(status: string): string {
   }
 }
 
-function fmtMailTime(iso: string | null): string {
-  if (!iso) return "";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "";
-  return new Date(t).toLocaleString();
-}
+const fmtMailTime = fmtDateTime;
 
 // One outbox page. The backend caps at 200/page and returns `hasMore` when a
 // full page came back; the "Load more" button pulls the next offset so entries

@@ -31,12 +31,17 @@ const PIPELINE = "('CONFIRMED','IN_PRODUCTION','READY_TO_SHIP')";
 
 interface SoRow {
   doc_no: string; status: string;
+  /** Migration 0324 — the hold MARKER. A held order keeps its real status, so
+   *  the PIPELINE status filter below can no longer exclude one by itself. */
+  on_hold?: boolean | null;
   debtor_name?: string | null; email?: string | null; address1?: string | null;
   postcode?: string | null; customer_delivery_date?: string | null;
-  local_total_centi?: number | null; paid_centi?: number | null;
+  local_total_sen?: number | null; paid_sen?: number | null;
 }
 interface ItemRow {
   doc_no: string; item_group: string; item_code: string;
+  /** mfg_products.category, resolved by the scalar subquery below. */
+  category?: string | null;
   stock_status: string; cancelled?: boolean | null;
 }
 
@@ -57,17 +62,24 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
 
   const soRes = await db
     .prepare(
-      `SELECT doc_no, status, debtor_name, email, address1, postcode,
-              customer_delivery_date, local_total_centi, paid_centi
+      `SELECT doc_no, status, on_hold, debtor_name, email, address1, postcode,
+              customer_delivery_date, local_total_sen, paid_sen
          FROM scm.mfg_sales_orders WHERE status IN ${PIPELINE} LIMIT 1000`,
     )
     .all<SoRow>();
   const sos = soRes.results ?? [];
 
   // All items for pipeline SOs in one join — no per-order query, no dynamic IN.
+  // The catalog category rides as a SCALAR SUBQUERY, not a join: mfg_products is
+  // per-company and `code` collides across companies, so joining it would fan a
+  // line out into two rows and double-count the readiness tally. LIMIT 1 cannot
+  // fan out, and the only consumer is isServiceLine's "is this SERVICE?" test —
+  // a code that is SERVICE in one company is SERVICE in the other.
   const itemRes = await db
     .prepare(
-      `SELECT i.doc_no, i.item_group, i.item_code, i.stock_status, i.cancelled
+      `SELECT i.doc_no, i.item_group, i.item_code, i.stock_status, i.cancelled,
+              (SELECT p.category FROM scm.mfg_products p
+                WHERE p.code = i.item_code LIMIT 1) AS category
          FROM scm.mfg_sales_order_items i
          JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no
         WHERE o.status IN ${PIPELINE}`,
@@ -76,7 +88,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   const itemsByDoc = new Map<string, ReadinessLine[]>();
   for (const it of itemRes.results ?? []) {
     const arr = itemsByDoc.get(it.doc_no) ?? [];
-    arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: !!it.cancelled });
+    arr.push({ item_group: it.item_group, item_code: it.item_code, category: it.category ?? null, stock_status: it.stock_status, cancelled: !!it.cancelled });
     itemsByDoc.set(it.doc_no, arr);
   }
 
@@ -88,11 +100,12 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   for (const so of sos) {
     const readiness = summariseReadiness(itemsByDoc.get(so.doc_no) ?? []);
     const gate = computeReleaseGate({
-      totalCenti: Number(so.local_total_centi ?? 0),
-      paidCenti: Number(so.paid_centi ?? 0),
+      totalSen: Number(so.local_total_sen ?? 0),
+      paidSen: Number(so.paid_sen ?? 0),
     });
     const input: FulfilmentInput = {
       status: so.status,
+      onHold: so.on_hold ?? null,
       isMainReady: readiness.isMainReady,
       isFullyReady: readiness.isFullyReady,
       releaseDecision: gate.decision,

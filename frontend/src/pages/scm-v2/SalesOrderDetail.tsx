@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtDateTime, fmtMoneyCenti, lineIdentity, missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -49,6 +49,7 @@ import {
   useUploadSoItemPhoto,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { AuditHistoryPanel } from '../../components/audit/AuditHistoryPanel';
 import type { AuditFieldChange, AuditLogEntry } from '../../components/audit/audit-labels';
 import { SO_AUDIT_LABELS } from './so-audit-labels';
@@ -60,8 +61,8 @@ import {
   amendmentEligible as soAmendmentEligible,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
-import { parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
@@ -70,7 +71,9 @@ import {
   soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
 } from '../../vendor/scm/lib/so-amendment-header';
-import { diffHeaderPayload } from '../../vendor/scm/lib/so-header-diff';
+import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-header-diff';
+import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
+  AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
@@ -92,18 +95,15 @@ import {
   useSupplierConfirm,
   useApproveSo,
   useAmendmentDetail,
-  useSoRevisions,
   type CreateAmendmentLine,
   type AmendmentLine,
-  type SoRevisionRow,
 } from '../../vendor/scm/lib/so-amendment-queries';
 import {
   amendmentLineChangedFields,
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines,
-} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -134,7 +134,18 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import {
+  cascadeStagedDeliveryDate, dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
+  patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
+  type StagedAddLine,
+} from './so-add-lines';
+import {
+  readVersionConflict, SoVersionConflictBanner, type SoVersionConflict,
+} from './so-version-conflict';
+import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
+import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -195,6 +206,14 @@ type SoStatus = typeof STATUS_LIST[number];
 const STATUS_CLASS: Record<string, string> = {
   // DRAFT flow — re-added so a DRAFT SO (scanned / auto-generated, pending
   // operator Confirm) renders the muted grey pill instead of a bare string.
+  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- a CSS module is
+     typed as a total Record<string,string>, so TS calls every `?? ''` here
+     redundant. It is not: a key with no matching class in the .module.css
+     resolves to undefined at runtime and the pill renders `class="undefined"`.
+     The type is the thing that is wrong, and until CSS modules are typed from
+     the stylesheet these guards are the only thing standing between a missing
+     class and a broken status pill. Deleting them to satisfy the rule would
+     trade a lint line for a visual bug. */
   DRAFT:          styles.statusDraft ?? '',
   CONFIRMED:      styles.statusConfirmed ?? '',
   IN_PRODUCTION:  styles.statusInProd ?? '',
@@ -205,6 +224,7 @@ const STATUS_CLASS: Record<string, string> = {
   CLOSED:         styles.statusClosed ?? '',
   CANCELLED:      styles.statusCancelled ?? '',
   RETURNED:       styles.statusReturned ?? '',
+  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 };
 
 // Owner-preferred status wording — kept identical to the SO list pill
@@ -224,7 +244,7 @@ const SO_STATUS_LABEL: Record<string, string> = {
   CANCELLED:     'Cancelled',
 };
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* Task #99 (UI perf) — Local debounce hook lifted to ../lib/hooks.ts as
    useDebouncedValue so SoLineCard's product picker (Task #102) can reuse
@@ -254,21 +274,21 @@ type SoHeader = {
   address3: string | null;
   address4: string | null;
   phone: string | null;
-  mattress_sofa_centi: number;
-  bedframe_centi: number;
-  accessories_centi: number;
-  others_centi: number;
+  mattress_sofa_sen: number;
+  bedframe_sen: number;
+  accessories_sen: number;
+  others_sen: number;
   /* Task #114 — per-category cost rollup (migration 0079). Used by the
      Totals card category breakdown so each row can show Revenue / Cost /
      Margin without summing items. May be undefined on rows older than
      0079 — fall back to 0 in the consumer. */
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?:      number;
-  accessories_cost_centi?:   number;
-  others_cost_centi?:        number;
-  local_total_centi: number;
-  total_cost_centi: number;
-  total_margin_centi: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?:      number;
+  accessories_cost_sen?:   number;
+  others_cost_sen?:        number;
+  local_total_sen: number;
+  total_cost_sen: number;
+  total_margin_sen: number;
   margin_pct_basis: number;
   line_count: number;
   currency: string;
@@ -306,11 +326,6 @@ type SoHeader = {
   hub_name: string | null;
   customer_delivery_date: string | null;
   processing_date: string | null;
-  /* POS "Proceed" timestamp (migration 0110). Auto-stamped server-side when the
-     SO first enters IN_PRODUCTION (the POS "Proceed" action). Read-only here —
-     surfaced as "Proceed Date" in the Order Info card so the coordinator can
-     see WHEN the salesperson proceeded the order. */
-  proceeded_at: string | null;
   linked_do_doc_no: string | null;
   ship_to_address: string | null;
   bill_to_address: string | null;
@@ -327,6 +342,9 @@ type SoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* POS handover "Target Date" — still WRITTEN by the POS (46 SOs in the last
+     90 days, measured on prod 2026-08-18) and still read by the sales-report
+     export. Not rendered here; do not delete it as dead. */
   target_date: string | null;
   /* P1 (migration 0142) — POS handover customer signature (data URL). Read-only
      here; rendered as an image so the coordinator can see the signed proof. */
@@ -351,8 +369,8 @@ type SoHeader = {
   merchant_provider: string | null;     // GHL | HLB | MBB | PBB
   approval_code: string | null;
   payment_date: string | null;          // PR #157 — date funds received
-  deposit_centi: number;
-  paid_centi: number;
+  deposit_sen: number;
+  paid_sen: number;
 };
 
 type SoItem = {
@@ -364,12 +382,12 @@ type SoItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  total_centi: number;
-  unit_cost_centi: number;
-  line_cost_centi: number;
-  line_margin_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  total_sen: number;
+  unit_cost_sen: number;
+  line_cost_sen: number;
+  line_margin_sen: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
   /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
@@ -415,9 +433,9 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   description:    it.description ?? '',
   uom:            it.uom ?? 'UNIT',
   qty:            it.qty ?? 1,
-  unitPriceCenti: it.unit_price_centi ?? 0,
-  discountCenti:  it.discount_centi ?? 0,
-  unitCostCenti:  it.unit_cost_centi ?? 0,
+  unitPriceSen: it.unit_price_sen ?? 0,
+  discountSen:  it.discount_sen ?? 0,
+  unitCostSen:  it.unit_cost_sen ?? 0,
   // 2026-06-08 (Loo) — canonicalise POS-vocabulary sofa keys (depth →
   // seatHeight, sofaLegHeight → legHeight) so the Edit modal's Seat/Leg
   // dropdowns prefill a POS-created line instead of re-asking. fabricCode
@@ -451,51 +469,13 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
   description:    d.description,
   uom:            d.uom,
   qty:            d.qty,
-  unitPriceCenti: d.unitPriceCenti,
-  discountCenti:  d.discountCenti,
-  unitCostCenti:  d.unitCostCenti,
+  unitPriceSen: d.unitPriceSen,
+  discountSen:  d.discountSen,
+  unitCostSen:  d.unitCostSen,
   variants:       d.variants ?? null,
   remark:         d.remark,
   lineDeliveryDate:           d.lineDeliveryDate ?? null,
   lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
-});
-
-/* Serialised signature of exactly the fields an AMENDMENT LINE can carry — the
-   five the CreateAmendmentLine payload has room for, and no more.
-
-   Owner 2026-07-16 ("完全看不出有什麼變動申請？"): buildAmendmentLines used to test
-   dirtiness with lineCommitSig, which covers the 13 fields a line PATCH
-   persists. Nine of those (lineDeliveryDate, remark, description, uom,
-   itemGroup, discount, cost, …) have NO channel on an amendment, so a line
-   dirty only in one of them was recorded as a SPEC change whose new_* equalled
-   its own old_snapshot exactly — a card the approver reads as identical on both
-   sides. The mass-producer was the header Delivery Date cascade
-   (cascadeDeliveryDateToLines), which rewrites lineDeliveryDate on EVERY
-   non-overridden line the moment the header date input changes: a header-only
-   edit therefore recorded a phantom SPEC row for every line on the order. That
-   exact cascade-dirt was already carved out of saveEdit (2990 PR #718); the
-   amendment builder never got the same treatment.
-
-   Both sides are draftFromItem output for an untouched line — including the
-   canonicalizeVariants pass — so normalisation never false-positives. Comparing
-   the draft against the raw item instead WOULD: draftFromItem canonicalises
-   POS sofa aliases while the item's stored blob is raw.
-
-   REMARK joined the list on 2026-08-11 (mig 0280). It is one of the nine fields
-   named above as having "no channel" — and that was the whole defect, not a
-   design: an operator amended a locked SO purely to type "Please take back Cody
-   Bedframe (King Size) 2 units" onto a SVC-ADDON line, and BOTH halves of this
-   comment worked against them. The payload had no room for the text, and this
-   signature scored the line as unmoved, so a remark-only edit produced no
-   amendment at all — Save reported success and nothing was requested. The
-   column now exists, so the field belongs in the signature that decides whether
-   there is something to request. The other eight still have no channel. */
-const amendmentLineSig = (d: SoLineDraft): string => JSON.stringify({
-  itemCode:       d.itemCode,
-  qty:            d.qty,
-  unitPriceCenti: d.unitPriceCenti,
-  variants:       d.variants ?? null,
-  remark:         d.remark ?? '',
 });
 
 export const SalesOrderDetail = () => {
@@ -523,32 +503,32 @@ export const SalesOrderDetail = () => {
      scm.staff row (e.g. the owner). Used only as the first (id) match key + a
      name fallback in selfStaffMatch below. */
   const { staff: currentStaff } = useAuth();
-  /* Owner 2026-07-13 — mirror SalesOrderNew's `selfStaffMatch`: resolve the
-     logged-in Houzs user against the loaded staff roster (id → email → name) so
-     the Add-Payment "Collected By" defaults to the person recording it. The
-     2990 auth bridge reports id:null for the owner, so PaymentsTable's internal
-     `auth.staff?.id` fallback left "Collected By" as "—" on the SO detail. No
-     roster match ⇒ undefined ⇒ PaymentsTable keeps "—" (non-regressive). */
+  /* Owner 2026-07-13 — resolve the signed-in user against the staff roster so
+     Add-Payment's "Collected By" defaults to the person recording it. No match
+     ⇒ undefined ⇒ PaymentsTable keeps "—".
+
+     THE LADDER IS THE SHARED ONE NOW, and that is a BEHAVIOUR CHANGE, not a
+     pure refactor: this page had no `user_id` rung at all (bridge-id → email →
+     name), while resolveSelfStaff tries `user_id` first — the key the backend
+     itself joins on, present on 102 of 140 staff rows against email's 18. So
+     people previously unmatched (IT Admin: user_id 4, email NULL) now match,
+     and where the two disagree `user_id` wins. Changes only this picker's
+     DEFAULT, overridable, writes nothing. Full account: docs/bugs/0483. */
   const staffQ = useStaff();
   const staffList = useMemo(
     () => (staffQ.data ?? []).filter((s) => s.active),
     [staffQ.data],
   );
-  const selfStaffMatch = useMemo(() => {
-    const byId = currentStaff?.id
-      ? staffList.find((s) => s.id === currentStaff.id)
-      : undefined;
-    if (byId) return byId;
-    const email = (currentUser?.email ?? '').trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? '').trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const name = (currentUser?.name ?? currentStaff?.name ?? '').trim().toLowerCase();
-    return name
-      ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
-      : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name]);
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffId: currentStaff?.id,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
   const createAmendment = useCreateAmendment();
   const supplierConfirm = useSupplierConfirm();
   const approveSo = useApproveSo();
@@ -614,15 +594,17 @@ export const SalesOrderDetail = () => {
      (header + every line draft + an optional pending add-draft) is then
      committed by the ONE page-level Save in the header. editingDrafts is
      keyed by item id; the seed/clear effect below mirrors isEditing.
-     The "+ Add Line Item" button still seeds addingDraft with emptySoLine()
-     + the SO header's customer_delivery_date so a brand-new line renders an
+     The "+ Add Line Item" button appends one StagedAddLine (emptySoLine() +
+     the SO header's customer_delivery_date) so a brand-new line renders an
      inline SoLineCard at the bottom of the table (same component, same
      behavior as the New SO page — there is no modal flow at all). */
   const [editingDrafts, setEditingDrafts] = useState<Record<string, SoLineDraft>>({});
   /* The drafts AS SEEDED (pristine) — Save diffs each current draft against this
      so untouched lines are not re-committed (see lineCommitSig). */
   const originalDraftsRef = useRef<Record<string, SoLineDraft>>({});
-  const [addingDraft, setAddingDraft] = useState<SoLineDraft | null>(null);
+  /* Owner 2026-08-16: "it should be able to keep adding lines." A single
+     nullable draft + a self-hiding button capped an edit session at ONE. */
+  const [addingDrafts, setAddingDrafts] = useState<StagedAddLine[]>([]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
   const [unlockOverride, setUnlockOverride] = useState(false);
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
@@ -741,6 +723,11 @@ export const SalesOrderDetail = () => {
     pickChoice: pickChainChoice,
   } = useSoRelationshipMap(header);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /* The order moved under this editor. Held as STATE, not written straight into
+     loadedVersionRef, because adopting the server's version is the operator's
+     decision — see so-version-conflict.tsx for why silently adopting it is a
+     lost update rather than a fix. */
+  const [versionConflict, setVersionConflict] = useState<SoVersionConflict | null>(null);
   const customerCardRef = useRef<CustomerCardHandle | null>(null);
 
   /* One idempotency key per AMENDMENT INTENT (see lib/idempotency.ts). The
@@ -752,14 +739,11 @@ export const SalesOrderDetail = () => {
      one is a real duplicate). A later, genuinely separate amendment is a new
      edit session and therefore a new key. */
   const amendKeyRef = useRef<string | null>(null);
-  /* One key for the pending ADD intent. It survives a timeout/retry so the
-     app-wide Idempotency-Key middleware replays the first successful insert
-     instead of creating a second line. */
-  const addLineKeyRef = useRef<string | null>(null);
+  /* The ADD key rides on the ROW now (StagedAddLine.idempotencyKey): one key
+     shared across distinct inserts would replay the first for all of them. */
   const activeLineLeaseRef = useRef<string | null>(null);
   const endEditSession = () => {
     amendKeyRef.current = null;
-    addLineKeyRef.current = null;
     activeLineLeaseRef.current = null;
     setIsEditing(false);
   };
@@ -783,10 +767,14 @@ export const SalesOrderDetail = () => {
     if (docNo) navigate(`/scm/sales-orders/${docNo}`, { replace: true });
   };
 
-  const enterEdit  = () => { setSaveError(null); setIsEditing(true); };
+  /* Both halves of the save feedback die together — a version banner left up
+     from the previous attempt would accuse the operator of a stale baseline
+     they have already dealt with. */
+  const clearSaveFeedback = () => { setSaveError(null); setVersionConflict(null); };
+  const enterEdit  = () => { clearSaveFeedback(); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
-    setSaveError(null);
+    clearSaveFeedback();
     // The seed/clear effect wipes editingDrafts + addingDraft when isEditing
     // flips to false, discarding any uncommitted line edits.
     endEditSession();
@@ -806,7 +794,7 @@ export const SalesOrderDetail = () => {
     const handle = customerCardRef.current;
     if (!handle || !header) return;
     if (savingOrder) return;
-    setSaveError(null);
+    clearSaveFeedback();
 
     /* Owner 2026-06-03 — phone is COMPULSORY on every SO. Mirror the New SO
        guard so Edit can't blank it out (the backend PATCH now rejects an
@@ -820,9 +808,11 @@ export const SalesOrderDetail = () => {
       return;
     }
 
-    // Guard: an open add-draft must have a product picked before Save.
-    if (addingDraft && !addingDraft.itemCode.trim()) {
-      setSaveError('Pick a product for the new line, or remove it before saving.');
+    // Guard: every staged add needs a product. Named by POSITION — with
+    // several staged, "the new line" no longer says which card to go and fix.
+    const blankAddPos = firstBlankStagedAdd(addingDrafts);
+    if (blankAddPos != null) {
+      setSaveError(`${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before saving.`);
       return;
     }
     // Guard: every existing line must still reference a product.
@@ -831,16 +821,26 @@ export const SalesOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    // In edit mode every existing line is seeded into editingDrafts, so this
-    // (+ the pending add-draft) covers the whole order.
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       Block + warn here so the operator gets one plain sentence, not a raw 400.
+       In edit mode every existing line is seeded into editingDrafts, so this
+       (+ EVERY staged add) covers the whole order.
+
+       INTRODUCED, not flat (2026-08-18). This asked `hasSofaMixConflict` on the
+       edited set alone, which is the CREATE path's question. The three server
+       line paths ask a different one — `mainMixIntroduced` refuses only a change
+       that INTRODUCES the mix, so an order written before the rule existed stays
+       editable — and the flat client check sat in front of them refusing saves
+       the server would have accepted. An operator on a pre-rule mixed order could
+       not save ANY change to it, not even a phone number, and the sentence blamed
+       a rule the server itself grandfathers. */
+    const storedGroups = items.map((it) => it.item_group);
     const editedGroups = [
       ...Object.values(editingDrafts),
-      ...(addingDraft ? [addingDraft] : []),
+      ...stagedAddDrafts(addingDrafts),
     ].filter((d) => d.itemCode.trim()).map((d) => d.itemGroup);
-    if (hasSofaMixConflict(editedGroups)) {
+    if (sofaMixIntroduced(storedGroups, editedGroups)) {
       setSaveError(SOFA_MIX_MESSAGE);
       return;
     }
@@ -850,7 +850,7 @@ export const SalesOrderDetail = () => {
     if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),
-        ...(addingDraft ? [addingDraft] : []),
+        ...stagedAddDrafts(addingDrafts),
       ]
         .filter((d) => d.itemCode.trim())
         .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
@@ -900,7 +900,13 @@ export const SalesOrderDetail = () => {
       return true;
     });
     const deleteEntries = items.filter((it) => !(it.id in editingDrafts));
-    const pendingAdd = addingDraft;
+    // Snapshot: the set that goes out must be the set the guards above passed.
+    const pendingAdds = addingDrafts;
+    // What the operator will read in a failure message.
+    const addLabel = (row: StagedAddLine, i: number) =>
+      row.draft.itemCode.trim() || stagedAddLabel(i + 1);
+    const itemLabel = (id: string) => editingDrafts[id]?.itemCode.trim()
+      || items.find((it) => it.id === id)?.item_code || 'A line';
 
     const saveHeader = () => new Promise<void>((resolve, rejectSave) => {
       handle.save({
@@ -916,7 +922,7 @@ export const SalesOrderDetail = () => {
         },
       });
     });
-    const hasLineWrites = lineEntries.length > 0 || deleteEntries.length > 0 || pendingAdd != null;
+    const hasLineWrites = lineEntries.length > 0 || deleteEntries.length > 0 || pendingAdds.length > 0;
     const leaseToken = hasLineWrites
       ? (activeLineLeaseRef.current ??= newIdempotencyKey())
       : null;
@@ -930,18 +936,28 @@ export const SalesOrderDetail = () => {
       : Promise.resolve();
 
     /* The version reservation is the first persisted operation. A stale
-       editor therefore stops at 409 before any line PATCH/POST. Existing-line
-       writes remain idempotent PATCHes; the pending ADD carries one stable
-       Idempotency-Key across retries. The real header patch follows the lines
-       so its Processing-Date gate can inspect the now-current variants. */
+       editor therefore stops at 409 before any line PATCH/POST. Each staged
+       ADD carries its OWN Idempotency-Key across retries. runSoLineWrites owns
+       the stage order and the settling rules — see so-add-lines.ts for why the
+       ADDs go one at a time and why every stage now reports which line. */
     reserveHeader
-      .then(() => Promise.all(deleteEntries.map((it) => deleteItem.mutateAsync({
-        docNo: header.doc_no,
-        itemId: it.id,
-        leaseToken: leaseToken!,
-      }))))
-      .then(() => Promise.all(lineEntries.map(([id, d]) => commitEditingDraft(id, d))))
-      .then(() => (pendingAdd ? commitAddLine(pendingAdd) : Promise.resolve()))
+      .then(() => runSoLineWrites({
+        deletes: deleteEntries.map((it) => ({
+          label: it.item_code || 'A removed line',
+          value: it.id,
+          run: () => deleteItem.mutateAsync({ docNo: header.doc_no, itemId: it.id, leaseToken: leaseToken! }),
+        })),
+        updates: lineEntries.map(([id, d]) => ({
+          label: itemLabel(id), value: id, run: () => commitEditingDraft(id, d),
+        })),
+        adds: pendingAdds.map((row, i) => ({
+          label: addLabel(row, i), value: row, run: () => commitAddLine(row),
+        })),
+        onAddsLanded: (landed) => {
+          const keys = new Set(landed.map((row) => row.key));
+          setAddingDrafts((prev) => prev.filter((row) => !keys.has(row.key)));
+        },
+      }))
       .then(saveHeader)
       .then(() => {
         setSavingOrder(false);
@@ -954,28 +970,36 @@ export const SalesOrderDetail = () => {
         setSavingOrder(false);
         const heldLease = activeLineLeaseRef.current;
         if (heldLease && loadedVersionRef.current != null) {
+          /* Forget the token only when the server CONFIRMS the release. The
+             release predicate is `.eq('version', clientVersion)
+             .eq('edit_lease_token', ...)` (mfg-sales-orders.ts:6810-6812), so a
+             release can be refused — and dropping the token on a refusal used
+             to leave the server holding a lease this client could no longer
+             name. The next Save then minted a fresh token, tripped
+             `activeLeaseToken !== requestedLeaseToken` (:6782) and told the
+             operator their order was "being saved on another screen" — about
+             themselves — until the 5-minute TTL (:7274) expired. */
           void updateHeader.mutateAsync({
             docNo: header.doc_no,
             completeLineWrites: true,
             lineWriteLeaseToken: heldLease,
             version: loadedVersionRef.current,
             __suppressInvalidate: true,
-          }).finally(() => { activeLineLeaseRef.current = null; });
+          }).then(() => { activeLineLeaseRef.current = null; }, () => { /* keep it: the server still has it */ });
         }
+        /* The order moved under us. The server told us where it actually is
+           (soVersionConflict -> `currentVersion`, mfg-sales-orders.ts:356) and
+           authed-fetch kept that body verbatim on `err.body`; until now nothing
+           read it, so a stale baseline was a dead end — every later Save re-sent
+           the same number and the refetch effect is (rightly) forbidden from
+           advancing it mid-edit. The banner is the door out. */
+        const conflict = readVersionConflict((e as { body?: string } | undefined)?.body);
+        if (conflict) { setVersionConflict(conflict); return; }
         /* An aggregated save-gate failure (validation_failed) — show EVERY reason
            at once in a POPUP the owner can't miss (owner 2026-07-18: he wanted a
            modal listing all reasons, not a banner to scroll to). Anything else
            keeps the inline banner. */
-        const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-        if (problems && problems.length > 0) {
-          notify({
-            title: saveProblemsTitle(problems.length),
-            body: <SaveProblemsList problems={problems} />,
-            tone: 'error',
-          });
-        } else {
-          setSaveError(e instanceof Error ? e.message : 'Something went wrong.');
-        }
+        void notifySaveProblems(notify, e, setSaveError);
       });
   };
 
@@ -988,6 +1012,7 @@ export const SalesOrderDetail = () => {
      amendment then flows through the supplier-confirm / approve gates before it
      re-derives the SO — direct line writes on a PO'd SO would break the supplier
      copy, which is exactly what this workflow prevents. */
+
   const buildAmendmentLines = (): CreateAmendmentLine[] => {
     const out: CreateAmendmentLine[] = [];
     // Existing lines — SPEC / QTY. An item still in editingDrafts whose AMENDABLE
@@ -1006,7 +1031,7 @@ export const SalesOrderDetail = () => {
       const qtyOnly =
         draft.itemCode === orig.itemCode
         && JSON.stringify(draft.variants ?? null) === JSON.stringify(orig.variants ?? null)
-        && draft.unitPriceCenti === orig.unitPriceCenti
+        && draft.unitPriceSen === orig.unitPriceSen
         && draft.qty !== orig.qty;
       out.push({
         salesOrderItemId: it.id,
@@ -1014,19 +1039,25 @@ export const SalesOrderDetail = () => {
         newItemCode: draft.itemCode || undefined,
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
-        newUnitPriceSen: draft.unitPriceCenti,
+        newUnitPriceSen: draft.unitPriceSen,
         /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
            actually moved: null/absent means "not requested", which is what stops
            the apply from rewriting a remark this session never touched. */
         ...(((draft.remark ?? '') !== (orig.remark ?? ''))
           ? { newRemark: draft.remark ?? '' }
           : {}),
+        /* mig 0317 — the discount rides only when it moved (the fee cell's one
+           lever on a locked SO). Sent-when-unchanged would let an approval
+           overwrite a discount booked on the line since the request. */
+        ...((Math.round(draft.discountSen) !== Math.round(orig.discountSen))
+          ? { newDiscountSen: Math.max(0, Math.round(draft.discountSen)) }
+          : {}),
         // Old snapshot for the before/after diff — the pre-edit line values.
         oldSnapshot: {
           itemCode: it.item_code,
           variants: it.variants ?? null,
           qty: it.qty,
-          unitPriceSen: it.unit_price_centi,
+          unitPriceSen: it.unit_price_sen,
           description2: it.description2 ?? null,
         },
       });
@@ -1042,23 +1073,26 @@ export const SalesOrderDetail = () => {
           itemCode: it.item_code,
           variants: it.variants ?? null,
           qty: it.qty,
-          unitPriceSen: it.unit_price_centi,
+          unitPriceSen: it.unit_price_sen,
           description2: it.description2 ?? null,
         },
       });
     }
-    // Added line — the pending add-draft (no persisted id yet).
-    if (addingDraft && addingDraft.itemCode.trim()) {
+    /* Added lines — EVERY staged add. POST /:docNo/amendments caps `lines` at
+       nothing and applySoAmendment (scm/lib/so-revision.ts:383) inserts them in
+       a per-diff loop; this used to emit at most one, so on a processing-locked
+       SO the second new line vanished at submit. */
+    for (const { draft } of namedStagedAdds(addingDrafts)) {
       out.push({
         changeType: 'ADD',
-        newItemCode: addingDraft.itemCode,
-        newVariants: addingDraft.variants ?? undefined,
-        newQty: addingDraft.qty,
-        newUnitPriceSen: addingDraft.unitPriceCenti,
+        newItemCode: draft.itemCode,
+        newVariants: draft.variants ?? undefined,
+        newQty: draft.qty,
+        newUnitPriceSen: draft.unitPriceSen,
         /* mig 0280 — an ADDED line carries whatever remark was typed on it. This
            is the case that lost the owner's instruction on 2990-SO-2608-016: the
            added line WAS a SVC-ADDON whose entire purpose lived in the text. */
-        ...((addingDraft.remark ?? '').trim() ? { newRemark: addingDraft.remark } : {}),
+        ...((draft.remark ?? '').trim() ? { newRemark: draft.remark } : {}),
       });
     }
     return out;
@@ -1083,10 +1117,11 @@ export const SalesOrderDetail = () => {
   const submitAmendment = async () => {
     const handle = customerCardRef.current;
     if (!handle || !header || savingOrder) return;
-    setSaveError(null);
-    // Guard: an open add-draft must have a product picked.
-    if (addingDraft && !addingDraft.itemCode.trim()) {
-      setSaveError('Pick a product for the new line, or remove it before submitting.');
+    clearSaveFeedback();
+    // Guard: every staged add must have a product picked (named by position).
+    const blankAddPos = firstBlankStagedAdd(addingDrafts);
+    if (blankAddPos != null) {
+      setSaveError(`${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before submitting.`);
       return;
     }
     /* Owner 2026-06-03 — phone is COMPULSORY on every SO. Mirrors saveEdit: the
@@ -1108,13 +1143,16 @@ export const SalesOrderDetail = () => {
 
     const { changes: headerChanges } = handle.getLockedHeaderChanges();
     const lines = buildAmendmentLines();
-    if (lines.length === 0 && !hasAmendmentHeaderChanges(headerChanges)) {
-      setSaveError(
-        'No changes to submit — edit a line, a date or the delivery location first, then submit the amendment.',
-      );
-      return;
-    }
-    const reason = await askPrompt({
+
+    // Asks about BOTH halves — see vendor/scm/lib/so-amendment-submit.
+    const plan = planAmendmentSubmit({
+      hasLineChanges: lines.length > 0,
+      hasFrozenHeaderChanges: hasAmendmentHeaderChanges(headerChanges),
+      hasDirectHeaderChanges: handle.hasDirectHeaderChanges(),
+    });
+    if (plan === 'NOTHING') { setSaveError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
+    // DIRECT_ONLY needs no reason: nothing is going for approval.
+    const reason = plan === 'AMENDMENT' ? await askPrompt({
       title: `Submit amendment for ${header.doc_no}?`,
       body: 'This Sales Order is already ordered from the supplier, so your changes go out as an '
         + 'amendment request. Coordinator + supplier confirm it before the order is revised. '
@@ -1122,7 +1160,7 @@ export const SalesOrderDetail = () => {
       placeholder: 'e.g. customer changed the fabric colour',
       multiline: true,
       confirmLabel: 'Submit amendment',
-    });
+    }) : '';
     if (reason == null) return; // cancelled the prompt
     setSavingOrder(true);
     try {
@@ -1135,44 +1173,47 @@ export const SalesOrderDetail = () => {
           { keepLockedColsAsOriginal: true },
         );
       });
-      /* 2. The approval half — frozen header fields + line diffs. */
-      amendKeyRef.current ??= newIdempotencyKey();
-      const createdRes = await createAmendment.mutateAsync({
-        docNo: header.doc_no,
-        reason: reason.trim() || undefined,
-        lines,
-        headerChanges,
-        idempotencyKey: amendKeyRef.current,
-      });
+      /* 2. The approval half — frozen header fields + line diffs. DIRECT_ONLY
+            skips ONLY this: the save above is the whole of that edit. */
+      let createdRes: unknown = null;
+      if (plan === 'AMENDMENT') {
+        amendKeyRef.current ??= newIdempotencyKey();
+        createdRes = await createAmendment.mutateAsync({
+          docNo: header.doc_no,
+          reason: reason.trim() || undefined,
+          lines,
+          headerChanges,
+          idempotencyKey: amendKeyRef.current,
+        });
+      }
       setSavingOrder(false);
       endEditSession();
       /* Two-lane rework: the server classifies (and may SPLIT) the request —
          product changes go to Purchasing, delivery changes to Logistics, each
          applied by ONE signature. Tell the operator exactly what was raised. */
-      const createdList = ((createdRes as unknown as {
-        amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
-      } | undefined)?.amendments ?? []);
-      const laneName = (l?: string | null) =>
-        l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
-      notify(createdList.length > 1
-        ? {
-          title: 'Amendment split into two approvals',
-          body: `${createdList.map((a) => `${a.amendment_no ?? ''} → ${laneName(a.lane)}`).join('; ')}. Each applies as soon as its approver signs.`,
-        }
-        : createdList[0]?.lane
-          ? {
-            title: 'Amendment submitted',
-            body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.`,
-          }
-          : {
-            title: 'Amendment submitted',
-            body: 'It now needs approval before the order is revised.',
-          });
+      notify(amendmentSubmittedNotice(plan, createdRes));
     } catch (e) {
       setSavingOrder(false);
+      // Same dead end as saveEdit: the amendment's direct-half header PATCH
+      // carries the CAS version too, so it 409s on a stale baseline forever.
+      const conflict = readVersionConflict((e as { body?: string } | undefined)?.body);
+      if (conflict) { setVersionConflict(conflict); return; }
       // authed-fetch already humanises the API error to one plain sentence.
       setSaveError(e instanceof Error ? e.message : 'Something went wrong.');
     }
+  };
+
+  /* Adopt the server's version as the new CAS baseline. Called ONLY from the
+     conflict banner's own button: the operator has been told the order moved
+     and has been offered the history panel first, so this is an informed
+     decision to write on top rather than the silent adoption that would turn
+     CAS into last-writer-wins. Their drafts are untouched — nothing to retype. */
+  const adoptServerVersion = () => {
+    const v = versionConflict?.serverVersion;
+    if (v == null) return false;
+    loadedVersionRef.current = v;
+    setVersionConflict(null);
+    return true;
   };
 
   /* Task #99 (UI perf) — Stable callbacks for the memo'd child cards. Without
@@ -1258,8 +1299,8 @@ export const SalesOrderDetail = () => {
      line rows didn't "jump" until that Save round-trip. This pushes the new
      header date into every line draft that hasn't been manually overridden
      the moment the user changes the header Delivery Date input — matching the
-     New SO behaviour. Overridden lines keep their own value untouched. The
-     pending add-draft (if any) also follows when it hasn't been overridden. */
+     New SO behaviour. Overridden lines keep their own value untouched. EVERY
+     staged add follows too, on the same not-overridden rule. */
   const cascadeDeliveryDateToLines = useCallback((date: string) => {
     const next = date || null;
     setEditingDrafts((prev) => {
@@ -1275,11 +1316,7 @@ export const SalesOrderDetail = () => {
       }
       return changed ? out : prev;
     });
-    setAddingDraft((prev) =>
-      prev && !prev.lineDeliveryDateOverridden && prev.lineDeliveryDate !== next
-        ? { ...prev, lineDeliveryDate: next }
-        : prev,
-    );
+    setAddingDrafts((prev) => cascadeStagedDeliveryDate(prev, next));
   }, []);
 
   /* Per-row delete. On a persisted line this fires the delete mutation
@@ -1306,7 +1343,7 @@ export const SalesOrderDetail = () => {
   useEffect(() => {
     if (!isEditing) {
       setEditingDrafts({});
-      setAddingDraft(null);
+      setAddingDrafts([]);
       originalDraftsRef.current = {};
       return;
     }
@@ -1366,34 +1403,48 @@ export const SalesOrderDetail = () => {
   }, [items, patchEditingDraft, removeEditingLine, askConfirm,
       header?.amendment_eligible, header?.has_open_amendment]);
 
-  /* Add path — single inline SoLineCard appended below the table when
-     "+ Add Line Item" is clicked. The draft is committed together with the
+  /* Add path — one more inline SoLineCard appended below the table on every
+     "+ Add Line Item" click. Every staged draft is committed together with the
      header + line edits by the page-level Save (see saveEdit). */
   const startAddLine = () => {
     if (!header) return;
-    addLineKeyRef.current = newIdempotencyKey();
-    setAddingDraft({
-      ...emptySoLine(),
-      // Seed the line delivery date from the SO header so the SoLineCard
-      // displays a default — same pattern SalesOrderNew uses.
-      lineDeliveryDate: header.customer_delivery_date ?? null,
-      lineDeliveryDateOverridden: false,
-    });
+    setAddingDrafts((prev) => [...prev, {
+      key: newIdempotencyKey(),
+      idempotencyKey: newIdempotencyKey(),
+      draft: {
+        ...emptySoLine(),
+        // Header's date as the default — same pattern SalesOrderNew uses.
+        lineDeliveryDate: header.customer_delivery_date ?? null,
+        lineDeliveryDateOverridden: false,
+      },
+    }]);
   };
 
-  const cancelAddLine = useCallback(() => {
-    addLineKeyRef.current = null;
-    setAddingDraft(null);
-  }, []);
-
-  /* Stable onChange for the lone "+ Add Line Item" SoLineCard at the bottom
-     of the table. Kept standalone (not in rowCallbacks) because there is at
-     most one add-draft at a time. */
-  const patchAddingDraft = useCallback(
-    (patch: Partial<SoLineDraft>) =>
-      setAddingDraft((prev) => prev ? { ...prev, ...patch } : prev),
+  const cancelAddLine = useCallback(
+    (key: string) => setAddingDrafts((prev) => dropStagedAdd(prev, key)),
     [],
   );
+
+  const patchAddingDraft = useCallback(
+    (key: string, patch: Partial<SoLineDraft>) =>
+      setAddingDrafts((prev) => patchStagedAdd(prev, key, patch)),
+    [],
+  );
+
+  /* Per-staged-line callbacks — same reason rowCallbacks exists (SoLineCard is
+     React.memo'd). Keyed on the KEY LIST, not on addingDrafts: that array's
+     identity changes on every character typed. */
+  const addKeyList = addingDrafts.map((row) => row.key).join('|');
+  const addCallbacks = useMemo(() => {
+    const map = new Map<string, { onChange: (p: Partial<SoLineDraft>) => void; onRemove: () => void }>();
+    for (const key of addKeyList ? addKeyList.split('|') : []) {
+      map.set(key, {
+        onChange: (patch) => patchAddingDraft(key, patch),
+        onRemove: () => cancelAddLine(key),
+      });
+    }
+    return map;
+  }, [addKeyList, patchAddingDraft, cancelAddLine]);
 
   /* Commit one persisted line via updateItem. Used by the page-level Save to
      fan every dirty line draft out in parallel. Returns the mutation promise
@@ -1408,32 +1459,40 @@ export const SalesOrderDetail = () => {
       description:    d.description,
       uom:            d.uom,
       qty:            d.qty,
-      unitPriceCenti: d.unitPriceCenti,
-      discountCenti:  d.discountCenti,
-      unitCostCenti:  d.unitCostCenti,
+      unitPriceSen: d.unitPriceSen,
+      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
+         it must not silently re-price it (a qty-only edit sends the price too). */
+      ...zeroPriceClaim(d.unitPriceSen, true),
+      discountSen:  d.discountSen,
+      unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
       lineDeliveryDate:           d.lineDeliveryDate ?? null,
       lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
     });
 
-  /* Commit the pending add-draft via addItem, then drain any staged photo
-     Files against the freshly-minted itemId. Returns a promise so it can be
-     awaited as part of the page-level Save. */
-  const commitAddLine = async (d: SoLineDraft) => {
+  /* Commit ONE staged add via addItem, then drain its staged photo Files
+     against the freshly-minted itemId. The key comes off the ROW, so a retry
+     of this line replays this line and never another. */
+  const commitAddLine = async (staged: StagedAddLine) => {
+    const d = staged.draft;
     const pendingFiles = d.pendingPhotoFiles ?? [];
     const res = await addItem.mutateAsync({
       docNo: header!.doc_no,
-      idempotencyKey: addLineKeyRef.current ??= newIdempotencyKey(),
+      idempotencyKey: staged.idempotencyKey,
       leaseToken: activeLineLeaseRef.current!,
       itemCode:       d.itemCode,
       itemGroup:      d.itemGroup,
       description:    d.description,
       uom:            d.uom,
       qty:            d.qty,
-      unitPriceCenti: d.unitPriceCenti,
-      discountCenti:  d.discountCenti,
-      unitCostCenti:  d.unitCostCenti,
+      unitPriceSen: d.unitPriceSen,
+      /* UNCHANGED behaviour: this staged ADD has claimed every 0 since #2425.
+         BUG-HISTORY 2026-08-20 records the open question about an unpriced SKU
+         reaching this path; deliberately not touched here. */
+      ...zeroPriceClaim(d.unitPriceSen, true),
+      discountSen:  d.discountSen,
+      unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
       lineDeliveryDate:           d.lineDeliveryDate ?? null,
@@ -1505,10 +1564,14 @@ export const SalesOrderDetail = () => {
      (partial delivery) via the list's right-click. */
   const hasChildren = Boolean((header as { has_children?: boolean }).has_children);
   const isLocked = isSoLocked(header.status, hasChildren, unlockOverride);
+  /* The one thing a hard-locked SO still accepts: a new salesperson. Same
+     permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
+     it re-enables can never open an order the server would refuse to save. */
+  const canAttributeOther = can('scm.so.attribute_other');
 
-  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has been PROCEEDED
-     (proceeded_at stamped) AND its processing day has passed, we PO to the
-     supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
+  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has a Processing Date
+     (which IS what being proceeded means — owner, pinned 2026-08-13) AND that
+     day has passed, we PO to the supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
      card below). Payment + the rest of the customer data stay editable. This is
      independent of `isLocked` (status/downstream) — it applies while the SO is
      still in an otherwise-editable status. Shared gate uses todayMyt() (Malaysia
@@ -1555,6 +1618,10 @@ export const SalesOrderDetail = () => {
      server (price override) rather than through the amendment diff — those must
      stay disabled on a locked SO or they render-then-409. */
   const overrideLocked = isLocked || procLockActive;
+  const visibleLines = visibleLineCounts({
+    isEditing, itemIds: items.map((it) => it.id),
+    editingDraftIds: Object.keys(editingDrafts), stagedAdds: addingDrafts.length,
+  });
   // Houzs perm gates (mirror the server-side scm.amendment.* keys): the server
   // 403 stays the real gate (its plain-language message is humanised by
   // authed-fetch); these just hide the affordance from users who can't use it.
@@ -1639,7 +1706,7 @@ export const SalesOrderDetail = () => {
       body: "The SO will stop proceeding — it won't appear in MRP / PO / DO conversion, and line edits lock. You can Reopen it later.",
       confirmLabel: 'Cancel SO', danger: true,
     }))) return;
-    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED' });
+    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
   };
   /* Discard draft (owner 2026-07-20) — hard-delete a junk DRAFT (esp. a bad
      scan/OCR draft) instead of burning a doc number on confirm→cancel. Behind the
@@ -1666,7 +1733,7 @@ export const SalesOrderDetail = () => {
   };
   const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
-       header columns (paid_centi, payment_method, …) are deprecated. If
+       header columns (paid_sen, payment_method, …) are deprecated. If
        the query is still loading we surface a brief notice and bail out
        rather than printing a PDF with an empty Payments table.
 
@@ -1747,8 +1814,8 @@ export const SalesOrderDetail = () => {
           + (currentDocNo && currentDocNo !== header.doc_no ? ` · Current ${currentDocNo}` : '')
           + (header.po_doc_no ? ` · Customer PO ${header.po_doc_no}` : '')
           + (header.customer_so_no ? ` · Ref ${header.customer_so_no}` : '')
-          + (Number((header as { customer_credit_centi?: number }).customer_credit_centi ?? 0) > 0
-            ? ` · Customer credit balance: ${fmtCenti(Number((header as { customer_credit_centi?: number }).customer_credit_centi ?? 0))}`
+          + (Number((header as { customer_credit_sen?: number }).customer_credit_sen ?? 0) > 0
+            ? ` · Customer credit balance: ${fmtSen(Number((header as { customer_credit_sen?: number }).customer_credit_sen ?? 0))}`
             : '')
         }
         primaryAction={
@@ -1781,7 +1848,7 @@ export const SalesOrderDetail = () => {
             <div className="mr-1 flex flex-col items-end leading-none">
               <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Total</span>
               <span className="text-[15px] font-semibold tabular-nums text-primary-ink">
-                {fmtRm(header.local_total_centi, header.currency)}
+                {fmtRm(header.local_total_sen, header.currency)}
               </span>
             </div>
             {(() => {
@@ -1791,9 +1858,19 @@ export const SalesOrderDetail = () => {
                 (header as { lifecycle_state?: SoLifecycle }).lifecycle_state,
               );
               return (
-                <span className={`${styles.statusPill} ${STATUS_CLASS[eff.classKey as SoStatus] ?? ''}`}>
-                  {eff.label ?? SO_STATUS_LABEL[header.status] ?? header.status.replace(/_/g, ' ')}
-                </span>
+                <>
+                  <span className={`${styles.statusPill} ${STATUS_CLASS[eff.classKey as SoStatus] ?? ''}`}>
+                    {eff.label ?? SO_STATUS_LABEL[header.status] ?? header.status.replace(/_/g, ' ')}
+                  </span>
+                  {/* mig 0324 — the hold marker sits BESIDE the status, never
+                      instead of it. Before this change an order that went on
+                      hold stopped saying "In Production" anywhere on this page,
+                      and the fact was gone from the database too. */}
+                  <HoldChip
+                    onHold={(header as { on_hold?: boolean | null }).on_hold}
+                    reason={(header as { hold_reason?: string | null }).hold_reason}
+                  />
+                </>
               );
             })()}
             {/* PR-D — History drawer toggle (HOOKKA-style timeline). */}
@@ -1823,7 +1900,7 @@ export const SalesOrderDetail = () => {
                 { label: 'Customer', value: header.debtor_name || '—' },
                 { label: 'Order date', value: fmtDateOrDash(header.so_date) },
                 { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
-                { label: 'Order total', value: fmtRm(header.local_total_centi, header.currency) },
+                { label: 'Order total', value: fmtRm(header.local_total_sen, header.currency) },
               ]}
               {...print.handlers}
             />
@@ -1836,10 +1913,19 @@ export const SalesOrderDetail = () => {
                 <span>Cancel SO</span>
               </Button>
             ) : null}
-            {/* PR-A — Page-level Edit/Save/Cancel. */}
+            {/* PR-A — Page-level Edit/Save/Cancel.
+
+                Owner 2026-08-17 — a hard-locked (DO/SI) SO still opens for
+                edit when the caller may RE-ATTRIBUTE it. Everything else on
+                the page stays disabled: `inputsDisabled` keeps reading
+                `locked`, and only the Salesperson select opts out of it (see
+                CustomerCard). Without this, handing a delivered order to the
+                replacement rep meant clicking Override — which unlocks the
+                WHOLE order, addresses and lines included, to change one
+                dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={isLocked}>
+                onClick={enterEdit} disabled={isLocked && !canAttributeOther}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -1877,6 +1963,16 @@ export const SalesOrderDetail = () => {
           <strong>Save failed.</strong>
           <span>{saveError}</span>
         </div>
+      )}
+
+      {versionConflict && (
+        <SoVersionConflictBanner
+          conflict={versionConflict}
+          className={styles.bannerWarn}
+          saving={savingOrder}
+          onReview={() => setHistoryOpen(true)}
+          onProceed={() => { if (adoptServerVersion()) (amendmentMode ? submitAmendment : saveEdit)(); }}
+        />
       )}
 
       {/* ── Cancelled banner (Commander 2026-05-29) ─────────────── */}
@@ -1938,7 +2034,7 @@ export const SalesOrderDetail = () => {
                   body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
                   confirmLabel: 'Confirm Order',
                 }))) return;
-                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED' });
+                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });
               }}
               disabled={updateStatus.isPending || deleteDraft.isPending}>
               <span>{updateStatus.isPending ? 'Confirming…' : 'Confirm Order'}</span>
@@ -1977,7 +2073,7 @@ export const SalesOrderDetail = () => {
                 if (reason == null) return;
                 // Audit the override via a status change row (we re-affirm the
                 // current status with an OVERRIDE notes prefix).
-                updateStatus.mutate({ docNo: header.doc_no, status: header.status });
+                updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status });
                 setUnlockOverride(true);
               } else {
                 setUnlockOverride(false);
@@ -2002,10 +2098,8 @@ export const SalesOrderDetail = () => {
           fontSize: 'var(--fs-13)',
         }}>
           <Lock {...ICON} />
-          <span>This SO is already ordered from the supplier. Edit the lines, dates or delivery
-            location as usual — your {' '}<strong>Submit amendment request</strong> sends those
-            changes for the coordinator and supplier to confirm before the order is revised.
-            Contact details and address lines save straight away.</span>
+          {/* Shared copy — both surfaces were wrong about addresses. */}
+          <span>{AMENDMENT_MODE_BANNER}</span>
         </div>
       )}
 
@@ -2122,12 +2216,23 @@ export const SalesOrderDetail = () => {
       {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Line Items ({items.length})</h2>
+          {/* Owner 2026-08-16 — "LINE ITEMS (2)" over three rows made the new row
+              look unreal. Counts what is RENDERED now (visibleLineCounts), and
+              says how many are unsaved: a count including staged work must say so. */}
+          <h2 className={styles.cardTitle}>
+            Line Items ({visibleLines.total})
+            {addingDrafts.length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.04em', color: '#a6471e' }}>
+                {addingDrafts.length} new · not saved yet
+              </span>
+            )}
+          </h2>
           {/* PR-A — Add Line Item is only shown in edit mode.
-              Task #80 — clicking now seeds an inline SoLineCard at the
-              bottom of the table (no more modal). Button hides itself
-              while a draft is open to avoid stacking two add-cards. */}
-          {isEditing && !addingDraft && (
+              Task #80 — clicking seeds one more inline SoLineCard at the bottom of
+              the table (no more modal). It used to hide itself while a draft was
+              open, capping an edit session at ONE new line (owner 2026-08-16: "it
+              should be able to keep adding lines"). `linesLocked` still refuses. */}
+          {isEditing && (
             <Button variant="primary" onClick={startAddLine} disabled={linesLocked}>
               <Plus {...ICON} />
               <span>Add Line Item</span>
@@ -2194,20 +2299,32 @@ export const SalesOrderDetail = () => {
               );
             })}
 
-            {/* New line — staged as a card and committed by the page-level
-                Save alongside the existing line edits. */}
-            {addingDraft && (
-              <SoLineCard
-                index={items.length}
-                draft={addingDraft}
-                onChange={patchAddingDraft}
-                onRemove={cancelAddLine}
-                canRemove={true}
-                variantsRequired={requireVariants}
-              />
-            )}
+            {/* New lines — as many as the operator asks for, each with its own ADD
+                idempotency key, all committed by the page-level Save. The caption is
+                the "visibly staged" half of the count fix: the row number continues
+                the table, so a staged card would otherwise look like a saved one. */}
+            {addingDrafts.map((staged, i) => {
+              const cb = addCallbacks.get(staged.key);
+              return (
+                <div key={staged.key}>
+                  <div className={styles.actionsCell} style={{ marginBottom: 'var(--space-2)' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: '#a6471e' }}>
+                      {stagedAddLabel(i + 1)} — not saved yet
+                    </span>
+                  </div>
+                  <SoLineCard
+                    index={visibleLines.persisted + i}
+                    draft={staged.draft}
+                    onChange={cb?.onChange ?? ((patch) => patchAddingDraft(staged.key, patch))}
+                    onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
+                    canRemove={true}
+                    variantsRequired={requireVariants}
+                  />
+                </div>
+              );
+            })}
 
-            {items.length === 0 && !addingDraft && (
+            {items.length === 0 && addingDrafts.length === 0 && (
               <p className={styles.emptyRow} style={{ padding: 'var(--space-3)' }}>
                 No items yet — click "Add Line Item" above to begin.
               </p>
@@ -2331,8 +2448,8 @@ export const SalesOrderDetail = () => {
                       return coverage ?? <span className={styles.muted}>—</span>;
                     })()}
                   </td>
-                  <td className={styles.tableRight} data-label="Unit">{fmtRm(it.unit_price_centi, header.currency)}</td>
-                  <td className={styles.tableRight} data-label="Disc">{it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—'}</td>
+                  <td className={styles.tableRight} data-label="Unit">{fmtRm(it.unit_price_sen, header.currency)}</td>
+                  <td className={styles.tableRight} data-label="Disc">{it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—'}</td>
                   <td className={styles.tableRight} data-label="Delivery">
                     {displayDate ? (
                       <span style={isAuto ? { color: 'var(--fg-muted)' } : undefined}>
@@ -2343,7 +2460,7 @@ export const SalesOrderDetail = () => {
                       </span>
                     ) : '—'}
                   </td>
-                  <td className={styles.priceCell} data-label="Total">{fmtRm(it.total_centi, header.currency)}</td>
+                  <td className={styles.priceCell} data-label="Total">{fmtRm(it.total_sen, header.currency)}</td>
                   {/* Owner 2026-07-17: per-line Unit Cost / Line Cost / Margin
                       cells removed for EVERYONE (see the <thead> note). */}
                 </tr>
@@ -2408,7 +2525,7 @@ export const SalesOrderDetail = () => {
       <PaymentsTable
         key={header.doc_no}
         docNo={header.doc_no}
-        grandTotalCenti={header.local_total_centi}
+        grandTotalSen={header.local_total_sen}
         currency={header.currency}
         locked={!canEditPayments}
         draftUnlocked={isDraftSo}
@@ -2583,9 +2700,10 @@ type CustomerCardHandle = {
   validate: () => string | null;
   /** `keepLockedColsAsOriginal` (amendment mode) — send every FROZEN header
       column at its ORIGINAL value so this direct PATCH stays inside the server's
-      field-scoped processing lock, while the customer's contact details / address
-      lines / note in the same payload still save immediately. The changed frozen
-      values ride the amendment instead (getLockedHeaderChanges below). */
+      field-scoped processing lock, while the customer's contact details and note
+      in the same payload still save immediately. The changed frozen values ride
+      the amendment instead (getLockedHeaderChanges below). NOT address lines:
+      they joined the CONTROLLED set 2026-07-27 and ride the amendment too. */
   save: (
     // `raw` (optional 2nd arg) carries the original Error, whose `.body` holds
     // the server's aggregated `problems` list — so the page Save can show EVERY
@@ -2605,6 +2723,9 @@ type CustomerCardHandle = {
     changes: SoAmendmentHeaderChanges;
     oldSnapshot: SoAmendmentHeaderChanges;
   };
+  /** Is the DIRECT half dirty? Tells "nothing to submit" apart from "nothing
+      needs APPROVAL" — the two the old single return could not. */
+  hasDirectHeaderChanges: () => boolean;
 };
 
 type CustomerCardProps = {
@@ -2672,7 +2793,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      via the Team-grant rule (usePickableStaff). The self-resolution copy above
      (for the Collected-By default) stays on the FULL useStaff roster; only the
      list of people you can PICK is company-scoped. */
-  const staffQ = usePickableStaff({ onlySales: true });
+  /* `include` carries the salesperson already ON this document, so someone the
+     onlySales narrowing hides is still named. "(former staff)" below is then
+     only reachable for a row that genuinely is gone. */
+  const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
   /* Commander 2026-05-27: Venue is locked to the picked salesperson's
      staff.venue_id; only admin / sales_director may swap the salesperson.
@@ -2712,7 +2836,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      branding + ref + venue dropped per commander 2026-05-26. */
   // PR #140 — Commander 2026-05-26 drop list:
   //   - poDocNo (Customer PO #)   → "customer PO 不需要"
-  //   - targetDate                → replaced by Processing + Delivery Date
+  //   - the POS-era "Target Date" → replaced by Processing + Delivery Date.
+  //     The NAME went with it on 2026-08-18: the server no longer selects,
+  //     accepts or maps it anywhere (owner: "全部你都是要统一掉的，不要那么多个").
   // PR #140 — add list:
   //   - processingDate
   //   - customerDeliveryDate
@@ -2801,7 +2927,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     /* Processing Date persists to the processing_date column — the same word
        on the form, in this payload and in Postgres since mig 0284 (commander
        2026-05-26: "internal expected date 是 Hookka 用的"; #140 changed the
-       label, 0284 changed the name underneath it). targetDate field dropped. */
+       label, 0284 changed the name underneath it).
+
+       WHAT IT MEANS (owner 2026-08-18): the date this order is RELEASED for
+       purchasing to order goods — "Processing Date 就代表这张单可以安排订货了".
+       Not a production date; this business does not schedule a factory. */
     processingDate: f.processingDate || null,
     customerDeliveryDate: f.customerDeliveryDate || null,
     note: f.note,
@@ -2989,9 +3119,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
 
-  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has been
-     PROCEEDED (proceeded_at stamped) AND its processing day has passed. That is
-     the moment we PO to the supplier, so from then on the LINE ITEMS and the
+  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
+     Processing Date (which IS what being proceeded means) AND that day has
+     passed. That is the moment we PO to the supplier, so from then on the LINE ITEMS and the
      customer STATE + POSTCODE (which drive the line warehouse + the PO delivery
      location) freeze. PAYMENT and every other customer field stay editable.
      This is stricter than `processingLocked` (which grandfather-locks the past
@@ -3058,6 +3188,12 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        surface doesn't collect, so omitting them is the correct shape. */
     address1:             form.address1,
     address2:             form.address2,
+    /* Customer info joined the frozen set 2026-08-21 (owner: "需要加上更新
+       客户信息") — a name/phone/email change on a locked SO rides the
+       DELIVERY-lane amendment instead of saving directly. */
+    debtorName:           form.customerName,
+    phone:                form.phone,
+    email:                form.email,
   };
   const lockedHeaderOriginal = {
     processingDate:   header.processing_date ?? '',
@@ -3067,7 +3203,15 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     city:                 header.city ?? '',
     address1:             header.address1 ?? '',
     address2:             header.address2 ?? '',
+    debtorName:           header.debtor_name ?? '',
+    phone:                header.phone ?? '',
+    email:                header.email ?? '',
   };
+
+  /* The EXACT body the direct half sends in amendment mode; trySave and
+     hasDirectHeaderChanges share it so the two cannot disagree. */
+  const directHeaderPatch = () => diffHeaderPayload(originalPayloadRef.current,
+    withFrozenHeaderFieldsReverted(buildPayload(), lockedHeaderOriginal));
 
   const trySave = (
     cb?: { onSuccess?: () => void; onError?: (msg: string, raw?: unknown) => void },
@@ -3079,15 +3223,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       else notify({ title: 'Check the dates', body: err, tone: 'error' });
       return;
     }
-    const payload = opts?.keepLockedColsAsOriginal
-      ? withFrozenHeaderFieldsReverted(buildPayload(), lockedHeaderOriginal)
-      : buildPayload();
     /* Send ONLY what the operator changed. The diff runs AFTER the frozen-field
        revert, so a reverted column equals its seeded value and drops out
        entirely — which is strictly safer than sending it back unchanged: the
        server's lock diffs `col in updates`, so a column we never send cannot
        409 so_locked_processing at all. */
-    onSave(diffHeaderPayload(originalPayloadRef.current, payload), cb);
+    onSave(opts?.keepLockedColsAsOriginal ? directHeaderPatch()
+      : diffHeaderPayload(originalPayloadRef.current, buildPayload()), cb);
   };
 
   /* PR-A — Expose imperative save()/reset() so the page-level Edit/Save/
@@ -3107,6 +3249,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     getPhone: () => form.phone ?? '',
     getLockedHeaderChanges: () =>
       buildAmendmentHeaderChanges(lockedHeaderNow, lockedHeaderOriginal),
+    hasDirectHeaderChanges: () => hasHeaderChanges(directHeaderPatch()),
   }));
 
   /* PR-A — Inputs are read-only when the page isn't in edit mode OR the
@@ -3207,27 +3350,36 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Salesperson</span>
               {/* Commander 2026-05-27: only admin / sales_director can swap
                   the salesperson on an existing SO. Non-admin sales roles
-                  see a disabled select pinned to whoever owns the SO. */}
+                  see a disabled picker pinned to whoever owns the SO.
+
+                  Owner 2026-08-17 — this ONE field ignores `locked`. A
+                  delivered / invoiced order freezes everything a DO or SI
+                  snapshots, but not who owns it: that is how a resigning rep's
+                  orders reach their replacement. Searchable because the roster
+                  is ~100 people; a former staff id with no roster row still
+                  shows as "(not in this list)" rather than a bare uuid. */}
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
-                  disabled={inputsDisabled || !canChangeSalesperson}
-                  onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>
-                  ))}
-                  {/* Persisted salesperson may not be in the active list
-                      (deactivated since the SO was created) — render
-                      explicitly so the select still shows the original
-                      name instead of blanking out. */}
-                  {form.salespersonId
-                    && !staffList.some((s) => s.id === form.salespersonId)
-                    && (
-                      <option value={form.salespersonId}>
-                        (former staff)
-                      </option>
-                    )}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  disabled={!isEditing || !canChangeSalesperson}
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({
+                      value: s.id,
+                      label: `${s.name} (${s.staffCode})`,
+                    })),
+                    /* Persisted salesperson may not be in the active list
+                       (deactivated since the SO was created) — carry a row for
+                       it so the picker still shows a name instead of blanking
+                       out or printing a uuid. */
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -3285,12 +3437,16 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input type="date" className={styles.fieldInput} value={form.processingDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.processingDate}
                 disabled={inputsDisabled || processingLocked}
                 title={processingLocked ? 'Processing date has passed — locked.' : undefined}
                 min={processingLocked ? undefined : today}
-                onChange={(e) => set('processingDate', e.target.value)}
-                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => set('processingDate', iso)}
+                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
               {/* Remove-Processing-Date gate (Owner 2026-07-09) — the server 403s
                   a non-holder's clear; surface the rule up front instead of
                   letting them find out on Save. */}
@@ -3302,14 +3458,20 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={form.customerDeliveryDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.customerDeliveryDate}
                 disabled={inputsDisabled}
                 min={today}
-                onChange={(e) => { set('customerDeliveryDate', e.target.value); onDeliveryDateChange?.(e.target.value); }}
-                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => { set('customerDeliveryDate', iso); onDeliveryDateChange?.(iso); }}
+                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
             </label>
-            {/* Proceed Date field removed per request 2026-06-05 — the POS still
-                stamps proceeded_at server-side; it's just no longer surfaced here. */}
+            {/* Proceed Date field removed per request 2026-06-05. It showed a
+                separate server-stamped Proceed timestamp; the owner has since
+                ruled (three times, last 2026-08-18) that the Processing Date IS
+                the Proceed, so there is no second date to surface. */}
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Note</span>
               <input className={styles.fieldInput} value={form.note}
@@ -3574,7 +3736,7 @@ const ScannedImageCard = ({
    The Revenue / Cost / Margin / Margin% card (and its per-category cost
    breakdown) is gone from the SO document view for EVERYONE — costing moves to
    the separate Finance "Fulfillment Costing" module. Customer-facing totals are
-   untouched. The header cost/margin columns (total_cost_centi etc.) remain in
+   untouched. The header cost/margin columns (total_cost_sen etc.) remain in
    the type + server payload; only their display is removed. */
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3626,7 +3788,7 @@ const OverridePriceModal = ({
   const override = useOverrideMfgSoLinePrice();
   const notify = useNotify();
   const [overrideRm, setOverrideRm] = useState(
-    (item.unit_price_centi / 100).toFixed(2),
+    (item.unit_price_sen / 100).toFixed(2),
   );
   const [reason, setReason] = useState('');
 
@@ -3646,9 +3808,9 @@ const OverridePriceModal = ({
     );
   };
 
-  const delta = Math.round(Number(overrideRm) * 100) - item.unit_price_centi;
-  const deltaPct = item.unit_price_centi > 0
-    ? (delta / item.unit_price_centi) * 100
+  const delta = Math.round(Number(overrideRm) * 100) - item.unit_price_sen;
+  const deltaPct = item.unit_price_sen > 0
+    ? (delta / item.unit_price_sen) * 100
     : 0;
 
   return (
@@ -3667,7 +3829,7 @@ const OverridePriceModal = ({
         <div className={styles.modalBody}>
           <p className={styles.muted}>
             Item <strong>{item.item_code}</strong>{item.description ? ` — ${item.description}` : ''}<br />
-            Current unit price: <strong>{fmtRm(item.unit_price_centi, currency)}</strong>
+            Current unit price: <strong>{fmtRm(item.unit_price_sen, currency)}</strong>
           </p>
 
           <div className={styles.formGrid4}>
@@ -3973,6 +4135,9 @@ const AmendmentDiffModal = ({
                             {chg.remark && (old.remark ?? '').trim() ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...strikeIf(true) }}>“{old.remark}”</div>
                             ) : null}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={strikeIf(true)}>Discount {fmtRm(old.discountSen ?? 0, currency)}</div>
+                            ) : null}
                           </div>
                         )}
                       </td>
@@ -3995,6 +4160,12 @@ const AmendmentDiffModal = ({
                             {chg.remark ? (
                               <div className={styles.muted} style={{ fontStyle: 'italic', ...emphasiseIf(true) }}>
                                 {(l.new_remark ?? '').trim() ? `“${l.new_remark}”` : 'Remark cleared'}
+                              </div>
+                            ) : null}
+                            {/* mig 0317 — the requested discount: on a fee line it is the request. */}
+                            {chg.discount ? (
+                              <div className={styles.muted} style={emphasiseIf(true)}>
+                                {Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount ${fmtRm(l.new_discount_sen ?? 0, currency)}` : 'Discount cleared'}
                               </div>
                             ) : null}
                           </div>
@@ -4022,118 +4193,3 @@ const AmendmentDiffModal = ({
   );
 };
 
-/* Read-only Revisions tab — lists prior SO snapshots (newest first) via
-   useSoRevisions. Clicking a revision expands its stored snapshot as read-only
-   detail. Mirrors the audit/history read pattern; no writes. */
-const RevisionsTab = ({ docNo, currency }: { docNo: string; currency: string }) => {
-  const { data, isLoading, error } = useSoRevisions(docNo);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const revisions = (data?.revisions ?? []) as SoRevisionRow[];
-
-  return (
-    <section className={styles.card}>
-      <header className={styles.cardHeader}>
-        <h2 className={styles.cardTitle}>Revisions ({revisions.length})</h2>
-      </header>
-      <div className={styles.cardBody}>
-        {isLoading ? (
-          <p className={styles.muted}>Loading revisions…</p>
-        ) : error ? (
-          <div className={styles.bannerWarn}>
-            <strong>Could not load revisions.</strong>{' '}
-            {error instanceof Error ? error.message : 'Something went wrong.'}
-          </div>
-        ) : revisions.length === 0 ? (
-          <p className={styles.muted}>
-            No prior revisions — this Sales Order hasn't been amended yet. Approved
-            amendments snapshot the previous version here.
-          </p>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th className={styles.tableRight}>Rev.</th>
-                <th>Date</th>
-                <th>Snapshot</th>
-              </tr>
-            </thead>
-            <tbody>
-              {revisions.map((r) => {
-                const isOpen = openId === r.id;
-                return (
-                  <tr key={r.id}>
-                    <td className={styles.tableRight}><strong>{r.revision}</strong></td>
-                    <td>{r.created_at ? fmtDateTime(r.created_at) : '—'}</td>
-                    <td>
-                      <button type="button"
-                        onClick={() => setOpenId(isOpen ? null : r.id)}
-                        style={{
-                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                          color: 'var(--c-burnt)', fontWeight: 600, fontSize: 'var(--fs-13)',
-                          textDecoration: 'underline',
-                        }}>
-                        {isOpen ? 'Hide snapshot' : 'View snapshot'}
-                      </button>
-                      {isOpen && (
-                        <RevisionSnapshot snapshot={r.snapshot} currency={currency} />
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </section>
-  );
-};
-
-/* Read-only render of a revision snapshot (header + lines). The snapshot JSON is
-   the full SO at that revision; we surface the key header fields + the line list.
-   Dual-reads snake/camel defensively (the approve-so snapshot shape isn't frozen). */
-const RevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currency: string }) => {
-  const snap = (snapshot ?? {}) as Record<string, unknown>;
-  const header = (snap.header ?? snap.salesOrder ?? snap) as Record<string, unknown>;
-  const rawLines = (snap.lines ?? snap.items ?? []) as Array<Record<string, unknown>>;
-  const lines = Array.isArray(rawLines) ? rawLines : [];
-  const str = (v: unknown): string => (v == null ? '—' : String(v));
-  const centi = (v: unknown): string =>
-    typeof v === 'number' ? fmtRm(v, currency) : '—';
-
-  return (
-    <div style={{
-      marginTop: 'var(--space-2)', padding: 'var(--space-3)',
-      background: 'var(--bg-subtle, rgba(34,31,32,0.03))',
-      border: '1px solid var(--line)', borderRadius: 'var(--radius-md)',
-      fontSize: 'var(--fs-12)',
-    }}>
-      <div style={{ marginBottom: 'var(--space-2)' }}>
-        <strong>Customer:</strong> {str(header.debtor_name ?? header.debtorName)}
-        {' · '}<strong>Total:</strong> {centi(header.local_total_centi ?? header.localTotalCenti)}
-      </div>
-      {lines.length > 0 ? (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className={styles.tableRight}>Qty</th>
-              <th className={styles.tableRight}>Unit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l, i) => (
-              <tr key={i}>
-                <td>{str(l.item_code ?? l.itemCode)}</td>
-                <td className={styles.tableRight}>{str(l.qty)}</td>
-                <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <span className={styles.muted}>Snapshot has no line detail.</span>
-      )}
-    </div>
-  );
-};

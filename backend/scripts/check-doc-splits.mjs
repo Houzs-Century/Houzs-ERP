@@ -159,7 +159,7 @@ try {
     const rows = await pg`
       SELECT po.po_number       AS parent_no,
              pi.id              AS line_id,
-             pi.material_code   AS item_code,
+             pi.item_code   AS item_code,
              pi.material_name   AS description,
              pi.qty             AS ordered_qty,
              g.grn_number       AS child_no,
@@ -172,7 +172,7 @@ try {
         LEFT JOIN scm.grns g
                ON g.id = gi.grn_id AND g.status <> 'CANCELLED'
        WHERE po.po_number = ${doc}
-       ORDER BY pi.material_code, g.created_at NULLS FIRST
+       ORDER BY pi.item_code, g.created_at NULLS FIRST
     `;
     report(doc, "Purchase Order", "Goods Receipts", rows);
   }

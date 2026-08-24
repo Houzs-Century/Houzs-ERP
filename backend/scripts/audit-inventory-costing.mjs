@@ -40,7 +40,7 @@
 //     diag-po-receipt-drift.mjs.
 //   * the authoritative landed unit cost of a lot is
 //     (PI line price -> GR price -> Pending) + allocated freight, weighted by qty
-//     over the lot identity (product_code, variant_key, batch_no) — the exact
+//     over the lot identity (item_code, variant_key, batch_no) — the exact
 //     cascade recostFromGrn implements (backend/src/scm/lib/recost.ts).
 //   * zero is NOT a price in this schema: it encodes "no price known yet"
 //     (recost.ts). A zero-cost GRN lot is therefore PENDING, not a defect, and is
@@ -260,18 +260,18 @@ async function main() {
     if (C.inventory_lots.has("movement_id") && C.inventory_lots.has("batch_no") && C.inventory_movements.has("batch_no")) {
       const splitRows = await pg.unsafe(`
         SELECT l.id AS lot_id, l.batch_no AS lot_batch, m.batch_no AS mov_batch,
-               l.product_code, m.source_doc_no, ${byCompany ? "l.company_id" : "NULL::int AS company_id"}
+               l.item_code, m.source_doc_no, ${byCompany ? "l.company_id" : "NULL::int AS company_id"}
           FROM ${L} l
           JOIN ${M} m ON m.id = l.movement_id
          WHERE COALESCE(l.batch_no,'') <> COALESCE(m.batch_no,'')
-         ORDER BY l.product_code`);
+         ORDER BY l.item_code`);
       const lotsWithMov = (await pg.unsafe(`SELECT count(*)::int AS n FROM ${L} l JOIN ${M} m ON m.id = l.movement_id`))[0].n;
       notice("");
       notice("  lot.batch_no vs its OWN source IN movement.batch_no (a partial rename would split these):");
       notice(`    lot/movement pairs compared                : ${lotsWithMov}`);
       notice(`    pairs whose batch_no DISAGREES             : ${splitRows.length}`);
       for (const r of splitRows.slice(0, SAMPLE)) {
-        notice(`      co=${r.company_id ?? "-"} ${pad(short(r.product_code, 24), 24)} lot="${r.lot_batch ?? ""}" mov="${r.mov_batch ?? ""}" ${r.source_doc_no ?? ""}`);
+        notice(`      co=${r.company_id ?? "-"} ${pad(short(r.item_code, 24), 24)} lot="${r.lot_batch ?? ""}" mov="${r.mov_batch ?? ""}" ${r.source_doc_no ?? ""}`);
       }
       verdict("0c", "lot.batch_no vs its source movement.batch_no (partial-rename split)",
         splitRows.length, lotsWithMov, splitRows.length === 0 ? "PASS" : "DEFECT",
@@ -355,33 +355,33 @@ async function main() {
 
     const driftRows = await pg.unsafe(`
       WITH mov AS (
-        SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+        SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
                COALESCE(variant_key,'') AS variant_key,
                SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                       WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                       ELSE 0 END) AS mov_qty,
                MAX(product_name) AS product_name
-          FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+          FROM ${M} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
       ), lot AS (
-        SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+        SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
                COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
-          FROM ${L} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+          FROM ${L} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
       )
       SELECT COALESCE(mov.company_id, lot.company_id) AS company_id,
              COALESCE(mov.warehouse_id, lot.warehouse_id) AS warehouse_id,
-             COALESCE(mov.product_code, lot.product_code) AS product_code,
+             COALESCE(mov.item_code, lot.item_code) AS item_code,
              COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
              COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty,
              COALESCE(mov.mov_qty,0) - COALESCE(lot.lot_qty,0) AS delta
         FROM mov FULL OUTER JOIN lot
-          ON mov.warehouse_id = lot.warehouse_id AND mov.product_code = lot.product_code
+          ON mov.warehouse_id = lot.warehouse_id AND mov.item_code = lot.item_code
          AND mov.variant_key = lot.variant_key ${byCompany ? "AND mov.company_id = lot.company_id" : ""}
        WHERE COALESCE(mov.mov_qty,0) <> COALESCE(lot.lot_qty,0)
-       ORDER BY ABS(COALESCE(mov.mov_qty,0) - COALESCE(lot.lot_qty,0)) DESC, product_code`);
+       ORDER BY ABS(COALESCE(mov.mov_qty,0) - COALESCE(lot.lot_qty,0)) DESC, item_code`);
 
     bucketTotal = (await pg.unsafe(`
       SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+        SELECT 1 FROM ${M} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
       ) t`))[0].n;
     const driftUnits = driftRows.reduce((a, r) => a + Math.abs(Number(r.delta)), 0);
     notice("");
@@ -392,7 +392,7 @@ async function main() {
       notice(`  sample (up to ${SAMPLE}, largest |delta| first):`);
       notice(`    ${pad("product", 24)} ${pad("variant", 12)} ${pad("co", 3)} ${pad("movQty", 8)} ${pad("lotQty", 8)} ${pad("delta", 7)} warehouse`);
       for (const r of driftRows.slice(0, SAMPLE)) {
-        notice(`    ${pad(short(r.product_code, 24), 24)} ${pad(short(r.variant_key, 12), 12)} ${pad(r.company_id ?? "-", 3)} ${pad(r.mov_qty, 8)} ${pad(r.lot_qty, 8)} ${pad(r.delta, 7)} ${short(r.warehouse_id, 38)}`);
+        notice(`    ${pad(short(r.item_code, 24), 24)} ${pad(short(r.variant_key, 12), 12)} ${pad(r.company_id ?? "-", 3)} ${pad(r.mov_qty, 8)} ${pad(r.lot_qty, 8)} ${pad(r.delta, 7)} ${short(r.warehouse_id, 38)}`);
       }
     }
     verdict("1", "on-hand reconciliation (movement sum == lot sum)", driftRows.length, bucketTotal,
@@ -412,7 +412,7 @@ async function main() {
     const lotCount = (await pg.unsafe(`SELECT count(*)::int AS n FROM ${L}`))[0].n;
     const lotBad = await pg.unsafe(`
       WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${K} GROUP BY lot_id)
-      SELECT l.id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"}, l.product_code,
+      SELECT l.id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"}, l.item_code,
              COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
              l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
              l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining AS residual,
@@ -429,7 +429,7 @@ async function main() {
     notice(`  ... with qty_remaining < 0        : ${lotBad.filter((r) => Number(r.qty_remaining) < 0).length}`);
     notice(`  ... consumed > received           : ${lotBad.filter((r) => Number(r.consumed) > Number(r.qty_received)).length}`);
     for (const r of lotBad.slice(0, SAMPLE)) {
-      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.product_code, 22), 22)} batch=${pad(short(r.batch_no, 20), 20)} recv=${pad(r.qty_received, 6)} cons=${pad(r.consumed, 6)} rem=${pad(r.qty_remaining, 6)} residual=${r.residual}  ${r.source_doc_no ?? ""}`);
+      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.item_code, 22), 22)} batch=${pad(short(r.batch_no, 20), 20)} recv=${pad(r.qty_received, 6)} cons=${pad(r.consumed, 6)} rem=${pad(r.qty_remaining, 6)} residual=${r.residual}  ${r.source_doc_no ?? ""}`);
     }
     verdict("2a", "lot conservation (received - consumed == remaining, no negatives)",
       lotBad.length, lotCount, lotBad.length === 0 ? "PASS" : "DEFECT",
@@ -438,19 +438,19 @@ async function main() {
     // Negative on-hand anywhere — in either ledger.
     const negRows = await pg.unsafe(`
       WITH mov AS (
-        SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+        SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
                COALESCE(variant_key,'') AS variant_key, MAX(product_name) AS product_name,
                SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                       WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                       ELSE 0 END) AS mov_qty
-          FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+          FROM ${M} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
       )
       SELECT * FROM mov WHERE mov_qty < 0 ORDER BY mov_qty ASC`);
     notice("");
     notice(`  buckets with NEGATIVE movement-ledger on-hand : ${negRows.length}`);
     notice("  (a negative on-hand means more shipped than ever received into that bucket — an oversell)");
     for (const r of negRows.slice(0, SAMPLE)) {
-      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.product_code, 24), 24)} ${pad(short(r.variant_key, 14), 14)} onHand=${r.mov_qty}  ${short(r.warehouse_id, 38)}`);
+      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.item_code, 24), 24)} ${pad(short(r.variant_key, 14), 14)} onHand=${r.mov_qty}  ${short(r.warehouse_id, 38)}`);
     }
     verdict("2b", "negative on-hand in the movement ledger", negRows.length, bucketTotal,
       negRows.length === 0 ? "PASS" : "DEFECT",
@@ -474,9 +474,9 @@ async function main() {
     if (has("grns", "id", "status") && has("grn_items", "grn_id", "qty_accepted")) {
       const grnNoCol = ["grn_number", "grn_no", "doc_no"].find((c) => C.grns.has(c));
       const retCol = C.grn_items.has("returned_qty") ? "COALESCE(gi.returned_qty,0)" : "0";
-      const svcPred3a = (C.grn_items.has("item_group") || C.grn_items.has("material_code"))
+      const svcPred3a = (C.grn_items.has("item_group") || C.grn_items.has("item_code"))
         ? svc(C.grn_items.has("item_group") ? "gi.item_group" : "NULL",
-            C.grn_items.has("material_code") ? "gi.material_code" : "NULL")
+            C.grn_items.has("item_code") ? "gi.item_code" : "NULL")
         : "FALSE";
       const grnRows = await pg.unsafe(`
         WITH lines AS (
@@ -521,7 +521,12 @@ async function main() {
     //     movement carrying that DO, not just the OUTs.
     if (has("delivery_orders", "id", "status") && has("delivery_order_items", "delivery_order_id", "qty")) {
       const doNoCol = ["do_number", "do_no", "doc_no"].find((c) => C.delivery_orders.has(c));
-      const shipped = "('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')";
+      /* A fourth hand-typed copy of the stock-out set — this file predates
+         scripts/lib/do-shipped-states.mjs and never imported it. 'COMPLETED'
+         dropped from all three occurrences on 2026-08-18: it is not a member of
+         scm.do_status, so it matched nothing. It never THREW here only because
+         every one of these predicates casts `d.status::text` first. */
+      const shipped = "('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')";
       const doRows = await pg.unsafe(`
         WITH lines AS (
           SELECT di.delivery_order_id AS doc_id, SUM(COALESCE(di.qty,0))::int AS line_qty
@@ -610,13 +615,13 @@ async function main() {
     // ==========================================================================
     hdr("5. COSTING — GRN capture (is the cost stamped on receipt the right one?)");
     notice("  Correct = the recostFromGrn cascade's own answer: per lot identity");
-    notice("  (product_code, variant_key, batch_no), the qty-weighted average of");
+    notice("  (item_code, variant_key, batch_no), the qty-weighted average of");
     notice("     goods = PI line price (in MYR at the PI's rate) if > 0, else GR price x GRN rate if > 0, else PENDING");
-    notice("     freight = round(grn_items.allocated_charge_centi / qty) + round(PI allocated_charge_centi / qty)");
+    notice("     freight = round(grn_items.allocated_charge_sen / qty) + round(PI allocated_charge_sen / qty)");
     notice("  Zero is NOT a price in this schema — it encodes 'no price known yet' (recost.ts).");
 
     const canCost =
-      has("grn_items", "id", "grn_id", "material_code", "qty_accepted", "unit_price_centi") &&
+      has("grn_items", "id", "grn_id", "item_code", "qty_accepted", "unit_price_sen") &&
       has("grns", "id", "status") &&
       has("purchase_order_items", "id", "purchase_order_id") &&
       has("purchase_orders", "id", "po_number") &&
@@ -624,9 +629,9 @@ async function main() {
     if (canCost) {
       const grnRate = C.grns.has("exchange_rate") ? "COALESCE(g.exchange_rate,1)" : "1";
       const piRate = C.purchase_invoices.has("exchange_rate") ? "COALESCE(pi.exchange_rate,1)" : "1";
-      const giFreight = C.grn_items.has("allocated_charge_centi") ? "COALESCE(gi.allocated_charge_centi,0)" : "0";
-      const piFreight = C.purchase_invoice_items.has("allocated_charge_centi") ? "COALESCE(pii.allocated_charge_centi,0)" : "0";
-      const havePi = has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_centi") && has("purchase_invoices", "id", "status");
+      const giFreight = C.grn_items.has("allocated_charge_sen") ? "COALESCE(gi.allocated_charge_sen,0)" : "0";
+      const piFreight = C.purchase_invoice_items.has("allocated_charge_sen") ? "COALESCE(pii.allocated_charge_sen,0)" : "0";
+      const havePi = has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_sen") && has("purchase_invoices", "id", "status");
 
       /* Rebuild the authoritative landed cost per GRN LINE exactly as recost.ts
          does, then aggregate to the lot identity. Every rounding step mirrors the
@@ -637,7 +642,7 @@ async function main() {
           ${havePi ? `
           SELECT pii.grn_item_id,
                  SUM(pii.qty) AS qty,
-                 SUM(pii.qty * ROUND(COALESCE(pii.unit_price_centi,0) * ${piRate})) AS amt,
+                 SUM(pii.qty * ROUND(COALESCE(pii.unit_price_sen,0) * ${piRate})) AS amt,
                  SUM(${piFreight}) AS freight
             FROM ${q("purchase_invoice_items")} pii
             JOIN ${q("purchase_invoices")} pi ON pi.id = pii.purchase_invoice_id
@@ -646,12 +651,12 @@ async function main() {
            GROUP BY pii.grn_item_id`
           : "SELECT NULL::uuid AS grn_item_id, 0::numeric AS qty, 0::numeric AS amt, 0::numeric AS freight WHERE false"}
         ), line AS (
-          SELECT gi.id AS gi_id, gi.grn_id, gi.material_code,
+          SELECT gi.id AS gi_id, gi.grn_id, gi.item_code,
                  GREATEST(0, COALESCE(gi.qty_accepted,0)) AS qty,
                  CASE WHEN COALESCE(p.qty,0) > 0 AND ROUND(p.amt / p.qty) > 0
                       THEN ROUND(p.amt / p.qty)
-                      WHEN COALESCE(gi.unit_price_centi,0) > 0
-                      THEN ROUND(COALESCE(gi.unit_price_centi,0) * ${grnRate})
+                      WHEN COALESCE(gi.unit_price_sen,0) > 0
+                      THEN ROUND(COALESCE(gi.unit_price_sen,0) * ${grnRate})
                       ELSE NULL END AS goods,
                  CASE WHEN GREATEST(0, COALESCE(gi.qty_accepted,0)) > 0
                       THEN ROUND(${giFreight}::numeric / GREATEST(0, COALESCE(gi.qty_accepted,0)))
@@ -668,22 +673,22 @@ async function main() {
             LEFT JOIN ${q("purchase_order_items")} poi ON poi.id = l.purchase_order_item_id
             LEFT JOIN ${q("purchase_orders")} po ON po.id = poi.purchase_order_id
         ), agg AS (
-          SELECT grn_id, material_code, COALESCE(batch_no,'') AS batch_no,
+          SELECT grn_id, item_code, COALESCE(batch_no,'') AS batch_no,
                  SUM(qty) AS qty, SUM(qty * (goods + freight)) AS amt
             FROM line_batch WHERE goods IS NOT NULL
-           GROUP BY grn_id, material_code, COALESCE(batch_no,'')
+           GROUP BY grn_id, item_code, COALESCE(batch_no,'')
         )
         SELECT l.id AS lot_id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
-               l.product_code, COALESCE(l.batch_no,'') AS batch_no,
+               l.item_code, COALESCE(l.batch_no,'') AS batch_no,
                l.qty_received, l.qty_remaining, l.unit_cost_sen, l.source_doc_no,
                CASE WHEN a.qty > 0 THEN ROUND(a.amt / a.qty) ELSE NULL END AS expected_cost_sen
           FROM ${L} l
           LEFT JOIN agg a
             ON a.grn_id::text = l.source_doc_id::text
-           AND a.material_code = l.product_code
+           AND a.item_code = l.item_code
            AND a.batch_no = COALESCE(l.batch_no,'')
          WHERE l.source_doc_type = 'GRN'
-         ORDER BY l.product_code`);
+         ORDER BY l.item_code`);
 
       const grnLots = costRows.length;
       const pending = costRows.filter((r) => r.expected_cost_sen === null);
@@ -707,7 +712,7 @@ async function main() {
           Math.abs((a.expected_cost_sen - a.unit_cost_sen) * a.qty_received));
         for (const r of bySize.slice(0, SAMPLE)) {
           const gap = (Number(r.expected_cost_sen) - Number(r.unit_cost_sen ?? 0)) * Number(r.qty_received ?? 0);
-          notice(`    ${pad(short(r.product_code, 24), 24)} ${pad(short(r.batch_no, 22), 22)} ${pad(r.qty_received, 5)} ${pad(rm(r.unit_cost_sen), 12)} ${pad(rm(r.expected_cost_sen), 12)} ${pad(rm(gap), 12)} ${short(r.source_doc_no, 20)}`);
+          notice(`    ${pad(short(r.item_code, 24), 24)} ${pad(short(r.batch_no, 22), 22)} ${pad(r.qty_received, 5)} ${pad(rm(r.unit_cost_sen), 12)} ${pad(rm(r.expected_cost_sen), 12)} ${pad(rm(gap), 12)} ${short(r.source_doc_no, 20)}`);
         }
       }
       verdict("5a", "GRN lot unit cost == the recost cascade's authoritative landed cost",
@@ -757,7 +762,7 @@ async function main() {
           FROM ${K} GROUP BY movement_id
       )
       SELECT m.id, ${byCompany ? "m.company_id" : "NULL::int AS company_id"},
-             m.movement_type, m.source_doc_type, m.source_doc_no, m.product_code,
+             m.movement_type, m.source_doc_type, m.source_doc_no, m.item_code,
              COALESCE(m.variant_key,'') AS variant_key, m.batch_no,
              ABS(m.qty) AS mov_qty, COALESCE(c.cons_qty,0) AS cons_qty,
              COALESCE(m.total_cost_sen,0) AS mov_cost, COALESCE(c.cons_cost,0) AS cons_cost,
@@ -777,13 +782,13 @@ async function main() {
       notice(`  sample of qty-short movements (up to ${SAMPLE}):`);
       notice(`    ${pad("doc", 22)} ${pad("type", 6)} ${pad("product", 24)} ${pad("movQty", 7)} ${pad("consQty", 8)} ${pad("cost", 12)} created`);
       for (const r of qtyBad.slice(0, SAMPLE)) {
-        notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(r.movement_type, 6)} ${pad(short(r.product_code, 24), 24)} ${pad(r.mov_qty, 7)} ${pad(r.cons_qty, 8)} ${pad(rm(r.mov_cost), 12)} ${String(r.created_at).slice(0, 10)}`);
+        notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(r.movement_type, 6)} ${pad(short(r.item_code, 24), 24)} ${pad(r.mov_qty, 7)} ${pad(r.cons_qty, 8)} ${pad(rm(r.mov_cost), 12)} ${String(r.created_at).slice(0, 10)}`);
       }
     }
     if (costBad.length) {
       notice(`  sample of COGS-mismatched movements (up to ${SAMPLE}):`);
       for (const r of costBad.slice(0, SAMPLE)) {
-        notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.product_code, 24), 24)} movCost=${pad(rm(r.mov_cost), 12)} consCost=${pad(rm(r.cons_cost), 12)} delta=${rm(Number(r.mov_cost) - Number(r.cons_cost))}`);
+        notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.item_code, 24), 24)} movCost=${pad(rm(r.mov_cost), 12)} consCost=${pad(rm(r.cons_cost), 12)} delta=${rm(Number(r.mov_cost) - Number(r.cons_cost))}`);
       }
     }
     verdict("6a", "outgoing movement qty fully backed by lot consumptions",
@@ -799,7 +804,7 @@ async function main() {
     //     the lot it drew from — this is the invariant fn_consume_fifo writes.
     const consBad = await pg.unsafe(`
       SELECT k.id, k.source_doc_no, k.qty_consumed, k.unit_cost_sen, k.total_cost_sen,
-             l.unit_cost_sen AS lot_cost, k.product_code
+             l.unit_cost_sen AS lot_cost, k.item_code
         FROM ${K} k LEFT JOIN ${L} l ON l.id = k.lot_id
        WHERE k.total_cost_sen <> k.qty_consumed * k.unit_cost_sen
           OR k.qty_consumed <= 0
@@ -810,57 +815,57 @@ async function main() {
     notice(`  consumption rows scanned                     : ${consTotal}`);
     notice(`  ... failing total == qty x unit, or disagreeing with their lot's cost : ${consBad.length}`);
     for (const r of consBad.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.product_code, 24), 24)} qty=${pad(r.qty_consumed, 5)} unit=${pad(rm(r.unit_cost_sen), 12)} total=${pad(rm(r.total_cost_sen), 12)} lotUnit=${rm(r.lot_cost)}`);
+      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.item_code, 24), 24)} qty=${pad(r.qty_consumed, 5)} unit=${pad(rm(r.unit_cost_sen), 12)} total=${pad(rm(r.total_cost_sen), 12)} lotUnit=${rm(r.lot_cost)}`);
     }
     verdict("6d", "consumption arithmetic and lot-cost agreement", consBad.length, consTotal,
       consBad.length === 0 ? "PASS" : "DEFECT",
       "NOTE: recostFromGrn deliberately restamps BOTH the lot and its consumptions, so a disagreement means a half-applied recost");
 
     // 6e. Sales Invoice cost vs the DO cost it copied. restampSiFromDo copies
-    //     delivery_order_items.unit_cost_centi x qty onto sales_invoice_items
-    //     .line_cost_centi, so the two must agree on every non-cancelled invoice.
-    if (has("sales_invoice_items", "do_item_id", "qty", "line_cost_centi") &&
-        has("delivery_order_items", "id", "unit_cost_centi") &&
+    //     delivery_order_items.unit_cost_sen x qty onto sales_invoice_items
+    //     .line_cost_sen, so the two must agree on every non-cancelled invoice.
+    if (has("sales_invoice_items", "do_item_id", "qty", "line_cost_sen") &&
+        has("delivery_order_items", "id", "unit_cost_sen") &&
         has("sales_invoices", "id", "status")) {
       const siNoCol = ["invoice_number", "si_number", "doc_no"].find((c) => C.sales_invoices.has(c));
       const siRows = await pg.unsafe(`
         SELECT si.id AS si_id, ${siNoCol ? `si."${ident(siNoCol)}"` : "si.id::text"} AS doc_no,
                ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-               sii.id AS line_id, sii.qty, sii.line_cost_centi,
-               di.unit_cost_centi, (sii.qty * COALESCE(di.unit_cost_centi,0)) AS expected_cost
+               sii.id AS line_id, sii.qty, sii.line_cost_sen,
+               di.unit_cost_sen, (sii.qty * COALESCE(di.unit_cost_sen,0)) AS expected_cost
           FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
           JOIN ${q("delivery_order_items")} di ON di.id = sii.do_item_id
          WHERE UPPER(si.status::text) <> 'CANCELLED'`);
-      const bad = siRows.filter((r) => Number(r.line_cost_centi ?? 0) !== Number(r.expected_cost));
-      const zero = siRows.filter((r) => Number(r.line_cost_centi ?? 0) === 0);
+      const bad = siRows.filter((r) => Number(r.line_cost_sen ?? 0) !== Number(r.expected_cost));
+      const zero = siRows.filter((r) => Number(r.line_cost_sen ?? 0) === 0);
       notice("");
       notice("  6e. Sales Invoice line cost vs the DO line cost it copies (restampSiFromDo)");
       notice(`      SI lines linked to a DO line scanned : ${siRows.length}`);
-      notice(`      ... line_cost_centi != qty x DO unit_cost_centi : ${bad.length}`);
-      notice(`      ... line_cost_centi = 0              : ${zero.length}`);
+      notice(`      ... line_cost_sen != qty x DO unit_cost_sen : ${bad.length}`);
+      notice(`      ... line_cost_sen = 0              : ${zero.length}`);
       for (const r of bad.slice(0, SAMPLE)) {
-        notice(`        co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} qty=${pad(r.qty, 5)} stored=${pad(rm(r.line_cost_centi), 12)} expected=${pad(rm(r.expected_cost), 12)} delta=${rm(Number(r.line_cost_centi ?? 0) - Number(r.expected_cost))}`);
+        notice(`        co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} qty=${pad(r.qty, 5)} stored=${pad(rm(r.line_cost_sen), 12)} expected=${pad(rm(r.expected_cost), 12)} delta=${rm(Number(r.line_cost_sen ?? 0) - Number(r.expected_cost))}`);
       }
       verdict("6e", "Sales Invoice line cost == DO line cost x qty", bad.length, siRows.length,
         bad.length === 0 ? "PASS" : "DEFECT",
         "a gap means a DO recost did not cascade to the invoice, so the invoice's margin is wrong");
 
       // 6f. SI header totals must equal the sum of their own lines (recomputeSiTotals).
-      if (C.sales_invoices.has("total_cost_centi")) {
+      if (C.sales_invoices.has("total_cost_sen")) {
         const hdrRows = await pg.unsafe(`
           WITH s AS (
-            SELECT sales_invoice_id, SUM(COALESCE(line_cost_centi,0))::bigint AS line_cost
+            SELECT sales_invoice_id, SUM(COALESCE(line_cost_sen,0))::bigint AS line_cost
               FROM ${q("sales_invoice_items")} GROUP BY sales_invoice_id
           )
           SELECT si.id, ${siNoCol ? `si."${ident(siNoCol)}"` : "si.id::text"} AS doc_no,
                  ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-                 COALESCE(si.total_cost_centi,0) AS hdr_cost, COALESCE(s.line_cost,0) AS line_cost
+                 COALESCE(si.total_cost_sen,0) AS hdr_cost, COALESCE(s.line_cost,0) AS line_cost
             FROM ${q("sales_invoices")} si LEFT JOIN s ON s.sales_invoice_id = si.id
            WHERE UPPER(si.status::text) <> 'CANCELLED'`);
         const badHdr = hdrRows.filter((r) => Number(r.hdr_cost) !== Number(r.line_cost));
         notice("");
-        notice("  6f. Sales Invoice header total_cost_centi vs the sum of its lines");
+        notice("  6f. Sales Invoice header total_cost_sen vs the sum of its lines");
         notice(`      invoices scanned                 : ${hdrRows.length}`);
         notice(`      ... header != Sigma(lines)       : ${badHdr.length}`);
         for (const r of badHdr.slice(0, SAMPLE)) {
@@ -868,7 +873,7 @@ async function main() {
         }
         verdict("6f", "SI header cost total == sum of its line costs", badHdr.length, hdrRows.length,
           badHdr.length === 0 ? "PASS" : "DEFECT",
-          "total_cost_centi is what the P&L reads; a stale header understates or overstates margin directly");
+          "total_cost_sen is what the P&L reads; a stale header understates or overstates margin directly");
       }
     } else {
       notice("");
@@ -883,13 +888,13 @@ async function main() {
     // SECTION 7 — PO -> GRN -> PI chain
     // ==========================================================================
     hdr("7. COSTING — PO -> GRN -> PI chain");
-    if (has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_centi") &&
+    if (has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_sen") &&
         has("purchase_invoices", "id", "status") &&
-        has("grn_items", "id", "qty_accepted", "unit_price_centi") && has("grns", "id", "status")) {
+        has("grn_items", "id", "qty_accepted", "unit_price_sen") && has("grns", "id", "status")) {
       const retCol = C.grn_items.has("returned_qty") ? "COALESCE(gi.returned_qty,0)" : "0";
-      const piAmtExpr = C.purchase_invoice_items.has("line_total_centi")
-        ? "COALESCE(pii.line_total_centi, pii.qty * COALESCE(pii.unit_price_centi,0))"
-        : "pii.qty * COALESCE(pii.unit_price_centi,0)";
+      const piAmtExpr = C.purchase_invoice_items.has("line_total_sen")
+        ? "COALESCE(pii.line_total_sen, pii.qty * COALESCE(pii.unit_price_sen,0))"
+        : "pii.qty * COALESCE(pii.unit_price_sen,0)";
       const chain = await pg.unsafe(`
         WITH pi AS (
           SELECT pii.grn_item_id, SUM(pii.qty)::int AS pi_qty,
@@ -903,7 +908,7 @@ async function main() {
                ${C.grns.has("company_id") ? "g.company_id" : "NULL::int AS company_id"},
                SUM(GREATEST(0, COALESCE(gi.qty_accepted,0) - ${retCol}))::int AS recv_qty,
                SUM(COALESCE(pi.pi_qty,0))::int AS billed_qty,
-               SUM(COALESCE(gi.qty_accepted,0) * COALESCE(gi.unit_price_centi,0))::bigint AS grn_amt,
+               SUM(COALESCE(gi.qty_accepted,0) * COALESCE(gi.unit_price_sen,0))::bigint AS grn_amt,
                SUM(COALESCE(pi.pi_amt,0))::bigint AS pi_amt,
                count(*) FILTER (WHERE pi.grn_item_id IS NULL)::int AS unbilled_lines,
                count(*)::int AS lines
@@ -987,9 +992,9 @@ async function main() {
     notice("  qty_accepted (NOT qty_received) is the column the post uses (grns.ts:502) — a rejected");
     notice("  unit is deliberately never stocked, so accepted < received is correct, not a gap.");
 
-    if (has("grns", "id", "status") && has("grn_items", "grn_id", "qty_accepted", "material_code")) {
+    if (has("grns", "id", "status") && has("grn_items", "grn_id", "qty_accepted", "item_code")) {
       const grnNoCol = ["grn_number", "grn_no", "doc_no"].find((c) => C.grns.has(c));
-      const svcPred = svc("gi.item_group", "gi.material_code");
+      const svcPred = svc("gi.item_group", "gi.item_code");
       const inbound = await pg.unsafe(`
         WITH lines AS (
           SELECT gi.grn_id,
@@ -1100,7 +1105,7 @@ async function main() {
       WITH cons AS (
         SELECT k.id, k.lot_id, k.movement_id, k.qty_consumed, k.consumed_at,
                l.received_at, COALESCE(l.batch_no,'') AS lot_batch,
-               l.product_code, COALESCE(l.variant_key,'') AS vk,
+               l.item_code, COALESCE(l.variant_key,'') AS vk,
                l.warehouse_id::text AS wh, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
                COALESCE(m.batch_no,'') AS mov_batch, m.source_doc_type, m.source_doc_no,
                m.movement_type
@@ -1124,7 +1129,7 @@ async function main() {
                           AND (a.consumed_at < c.consumed_at
                                OR (a.consumed_at = c.consumed_at AND a.id < c.id))), 0) AS avail
                 FROM ${L} l2
-               WHERE l2.product_code = c.product_code
+               WHERE l2.item_code = c.item_code
                  AND COALESCE(l2.variant_key,'') = c.vk
                  AND l2.warehouse_id::text = c.wh
                  ${byCompany ? "AND l2.company_id = c.company_id" : ""}
@@ -1142,7 +1147,7 @@ async function main() {
     notice(`  consumptions with a resolvable lot scanned     : ${consWithLot}`);
     notice(`  ... that SKIPPED an older lot still holding stock (FIFO violation) : ${fifoRows.length}`);
     for (const r of fifoRows.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.product_code, 22), 22)} took lot recv=${String(r.received_at).slice(0, 10)} batch="${short(r.lot_batch, 20)}" qty=${r.qty_consumed}  skipped ${r.n_skipped} older lot(s) holding ${r.skipped_units} unit(s), oldest ${String(r.oldest_skipped_at).slice(0, 10)}`);
+      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} took lot recv=${String(r.received_at).slice(0, 10)} batch="${short(r.lot_batch, 20)}" qty=${r.qty_consumed}  skipped ${r.n_skipped} older lot(s) holding ${r.skipped_units} unit(s), oldest ${String(r.oldest_skipped_at).slice(0, 10)}`);
     }
     verdict("9c", "FIFO order — no consumption skipped an older available lot",
       fifoRows.length, consWithLot, fifoRows.length === 0 ? "PASS" : "DEFECT",
@@ -1151,7 +1156,7 @@ async function main() {
     // 9d. Batch fidelity of the consume: did a batch-stamped OUT actually consume
     //     that batch, or did it land on the 0195 plain-FIFO fallback?
     const batchDrift = await pg.unsafe(`
-      SELECT m.source_doc_no, m.source_doc_type, m.product_code, m.batch_no AS mov_batch,
+      SELECT m.source_doc_no, m.source_doc_type, m.item_code, m.batch_no AS mov_batch,
              COALESCE(l.batch_no,'') AS lot_batch, k.qty_consumed, k.total_cost_sen, m.created_at
         FROM ${K} k JOIN ${M} m ON m.id = k.movement_id JOIN ${L} l ON l.id = k.lot_id
        WHERE m.batch_no IS NOT NULL AND m.batch_no <> ''
@@ -1164,7 +1169,7 @@ async function main() {
     notice(`  consumptions on a batch-stamped movement       : ${batchStamped}`);
     notice(`  ... that consumed a DIFFERENT batch (0195 plain-FIFO fallback) : ${batchDrift.length}`);
     for (const r of batchDrift.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.product_code, 22), 22)} wanted="${short(r.mov_batch, 22)}" took="${short(r.lot_batch, 22)}" qty=${r.qty_consumed} ${rm(r.total_cost_sen)}`);
+      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} wanted="${short(r.mov_batch, 22)}" took="${short(r.lot_batch, 22)}" qty=${r.qty_consumed} ${rm(r.total_cost_sen)}`);
     }
     verdict("9d", "batch-stamped OUT consumed its own batch", batchDrift.length, batchStamped,
       batchDrift.length === 0 ? "PASS" : "LEGIT-BY-DESIGN",
@@ -1201,7 +1206,7 @@ async function main() {
          GROUP BY k.lot_id
       )
       SELECT ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
-             l.warehouse_id::text AS warehouse_id, l.product_code,
+             l.warehouse_id::text AS warehouse_id, l.item_code,
              COALESCE(l.variant_key,'') AS variant_key, COALESCE(l.batch_no,'(no batch)') AS batch_no,
              SUM(l.qty_received)::int AS received,
              SUM(l.qty_remaining)::int AS on_hand,
@@ -1212,8 +1217,8 @@ async function main() {
              SUM(COALESCE(c.n_dos,0))::int AS n_dos,
              count(*)::int AS lots
         FROM ${L} l LEFT JOIN lot_cons c ON c.lot_id = l.id
-       GROUP BY l.warehouse_id, l.product_code, COALESCE(l.variant_key,''), COALESCE(l.batch_no,'(no batch)')${byCompany ? ", l.company_id" : ""}
-       ORDER BY l.product_code`);
+       GROUP BY l.warehouse_id, l.item_code, COALESCE(l.variant_key,''), COALESCE(l.batch_no,'(no batch)')${byCompany ? ", l.company_id" : ""}
+       ORDER BY l.item_code`);
     const unbalanced = traceRows.filter((r) => Number(r.received) !== Number(r.consumed) + Number(r.on_hand));
     const unattributed = traceRows.filter((r) => Number(r.to_missing_do) > 0 || Number(r.to_other) > 0);
     const totRecv = traceRows.reduce((a, r) => a + Number(r.received), 0);
@@ -1234,12 +1239,12 @@ async function main() {
     notice(`  consumed units consumed by a NON-DO document       : ${totOther}  (transfers / returns / write-offs — legitimate, listed below)`);
     notice(`  batches where received != consumed + on hand       : ${unbalanced.length}`);
     for (const r of unbalanced.slice(0, SAMPLE)) {
-      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.product_code, 22), 22)} batch=${pad(short(r.batch_no, 22), 22)} recv=${pad(r.received, 6)} cons=${pad(r.consumed, 6)} hand=${pad(r.on_hand, 6)} lots=${r.lots}`);
+      notice(`    co=${r.company_id ?? "-"} ${pad(short(r.item_code, 22), 22)} batch=${pad(short(r.batch_no, 22), 22)} recv=${pad(r.received, 6)} cons=${pad(r.consumed, 6)} hand=${pad(r.on_hand, 6)} lots=${r.lots}`);
     }
     if (unattributed.length) {
       notice(`  batches with units consumed outside a real DO (up to ${SAMPLE}):`);
       for (const r of unattributed.slice(0, SAMPLE)) {
-        notice(`    co=${r.company_id ?? "-"} ${pad(short(r.product_code, 22), 22)} batch=${pad(short(r.batch_no, 22), 22)} toDO=${pad(r.to_do, 5)} toMissingDO=${pad(r.to_missing_do, 5)} toOther=${pad(r.to_other, 5)} distinctDOs=${r.n_dos}`);
+        notice(`    co=${r.company_id ?? "-"} ${pad(short(r.item_code, 22), 22)} batch=${pad(short(r.batch_no, 22), 22)} toDO=${pad(r.to_do, 5)} toMissingDO=${pad(r.to_missing_do, 5)} toOther=${pad(r.to_other, 5)} distinctDOs=${r.n_dos}`);
       }
     }
     // Which non-DO document types consumed stock, so "other" is never a black box.
@@ -1262,7 +1267,7 @@ async function main() {
     //      exactly one lot (structural, via lot_id) and one movement.
     const overAttr = await pg.unsafe(`
       WITH c AS (SELECT movement_id, SUM(qty_consumed)::int AS cons FROM ${K} GROUP BY movement_id)
-      SELECT m.source_doc_type, m.source_doc_no, m.product_code, ABS(m.qty) AS mov_qty, c.cons
+      SELECT m.source_doc_type, m.source_doc_no, m.item_code, ABS(m.qty) AS mov_qty, c.cons
         FROM c JOIN ${M} m ON m.id = c.movement_id
        WHERE c.cons > ABS(m.qty) ORDER BY c.cons - ABS(m.qty) DESC`);
     const orphanCons = await pg.unsafe(`
@@ -1270,7 +1275,7 @@ async function main() {
     notice("");
     notice(`  movements consuming MORE than they moved (double attribution) : ${overAttr.length}`);
     for (const r of overAttr.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.product_code, 22), 22)} moved=${r.mov_qty} consumed=${r.cons}`);
+      notice(`    ${pad(short(r.source_doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} moved=${r.mov_qty} consumed=${r.cons}`);
     }
     notice(`  consumptions whose movement does not exist                    : ${orphanCons[0].n}`);
     verdict("10c", "no double attribution (consumed <= moved, every consumption has a movement)",
@@ -1288,32 +1293,32 @@ async function main() {
     // ==========================================================================
     hdr("11. GROSS PROFIT — does the SI margin fall out of the lots actually consumed?");
     notice("  The chain is: consumptions -> inventory_movements.total_cost_sen -> restampDoActualCost");
-    notice("  -> delivery_order_items.unit_cost_centi/line_cost_centi -> sales_invoice_items.line_cost_centi");
-    notice("  -> sales_invoices.total_cost_centi -> total_margin_centi. Each link is checked separately");
+    notice("  -> delivery_order_items.unit_cost_sen/line_cost_sen -> sales_invoice_items.line_cost_sen");
+    notice("  -> sales_invoices.total_cost_sen -> total_margin_sen. Each link is checked separately");
     notice("  so a break can be located, not merely detected.");
-    notice("  Unit note: *_sen and *_centi are the SAME unit (1/100 MYR); the sen->centi hand-off in");
+    notice("  Unit note: *_sen and *_sen are the SAME unit (1/100 MYR); the sen->centi hand-off in");
     notice("  restampDoActualCost is therefore a rename, not a conversion.");
 
     // 11a. DO line cost vs the FIFO cost its own movements actually booked.
     if (has("delivery_order_items", "delivery_order_id", "item_code", "qty") &&
         has("delivery_orders", "id", "status") &&
-        C.delivery_order_items.has("line_cost_centi")) {
+        C.delivery_order_items.has("line_cost_sen")) {
       const svcDo = svc("di.item_group", "di.item_code");
       const doCost = await pg.unsafe(`
         WITH lines AS (
           SELECT di.delivery_order_id AS doc_id, di.item_code,
                  SUM(COALESCE(di.qty,0))::int AS qty,
-                 SUM(COALESCE(di.line_cost_centi,0))::bigint AS line_cost
+                 SUM(COALESCE(di.line_cost_sen,0))::bigint AS line_cost
             FROM ${q("delivery_order_items")} di
            WHERE NOT ${svcDo}
            GROUP BY di.delivery_order_id, di.item_code
         ), fifo AS (
-          SELECT source_doc_id::text AS doc_id, product_code,
+          SELECT source_doc_id::text AS doc_id, item_code,
                  SUM(CASE movement_type WHEN 'OUT' THEN COALESCE(total_cost_sen,0)
                                         ELSE -COALESCE(total_cost_sen,0) END)::bigint AS net_cost,
                  SUM(CASE movement_type WHEN 'OUT' THEN qty ELSE -qty END)::int AS net_qty
             FROM ${M} WHERE source_doc_type = 'DO' AND source_doc_id IS NOT NULL
-           GROUP BY source_doc_id, product_code
+           GROUP BY source_doc_id, item_code
         )
         SELECT ${C.delivery_orders.has("do_number") ? "d.do_number" : "d.id::text"} AS doc_no,
                ${C.delivery_orders.has("company_id") ? "d.company_id" : "NULL::int AS company_id"},
@@ -1321,8 +1326,8 @@ async function main() {
                COALESCE(f.net_cost,0) AS fifo_cost, COALESCE(f.net_qty,0) AS fifo_qty
           FROM lines l
           JOIN ${q("delivery_orders")} d ON d.id = l.doc_id
-          LEFT JOIN fifo f ON f.doc_id = l.doc_id::text AND f.product_code = l.item_code
-         WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')
+          LEFT JOIN fifo f ON f.doc_id = l.doc_id::text AND f.item_code = l.item_code
+         WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')
          ORDER BY 1`);
       const doBad = doCost.filter((r) => Number(r.line_cost) !== Number(r.fifo_cost));
       const doGap = doBad.reduce((a, r) => a + Math.abs(Number(r.line_cost) - Number(r.fifo_cost)), 0);
@@ -1340,17 +1345,17 @@ async function main() {
     }
 
     // 11b. Margin identity on every SI line, and on the header.
-    if (has("sales_invoice_items", "sales_invoice_id", "line_total_centi", "line_cost_centi") &&
-        C.sales_invoice_items.has("line_margin_centi") && has("sales_invoices", "id", "status")) {
+    if (has("sales_invoice_items", "sales_invoice_id", "line_total_sen", "line_cost_sen") &&
+        C.sales_invoice_items.has("line_margin_sen") && has("sales_invoices", "id", "status")) {
       const siNoCol2 = ["invoice_number", "si_number", "doc_no"].find((c) => C.sales_invoices.has(c));
       const gpLine = await pg.unsafe(`
         SELECT ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-               sii.id, sii.line_total_centi, sii.line_cost_centi, sii.line_margin_centi
+               sii.id, sii.line_total_sen, sii.line_cost_sen, sii.line_margin_sen
           FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
          WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT')
-           AND COALESCE(sii.line_margin_centi,0) <> COALESCE(sii.line_total_centi,0) - COALESCE(sii.line_cost_centi,0)`);
+           AND COALESCE(sii.line_margin_sen,0) <> COALESCE(sii.line_total_sen,0) - COALESCE(sii.line_cost_sen,0)`);
       const gpLineTotal = (await pg.unsafe(`
         SELECT count(*)::int AS n FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
@@ -1360,17 +1365,17 @@ async function main() {
       notice(`       issued SI lines scanned      : ${gpLineTotal}`);
       notice(`       ... margin identity BROKEN   : ${gpLine.length}`);
       for (const r of gpLine.slice(0, SAMPLE)) {
-        notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} rev=${pad(rm(r.line_total_centi), 13)} cost=${pad(rm(r.line_cost_centi), 13)} margin=${pad(rm(r.line_margin_centi), 13)} shouldBe=${rm(Number(r.line_total_centi ?? 0) - Number(r.line_cost_centi ?? 0))}`);
+        notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} rev=${pad(rm(r.line_total_sen), 13)} cost=${pad(rm(r.line_cost_sen), 13)} margin=${pad(rm(r.line_margin_sen), 13)} shouldBe=${rm(Number(r.line_total_sen ?? 0) - Number(r.line_cost_sen ?? 0))}`);
       }
       verdict("11b", "SI line margin == line revenue - line cost", gpLine.length, gpLineTotal,
         gpLine.length === 0 ? "PASS" : "DEFECT",
         "a broken identity means the GP shown on the invoice is not the GP its own numbers imply");
 
       // 11c. GP traced end to end: SI line cost -> DO line -> FIFO consumptions.
-      if (C.sales_invoice_items.has("do_item_id") && C.delivery_order_items.has("unit_cost_centi")) {
+      if (C.sales_invoice_items.has("do_item_id") && C.delivery_order_items.has("unit_cost_sen")) {
         const gpTrace = await pg.unsafe(`
           WITH si_line AS (
-            SELECT sii.id, sii.do_item_id, sii.qty, sii.line_total_centi, sii.line_cost_centi,
+            SELECT sii.id, sii.do_item_id, sii.qty, sii.line_total_sen, sii.line_cost_sen,
                    ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                    ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"}
               FROM ${q("sales_invoice_items")} sii
@@ -1378,40 +1383,40 @@ async function main() {
              WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT') AND sii.do_item_id IS NOT NULL
           ), do_line AS (
             SELECT di.id, di.delivery_order_id, di.item_code, di.qty AS do_qty,
-                   COALESCE(di.unit_cost_centi,0) AS unit_cost, COALESCE(di.line_cost_centi,0) AS do_line_cost,
+                   COALESCE(di.unit_cost_sen,0) AS unit_cost, COALESCE(di.line_cost_sen,0) AS do_line_cost,
                    ${C.delivery_order_items.has("item_group") ? "di.item_group" : "NULL::text AS item_group"}
               FROM ${q("delivery_order_items")} di
           ), fifo AS (
-            SELECT k.movement_id, m.source_doc_id::text AS doc_id, m.product_code,
+            SELECT k.movement_id, m.source_doc_id::text AS doc_id, m.item_code,
                    SUM(k.qty_consumed)::int AS cons_qty, SUM(k.total_cost_sen)::bigint AS cons_cost
               FROM ${K} k JOIN ${M} m ON m.id = k.movement_id
              WHERE m.source_doc_type = 'DO'
-             GROUP BY k.movement_id, m.source_doc_id, m.product_code
+             GROUP BY k.movement_id, m.source_doc_id, m.item_code
           ), fifo_doc AS (
-            SELECT doc_id, product_code, SUM(cons_qty)::int AS cons_qty, SUM(cons_cost)::bigint AS cons_cost
-              FROM fifo GROUP BY doc_id, product_code
+            SELECT doc_id, item_code, SUM(cons_qty)::int AS cons_qty, SUM(cons_cost)::bigint AS cons_cost
+              FROM fifo GROUP BY doc_id, item_code
           )
-          SELECT s.doc_no, s.company_id, dl.item_code, s.qty, s.line_total_centi, s.line_cost_centi,
+          SELECT s.doc_no, s.company_id, dl.item_code, s.qty, s.line_total_sen, s.line_cost_sen,
                  dl.unit_cost, COALESCE(f.cons_qty,0) AS cons_qty, COALESCE(f.cons_cost,0) AS cons_cost
             FROM si_line s
             JOIN do_line dl ON dl.id = s.do_item_id
-            LEFT JOIN fifo_doc f ON f.doc_id = dl.delivery_order_id::text AND f.product_code = dl.item_code
+            LEFT JOIN fifo_doc f ON f.doc_id = dl.delivery_order_id::text AND f.item_code = dl.item_code
            WHERE NOT ${svc("dl.item_group", "dl.item_code")}
            ORDER BY s.doc_no`);
         /* An SI line's cost is traceable when the DO bucket it bills actually
            consumed lots. Zero consumed units with a non-zero billed cost (or the
            reverse) is the break the owner is asking about. */
         const noFifo = gpTrace.filter((r) => Number(r.cons_qty) === 0);
-        const zeroCost = gpTrace.filter((r) => Number(r.line_cost_centi ?? 0) === 0);
+        const zeroCost = gpTrace.filter((r) => Number(r.line_cost_sen ?? 0) === 0);
         notice("");
         notice("  11c. SI goods lines traced back to a real FIFO consumption");
         notice(`       issued SI goods lines linked to a DO line : ${gpTrace.length}`);
         notice(`       ... whose DO bucket consumed NO lot at all : ${noFifo.length}  <- GP on these is not FIFO-derived`);
         notice(`       ... billed at zero cost (GP = 100%)        : ${zeroCost.length}`);
-        const gpAtRisk = noFifo.reduce((a, r) => a + Number(r.line_total_centi ?? 0), 0);
+        const gpAtRisk = noFifo.reduce((a, r) => a + Number(r.line_total_sen ?? 0), 0);
         notice(`       revenue sitting on a non-FIFO-derived GP   : ${rm(gpAtRisk)}`);
         for (const r of noFifo.slice(0, SAMPLE)) {
-          notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} qty=${pad(r.qty, 4)} rev=${pad(rm(r.line_total_centi), 13)} cost=${pad(rm(r.line_cost_centi), 13)} consumedUnits=${r.cons_qty}`);
+          notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} qty=${pad(r.qty, 4)} rev=${pad(rm(r.line_total_sen), 13)} cost=${pad(rm(r.line_cost_sen), 13)} consumedUnits=${r.cons_qty}`);
         }
         verdict("11c", "SI goods line GP derived from a real FIFO consumption",
           noFifo.length, gpTrace.length, noFifo.length === 0 ? "PASS" : "DEFECT",
@@ -1419,16 +1424,16 @@ async function main() {
       }
 
       // 11d. SI header margin identity.
-      if (C.sales_invoices.has("total_margin_centi") && C.sales_invoices.has("total_cost_centi")) {
-        const revCol = C.sales_invoices.has("local_total_centi") ? "local_total_centi" : "total_centi";
+      if (C.sales_invoices.has("total_margin_sen") && C.sales_invoices.has("total_cost_sen")) {
+        const revCol = C.sales_invoices.has("local_total_sen") ? "local_total_sen" : "total_sen";
         const gpHdr = await pg.unsafe(`
           SELECT ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                  ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-                 COALESCE(si."${ident(revCol)}",0) AS rev, COALESCE(si.total_cost_centi,0) AS cost,
-                 COALESCE(si.total_margin_centi,0) AS margin
+                 COALESCE(si."${ident(revCol)}",0) AS rev, COALESCE(si.total_cost_sen,0) AS cost,
+                 COALESCE(si.total_margin_sen,0) AS margin
             FROM ${q("sales_invoices")} si
            WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT')
-             AND COALESCE(si.total_margin_centi,0) <> COALESCE(si."${ident(revCol)}",0) - COALESCE(si.total_cost_centi,0)`);
+             AND COALESCE(si.total_margin_sen,0) <> COALESCE(si."${ident(revCol)}",0) - COALESCE(si.total_cost_sen,0)`);
         const hdrTotal = (await pg.unsafe(`
           SELECT count(*)::int AS n FROM ${q("sales_invoices")} WHERE UPPER(status::text) NOT IN ('CANCELLED','DRAFT')`))[0].n;
         notice("");
@@ -1440,7 +1445,7 @@ async function main() {
         }
         verdict("11d", "SI header margin == header revenue - header cost", gpHdr.length, hdrTotal,
           gpHdr.length === 0 ? "PASS" : "DEFECT",
-          "total_margin_centi is what the P&L reads; a broken identity misstates reported GP directly");
+          "total_margin_sen is what the P&L reads; a broken identity misstates reported GP directly");
       }
     }
   } catch (e) {
@@ -1465,19 +1470,19 @@ async function main() {
                  d.status::text AS status
             FROM ${q("delivery_order_items")} di
             JOIN ${q("delivery_orders")} d ON d.id = di.delivery_order_id
-           WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')
+           WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')
              AND di.committed_po_batch_no IS NOT NULL AND di.committed_po_batch_no <> ''
         ), taken AS (
-          SELECT m.source_doc_id::text AS doc_id, m.product_code,
+          SELECT m.source_doc_id::text AS doc_id, m.item_code,
                  STRING_AGG(DISTINCT COALESCE(l.batch_no,'(none)'), ',') AS batches_taken,
                  SUM(k.qty_consumed)::int AS cons_qty
             FROM ${K} k JOIN ${M} m ON m.id = k.movement_id JOIN ${L} l ON l.id = k.lot_id
            WHERE m.source_doc_type = 'DO'
-           GROUP BY m.source_doc_id, m.product_code
+           GROUP BY m.source_doc_id, m.item_code
         )
         SELECT s.*, t.batches_taken, COALESCE(t.cons_qty,0) AS cons_qty
           FROM shipped s
-          LEFT JOIN taken t ON t.doc_id = s.delivery_order_id::text AND t.product_code = s.item_code
+          LEFT JOIN taken t ON t.doc_id = s.delivery_order_id::text AND t.item_code = s.item_code
          ORDER BY s.doc_no`);
       const drift = anchor.filter((r) => (r.batches_taken ?? "") !== r.committed);
       const noConsume = anchor.filter((r) => Number(r.cons_qty) === 0);

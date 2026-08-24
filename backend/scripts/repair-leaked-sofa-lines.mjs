@@ -54,7 +54,7 @@ async function main() {
   const { findColour } = buildFabricColourIndex(fcRows);
 
   const items = await sql`SELECT i.id, i.doc_no, i.line_no, i.item_code, i.item_group, i.qty,
-                                 i.unit_price_centi, i.total_centi, i.remark, i.location, i.uom,
+                                 i.unit_price_sen, i.total_sen, i.remark, i.location, i.uom,
                                  h.linked_ac_docno
                           FROM scm.mfg_sales_order_items i
                           JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
@@ -87,7 +87,7 @@ async function main() {
 
   note(`repairable leaked lines: ${plan.length}; blocked: ${blocked.length}`);
   for (const b of blocked) note(`   BLOCKED ${b.doc} (${b.ac}) — ${b.reason}`);
-  for (const p of plan) note(`   ${p.line.doc_no} (${p.ac}) ${p.line.item_code} RM${(p.line.total_centi / 100).toFixed(2)} -> ${p.pieces.join(" + ")} @${p.size ?? "?"}`);
+  for (const p of plan) note(`   ${p.line.doc_no} (${p.ac}) ${p.line.item_code} RM${(p.line.total_sen / 100).toFixed(2)} -> ${p.pieces.join(" + ")} @${p.size ?? "?"}`);
 
   if (!APPLY) { note("DRY-RUN — nothing written."); await sql.end({ timeout: 5 }); return; }
 
@@ -110,7 +110,7 @@ async function main() {
         ln += 1;
         await tx`INSERT INTO scm.mfg_sales_order_items
           (doc_no, line_no, item_group, item_code, description, description2, uom, location,
-           qty, unit_price_centi, total_centi, balance_centi, company_id, variants, remark)
+           qty, unit_price_sen, total_sen, balance_sen, company_id, variants, remark)
           VALUES (${p.line.doc_no}, ${ln + 900}, 'sofa', ${code},
                   ${nameByCode.get(code.toUpperCase()) || code}, ${p.d2 || null}, ${p.line.uom || "UNIT"}, ${p.line.location},
                   ${p.line.qty}, 0, 0, 0, 1, ${tx.json(v)},

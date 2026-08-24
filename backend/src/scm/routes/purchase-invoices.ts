@@ -1,12 +1,15 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
 import { Hono } from 'hono';
+import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
+import { HELD_OR_TERM, HOLD_COLUMNS } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { coerceEmptyDates, dateOrNull } from '../lib/date-coerce';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -18,6 +21,11 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
+import {
+  coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
+} from '../lib/return-unlinked-lines';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -26,8 +34,18 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
+/* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
+import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
+/* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
+   blocks only — every guard stayed, because the unlinked-line suite proves them
+   per HANDLER against this router's own source text. */
+import { recomputePiTotals, reallocatePiCharges } from '../lib/pi-money-rollups';
+import { PI_AUDIT_FIELDS, loadPiAuditMeta, recordPiCreate } from '../lib/pi-audit-trail';
+import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
@@ -44,119 +62,21 @@ async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
 
-/* ── Audit trail (migration 0139 / lib/entity-audit) ───────────────────────────
-   Action vocabulary for this module:
-     POST   — DRAFT -> POSTED. The AP liability is booked (Dr Inventory / Cr
-              Payables) and the GRN lines are consumed.
-     CANCEL — status -> CANCELLED (the document event).
-     REVERSE— the AP/GL contra that follows a cancel (the LEDGER event), kept
-              apart from the CANCEL for the same reason payment-vouchers keeps
-              them apart: a reversal that FAILED must be visible as such.
-     UPDATE — header edits and payments.
-   No DELETE: this module never hard-deletes an invoice. */
-const PI_AUDIT_FIELDS: Array<[string, string]> = [
-  ['supplierId', 'supplier_id'], ['supplierInvoiceRef', 'supplier_invoice_ref'],
-  ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'],
-  ['currency', 'currency'], ['notes', 'notes'],
-  ['exchangeRate', 'exchange_rate'],
-];
-
-/* CREATE was added after the post/payment/cancel/header pass, and it is recorded
-   LATE for a reason. All three create paths write the header first and DELETE it
-   again — on a failed line insert, and again when the post-insert over-invoice
-   re-verification finds this PI would over-bill a GRN line. A CREATE row emitted
-   at insert time would describe an invoice that never existed, against a GRN
-   whose invoiced_qty never moved. recordPiCreate re-reads the persisted row
-   rather than echoing the payload, which makes that ordering self-enforcing: a
-   rolled-back header reads back as nothing and no row is written.
-
-   The line vocabulary lives in lib/entity-audit-fields (imported above) — the
-   camelCase half is what AUDIT_FINANCE_FIELDS gates on and needs a test that can
-   import it without dragging Hono along. */
+/* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi, status, notes, posted_at, created_at, created_by, updated_at';
+  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // HOLD_COLUMNS = mig 0324's marker, BESIDE the status pill
 const ITEM =
-  'id, purchase_invoice_id, grn_item_id, material_kind, material_code, material_name, qty, unit_price_centi, line_total_centi, notes, ' +
+  'id, purchase_invoice_id, grn_item_id, material_kind, item_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
-  'item_group, description, description2, uom, discount_centi, variants, ' +
+  'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
-  'custom_specials, line_suffix, special_order_price_sen, unit_cost_centi, created_at';
+  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
 
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
-
-/* The PI's identity for an audit row written from a LINE handler, which has the
-   line in hand but not the parent. Best-effort by design: the writer is
-   fail-open, so an unresolved doc number costs the row its human key and
-   nothing else. */
-async function loadPiAuditMeta(
-  sb: Variables['supabase'],
-  piId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('purchase_invoices')
-      .select('invoice_number, company_id, status').eq('id', piId).maybeSingle();
-    const row = (data ?? null) as { invoice_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.invoice_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
-
-/**
- * Record the CREATE of a PI that has SURVIVED its handler.
- *
- * Reads the row back rather than taking the caller's payload: the doc number is
- * minted server-side, the currency and exchange rate are resolved server-side,
- * the totals come off the lines — and a header a compensating branch already
- * deleted reads back as nothing, so this cannot write a CREATE row for an
- * invoice that was rolled back.
- */
-async function recordPiCreate(
-  sb: Variables['supabase'],
-  actor: Variables['houzsUser'],
-  fallbackCompanyId: number | null | undefined,
-  piId: string,
-  lineCount: number,
-  note?: string,
-): Promise<void> {
-  let row: Record<string, unknown> | null = null;
-  try {
-    const { data } = await sb.from('purchase_invoices')
-      .select('id, invoice_number, status, company_id, supplier_id, supplier_invoice_ref, ' +
-        'purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, total_centi')
-      .eq('id', piId).maybeSingle();
-    row = (data ?? null) as Record<string, unknown> | null;
-  } catch { /* best-effort */ }
-  if (!row) return; // rolled back (or unreadable): a CREATE row here would be a lie
-  await recordEntityAudit(sb, {
-    entityType: 'PURCHASE_INVOICE',
-    entityId: piId,
-    entityDocNo: (row.invoice_number as string | null) ?? null,
-    action: 'CREATE',
-    actor,
-    companyId: (row.company_id as number | null) ?? fallbackCompanyId,
-    statusSnapshot: (row.status as string | null) ?? null,
-    note,
-    fieldChanges: compactChanges([
-      fieldChange('status', null, row.status ?? null),
-      fieldChange('supplierId', null, row.supplier_id ?? null),
-      fieldChange('supplierInvoiceRef', null, row.supplier_invoice_ref ?? null),
-      fieldChange('purchaseOrderId', null, row.purchase_order_id ?? null),
-      fieldChange('grnId', null, row.grn_id ?? null),
-      fieldChange('invoiceDate', null, row.invoice_date ?? null),
-      fieldChange('dueDate', null, row.due_date ?? null),
-      fieldChange('currency', null, row.currency ?? null),
-      fieldChange('exchangeRate', null, row.exchange_rate ?? null),
-      /* INTEGER SEN, straight off the column. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
-      fieldChange('lineCount', null, lineCount),
-    ]),
-  });
-}
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   const d = new Date();
@@ -165,172 +85,6 @@ const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${p}${prefix}-${yymm}`);
 };
 
-/* ── Recompute PI header money rollups (mirror recomputeGrnTotals) ─────────
-   Sum line_total_centi across purchase_invoice_items → write subtotal_centi,
-   then total_centi = subtotal + tax_centi (PI carries a stored tax that GRN
-   does NOT, so we ADD it into total here). paid_centi is untouched — Balance
-   (total - paid) is derived in the UI; payment recording stays on /payment.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
-async function recomputePiTotals(sb: any, piId: string) {
-  const [itemsRes, headerRes] = await Promise.all([
-    sb.from('purchase_invoice_items').select('line_total_centi').eq('purchase_invoice_id', piId),
-    sb.from('purchase_invoices').select('tax_centi').eq('id', piId).maybeSingle(),
-  ]);
-  /* Neither read's error was looked at, and `?? []` / `?? 0` cannot tell a failed
-     read from a real empty/zero: a blip on the ITEMS read wrote total_centi ZERO
-     on an invoice the supplier is owed for, and a blip on the HEADER read wrote a
-     total silently SHORT by the tax. Both are what this AP figure is paid from.
-     The ERROR is the signal, never the emptiness: a genuinely line-less PI, and a
-     PI that genuinely carries no tax, both resolve error === null and MUST still
-     fall through. Neither of these two is more urgent than the other, so both
-     abort before any write rather than half-writing from the half we trust. */
-  if (itemsRes.error) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] item read failed — header left unchanged:', piId, itemsRes.error.message);
-    return;
-  }
-  if (headerRes.error) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] tax read failed — header left unchanged:', piId, headerRes.error.message);
-    return;
-  }
-  const subtotal = (itemsRes.data ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
-  const tax = (headerRes.data as { tax_centi?: number } | null)?.tax_centi ?? 0;
-  const { error: updErr } = await sb.from('purchase_invoices').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal + tax,
-    updated_at: new Date().toISOString(),
-  }).eq('id', piId);
-  if (updErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] header update failed — totals left STALE:', piId, updErr.message);
-  }
-}
-
-/* ── PI-level landed freight ("平摊") — reallocatePiCharges ──────────────────
-   Migration 0082 added purchase_invoice_items.allocated_charge_centi and recost.ts
-   folds it into the FIFO lot cost — but until now NO write path ever filled it, so
-   the column sat at 0 forever and freight billed on the SUPPLIER'S INVOICE (the
-   normal shape for RMB / cross-border sourcing, where freight arrives on the PI
-   rather than the GRN) raised the PI total and the AP but never reached inventory:
-   COGS understated permanently. PurchaseInvoiceNew already ships the picker, sends
-   allocationMethod, and its preview names this function as the authoritative
-   splitter — this is that function.
-
-   POOL = PI-NATIVE service lines only (grn_item_id IS NULL). A service line COPIED
-   DOWN from the GRN by /from-grn keeps its grn_item_id, and that charge was ALREADY
-   capitalised into the lot at receive time (grn_items.allocated_charge_centi, which
-   recost re-adds separately) — pooling it again here would capitalise the same
-   freight twice. This is what "each capitalises EXACTLY ONCE" means in recost.ts.
-
-   Allocated across ALL goods lines, mirroring the GRN allocator. A goods line with
-   no grn_item_id owns no lot, so its share simply doesn't capitalise — the goods
-   aren't in inventory to carry it.
-
-   Pure-on-empty: no native service line ⇒ pool 0 ⇒ allocation 0 everywhere ⇒ the
-   column stays 0 and every existing PI recosts byte-for-byte as before.
-
-   METHOD IS NOT PERSISTED: scm.purchase_invoices has no allocation_method column
-   (0082 added one to grns only). The create paths pass the operator's choice; a
-   later line edit has nothing to read it back from and re-splits by QTY. The pool
-   still sums exactly either way — only the basis degrades. Persisting it needs a
-   migration + a column. */
-async function reallocatePiCharges(
-  sb: any,
-  piId: string,
-  method: ReturnType<typeof normalizeAllocationMethod> = 'QTY',
-  companyId?: number | null,
-): Promise<void> {
-  try {
-    const [headRes, itemsRes] = await Promise.all([
-      sb.from('purchase_invoices').select('exchange_rate').eq('id', piId).maybeSingle(),
-      sb.from('purchase_invoice_items')
-        .select('id, grn_item_id, material_code, item_group, qty, unit_price_centi, line_total_centi, allocated_charge_centi')
-        .eq('purchase_invoice_id', piId),
-    ]);
-    /* `?? 1` means "already MYR", so a failed read on an RMB/USD PI allocates the
-       freight pool at rate 1 and writes an allocated_charge_centi wrong by the
-       whole FX factor onto every goods line — which recost then capitalises into
-       the lot. The itemsRes read below fails closed (items = [] returns), but this
-       one silently invents an exchange rate. Returning matches this function's own
-       contract, stated in the catch: the PI's lines are already committed, a
-       hiccup logs + skips and the split re-converges on the next line write. A PI
-       that genuinely carries no rate resolves error === null and correctly uses 1. */
-    if (headRes.error) {
-      /* eslint-disable-next-line no-console */
-      console.error('[reallocatePiCharges] PI rate read failed — charge split left unchanged:', piId, headRes.error.message);
-      return;
-    }
-    const piRate = (headRes.data as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
-    const items = (itemsRes.data ?? []) as Array<{
-      id: string; grn_item_id: string | null; material_code: string; item_group: string | null;
-      qty: number | null; unit_price_centi: number | null; line_total_centi: number | null;
-      allocated_charge_centi: number | null;
-    }>;
-    if (items.length === 0) return;
-
-    /* Drop GRN-copied service lines BEFORE the allocator sees them: it classifies
-       by item_group/code alone and would otherwise pool a charge the GRN already
-       capitalised. They are not goods either, so removing them leaves the goods
-       basis untouched. */
-    const visible = items.filter((it) =>
-      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.material_code })));
-
-    // CBM basis needs each goods line's product volume; one round trip, default 0
-    // (the allocator falls back to QTY when the CBM Σ is 0).
-    const m3ByCode = new Map<string, number>();
-    const codes = [...new Set(visible.map((it) => it.material_code).filter(Boolean))];
-    if (codes.length > 0) {
-      // Company-scoped: `code` is shared, and the other company's volume would
-      // shift every goods line's share of the landed charge.
-      let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
-      if (companyId != null) volQ = volQ.eq('company_id', companyId);
-      const { data: prods } = await volQ;
-      for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
-        m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
-      }
-    }
-
-    const alloc = allocateLandedCharges(
-      visible.map((it) => ({
-        id: it.id,
-        itemGroup: it.item_group ?? null,
-        materialCode: it.material_code,
-        qty: Number(it.qty ?? 0),
-        // Pool by the SERVICE line's line total; allocate ONTO the goods lines.
-        amountCenti: Number(it.line_total_centi ?? 0),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
-      })),
-      method,
-      piRate,
-    );
-
-    /* Write the computed value (incl. resetting to 0) so a removed / re-split
-       charge is reflected — but only when there's something to reconcile, so a
-       plain goods-only PI issues no writes at all. Lines the allocator didn't
-       return (the service lines themselves) are forced to 0: recost re-adds the
-       charge of ANY line carrying a grn_item_id, so a row that used to be goods and
-       was later retyped as freight would otherwise keep injecting a stale charge. */
-    const anyToReset = items.some((it) => Number(it.allocated_charge_centi ?? 0) !== 0);
-    if (alloc.chargePoolMyr > 0 || anyToReset) {
-      const allocById = new Map(alloc.goods.map((g) => [g.id, g.allocatedChargeCenti]));
-      await Promise.all(items.map((it) => {
-        const next = allocById.get(it.id) ?? 0;
-        if (Number(it.allocated_charge_centi ?? 0) === next) return null;
-        return sb.from('purchase_invoice_items').update({ allocated_charge_centi: next }).eq('id', it.id);
-      }).filter(Boolean));
-    }
-  } catch (e) {
-    // Best-effort (audit-DLQ pattern): the PI's own lines already committed; a
-    // freight-split hiccup logs + skips and re-converges on the next line write.
-    // eslint-disable-next-line no-console
-    console.error('[reallocatePiCharges] failed:', piId, e);
-  }
-}
 
 /* ── Self-heal GRN invoiced counter (live-count model, mirrors recomputeSoPicked
    / recomputePoReceived) ────────────────────────────────────────────────────
@@ -431,32 +185,61 @@ async function recomputeGrnInvoiced(sb: any, grnItemIds: Array<string | null | u
 async function verifyGrnLinesNotOverInvoiced(
   sb: any,
   grnItemIds: Array<string | null | undefined>,
-): Promise<Array<{ grnItemId: string; invoiced: number; cap: number }>> {
+  /* One PI whose DRAFT lines COUNT anyway — the one being confirmed. See the
+     DRAFT note below: drafts are excluded from this sum because a draft consumes
+     nothing, but the whole question at confirm time is "would committing THIS
+     draft break the cap?", and excluding it makes the answer always yes. */
+  countDraftPiId?: string | null,
+): Promise<{ over: Array<{ grnItemId: string; invoiced: number; cap: number }>; error: string | null }> {
   const ids = [...new Set(grnItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { over: [], error: null };
+  /* THE ERRORS ARE BOUND, and returned rather than swallowed. Unbound, a failed
+     cap read left `capById` empty, `cap = capById.get(id) ?? invoiced` made every
+     cap equal its own draw, and the function answered "nothing is over" — a
+     money guard that says all-clear because it could not look. Each caller then
+     decides: the CREATE paths log and proceed (they ran a pre-check of their own
+     moments earlier, and rolling a legitimate invoice back on a transient blip is
+     the wrong trade), while the CONFIRM transition refuses, because there the
+     pre-check is the only check there is. */
   // Cap per GRN line = qty_accepted - returned_qty.
-  const { data: giRows } = await sb.from('grn_items')
+  const { data: giRows, error: giErr } = await sb.from('grn_items')
     .select('id, qty_accepted, returned_qty').in('id', ids);
+  if (giErr) return { over: [], error: `receipt cap read failed: ${giErr.message}` };
   const capById = new Map<string, number>(
     ((giRows ?? []) as Array<{ id: string; qty_accepted: number; returned_qty: number }>)
       .map((g) => [g.id, (g.qty_accepted ?? 0) - (g.returned_qty ?? 0)]),
   );
   // Live invoiced per GRN line = sum(qty) across all committed (non-cancelled,
   // non-draft) PI lines.
-  const { data: sib } = await sb.from('purchase_invoice_items')
+  const { data: sib, error: sibErr } = await sb.from('purchase_invoice_items')
     .select('grn_item_id, qty, purchase_invoice_id').in('grn_item_id', ids);
+  if (sibErr) return { over: [], error: `invoiced-qty read failed: ${sibErr.message}` };
   const sibRows = (sib ?? []) as Array<{ grn_item_id: string; qty: number; purchase_invoice_id: string }>;
   const piIds = [...new Set(sibRows.map((r) => r.purchase_invoice_id).filter(Boolean))];
   /* LEAK GUARD (DRAFT, PI two-state — 2026-06-25 anchoring diff vs 2990) — exclude
      DRAFT as well as CANCELLED from the over-invoice cap re-sum: a DRAFT PI consumes
-     no GRN qty, so it never counts against the qty_accepted-returned cap. The cap is
-     re-checked at confirm (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT
-     that would over-bill is caught the moment it's confirmed, not while still a
-     draft. */
+     no GRN qty, so it never counts against the qty_accepted-returned cap.
+
+     THIS NOTE USED TO END with "The cap is re-checked at confirm
+     (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT that would over-bill
+     is caught the moment it's confirmed". IT WAS NOT TRUE, and it was load-bearing:
+     `recomputeGrnInvoiced` CLAMPS (`Math.min(accepted, inv)`) and is contractually
+     "best-effort, never throws", so it cannot refuse anything — it just quietly
+     writes the capped number and leaves invoiced_qty reading correct over a receipt
+     billed twice. Two DRAFT PIs each taking a receipt line in full both confirmed,
+     both posted AP, and every counter a reconciliation reads said the receipt was
+     billed exactly once. The confirm transition now calls THIS function with
+     `countDraftPiId` set, which is the check that note always claimed existed. */
   const excluded = new Set<string>();
   if (piIds.length > 0) {
-    const { data: pis } = await sb.from('purchase_invoices').select('id, status').in('id', piIds);
+    const { data: pis, error: pisErr } = await sb.from('purchase_invoices').select('id, status').in('id', piIds);
+    /* An empty `excluded` from a failed read does not read as "we don't know" — it
+       reads as "no sibling invoice is DRAFT or CANCELLED", which INFLATES the sum
+       and would refuse a legitimate bill. Same class as the note in
+       recomputeGrnInvoiced. */
+    if (pisErr) return { over: [], error: `sibling-status read failed: ${pisErr.message}` };
     for (const p of (pis ?? []) as Array<{ id: string; status: string }>) {
+      if (p.id === countDraftPiId) continue;   // the one being confirmed: it counts
       if (p.status === 'CANCELLED' || p.status === 'DRAFT') excluded.add(p.id);
     }
   }
@@ -471,15 +254,15 @@ async function verifyGrnLinesNotOverInvoiced(
     const cap = capById.get(id) ?? invoiced;
     if (invoiced > cap) over.push({ grnItemId: id, invoiced, cap });
   }
-  return over;
+  return { over, error: null };
 }
 
-/* PI edit-lock guard: a PI with ANY payment recorded (paid_centi > 0) or that's
+/* PI edit-lock guard: a PI with ANY payment recorded (paid_sen > 0) or that's
    CANCELLED is read-only. Returns the blocking JSON response, or null if the PI
    is editable. */
 async function piLocked(sb: any, piId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_invoices')
-    .select('paid_centi, status').eq('id', piId).maybeSingle();
+    .select('paid_sen, status').eq('id', piId).maybeSingle();
   /* The error is READ, not dropped. A dropped error made `data` null, `!data`
      read as "no such invoice", and the guard answered "not locked" — so a PAID
      or CANCELLED invoice became editable on a transient read failure. A failed
@@ -489,9 +272,9 @@ async function piLocked(sb: any, piId: string): Promise<{ error: string; message
     return { error: 'pi_lock_check_failed', message: `Could not check whether this invoice is locked, so it is treated as locked — try again (${error.message}).` };
   }
   if (!data) return null; // not found — let the handler's own load surface 404
-  const row = data as { paid_centi: number | null; status: string };
+  const row = data as { paid_sen: number | null; status: string };
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };
-  if ((row.paid_centi ?? 0) > 0) return { error: 'pi_locked', message: 'Invoice has a payment recorded — locked' };
+  if ((row.paid_sen ?? 0) > 0) return { error: 'pi_locked', message: 'Invoice has a payment recorded — locked' };
   return null;
 }
 
@@ -534,98 +317,7 @@ async function migratedRefusalForGrnItems(
    source of truth for BOTH the status-count queries and the list `status`
    filter. All five buckets are 1:1 today, but the FE sends the BUCKET NAME as
    `status`; a raw DB status still works (backward-compatible fallback). */
-const PI_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  posted: ['POSTED'],
-  partial: ['PARTIALLY_PAID'],
-  paid: ['PAID'],
-  cancelled: ['CANCELLED'],
-};
 
-/* Collapsed "Assigned SO" column (owner 2026-07-31): a PI inherits its parent
-   PO's Assigned SO(s). Resolve the parent PO through the SAME chain the per-line
-   drill-down uses (pi.grn_id → grns.purchase_order_id → PO), so the list row and
-   its expansion never disagree, then batch the coverage for the whole page in
-   ONE pass (computeMrp runs once). Fail-soft: on any error the rows still return,
-   just without the column populated. */
-async function attachPiAssignedSos(
-  sb: any,
-  c: any,
-  rows: Array<{ id: string; grn_id?: string | null } & Record<string, unknown>>,
-): Promise<Array<Record<string, unknown>>> {
-  try {
-    const grnIds = [...new Set(rows.map((r) => r.grn_id).filter((x): x is string => !!x))];
-    const poByGrn = new Map<string, string>();
-    for (let k = 0; k < grnIds.length; k += 300) {
-      const chunk = grnIds.slice(k, k + 300);
-      if (chunk.length === 0) continue;
-      const { data: grnRows } = await scopeToCompany(
-        sb.from('grns').select('id, purchase_order_id'), c,
-      ).in('id', chunk);
-      for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null }>) {
-        if (g.purchase_order_id) poByGrn.set(g.id, g.purchase_order_id);
-      }
-    }
-    const poIds = [...poByGrn.values()];
-    /* Each PI's OWN line codes (header ≡ ∪(drill lines), 2026-08-02): the drill
-       matches assignments into the PI's lines by material_code, so the header
-       cells roll up ONLY those SKUs — a partial-billing PI must not inherit
-       its parent PO's whole assignment history. */
-    const piIds = rows.map((r) => r.id).filter(Boolean);
-    const codesByPi = new Map<string, Set<string>>();
-    for (let k = 0; k < piIds.length; k += 300) {
-      const chunk = piIds.slice(k, k + 300);
-      if (chunk.length === 0) continue;
-      const { data: piLines } = await sb.from('purchase_invoice_items')
-        .select('purchase_invoice_id, material_code')
-        .in('purchase_invoice_id', chunk);
-      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; material_code: string | null }>) {
-        const code = (l.material_code ?? '').trim();
-        if (!code) continue;
-        const set = codesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
-        set.add(code);
-        codesByPi.set(l.purchase_invoice_id, set);
-      }
-    }
-    /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods,
-       per CODE via the SAME pi → grn → PO chain, filtered to the PI's codes. */
-    const [originsByPo, deliveredByPoCode] = await Promise.all([
-      resolvePoSoCoveragePerSkuForPos(sb, c, poIds),
-      resolveDeliveredByCodeForPos(sb, c, poIds),
-    ]);
-    return rows.map((r) => {
-      const poId = r.grn_id ? poByGrn.get(r.grn_id) : undefined;
-      const piCodes = codesByPi.get(r.id) ?? new Set<string>();
-      const origins = (poId ? originsByPo.get(poId) ?? [] : [])
-        .filter((o) => piCodes.has(o.itemCode));
-      const summary = summarizeOrigins(origins);
-      const doAgg = new Map<string, DeliveredDo>();
-      if (poId) {
-        const byCode = deliveredByPoCode.get(poId);
-        if (byCode) {
-          for (const code of piCodes) {
-            for (const d of byCode.get(code) ?? []) {
-              const prev = doAgg.get(d.doNo);
-              if (prev) prev.qty += d.qty;
-              else doAgg.set(d.doNo, { ...d });
-            }
-          }
-        }
-      }
-      return {
-        ...r,
-        assigned_sos: summary.assignedSos,
-        assigned_so_linked: summary.sourceLinked,
-        /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-           rolled up over the SAME code-filtered origins (header ≡ ∪(lines)). */
-        assigned_so_provenance: summary.provenanceSos,
-        delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
-      };
-    });
-  } catch {
-    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, assigned_so_provenance: [], delivered_dos: [] }));
-  }
-}
 
 purchaseInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -662,7 +354,7 @@ purchaseInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_centi']);
+  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_sen']);
   const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
   const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
   const sortAsc = rawDir === 'asc';
@@ -674,7 +366,7 @@ purchaseInvoices.get('/', async (c) => {
      'all'/empty → no filter; otherwise treat it as a raw DB status. */
   const status = c.req.query('status');
   if (status && status !== 'all') {
-    if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
+    if (status === 'on_hold') q = q.or(HELD_OR_TERM); /* the MARKER (mig 0324) */ else if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
     else q = q.eq('status', status);
   }
   q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -697,24 +389,21 @@ purchaseInvoices.get('/', async (c) => {
      paid / cancelled) over the SAME company filter but WITHOUT status / search /
      pagination. */
   const countBase = () => scopeToCompany(sb.from('purchase_invoices').select('*', { count: 'exact', head: true }), c);
-  const [allC, draftC, postedC, partialC, paidC, cancelledC] = await Promise.all([
+  const [allC, draftC, postedC, partialC, paidC, cancelledC, onHoldC] = await Promise.all([
     countBase(),
     countBase().in('status', PI_STATUS_BUCKETS.draft),
     countBase().in('status', PI_STATUS_BUCKETS.posted),
     countBase().in('status', PI_STATUS_BUCKETS.partial),
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
+    countBase().or(HELD_OR_TERM),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    draft: draftC.count ?? 0,
-    posted: postedC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC, on_hold: onHoldC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
-  const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+  const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
   return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
 });
 
@@ -744,7 +433,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
     `),
     c,
   )
-    .eq('status', 'POSTED')
+    .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN now reads POSTED — the block stopped being free
     .order('received_at', { ascending: false })
     .limit(500);
   if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
@@ -764,18 +453,18 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const { data: items, error: iErr } = await sb
     .from('grn_items')
     .select(`
-      id, grn_id, material_kind, material_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_centi, variants
+      id, grn_id, material_kind, item_code, material_name, item_group,
+      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
     `)
     .in('grn_id', grnIds);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
 
   const headerById = new Map(headers.map((h) => [h.id, h]));
   const out = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; material_code: string;
+    id: string; grn_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
-    unit_price_centi: number; variants: unknown;
+    unit_price_sen: number; variants: unknown;
   }>)
     .map((r) => {
       const invoiced = r.invoiced_qty ?? 0;
@@ -796,13 +485,13 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
         supplierName:   h.supplier?.name ?? '',
         purchaseOrderId: h.purchase_order_id,
         poDocNo:        h.purchase_order?.po_number ?? null,
-        itemCode:       r.material_code,
+        itemCode:       r.item_code,
         description:    r.description ?? r.material_name,
         itemGroup:      r.item_group ?? '',
         qtyAccepted:    r.qty_accepted,
         invoicedQty:    r.invoiced_qty ?? 0,
         remaining:      r._remaining,
-        unitPriceCenti: r.unit_price_centi,
+        unitPriceSen: r.unit_price_sen,
         variants:       r.variants,
         /* Multi-note invoices (owner 2026-08-06) — the picker may combine
            several of a supplier's notes into ONE invoice, but a PI header
@@ -839,14 +528,14 @@ purchaseInvoices.get('/:id', async (c) => {
   if (!h.data) return c.json({ error: 'not_found' }, 404);
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PI lines expose `material_code`, so sort a shimmed view
+     on `item_code`; PI lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type PiItemRow = Record<string, unknown> & { id: string; material_code: string; item_code: string };
+  type PiItemRow = Record<string, unknown> & { id: string; item_code: string };
   const items = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; material_code: string }>)
-        .map((it): PiItemRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+        .map((it): PiItemRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -1002,12 +691,15 @@ purchaseInvoices.get('/:id/linked', async (c) => {
   });
 });
 
+/* Every refusal here releases the request's idempotency claim, so a corrected
+   Save reaches the handler instead of replaying the first one — rule 1 of
+   lib/pi-create-refusals.ts, which also draws the boundary this follows. */
 purchaseInvoices.post('/', async (c) => {
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
+  if (!body.supplierId) return refuseWithoutWriting(c, { error: 'supplier_required' }, 400);
   const items = body.items as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
+  if (!Array.isArray(items) || !items.length) return refuseWithoutWriting(c, { error: 'items_required' }, 400);
 
   /* DRAFT lifecycle (re-added per the full 6-doc Draft/Confirmed plan; reverses
      migration 0078's PI DRAFT removal). asDraft is opt-in per request — a normal
@@ -1017,6 +709,41 @@ purchaseInvoices.post('/', async (c) => {
   const asDraft = body.asDraft === true;
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* THE UNLINKED-LINE BACK DOOR, on the sixth and last chain that has it.
+     The over-invoice guard below caps only lines that CARRY a grnItemId; a
+     hand-added line with no link bills the goods while moving no
+     `grn_items.invoiced_qty`, so the GRN line still reads fully outstanding and
+     a second PI bills the same receipt — the supplier is paid twice. Refused
+     only when the material is already on one of the receipts this invoice
+     COVERS, so a freight or service line still passes. Five sibling chains close
+     exactly this door; see docs/unlinked-line-duplicate-coe.md and the owner's
+     2026-08-04 "包括 GR 那边也是".
+
+     The receipt set is the header ref UNION the receipts behind the body's own
+     linked lines, not the header ref alone: this endpoint is how the multi-note
+     `?grnId=` draft is saved, and a set of one made an unlinked line billing a
+     SECONDARY note's material pass. FAILS CLOSED — a check that could not run
+     must not authorise the write. */
+  {
+    const covered = await coveredGrnIds(sb, {
+      headerGrnId: (body.grnId as string | undefined) ?? null,
+      grnItemIds: items.map((it) => (it.grnItemId as string | undefined) ?? null),
+    });
+    if (covered.error) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(covered.error), 500);
+    const unlinked = await findUnlinkedPiLines(
+      sb,
+      covered.ids,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.itemCode ?? ''),
+        qty: Number(it.qty ?? 0),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      })),
+    );
+    if (!unlinked.ok) return refuseWithoutWriting(c, unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return refuseWithoutWriting(c, unlinkedInvoiceResponse(unlinked.offenders), 409);
+  }
 
   /* Over-invoice guard (mirrors /from-grn-items line ~432 + /:id/items): any
      line linked to a GRN line is capped at that line's REMAINING
@@ -1038,8 +765,8 @@ purchaseInvoices.post('/', async (c) => {
        fence. */
     {
       const mig = await migratedRefusalForGrnItems(sb, gids);
-      if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
-      if (mig.refusal) return c.json(mig.refusal, 409);
+      if (!mig.ok) return refuseWithoutWriting(c, loadFailed(mig.reason, 'check whether this receipt was carried over from the account book'), 500);
+      if (mig.refusal) return refuseWithoutWriting(c, mig.refusal, 409);
     }
     if (gids.length > 0) {
       /* The parent GRN rides the embed for the guard below: these grn_item ids
@@ -1056,19 +783,19 @@ purchaseInvoices.post('/', async (c) => {
       const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
       // isCrossCompanySource is false for a null company_id, so a hit is never null.
       const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
-      if (foreign) return c.json(crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
+      if (foreign) return refuseWithoutWriting(c, crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
       const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
         giList.map((g) => [g.id, g]),
       );
       const over: Array<{ grnItemId: string; requested: number; remaining: number }> = [];
       for (const [gid, want] of wantByGrnItem.entries()) {
         const g = byId.get(gid);
-        if (!g) return c.json({ error: 'item_not_found', grnItemId: gid }, 400);
+        if (!g) return refuseWithoutWriting(c, { error: 'item_not_found', grnItemId: gid, message: 'A line on this invoice points at a receipt line that is no longer there. Reopen the Goods Receipt and raise the invoice from it again.' }, 400);
         const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
         if (want > remaining) over.push({ grnItemId: gid, requested: want, remaining });
       }
       if (over.length > 0) {
-        return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+        return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
       }
     }
   }
@@ -1076,33 +803,33 @@ purchaseInvoices.post('/', async (c) => {
   let subtotal = 0;
   /* Reject non-finite line numbers BEFORE the map — the Math.max(0, ...) clamp
      below stops a negative total but NOT a NaN (Math.max(0, NaN) is NaN), so a
-     junk qty/price persisted NaN into line_total_centi and the PI subtotal,
+     junk qty/price persisted NaN into line_total_sen and the PI subtotal,
      which is what the supplier's AP balance is read from. */
   for (const [i, it] of items.entries()) {
     const parsed = parseLineNumbers({
       qty: { value: it.qty },
-      unitPriceCenti: { value: it.unitPriceCenti },
-      discountCenti: { value: it.discountCenti },
+      unitPriceSen: { value: it.unitPriceSen },
+      discountSen: { value: it.discountSen },
     });
     if (!parsed.ok) {
       const b = invalidLineNumberBody(parsed.invalid);
-      return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
+      return refuseWithoutWriting(c, { ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
   const itemRows = items.map((it) => {
     /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI
-       line write path: line_total_centi = qty × unit − discount, discount
+       line write path: line_total_sen = qty × unit − discount, discount
        stored. This path used to drop the client discount entirely (totals
        overstated whenever the form sent one). */
-    const qty = Number(it.qty ?? 0); const unit = Number(it.unitPriceCenti ?? 0);
-    const discount = Number(it.discountCenti ?? 0) || 0;
+    const qty = Number(it.qty ?? 0); const unit = Number(it.unitPriceSen ?? 0);
+    const discount = Number(it.discountSen ?? 0) || 0;
     // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
     const total = Math.max(0, qty * unit - discount); subtotal += total;
     return {
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
-      qty, unit_price_centi: unit, discount_centi: discount, line_total_centi: total,
+      qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: total,
       grn_item_id: (it.grnItemId as string | undefined) ?? null,
       notes: (it.notes as string | undefined) ?? null,
       // Commander 2026-05-29 — manual PI lines carry their category + variant
@@ -1133,7 +860,7 @@ purchaseInvoices.post('/', async (c) => {
      inherit an exchange_rate already gated at GRN create, so they need no guard. */
   {
     const rateGuard = await assertForeignRatePostable(sb, { currency: piCurrency, operatorRate: body.exchangeRate, docLabel: 'purchase invoice' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
@@ -1144,34 +871,49 @@ purchaseInvoices.post('/', async (c) => {
     supplier_id: body.supplierId,
     purchase_order_id: (body.purchaseOrderId as string) ?? null,
     grn_id: (body.grnId as string) ?? null,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
     currency: piCurrency,
     exchange_rate: piExchangeRate,
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     notes: (body.notes as string) ?? null,
     status: asDraft ? 'DRAFT' : 'POSTED',
     posted_at: asDraft ? null : new Date().toISOString(),
     created_by: user.id,
     }).select(HEADER).single(),
   );
-  if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
+  // Past the first write, but nothing survived it: an attempt that errored wrote
+  // no row, and the earlier ones only minted doc numbers. So this releases too.
+  if (hErr) return refuseWithoutWriting(c, insertFailed(hErr.message), 500);
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
   const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
-  if (iErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+  if (iErr) {
+    // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
+    // released one over a surviving header would mint a second invoice.
+    const b = insertFailed(iErr.message, 'items_insert_failed');
+    if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 500);
+    return refuseWithoutWriting(c, b, 500);
+  }
 
   /* Post-insert over-invoice verification (race guard) — the pre-check above is
      read-before-write; re-sum live invoiced per GRN line now that OUR lines are
      committed. If any GRN line is over its cap, delete THIS PI (header cascades
      its lines) + 409. Mirrors POST /:id/items. */
   {
-    const over = await verifyGrnLinesNotOverInvoiced(sb, itemRows.map((r) => r.grn_item_id));
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, itemRows.map((r) => r.grn_item_id));
+    // The pre-check above already ran; this is the race guard, so a read failure
+    // is logged rather than rolling back a legitimate invoice.
+    // eslint-disable-next-line no-console
+    if (verify.error) console.error(`[pi over-invoice verify] ${h.invoice_number}: ${verify.error}`);
+    const over = verify.over;
     if (over.length > 0) {
-      await sb.from('purchase_invoices').delete().eq('id', h.id);
-      return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
+      // Same rule as the items-insert rollback: release only on a proven undo.
+      const b = { error: 'qty_exceeds_remaining', lines: over };
+      if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 409);
+      return refuseWithoutWriting(c, b, 409);
     }
   }
 
@@ -1180,22 +922,24 @@ purchaseInvoices.post('/', async (c) => {
      the header, so from here every exit is a success and this CREATE row is
      true. Written before the DRAFT-dependent side-effects so both statuses
      record exactly one. */
+  /* Committed => 201, whatever happens after. A throw ABOVE one of these five
+     catches would report a SAVED invoice as a 500, which is the one shape that
+     books a second payable now that a refusal releases the key — rule 2. */
+  await committedAnyway(h.invoice_number, async () => {
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
-     of the standalone Sales Invoice: AcSyncService has no /create-pi, because
-     AutoCount builds a Purchase Invoice only by transferring a GRN's lines. The
-     two real conversion routes are POST /from-grn and /from-grn-items; anything
-     that arrives here is an invoice the account book will never hold, and it is
-     recorded so it can be found. */
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'PI',
-    docNo: h.invoice_number,
-    docId: h.id,
-    missing: 'no source Goods Received Note to transfer from',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+  /* ERP -> AutoCount. An invoice whose LINES name a receipt is sent as a real
+     gr_to_pi; one that names none is still parentless. The purchase-side half
+     of the grns.ts fix — lib/convert-parent.ts, docs/bugs/0524. */
+  const srcGrnIds = await sourceGrnIdsForPi(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'PI' as const, docNo: h.invoice_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
+  if (srcGrnIds.length) {
+    await enqueueConvert(sb, { ...acBase, op: 'gr_to_pi',
+      from: srcGrnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'purchase_invoices', keyCol: 'id', key: h.id } });
+  } else {
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Goods Received Note to transfer from' });
+  }
 
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN
      line (recomputeGrnInvoiced) nor re-cost (recostForPi). Both move to the
@@ -1219,6 +963,7 @@ purchaseInvoices.post('/', async (c) => {
     // billed price (or its later correction) in real time.
     await recostForPi(sb, h.id);
   }
+  });
   return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
 });
 
@@ -1228,7 +973,7 @@ purchaseInvoices.post('/', async (c) => {
    on create now run exactly once here:
      · recomputeGrnInvoiced  — consume the source GRN lines (drop them out of the
        outstanding picker) — the SAME chokepoint POST/ runs for a non-DRAFT PI.
-     · postPiAccounting       — post Dr Inventory 1200 / Cr Payables 2000 (AP/GL).
+     · postPiAccounting       — post Dr INVENTORY / Cr AP (roles, acc/rules.ts).
      · recostForPi            — push the billed price down the lots → DO → SI.
    Idempotent + back-compat: a PI already POSTED (e.g. created non-DRAFT) echoes
    back without re-running the transition, but still ENSURES its AP/GL entry —
@@ -1245,11 +990,11 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(sb.from('purchase_invoices')
-    .select('id, status, invoice_number, company_id, supplier_id, total_centi, currency').eq('id', id), co.companyId).maybeSingle();
+    .select('id, status, invoice_number, company_id, supplier_id, total_sen, currency').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curRow = cur as {
     id: string; status: string; invoice_number: string;
-    company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; currency?: string | null;
+    company_id?: number | null; supplier_id?: string | null; total_sen?: number | null; currency?: string | null;
   };
   /* Already POSTED (or beyond — PARTIALLY_PAID / PAID) → nothing to CONFIRM, but
      the AP/GL entry may still be missing: a PI created straight to POSTED (the
@@ -1268,6 +1013,56 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
       }
     }
     return c.json({ purchaseInvoice: cur });
+  }
+
+  /* ── THE CAP, RE-CHECKED BEFORE THE COMMIT ────────────────────────────────
+     A DRAFT PI consumes no GRN qty, so `verifyGrnLinesNotOverInvoiced` and
+     `recomputeGrnInvoiced` both exclude drafts from their sums — which is right
+     while it is a draft, and left the CONFIRM with no cap check at all. Two
+     clerks could each draft a PI taking the same receipt line in full: neither
+     create was refused (the pre-check saw remaining in full, the post-insert
+     verify excluded the sibling draft), both confirms flipped to POSTED, both
+     called postPiAccounting, and `recomputeGrnInvoiced` CLAMPED the recount to
+     qty_accepted — so the receipt was billed and paid for twice while
+     invoiced_qty read exactly right. The comment on that DRAFT exclusion claimed
+     this check existed; it did not.
+
+     `countDraftPiId: id` is what makes the sum answer the actual question: every
+     committed sibling PLUS this draft's own lines against the receipt line's
+     (qty_accepted - returned_qty). It is the owner's per-line invariant —
+     Σ(billed so far) + this bill ≤ received qty — NOT an "already invoiced" flag:
+     a receipt line legitimately gets billed across several invoices, and every
+     partial still passes.
+
+     Read BEFORE the flip so a refusal changes nothing, and the error FAILS CLOSED
+     because here the pre-check is the only check. */
+  const { data: draftLines, error: draftLinesErr } = await sb.from('purchase_invoice_items')
+    .select('grn_item_id').eq('purchase_invoice_id', id);
+  if (draftLinesErr) {
+    return c.json({
+      error: 'lookup_failed',
+      reason: `Could not read this invoice's lines, so it was NOT confirmed: ${draftLinesErr.message}`,
+    }, 500);
+  }
+  const draftGrnItemIds = ((draftLines ?? []) as Array<{ grn_item_id: string | null }>)
+    .map((l) => l.grn_item_id);
+  {
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, draftGrnItemIds, id);
+    if (verify.error) {
+      return c.json({
+        error: 'over_invoice_check_failed',
+        reason: `Could not check this invoice against the receipt's remaining quantity, so it was `
+          + `NOT confirmed — the same goods could otherwise be paid for twice (${verify.error}).`,
+      }, 500);
+    }
+    if (verify.over.length > 0) {
+      return c.json({
+        error: 'qty_exceeds_remaining',
+        message: 'Confirming this invoice would bill more than the Goods Receipt received. Another '
+          + 'invoice has already billed those lines — reduce the quantities, or cancel this draft.',
+        lines: verify.over,
+      }, 409);
+    }
   }
 
   /* Atomic single DRAFT → POSTED transition — the conditional UPDATE only fires
@@ -1290,7 +1085,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
      below. Each of those is a separate awaited step that can throw, and a PI
      that is POSTED in the database with no record of who posted it is exactly
      the hole this log exists to close. The GL outcome is recorded separately
-     when it fails. totalCenti is the INTEGER SEN booked to Payables. */
+     when it fails. totalSen is the INTEGER SEN booked to Payables. */
   await recordEntityAudit(sb, {
     entityType: 'PURCHASE_INVOICE',
     entityId: id,
@@ -1302,18 +1097,42 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
     fieldChanges: compactChanges([
       ...statusChange('DRAFT', 'POSTED'),
       fieldChange('supplierId', null, curRow.supplier_id ?? null),
-      fieldChange('totalCenti', null, Number(curRow.total_centi ?? 0)),
+      fieldChange('totalSen', null, Number(curRow.total_sen ?? 0)),
       fieldChange('currency', null, curRow.currency ?? null),
     ]),
   });
 
+  /* THE RACE, closed the same way the create paths close theirs. The cap check
+     above is read-before-write: two concurrent confirms of two drafts against the
+     same receipt line can each pass it and both flip. Re-sum now that this PI is
+     POSTED — its lines count on their own, so no `countDraftPiId` is needed — and
+     if OUR flip is the one that broke the cap, put the invoice back to DRAFT and
+     refuse. Nothing irreversible has happened yet: the AP post and the recost are
+     both below this point. */
+  {
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, draftGrnItemIds);
+    if (verify.over.length > 0) {
+      await scopeToCompanyId(sb.from('purchase_invoices').update({
+        status: 'DRAFT', posted_at: null, updated_at: new Date().toISOString(),
+      }).eq('id', id), co.companyId);
+      return c.json({
+        error: 'qty_exceeds_remaining',
+        message: 'Another invoice billed those receipt lines while this one was being confirmed, so '
+          + 'it has been left as a draft. Reduce the quantities, or cancel it.',
+        lines: verify.over,
+      }, 409);
+    }
+    if (verify.error) {
+      // eslint-disable-next-line no-console
+      console.error(`[pi over-invoice verify] confirm ${curRow.invoice_number}: ${verify.error}`);
+    }
+  }
+
   // COMMIT (was skipped at DRAFT create). Consume the GRN lines so the just-billed
-  // rows drop out of the outstanding picker.
-  const { data: lines } = await sb.from('purchase_invoice_items')
-    .select('grn_item_id').eq('purchase_invoice_id', id);
-  const grnItemIds = (lines ?? []).map((l: { grn_item_id: string | null }) => l.grn_item_id);
-  await recomputeGrnInvoiced(sb, grnItemIds);
-  // Post the AP/GL entry (Dr Inventory 1200 / Cr Payables 2000). Best-effort —
+  // rows drop out of the outstanding picker. The line ids were read before the
+  // flip, for the cap check above — one read, both uses.
+  await recomputeGrnInvoiced(sb, draftGrnItemIds);
+  // Post the AP/GL entry (Dr INVENTORY / Cr AP, by role). Best-effort —
   // idempotent + a post failure never un-confirms the PI.
   const postRes = await postPiAccounting(sb, curRow.invoice_number);
   if (!postRes.ok) {
@@ -1342,8 +1161,8 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 
-// Record a payment against the PI. Adds to paid_centi and auto-transitions
-// status: paid_centi == total → PAID, paid_centi > 0 && < total → PARTIALLY_PAID.
+// Record a payment against the PI. Adds to paid_sen and auto-transitions
+// status: paid_sen == total → PAID, paid_sen > 0 && < total → PARTIALLY_PAID.
 purchaseInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   /* company-scope: this records MONEY PAID. The concurrency loop below guards
@@ -1351,24 +1170,24 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
   const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
-  let body: { amountCenti?: number; notes?: string };
+  let body: { amountSen?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountCenti ?? 0);
+  const amount = Number(body.amountSen ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
 
   // Optimistic-concurrency loop (Bug#5, ported from 2990 1355332c). The old code
   // did read-modify-write — two payments hitting the SAME PI at once both read X
   // and both wrote X+amount, silently LOSING one. PI has no payment ledger to
   // re-sum (unlike SI's recomputePaid), and PostgREST can't do `col = col + x`,
-  // so we gate the UPDATE on `paid_centi = <the value we just read>`: if a
+  // so we gate the UPDATE on `paid_sen = <the value we just read>`: if a
   // concurrent payment moved it, the update matches 0 rows and we retry with a
   // fresh read.
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const { data: cur } = await sb.from('purchase_invoices')
-      .select('paid_centi, total_centi, status, invoice_number, company_id').eq('id', id).maybeSingle();
+      .select('paid_sen, total_sen, status, invoice_number, company_id').eq('id', id).maybeSingle();
     if (!cur) return c.json({ error: 'not_found' }, 404);
     const c0 = cur as {
-      paid_centi: number; total_centi: number; status: string;
+      paid_sen: number; total_sen: number; status: string;
       invoice_number?: string | null; company_id?: number | null;
     };
     // LEAK GUARD (DRAFT) — a DRAFT PI is not yet a real liability; reject payment
@@ -1376,20 +1195,20 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
     if (c0.status === 'DRAFT') return c.json({ error: 'not_payable', message: 'PI is a draft — confirm it before recording payment' }, 409);
     if (c0.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'PI is cancelled' }, 409);
 
-    const newPaid = c0.paid_centi + amount;
-    const newStatus = newPaid >= c0.total_centi ? 'PAID' : 'PARTIALLY_PAID';
+    const newPaid = c0.paid_sen + amount;
+    const newStatus = newPaid >= c0.total_sen ? 'PAID' : 'PARTIALLY_PAID';
 
     const { data, error } = await sb.from('purchase_invoices').update({
-      paid_centi: newPaid, status: newStatus, updated_at: new Date().toISOString(),
+      paid_sen: newPaid, status: newStatus, updated_at: new Date().toISOString(),
     })
       .eq('id', id)
-      .eq('paid_centi', c0.paid_centi) // only if nobody else moved it since the read
-      .select('id, paid_centi, status');
+      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
+      .select('id, paid_sen, status');
     if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
     if (data && data.length > 0) {
       /* Written only by the attempt whose compare-and-set actually landed, so a
          retry loop cannot produce two rows for one payment. The from-value is
-         the paid_centi that guard matched, which makes the pair exact rather
+         the paid_sen that guard matched, which makes the pair exact rather
          than approximate. All three figures are INTEGER SEN. */
       await recordEntityAudit(sb, {
         entityType: 'PURCHASE_INVOICE',
@@ -1401,14 +1220,14 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
         statusSnapshot: newStatus,
         note: 'Payment recorded',
         fieldChanges: compactChanges([
-          fieldChange('paidCenti', c0.paid_centi, newPaid),
-          fieldChange('paymentAmountCenti', null, amount),
+          fieldChange('paidSen', c0.paid_sen, newPaid),
+          fieldChange('paymentAmountSen', null, amount),
           ...statusChange(c0.status, newStatus),
         ]),
       });
       return c.json({ purchaseInvoice: data[0] });
     }
-    // 0 rows updated → a concurrent payment changed paid_centi; loop re-reads + retries.
+    // 0 rows updated → a concurrent payment changed paid_sen; loop re-reads + retries.
   }
   return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
 });
@@ -1429,15 +1248,15 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
   // Read → guard → release → cancel. Keep the existing PAID guard; a PI with
   // any payment can't be cancelled.
   const { data: cur, error: curErr } = await scopeToCompanyId(sb.from('purchase_invoices')
-    .select('id, status, paid_centi, invoice_number, company_id, total_centi').eq('id', id), co.companyId).maybeSingle();
+    .select('id, status, paid_sen, invoice_number, company_id, total_sen').eq('id', id), co.companyId).maybeSingle();
   if (curErr) return c.json({ error: 'lookup_failed', reason: curErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as {
-    id: string; status: string; paid_centi: number | null;
-    invoice_number?: string | null; company_id?: number | null; total_centi?: number | null;
+    id: string; status: string; paid_sen: number | null;
+    invoice_number?: string | null; company_id?: number | null; total_sen?: number | null;
   };
   const auditCompanyId = head.company_id ?? activeCompanyId(c);
-  if (head.status === 'PAID' || (head.paid_centi ?? 0) > 0) {
+  if (head.status === 'PAID' || (head.paid_sen ?? 0) > 0) {
     return c.json({ error: 'cannot_cancel', message: 'PI already paid' }, 409);
   }
   // Idempotent — already cancelled, echo back without re-releasing.
@@ -1510,7 +1329,7 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
     statusSnapshot: 'CANCELLED',
     fieldChanges: compactChanges([
       ...statusChange(head.status, 'CANCELLED'),
-      fieldChange('totalCenti', null, Number(head.total_centi ?? 0)),
+      fieldChange('totalSen', null, Number(head.total_sen ?? 0)),
     ]),
   });
 
@@ -1569,6 +1388,7 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
 
+mountHoldRoute(purchaseInvoices, 'pi'); // the mig-0324 MARKER, never `status`
 /* ── POST /from-grn-items ───────────────────────────────────────────────
    Body: { picks: [{ grnItemId, qty }], supplierInvoiceNumber?, invoiceDate?,
            notes? }.
@@ -1584,7 +1404,7 @@ purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
    the PRIMARY note ref only; the authoritative linkage is per LINE via
    purchase_invoice_items.grn_item_id. Every consumption / costing path already
    reads the line level (recomputeGrnInvoiced, verifyGrnLinesNotOverInvoiced,
-   computeGrnFlags, recostForPi), so they are multi-GRN correct unchanged.
+   computeGrnFlags (lib/grn-consumption-flags), recostForPi), so they are multi-GRN correct unchanged.
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
@@ -1614,25 +1434,25 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('grn_items')
     .select(`
-      id, grn_id, material_kind, material_code, material_name, item_group,
-      description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi,
+      id, grn_id, material_kind, item_code, material_name, item_group,
+      description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen,
       variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
-      special_order_price_sen, discount_centi,
-      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock, company_id )
+      special_order_price_sen, discount_sen,
+      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, on_hold, currency, exchange_rate, migrated_no_stock, company_id )
     `)
     .in('id', ids), c);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
-    id: string; grn_id: string; material_kind: string; material_code: string;
+    id: string; grn_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
-    qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_centi: number;
+    qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number;
     variants: unknown; gap_inches: number | null; divan_height_inches: number | null;
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
-    discount_centi: number;
+    discount_sen: number;
     grn: { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
   };
 
@@ -1663,9 +1483,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     if (p.qty > remaining) {
       return c.json({ error: 'qty_exceeds_remaining', grnItemId: p.grnItemId, requested: p.qty, remaining }, 409);
     }
-    if (row.grn.status !== 'POSTED') {
-      return c.json({ error: 'grn_not_posted', grnItemId: p.grnItemId, status: row.grn.status }, 409);
-    }
+    { const nb = grnNotBillableRefusal(row.grn, { grnItemId: p.grnItemId }); if (nb) return c.json(nb, 409); }
   }
 
   /* Group picks by SUPPLIER + currency + FX rate (owner 2026-08-06). One
@@ -1725,23 +1543,23 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const firstNext = await mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${cp}PI-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}PI-${yymm}-`.length), 10) - 1;
 
-  const invoiceDate = body.invoiceDate ?? todayMyt();
+  const invoiceDate = dateOrNull(body.invoiceDate) ?? todayMyt();
   const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
-     write path: line_total_centi = qty × unit − discount, discount stored.
+     write path: line_total_sen = qty × unit − discount, discount stored.
      The GRN line discount is pro-rated by billed qty over qty_accepted so a
      line billed across multiple PIs never subtracts more than the full GRN
      discount in total. (This path used to store the discount but exclude it
      from line_total + subtotal.) */
   const discFor = (row: ItemRow, qty: number) =>
-    Math.round(Number(row.discount_centi ?? 0) * qty / (Number(row.qty_accepted) || 1));
+    Math.round(Number(row.discount_sen ?? 0) * qty / (Number(row.qty_accepted) || 1));
 
   for (const bucket of buckets.values()) {
     counter += 1;
     // Audit (ported from 2990 b30f0bb1) — clamp each line before summing so a
     // discount > qty×price can't drive the PI subtotal negative.
-    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * row.unit_price_centi - discFor(row, qty)), 0);
+    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * row.unit_price_sen - discFor(row, qty)), 0);
     const piPayload = {
       company_id: activeCompanyId(c), // multi-company: stamp the active company
       supplier_invoice_ref: body.supplierInvoiceNumber ?? null,
@@ -1751,12 +1569,12 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       // grn_item_id is the authoritative linkage.
       grn_id: bucket.grnIds[0]!,
       invoice_date: invoiceDate,
-      due_date: body.dueDate ?? null,
+      due_date: dateOrNull(body.dueDate),
       currency: bucket.currency,
       exchange_rate: bucket.exchangeRate,
-      subtotal_centi: subtotal,
-      tax_centi: 0,
-      total_centi: subtotal,
+      subtotal_sen: subtotal,
+      tax_sen: 0,
+      total_sen: subtotal,
       // Auto-post per Commander preference (matches GRN/PO behaviour).
       status: 'POSTED',
       posted_at: new Date().toISOString(),
@@ -1788,12 +1606,12 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       purchase_invoice_id: h.id,
       grn_item_id: row.id,
       material_kind: row.material_kind,
-      material_code: row.material_code,
+      item_code: row.item_code,
       material_name: row.material_name,
       qty,
-      unit_price_centi: row.unit_price_centi,
+      unit_price_sen: row.unit_price_sen,
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-      line_total_centi: Math.max(0, qty * row.unit_price_centi - discFor(row, qty)),
+      line_total_sen: Math.max(0, qty * row.unit_price_sen - discFor(row, qty)),
       item_group: row.item_group,
       description: row.description,
       description2: row.description2,
@@ -1807,7 +1625,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       custom_specials: row.custom_specials,
       line_suffix: row.line_suffix,
       special_order_price_sen: row.special_order_price_sen ?? 0,
-      discount_centi: discFor(row, qty),
+      discount_sen: discFor(row, qty),
     }));
     const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
     if (iErr) {
@@ -1819,7 +1637,10 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
        bucket's lines are committed. On overshoot, delete THIS PI (cascades its
        lines) and skip the bucket rather than over-bill the GRN line. */
     {
-      const over = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+      const verify = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+      // eslint-disable-next-line no-console
+      if (verify.error) console.error(`[pi over-invoice verify] ${h.id}: ${verify.error}`);
+      const over = verify.over;
       if (over.length > 0) {
         await sb.from('purchase_invoices').delete().eq('id', h.id);
         continue;
@@ -1834,29 +1655,19 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     );
 
     /* ERP -> AutoCount GRN->Purchase Invoice, per bucket: each bucket IS its
-       own document. A bucket billing several GRNs has no AutoCount shape. */
-    if (bucket.grnIds.length === 1) {
-      await enqueueConvert(sb, {
+       own document, and a bucket billing several GRNs names every one of them.
+       The bucket is already grouped by supplier, so all its sources share one
+       creditor — which is what makes the merged transfer well-formed. */
+    const bucketAc = bucket.grnIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'gr_to_pi',
-        from: { table: 'grns', keyCol: 'id', key: bucket.grnIds[0] },
+        from: bucket.grnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id', key: id })),
         to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
         docType: 'PI',
         docNo: h.invoice_number,
         docId: h.id,
         createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    } else {
-      await recordConvertSkipped(sb, {
-        companyId: activeCompanyId(c),
-        op: 'gr_to_pi',
-        docType: 'PI',
-        docNo: h.invoice_number,
-        docId: h.id,
-        reason: `bills ${bucket.grnIds.length} Goods Receipts (${bucket.grnNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
+    }) : null;
     // Consume the GRN lines: recount invoiced_qty from live PI lines.
     await recomputeGrnInvoiced(sb, bucket.lines.map(({ row }) => row.id));
     // Split any PI-native freight before the recost reads it. This path copies GRN
@@ -1870,6 +1681,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     created.push({
       id: h.id, invoiceNumber: h.invoice_number,
       supplierId: bucket.supplierId, grnCount: bucket.grnIds.length, lineCount: bucket.lines.length,
+      ...(bucketAc?.problems.length ? { acNotSent: bucketAc.problems } : {}),
     });
   }
 
@@ -1897,16 +1709,16 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      out at `grn_not_found`. THE COST is the message, because naming the other
      company needs an UNSCOPED read this handler otherwise never makes. */
   const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
-    .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock, company_id')
+    .select('id, grn_number, supplier_id, purchase_order_id, status, on_hold, currency, exchange_rate, migrated_no_stock, company_id')
     .eq('id', grnId), c).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
-  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
-  if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
+  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; on_hold?: boolean | null; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
+  { const nb = grnNotBillableRefusal(g); if (nb) return c.json(nb, 409); }
   /* A receipt carried over from AutoCount is invoiced by the migrated-invoice
      converter, never here. Three things go wrong if this path takes it: the
      invoice would be numbered PI-YYMM-NNNN instead of HC-<AutoCount's number>
-     (the owner's standing rule), it would post Dr 1200 / Cr 2000 for a payable
+     (the owner's standing rule), it would post Dr INVENTORY / Cr AP for a payable
      AutoCount already booked, and it would enqueue a gr_to_pi transfer that
      duplicates the invoice in the live account book. It would also consume the
      GRN line's invoiceable quantity, so the mistake could not be corrected
@@ -1918,17 +1730,17 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items, error: iErr } = await scopeToCompany(sb.from('grn_items')
-    .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi')
+    .select('id, material_kind, item_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
   type GrnLine = {
-    id: string; material_kind: string; material_code: string; material_name: string;
+    id: string; material_kind: string; item_code: string; material_name: string;
     item_group: string | null; description: string | null; description2: string | null;
-    uom: string | null; qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_centi: number; variants: unknown;
+    uom: string | null; qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number; variants: unknown;
     gap_inches: number | null; divan_height_inches: number | null; divan_price_sen: number;
     leg_height_inches: number | null; leg_price_sen: number; custom_specials: unknown;
-    line_suffix: string | null; special_order_price_sen: number; discount_centi: number;
+    line_suffix: string | null; special_order_price_sen: number; discount_sen: number;
   };
   // Only copy lines that still have remaining = qty_accepted - invoiced_qty -
   // returned_qty > 0, and bill the REMAINING qty (a GRN can be invoiced across
@@ -1937,22 +1749,22 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.invoiced_qty ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'GRN is fully invoiced' }, 400);
+  if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'No billable lines came back for this GRN. Open it and check its invoiced balance before treating it as billed in full.' }, 400); // The expensive one: an operator told a note is fully billed stops looking, and an unlinked line makes a receipt read outstanding while a PI already billed it. Opposite errors, same supplier paid wrong. Report the read; let the note's own balance say what is true.
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
-     write path: line_total_centi = qty × unit − discount, discount stored.
+     write path: line_total_sen = qty × unit − discount, discount stored.
      The GRN line discount is pro-rated by the billed (remaining) qty over
      qty_accepted so a second /from-grn pass over a partially-billed line
      can't subtract the full discount twice. */
   const discFor = (it: GrnLine & { _remaining: number }) =>
-    Math.round(Number(it.discount_centi ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
+    Math.round(Number(it.discount_sen ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
   /* CLAMP EACH LINE BEFORE SUMMING, like the sibling /from-grn-items path. The
      lines written below are clamped at 0, so an unclamped sum leaves the header
-     total_centi SHORT of Σ line_total_centi — and total_centi is what AP pays
+     total_sen SHORT of Σ line_total_sen — and total_sen is what AP pays
      from and what computePiSettlement clamps against. A GRN line really can
-     carry discount_centi > qty × unit: grns.ts stores discountCenti unbounded
-     and clamps only line_total_centi. */
-  const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_centi - discFor(it)), 0);
+     carry discount_sen > qty × unit: grns.ts stores discountSen unbounded
+     and clamps only line_total_sen. */
+  const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_sen - discFor(it)), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
@@ -1966,9 +1778,9 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     // Migration 0082 — inherit the source GRN's currency + rate (MYR ⇒ 1, no-op).
     currency: normalizeCurrency(g.currency),
     exchange_rate: normalizeExchangeRate(g.exchange_rate, normalizeCurrency(g.currency)),
-    subtotal_centi: subtotal,
-    tax_centi: 0,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    tax_sen: 0,
+    total_sen: subtotal,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     notes: `From ${g.grn_number}`,
@@ -1982,12 +1794,12 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     purchase_invoice_id: h.id,
     grn_item_id: it.id,
     material_kind: it.material_kind,
-    material_code: it.material_code,
+    item_code: it.item_code,
     material_name: it.material_name,
     qty: it._remaining,
-    unit_price_centi: it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
     // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-    line_total_centi: Math.max(0, it._remaining * it.unit_price_centi - discFor(it)),
+    line_total_sen: Math.max(0, it._remaining * it.unit_price_sen - discFor(it)),
     item_group: it.item_group,
     description: it.description,
     description2: it.description2,
@@ -2001,7 +1813,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     custom_specials: it.custom_specials,
     line_suffix: it.line_suffix,
     special_order_price_sen: it.special_order_price_sen ?? 0,
-    discount_centi: discFor(it),
+    discount_sen: discFor(it),
   }));
   const { error: insErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
   if (insErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500); }
@@ -2011,7 +1823,10 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      PI's lines are committed. On overshoot, delete THIS PI (cascades its lines)
      + 409. */
   {
-    const over = await verifyGrnLinesNotOverInvoiced(sb, lines.map((it) => it.id));
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, lines.map((it) => it.id));
+    // eslint-disable-next-line no-console
+    if (verify.error) console.error(`[pi over-invoice verify] ${h.id}: ${verify.error}`);
+    const over = verify.over;
     if (over.length > 0) {
       await sb.from('purchase_invoices').delete().eq('id', h.id);
       return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
@@ -2023,7 +1838,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
 
   /* Past both compensating branches (items-insert rollback, over-invoice
      rollback) — the invoice is permanent from here. Written after
-     recomputePiTotals so totalCenti is the rolled-up figure. */
+     recomputePiTotals so totalSen is the rolled-up figure. */
   await recordPiCreate(
     sb, c.get('houzsUser'), activeCompanyId(c), h.id, rows.length,
     `Converted from Goods Receipt ${g.grn_number ?? g.id}`,
@@ -2043,7 +1858,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      receipt carried over from AutoCount never reaches this line — it is refused
      at the top of the handler, because the invoice AutoCount raised from it
      already exists in the live account book. */
-  await enqueueConvert(sb, {
+  const { problems: acNotSent } = await enqueueConvert(sb, {
     companyId: activeCompanyId(c),
     op: 'gr_to_pi',
     from: { table: 'grns', keyCol: 'id', key: g.id },
@@ -2054,15 +1869,15 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 };
 purchaseInvoices.post('/from-grn', createPurchaseInvoiceFromGrnHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    PI PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
    GRN detail page's confirmed/immediate-save editing (apps/api/src/routes/grns.ts).
-   The editable line quantity is qty; line_total_centi =
-   qty * unit_price_centi - discount_centi; recomputePiTotals rolls the header
+   The editable line quantity is qty; line_total_sen =
+   qty * unit_price_sen - discount_sen; recomputePiTotals rolls the header
    subtotal/total (PI keeps the stored tax in total, unlike GRN). PI is AP-only
    → line delete needs no inventory release (that landed at GRN time).
    ════════════════════════════════════════════════════════════════════════ */
@@ -2078,8 +1893,7 @@ purchaseInvoices.patch('/:id', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   /* exchangeRate is in PI_AUDIT_FIELDS but NOT written here — it is derived from
-     the currency below, so this loop skips it and the derived value is folded
-     into the audit patch after. */
+     the currency below, so the loop skips it and the audit patch folds it in. */
   for (const [from, to] of PI_AUDIT_FIELDS) {
     if (from === 'exchangeRate') continue;
     if (body[from] !== undefined) updates[to] = body[from];
@@ -2128,7 +1942,8 @@ purchaseInvoices.patch('/:id', async (c) => {
       piRateChanged = true;
     }
   }
-  const { data, error } = await sb.from('purchase_invoices').update(updates).eq('id', id).select(HEADER).single();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('purchase_invoices').update(coerceEmptyDates(updates)).eq('id', id).select(HEADER).single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff the NORMALISED values actually written, not the raw body: currency is
@@ -2172,7 +1987,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   const piId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -2181,31 +1996,56 @@ purchaseInvoices.post('/:id/items', async (c) => {
      a predicate — it tags the new line as ours while hanging it off the other
      company's invoice. piLocked below returns null on a miss, so it is not a
      load either. */
-  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  /* `grn_id` is selected alongside `id` for the unlinked-line guard below — the
+     ADD-LINE path is the other way a hand-typed goods line reaches an invoice
+     that names a receipt, and it is the likelier one: the operator converts the
+     GRN properly, then types the missing item in by hand. */
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id, grn_id').eq('id', piId), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
 
+  /* Same door as POST / — see the comment there. An unlinked line billing a
+     material one of this invoice's receipts already contains is refused; a
+     freight or service line, or anything those receipts do not contain, passes.
+     The receipt set walks THIS invoice's existing linked lines as well as the
+     header ref, because the header ref is only the primary one. */
+  {
+    const covered = await coveredGrnIds(sb, {
+      headerGrnId: (own as { grn_id?: string | null }).grn_id ?? null,
+      piId,
+      grnItemIds: [(it.grnItemId as string | undefined) ?? null],
+    });
+    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
+      lineRef: String(it.lineNumber ?? '0'),
+      itemCode: String(it.itemCode ?? ''),
+      qty: Number(it.qty ?? 1),
+      soItemId: (it.grnItemId as string | undefined) ?? null,
+    }]);
+    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
+  }
+
   const qty = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const discountCenti = Number(it.discountCenti ?? 0);
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const discountSen = Number(it.discountSen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-  const lineTotal = Math.max(0, (qty * unitPriceCenti) - discountCenti);
+  const lineTotal = Math.max(0, (qty * unitPriceSen) - discountSen);
 
   // GRN-linked line: cap qty at that GRN line's remaining
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     /* Same refusal as every other path that can attach a GRN line — a receipt
        carried over from AutoCount is invoiced by the converter, never by hand. */
     const mig = await migratedRefusalForGrnItems(sb, [grnItemId]);
     if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
     if (mig.refusal) return c.json(mig.refusal, 409);
-    /* The remaining-quantity cap was hand-rolled here and main replaced it with
-       the shared helper, which takes the row lock this arithmetic never did.
-       Keep the helper; the migrated refusal above is a different question. */
     const capLock = await qtyCapRefusal(sb, {
       table: 'grn_items', id: grnItemId,
       capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
@@ -2218,13 +2058,13 @@ purchaseInvoices.post('/:id/items', async (c) => {
     purchase_invoice_id: piId,
     grn_item_id: (it.grnItemId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     qty,
-    unit_price_centi: unitPriceCenti,
-    discount_centi: discountCenti,
-    line_total_centi: lineTotal,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    unit_price_sen: unitPriceSen,
+    discount_sen: discountSen,
+    line_total_sen: lineTotal,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     notes: (it.notes as string) ?? null,
     /* variant fields (mirror GRN/PO line) */
     gap_inches: (it.gapInches as number) ?? null,
@@ -2292,7 +2132,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line added: ${String(it.materialCode ?? '')}`,
+      note: `Line added: ${String(it.itemCode ?? '')}`,
       fieldChanges: compactChanges(
         PI_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, null, added[snake] ?? null)),
       ),
@@ -2318,9 +2158,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   /* company-scope: prove the PARENT invoice first. The M10 note below scopes the
      LINE to this PI, which proves the pair belongs together, never whose it is —
      both ids come from the caller. */
-  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  /* `grn_id` rides along for the unlinked-line guard further down — this handler
+     can rewrite a line's item_code, which is the third way the refused shape
+     reaches the table, and without the parent ref there is nothing to check it
+     against. */
+  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id, grn_id').eq('id', piId), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
+  const parentGrnId = (own as { grn_id?: string | null }).grn_id ?? null;
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -2357,10 +2202,10 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const prevQty = Number(prev.qty);
   const grnItemId = (prev.grn_item_id as string | null) ?? null;
   const qty = it.qty !== undefined ? Number(it.qty) : prevQty;
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi ?? 0);
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen ?? 0);
   /* PI discount unification (audit 2026-06-11 M3) — this IS the canonical rule
-     (line_total_centi = qty × unit − discount, discount stored); all four
+     (line_total_sen = qty × unit − discount, discount stored); all four
      create paths now write the same way, so an edit no longer shifts a line's
      total by a stored-but-previously-unapplied discount. */
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
@@ -2368,14 +2213,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 
   const updates: Record<string, unknown> = {
     qty,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['itemGroup', 'item_group'], ['description', 'description'], ['uom', 'uom'],
-    ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],
@@ -2389,6 +2234,36 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* THE THIRD DOOR, and it was wide open. The two guards above sit on the paths
+     that CREATE a line; this one rewrites an existing line's `item_code` (the
+     rename map below carries `itemCode`), leaves `grn_item_id` untouched, and
+     therefore lets the refused shape be assembled in two legal steps: add
+     PACKING-FILM by hand (allowed — the receipt does not contain it), then edit
+     that line's product to a material the receipt DOES contain. Nothing else
+     catches it: the qty cap at `if (grnItemId && delta !== 0)` below and the
+     `recomputeGrnInvoiced` recount are both gated on the STORED link, which is
+     still null, so the receipt line keeps reading fully outstanding while AP and
+     AutoCount both move. This file already knew lines get retyped after creation
+     — the charge-reallocation note calls out "a row that used to be goods and was
+     later retyped as freight".
+
+     The check runs on the EFFECTIVE post-patch code, and only for an unlinked
+     line: a linked line's identity is read-only in the UI and its qty is capped,
+     so the early-out means an ordinary qty or price edit pays for no extra read.
+     FAILS CLOSED, like the other two. */
+  if (!grnItemId && it.itemCode !== undefined) {
+    const covered = await coveredGrnIds(sb, { headerGrnId: parentGrnId, piId });
+    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
+      lineRef: itemId,
+      itemCode: String(it.itemCode ?? prev.item_code ?? ''),
+      qty,
+      soItemId: null,
+    }]);
+    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   // GRN-linked + qty changed: pre-check the delta won't push the GRN line over
@@ -2427,7 +2302,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
         actor: c.get('houzsUser'),
         companyId: meta.companyId ?? activeCompanyId(c),
         statusSnapshot: meta.status,
-        note: `Line edited: ${String(prev.material_code ?? itemId)}`,
+        note: `Line edited: ${String(prev.item_code ?? itemId)}`,
         fieldChanges: lineChanges,
       });
     }
@@ -2501,7 +2376,7 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line removed: ${String(line.material_code ?? itemId)}`,
+      note: `Line removed: ${String(line.item_code ?? itemId)}`,
       fieldChanges: compactChanges(
         PI_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, line[snake] ?? null, null)),
       ),

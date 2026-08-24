@@ -39,7 +39,7 @@ describe('parseVarianceThresholds', () => {
   test('zero is legal — every non-zero variance then needs a supervisor', () => {
     const t = parseVarianceThresholds({ STOCK_TAKE_VARIANCE_QTY_LIMIT: '0' });
     expect(t.qtyLimit).toBe(0);
-    expect(findVarianceBreaches([{ productCode: 'A', adjustment: 1, unitCostSen: null }], {
+    expect(findVarianceBreaches([{ itemCode: 'A', adjustment: 1, unitCostSen: null }], {
       ...t, valueLimitSen: 50_000,
     })).toEqual(['A']);
   });
@@ -48,38 +48,38 @@ describe('parseVarianceThresholds', () => {
 describe('findVarianceBreaches', () => {
   test('at the limit passes, one over breaches (strict >)', () => {
     expect(findVarianceBreaches([
-      { productCode: 'AT', adjustment: 5, unitCostSen: null },
-      { productCode: 'OVER', adjustment: 6, unitCostSen: null },
-      { productCode: 'NEG', adjustment: -6, unitCostSen: null },
+      { itemCode: 'AT', adjustment: 5, unitCostSen: null },
+      { itemCode: 'OVER', adjustment: 6, unitCostSen: null },
+      { itemCode: 'NEG', adjustment: -6, unitCostSen: null },
     ], T)).toEqual(['OVER', 'NEG']);
   });
 
   test('value rule: small qty on an expensive SKU still breaches', () => {
     // 2 × RM300 = RM600 > RM500, though |2| ≤ 5.
     expect(findVarianceBreaches([
-      { productCode: 'MAT-LUX', adjustment: -2, unitCostSen: 30_000 },
+      { itemCode: 'MAT-LUX', adjustment: -2, unitCostSen: 30_000 },
     ], T)).toEqual(['MAT-LUX']);
   });
 
   test('value exactly at the limit passes', () => {
     expect(findVarianceBreaches([
-      { productCode: 'EDGE', adjustment: 5, unitCostSen: 10_000 }, // = RM500
+      { itemCode: 'EDGE', adjustment: 5, unitCostSen: 10_000 }, // = RM500
     ], T)).toEqual([]);
   });
 
   test('unknown cost is judged on qty alone — no manufactured breach, no excuse', () => {
     expect(findVarianceBreaches([
-      { productCode: 'NOCOST-SMALL', adjustment: 3, unitCostSen: null },
-      { productCode: 'NOCOST-BIG', adjustment: -9, unitCostSen: null },
+      { itemCode: 'NOCOST-SMALL', adjustment: 3, unitCostSen: null },
+      { itemCode: 'NOCOST-BIG', adjustment: -9, unitCostSen: null },
     ], T)).toEqual(['NOCOST-BIG']);
   });
 
   test('zero-adjustment lines never breach, and codes deduplicate in order', () => {
     expect(findVarianceBreaches([
-      { productCode: 'Z', adjustment: 0, unitCostSen: 999_999 },
-      { productCode: 'CODY', adjustment: 7, unitCostSen: null },   // variant bucket 1
-      { productCode: 'CODY', adjustment: -8, unitCostSen: null },  // variant bucket 2
-      { productCode: 'BF-16', adjustment: 6, unitCostSen: null },
+      { itemCode: 'Z', adjustment: 0, unitCostSen: 999_999 },
+      { itemCode: 'CODY', adjustment: 7, unitCostSen: null },   // variant bucket 1
+      { itemCode: 'CODY', adjustment: -8, unitCostSen: null },  // variant bucket 2
+      { itemCode: 'BF-16', adjustment: 6, unitCostSen: null },
     ], T)).toEqual(['CODY', 'BF-16']);
   });
 });

@@ -149,8 +149,7 @@
     "backfill-sales-reps.mjs": [
       "mode-gate",
       "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "backfill-so-building-type.mjs": [
       "confirm-phrase",
@@ -219,8 +218,7 @@
     "cleanup-roles.mjs": [
       "mode-gate",
       "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "copy-pg-to-pg.mjs": [
       "mode-gate",
@@ -664,8 +662,7 @@
     "sync-sales-dept-reps.mjs": [
       "mode-gate",
       "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "tidy-fabric-descriptions.mjs": [
       "fresh-verify"

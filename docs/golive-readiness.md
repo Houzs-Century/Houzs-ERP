@@ -334,7 +334,7 @@ Worth stating because it is the intuitive explanation and it is wrong:
   default query caching is enabled is a console check, not a repo fact.
 
 **Relevant precedent, and it is reassuring.** This repo's one prior "saved but reads blank"
-in the API path (`BUG-HISTORY.md:1257-1262` — showroom parking) was **a stale frontend
+in the API path (`docs/bugs/0028-a-frozen-write-reads-as-an-outage-on-every-path-that-is-not.md` — showroom parking) was **a stale frontend
 react-query cache, not a lost write**; the write had persisted, proven against live prod.
 No BUG-HISTORY entry describes a script reporting a write count that did not land.
 

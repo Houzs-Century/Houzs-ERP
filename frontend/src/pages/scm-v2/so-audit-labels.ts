@@ -20,18 +20,18 @@ const ACTIONS: Record<string, string> = {
 const FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   phone: 'Phone', email: 'Email', soDate: 'SO date', status: 'Status',
-  paymentMethod: 'Payment method', depositCenti: 'Deposit',
+  paymentMethod: 'Payment method', depositSen: 'Deposit',
   processingDate: 'Processing date', customerSoNo: 'Customer SO ref',
   customerPo: 'Customer PO', customerState: 'State',
-  customerDeliveryDate: 'Delivery date', city: 'City', postcode: 'Postcode',
+  customerDeliveryDate: 'Delivery Date', city: 'City', postcode: 'Postcode',
   buildingType: 'Building type', address1: 'Address 1', address2: 'Address 2',
   address3: 'Address 3', address4: 'Address 4', note: 'Note',
   remark2: 'Remark 2', remark3: 'Remark 3', remark4: 'Remark 4',
   itemCode: 'Item', itemGroup: 'Group', description: 'Description',
   description2: 'Description 2', uom: 'UOM', qty: 'Qty',
-  unitPriceCenti: 'Unit price', discountCenti: 'Discount',
-  unitCostCenti: 'Unit cost', totalCenti: 'Line total',
-  lineCount: 'Lines', localTotalCenti: 'Total', cancelled: 'Cancelled',
+  unitPriceSen: 'Unit price', discountSen: 'Discount',
+  unitCostSen: 'Unit cost', totalSen: 'Line total',
+  lineCount: 'Lines', localTotalSen: 'Total', cancelled: 'Cancelled',
   remark: 'Remark', salespersonId: 'Salesperson', customerType: 'Customer type',
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
@@ -43,7 +43,7 @@ const FIELDS: Record<string, string> = {
   amendReason: 'Amend reason', deliveryState: 'Delivery region',
   possessionDate: 'Possession date', houseType: 'House type',
   replacementDisposal: 'Replacement / disposal', referral: 'Referral',
-  amountCenti: 'Amount', paidAt: 'Paid on', method: 'Method',
+  amountSen: 'Amount', paidAt: 'Paid on', method: 'Method',
   merchantProvider: 'Bank', installmentMonths: 'Installment months',
   onlineType: 'Online type', approvalCode: 'Approval code',
   stockStatus: 'Stock status', photoAdded: 'Photo added', photoRemoved: 'Photo removed',
@@ -55,8 +55,8 @@ const FIELDS: Record<string, string> = {
 };
 
 const MONEY_FIELDS = new Set([
-  'unitPriceCenti', 'discountCenti', 'totalCenti', 'depositCenti',
-  'localTotalCenti', 'unitCostCenti', 'amountCenti',
+  'unitPriceSen', 'discountSen', 'totalSen', 'depositSen',
+  'localTotalSen', 'unitCostSen', 'amountSen',
 ]);
 
 export const SO_AUDIT_LABELS: AuditLabelDictionary = {

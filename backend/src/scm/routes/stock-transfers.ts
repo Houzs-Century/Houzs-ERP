@@ -29,8 +29,16 @@ import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
 import { buildTransferPayload } from '../lib/stock-transfer-atomic';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { activeCompanyId, companyDocPrefix, requireActiveCompanyId,
+  NOT_THIS_COMPANY, type CompanyScopeCtx } from '../lib/companyScope';
+/* CONVERTED to scopedDb (2026-08-20 pilot). Every statement below NAMES the
+   company scope it runs under, and omitting one is a TS2554 rather than a
+   silently cross-company query. backend/scripts/company-scope-converted.json
+   lists this file and check-company-scope.mjs fails the build if it goes back to
+   c.get('supabase'). Read scopedDb.ts's header for what this does NOT cover;
+   every `unscoped(why)` below marks a place where it stops. */
+import { scmDb, companyScope, companyIdScope, CENTRALISED,
+  type ScmClient, type ScopedDb } from '../lib/scopedDb';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
@@ -42,11 +50,11 @@ const HEADER =
   'id, transfer_no, status, from_warehouse_id, to_warehouse_id, transfer_date, ' +
   'notes, posted_at, cancelled_at, created_at, created_by';
 const LINE =
-  'id, stock_transfer_id, product_code, product_name, variant_key, qty, notes, created_at';
+  'id, stock_transfer_id, item_code, product_name, variant_key, qty, notes, created_at';
 
 const VALID_STATUS = new Set(['POSTED', 'CANCELLED']);
 
-const nextTransferNo = async (sb: any, c: any): Promise<string> => {
+const nextTransferNo = async (sb: ScmClient, c: CompanyScopeCtx): Promise<string> => {
   const d = new Date();
   const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
   const p = companyDocPrefix(c);
@@ -55,7 +63,7 @@ const nextTransferNo = async (sb: any, c: any): Promise<string> => {
 
 // ── List ──────────────────────────────────────────────────────────────
 stockTransfers.get('/', async (c) => {
-  const sb = c.get('supabase');
+  const db = scmDb(c);
   const status            = c.req.query('status');
   const fromWarehouseId   = c.req.query('fromWarehouseId');
   const toWarehouseId     = c.req.query('toWarehouseId');
@@ -65,7 +73,7 @@ stockTransfers.get('/', async (c) => {
   // Page through so PostgREST's default 1000-row cap can't silently truncate
   // the transfer list (filters below only narrow the set).
   const { data, error } = await paginateAll((pFrom, pTo) => {
-    let q = sb.from('stock_transfers')
+    let q = db.from('stock_transfers', companyScope(c))
       .select(
         `${HEADER}, ` +
         `from_warehouse:warehouses!stock_transfers_from_warehouse_id_fkey(id, code, name), ` +
@@ -78,7 +86,6 @@ stockTransfers.get('/', async (c) => {
     if (toWarehouseId)   q = q.eq('to_warehouse_id',   toWarehouseId);
     if (dateFrom)        q = q.gte('transfer_date', dateFrom);
     if (dateTo)          q = q.lte('transfer_date', dateTo);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -94,8 +101,10 @@ stockTransfers.get('/', async (c) => {
     // chunkIn — ids can exceed 1000 (un-truncated list) and lines across the
     // listed transfers can exceed the 1000-row cap; batch + page so line_count
     // is never understated.
-    const { data: lineRows } = await chunkIn<{ stock_transfer_id: string }>(ids, (batch, pFrom, pTo) => sb
-      .from('stock_transfer_lines')
+    const { data: lineRows } = await chunkIn<{ stock_transfer_id: string }>(ids, (batch, pFrom, pTo) => db
+      .from('stock_transfer_lines', CENTRALISED(
+        'counted only for ids the company-scoped list read above already returned; a predicate here would ALSO drop pre-0061 lines whose company_id is null and understate line_count',
+      ))
       .select('stock_transfer_id')
       .in('stock_transfer_id', batch)
       .range(pFrom, pTo));
@@ -115,18 +124,20 @@ stockTransfers.get('/', async (c) => {
 
 // ── Detail ────────────────────────────────────────────────────────────
 stockTransfers.get('/:id', async (c) => {
-  const sb = c.get('supabase');
+  const db = scmDb(c);
   const id = c.req.param('id');
 
   const [headerRes, linesRes] = await Promise.all([
-    scopeToCompany(sb.from('stock_transfers')
+    db.from('stock_transfers', companyScope(c))
       .select(
         `${HEADER}, ` +
         `from_warehouse:warehouses!stock_transfers_from_warehouse_id_fkey(id, code, name), ` +
         `to_warehouse:warehouses!stock_transfers_to_warehouse_id_fkey(id, code, name)`,
       )
-      .eq('id', id), c).maybeSingle(),
-    sb.from('stock_transfer_lines').select(LINE).eq('stock_transfer_id', id).order('created_at'),
+      .eq('id', id).maybeSingle(),
+    db.from('stock_transfer_lines', CENTRALISED(
+      'the header read beside this one IS the company gate: a miss there returns 404 before these lines are used, and a predicate here would additionally hide pre-0061 lines with a null company_id',
+    )).select(LINE).eq('stock_transfer_id', id).order('created_at'),
   ]);
 
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
@@ -145,48 +156,52 @@ stockTransfers.get('/:id', async (c) => {
    Returns [] on success, or a one-element error list so the POST handler
    auto-cancels the header and returns a non-201. */
 async function writeTransferMovements(
-  sb: any,
+  db: ScopedDb,
   header: { id: string; transfer_no: string; from_warehouse_id: string; to_warehouse_id: string },
   userId: string,
-  // Multi-company (mig 0061): stamp the transfer's company on every movement row.
-  companyId?: number | null,
-  // Context for scopeToCompany on the source open-lots read (no-ops when the
-  // active company is unresolved / single-company fallback).
-  c?: any,
+  /* Multi-company (mig 0061): stamp the transfer's company on every movement
+     row. REQUIRED, not optional — it decides which company's books the movement
+     lands in, and a parameter that decides something never gets a silent
+     default here. `null` stays expressible and means the pre-migration state. */
+  companyId: number | null,
+  /* Context for the source open-lots read. REQUIRED for the same reason: absent,
+     that read would run with no company predicate at all. */
+  c: CompanyScopeCtx,
 ): Promise<string[]> {
   const movementErrors: string[] = [];
-  const { data: lines } = await sb.from('stock_transfer_lines')
-    .select('product_code, product_name, variant_key, qty')
+  const { data: lines } = await db
+    .from('stock_transfer_lines', CENTRALISED(
+      'header.id was minted by the company-scoped insert in the caller moments ago, so these lines are that document\'s by construction',
+    ))
+    .select('item_code, product_name, variant_key, qty')
     .eq('stock_transfer_id', header.id);
-  const lineList = (lines as Array<{ product_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
+  const lineList = (lines as Array<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
 
   /* Resolve the dye-lot batch each line moves so a batched (sofa) lot keeps its
      batch_no across the warehouse hop — otherwise the destination can't satisfy
      a batch-scoped sofa ship. We read OPEN lots at the SOURCE warehouse and, for
-     each (product_code, variant_key) bucket, carry the batch ONLY when the source
+     each (item_code, variant_key) bucket, carry the batch ONLY when the source
      stock sits in a single non-null batch. If the bucket spans multiple batches
      (or is plain un-batched), we leave the line un-batched → plain FIFO, rather
      than guess a wrong dye-lot. Forward-compat: pre-0120 the column/view is absent
      → empty map → every line un-batched (old behaviour). */
   const batchByBucket = new Map<string, string | null>(); // key `code::variant` → batch_no | null (ambiguous/none)
   try {
-    const { data: lots, error: lotsErr } = await scopeToCompany(
-      sb
-        .from('v_inventory_lots_open')
-        .select('warehouse_id, product_code, variant_key, batch_no, qty_remaining')
-        .eq('warehouse_id', header.from_warehouse_id)
-        .not('batch_no', 'is', null)
-        .gt('qty_remaining', 0),
-      c,
-    );
+    const { data: lots, error: lotsErr } = await db
+      .from('v_inventory_lots_open', companyScope(c))
+      .select('warehouse_id, item_code, variant_key, batch_no, qty_remaining')
+      .eq('warehouse_id', header.from_warehouse_id)
+      .not('batch_no', 'is', null)
+      .gt('qty_remaining', 0);
     if (!lotsErr) {
       // Collect the distinct non-null batches per bucket; single → carry, else null.
       const batchesByBucket = new Map<string, Set<string>>();
+      /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the scoped builder types `data` as non-null on this branch, but PostgREST really does return a null body (a 42703 on a column this view lacks pre-0120 is the case this whole try/catch exists for). The type is the optimistic one; the `?? []` is the true one. */
       for (const r of (lots ?? []) as Array<{
-        product_code: string; variant_key: string | null; batch_no: string | null;
+        item_code: string; variant_key: string | null; batch_no: string | null;
       }>) {
         if (!r.batch_no) continue;
-        const k = `${r.product_code}::${r.variant_key ?? ''}`;
+        const k = `${r.item_code}::${r.variant_key ?? ''}`;
         const set = batchesByBucket.get(k) ?? new Set<string>();
         set.add(r.batch_no);
         batchesByBucket.set(k, set);
@@ -206,7 +221,9 @@ async function writeTransferMovements(
   const payload = buildTransferPayload(lineList, batchByBucket);
   if (payload.length > 0) {
     try {
-      const { error: rpcErr } = await sb.rpc('fn_stock_transfer_apply', {
+      const { error: rpcErr } = await db.unscoped(
+        'an RPC, which this wrapper deliberately does not cover: fn_stock_transfer_apply takes p_company_id explicitly and scopes inside the transaction',
+      ).rpc('fn_stock_transfer_apply', {
         p_from_warehouse_id: header.from_warehouse_id,
         p_to_warehouse_id:   header.to_warehouse_id,
         p_source_doc_id:     header.id,
@@ -215,6 +232,7 @@ async function writeTransferMovements(
         p_performed_by:      userId,
         p_lines:             payload,
       });
+      /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- PostgrestError types `message` as a plain string, but an RPC that fails at the edge (transport, 502 from the pooler) surfaces an error object without one, and an operator reading "TRANSFER ST-2608-001: undefined" learns nothing. */
       if (rpcErr) movementErrors.push(`TRANSFER ${header.transfer_no}: ${rpcErr.message ?? 'movement apply failed'}`);
       /* Oversell retro-cost (0154) — the transfer just opened lots at the
          DESTINATION. If that warehouse had a prior "ship anyway" DO whose short
@@ -225,11 +243,13 @@ async function writeTransferMovements(
          rolled the whole transfer back, so no lot exists to draw on. */
       if (!rpcErr) {
         await reconcileUncostedAfterIn(
-          sb,
+          db.unscoped(
+            'library hand-off: the retro-cost walker takes the raw client and resolves lots from the movement rows this transfer just wrote',
+          ),
           payload.map((p) => ({
             movement_type: 'IN',
             warehouse_id: header.to_warehouse_id,
-            product_code: p.product_code,
+            item_code: p.item_code,
             variant_key: p.variant_key,
             qty: p.qty,
           })),
@@ -245,14 +265,16 @@ async function writeTransferMovements(
      row failed (partial transfer) and the bucket has actually shifted. */
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    await recomputeSoStockAllocation(db.unscoped(
+      'library hand-off: the B2C allocation walker is a system-wide recompute across both companies by design',
+    ));
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-transfer failed:', e); }
   return movementErrors;
 }
 
 // ── Create + auto-post ────────────────────────────────────────────────
 // body: { fromWarehouseId, toWarehouseId, transferDate?, notes?,
-//         items: [{ productCode, productName?, variantKey?, qty, notes? }] }
+//         items: [{ itemCode, productName?, variantKey?, qty, notes? }] }
 // PR-DRAFT-removal: row is inserted as POSTED and inventory_movements
 // are written inline. No separate /post call needed.
 stockTransfers.post('/', async (c) => {
@@ -260,8 +282,10 @@ stockTransfers.post('/', async (c) => {
      handler inserted moments earlier is deleted when the child insert fails.
      insertHeader / insertWithDocNoRetry stamp the active company on that row, so
      the id is not caller-supplied and cannot name another company's document.
-     Verified 2026-08-13 by reading the handler end to end. */
-  const sb = c.get('supabase');
+     Verified 2026-08-13 by reading the handler end to end. Each of those two
+     statements now SAYS so, as a CENTRALISED reason the compiler made
+     unavoidable, instead of relying on this paragraph being re-read. */
+  const db = scmDb(c);
   const user = c.get('user');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; }
@@ -277,8 +301,29 @@ stockTransfers.post('/', async (c) => {
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (items.length === 0) return c.json({ error: 'items_required' }, 400);
 
+  /* BOTH WAREHOUSES MUST BE THIS COMPANY'S. They arrive from the request body and
+     were previously only checked for presence and inequality. The header insert
+     below STAMPS the active company, which is not a predicate — so a caller could
+     name the OTHER company's warehouse as the source and the transfer would still
+     be booked as their own document.
+     That is not a bookkeeping-only defect: fn_stock_transfer_apply
+     (mig 0192) writes an OUT movement at from_warehouse_id, and the FIFO consumer
+     keys on (warehouse_id, item_code, variant_key) with no company argument —
+     so it consumes the other company's lots at their cost and opens the stock in
+     ours. Stock and valuation both move.
+     Checked as a SET so one round trip covers both ids; `companyScope(c)`
+     delegates to `scopeToCompany`, so it keeps the same degrade-when-unresolved
+     behaviour as the rest of the file. */
+  const wanted = [...new Set([fromWarehouseId, toWarehouseId])];
+  const { data: ownWhs, error: whErr } = await db
+    .from('warehouses', companyScope(c)).select('id').in('id', wanted);
+  if (whErr) return c.json({ error: 'warehouse_check_failed', reason: whErr.message }, 500);
+  if ((ownWhs ?? []).length !== wanted.length) return c.json(NOT_THIS_COMPANY, 404);
+
+  /* No `company_id` field here any more: the INSERT arm of the scoped builder
+     stamps it, through the same stampCompany this line used to inline — so it
+     cannot be dropped by a later edit to this object. */
   const headerInsert: Record<string, unknown> = {
-    company_id:         activeCompanyId(c), // multi-company: stamp the active company
     status:             'POSTED',
     posted_at:          new Date().toISOString(),
     from_warehouse_id:  fromWarehouseId,
@@ -293,13 +338,18 @@ stockTransfers.post('/', async (c) => {
      one) are written after stock has already moved, so neither can honestly fail
      there. One probe covers both: they share this entity and action, and by the
      time either runs the choice between them is already made. */
-  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TRANSFER', action: 'CREATE', companyId: activeCompanyId(c) });
+  const pf = await assertAuditWritable(db.unscoped(
+    'library hand-off: the audit sink takes the raw client and is told the company explicitly as companyId',
+  ), { entityType: 'STOCK_TRANSFER', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
   const { data: headerData, error: hErr } = await insertWithDocNoRetry<{ id: string; transfer_no: string; from_warehouse_id: string; to_warehouse_id: string }>(
-    () => nextTransferNo(sb, c),
-    (transferNo) => sb
-      .from('stock_transfers').insert({ transfer_no: transferNo, ...headerInsert }).select(HEADER).single(),
+    () => nextTransferNo(db.unscoped(
+      'library hand-off: mintMonthlyDocNo partitions by the per-company DOC-NUMBER PREFIX (companyDocPrefix), not by a predicate — its .like() for HC-ST-2608-% never matches 2990\'s numbers',
+    ), c),
+    (transferNo) => db
+      .from('stock_transfers', companyScope(c))
+      .insert({ transfer_no: transferNo, ...headerInsert }).select(HEADER).single(),
   );
   if (hErr) {
     /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
@@ -318,10 +368,10 @@ stockTransfers.post('/', async (c) => {
   const lineRows = items.map((it) => {
     const qty = Math.max(0, Math.floor(Number(it.qty ?? 0)));
     if (qty <= 0) throw new Error('qty must be > 0');
-    if (!it.productCode) throw new Error('productCode required per line');
+    if (!it.itemCode) throw new Error('itemCode required per line');
     return {
       stock_transfer_id: header.id,
-      product_code: String(it.productCode),
+      item_code: String(it.itemCode),
       product_name: (it.productName as string | undefined) ?? null,
       // Variant bucket so the OUT@from / IN@to movements consume + re-open the
       // matching FIFO batch. Omit / '' = unclassified (legacy behaviour).
@@ -330,14 +380,17 @@ stockTransfers.post('/', async (c) => {
       notes: (it.notes as string | undefined) ?? null,
     };
   });
-  const { error: lErr } = await sb.from('stock_transfer_lines').insert(stampCompany(lineRows, c));
+  const { error: lErr } = await db
+    .from('stock_transfer_lines', companyScope(c)).insert(lineRows);
   if (lErr) {
-    await sb.from('stock_transfers').delete().eq('id', header.id);
+    await db.from('stock_transfers', CENTRALISED(
+      'the ROLLBACK of the header this handler inserted seconds ago: the id was minted here, is not caller-supplied, and cannot name another company\'s document — while a predicate WOULD strand the row whenever the active company is unresolved',
+    )).delete().eq('id', header.id);
     return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500);
   }
 
   // Write inventory movements (paired OUT/IN) inline.
-  const movementErrors = await writeTransferMovements(sb, header, user.id, activeCompanyId(c), c);
+  const movementErrors = await writeTransferMovements(db, header, user.id, activeCompanyId(c) ?? null, c);
 
   /* If the movement apply failed, the transfer did NOT complete — and because
      fn_stock_transfer_apply is atomic, NOTHING moved (both warehouses are
@@ -358,10 +411,14 @@ stockTransfers.post('/', async (c) => {
   ]);
 
   if (movementErrors.length) {
-    await sb.from('stock_transfers')
+    await db.from('stock_transfers', CENTRALISED(
+      'auto-cancel of the header this handler inserted seconds ago — the same handler-minted id as the rollback above, not caller-supplied',
+    ))
       .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
       .eq('id', header.id);
-    await recordEntityAudit(sb, {
+    await recordEntityAudit(db.unscoped(
+      'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
+    ), {
       entityType: 'STOCK_TRANSFER',
       entityId: header.id,
       entityDocNo: header.transfer_no,
@@ -381,7 +438,9 @@ stockTransfers.post('/', async (c) => {
     }, 422);
   }
 
-  await recordEntityAudit(sb, {
+  await recordEntityAudit(db.unscoped(
+    'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
+  ), {
     entityType: 'STOCK_TRANSFER',
     entityId: header.id,
     entityDocNo: header.transfer_no,
@@ -403,12 +462,12 @@ stockTransfers.post('/', async (c) => {
 // opposite-direction movement per original row (IN@to → OUT@to, OUT@from →
 // IN@from) via reverseMovements, so stock flows back to the source warehouse
 // and the FIFO cost basis is restored. Variant-aware (reverseMovements buckets
-// by product_code + variant_key + warehouse). Idempotent two ways: the
+// by item_code + variant_key + warehouse). Idempotent two ways: the
 // status flip is gated POSTED→CANCELLED (the .neq guard returns no row on a
 // second call → 409), and reverseMovements itself skips buckets whose signed
 // net is already 0, so even a retry that slipped past the gate is a no-op.
 stockTransfers.patch('/:id/cancel', async (c) => {
-  const sb = c.get('supabase');
+  const db = scmDb(c);
   const user = c.get('user');
   const id = c.req.param('id');
 
@@ -427,19 +486,20 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  const { data: beforeRow } = await scopeToCompanyId(
-    sb.from('stock_transfers')
-      .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
-      .eq('id', id),
-    co.companyId,
-  ).maybeSingle();
+  const { data: beforeRow } = await db
+    .from('stock_transfers', companyIdScope(co.companyId))
+    .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
+    .eq('id', id)
+    .maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const beforeTransfer = beforeRow as {
     transfer_no: string; status: string;
     from_warehouse_id: string | null; to_warehouse_id: string | null; company_id: number | null;
   } | null;
 
-  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TRANSFER', entityId: id, action: 'CANCEL', companyId: beforeTransfer?.company_id ?? null });
+  const pf = await assertAuditWritable(db.unscoped(
+    'library hand-off: the audit sink takes the raw client and is told the company explicitly as companyId',
+  ), { entityType: 'STOCK_TRANSFER', entityId: id, action: 'CANCEL', companyId: beforeTransfer?.company_id ?? null });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
   /* The company predicate goes on the FLIP, not only on the read above — this
@@ -448,26 +508,29 @@ stockTransfers.patch('/:id/cancel', async (c) => {
      predicate can legitimately match zero rows (another company's transfer, or
      a second cancel), and single() reports that as an error, so the
      `already_cancelled` 409 below was unreachable — a repeat cancel 500'd. */
-  const { data, error } = await scopeToCompanyId(
-    sb.from('stock_transfers')
-      .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
-      .eq('id', id).neq('status', 'CANCELLED'),
-    co.companyId,
-  ).select('id, status, cancelled_at').maybeSingle();
+  const { data, error } = await db
+    .from('stock_transfers', companyIdScope(co.companyId))
+    .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
+    .eq('id', id).neq('status', 'CANCELLED')
+    .select('id, status, cancelled_at').maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data)  return c.json({ error: 'already_cancelled' }, 409);
 
   // Reverse the paired OUT/IN movements this transfer wrote. Best-effort,
   // mirroring the post path: a failed reversal row is logged + reported, it
   // does NOT roll back the CANCELLED status (audit-DLQ posture).
-  const rev = await reverseMovements(sb, 'STOCK_TRANSFER', id, user?.id ?? null);
+  const rev = await reverseMovements(db.unscoped(
+    'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped flip directly above already proved is ours',
+  ), 'STOCK_TRANSFER', id, user?.id ?? null);
 
   /* One row covering the cancel AND its stock reversal — unlike the PV cancel,
      which splits them, because here the reversal has no independent identity (no
      JE number) and its counts only mean anything next to the cancel itself. A
      partial reversal is the case worth surfacing: the header says CANCELLED but
      stock did not fully come back. */
-  await recordEntityAudit(sb, {
+  await recordEntityAudit(db.unscoped(
+    'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
+  ), {
     entityType: 'STOCK_TRANSFER',
     entityId: id,
     entityDocNo: beforeTransfer?.transfer_no ?? null,
@@ -490,7 +553,9 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   // partial reversal actually shifted a bucket.
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    await recomputeSoStockAllocation(db.unscoped(
+      'library hand-off: the B2C allocation walker is a system-wide recompute across both companies by design',
+    ));
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-cancel failed:', e); }
 
   return c.json({
@@ -502,9 +567,10 @@ stockTransfers.patch('/:id/cancel', async (c) => {
 
 // ── Post → idempotent no-op (legacy compat) ───────────────────────────
 stockTransfers.patch('/:id/post', async (c) => {
-  const sb = c.get('supabase');
+  const db = scmDb(c);
   const id = c.req.param('id');
-  const { data } = await scopeToCompany(sb.from('stock_transfers').select(HEADER).eq('id', id), c).maybeSingle();
+  const { data } = await db
+    .from('stock_transfers', companyScope(c)).select(HEADER).eq('id', id).maybeSingle();
   if (!data) return c.json({ error: 'not_found' }, 404);
   const row = data as unknown as { status: string };
   if (row.status === 'POSTED') return c.json({ transfer: data });

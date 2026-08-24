@@ -107,10 +107,57 @@ clock.
 **"`pretest` runs `test:scale-contract` on all four shards — three of those are
 waste."** True, and irrelevant: measured at **0.36s**. Left alone.
 
-**"`scale-postgres-contract` should not run on every PR."** Left alone —
-`docs/SCALE-PERFORMANCE-HARNESS.md` documents the every-PR execution as a
+**"`scale-postgres-contract` should not run on every PR."** Left alone at the
+time — `docs/SCALE-PERFORMANCE-HARNESS.md` documents the every-PR execution as a
 deliberate design ("the skip is therefore never the only report"), and the job
 costs ~80s.
+
+> **REVERSED 2026-08-18.** The job moved to `.github/workflows/postsubmit.yml`,
+> together with `frontend-perf`. Two things changed since the paragraph above was
+> written. First, evidence: over the last 40 `ci.yml` runs `scale-postgres-contract`
+> was **37 success, 0 failure** and `frontend-perf` **37 success, 0 failure** —
+> together ~180 runner-seconds spent on every PR to restate an unchanged result,
+> against the 20-slot ceiling that is the whole subject of this document. Second,
+> the harness doc's actual requirement is *one* execution per change, not a
+> *pre-merge* one ("running it twice buys nothing"); a postsubmit run on `main`
+> still gives exactly one, on the genuinely merged tree rather than a speculative
+> merge ref. What is given up is that the evidence now arrives after merge instead
+> of before — accepted for a job with no failures on the record, and reversible:
+> if it fails on `main`, move it back.
+>
+> **RE-REVERSED for `frontend-perf` on 2026-08-21 (#2591). `scale-postgres-contract`
+> stays.** The reversibility clause above was not decoration — it was cashed three
+> days later. `frontend-perf` failed **18 consecutive** postsubmit runs (first
+> `32390289786`, head `80f4f9756` = the merge commit of #2568; last `32405172079`)
+> and blocked nothing, because postsubmit triggers only on push to `main`.
+>
+> **The lesson is about the EVIDENCE, not the decision.** "37 success, 0 failure"
+> measures how often a gate FIRED, never what it GUARDS. `frontend-perf` owned the
+> ONLY typecheck of `frontend/perf-lab/` — `perf-lab/tsconfig.json` extends
+> `../tsconfig.app.json` and narrows `types`, while `frontend/tsconfig.json`
+> references only `tsconfig.app.json` + `tsconfig.node.json`, so `tsc -b` cannot
+> reach it — and forty greens therefore meant "nobody has broken it yet", not
+> "nothing can break it". Proven on PR #2592, a deliberate re-break: the required
+> `frontend-typecheck` passed and `frontend-perf` failed **on the same tree**.
+>
+> Before moving any job here, ask what would be UNGUARDED if it never ran again.
+> If the answer is "an input nothing else checks", a pass count is the wrong
+> evidence. `scale-postgres-contract` survives that question — the scale fixture
+> is not the only thing exercising the pg schema.
+>
+> It cost +0s of wall clock to bring back. Measured on `32407322884` and
+> `32407903048`: the job runs ~92-114s in parallel and finishes 61-65s BEFORE
+> `frontend-checks`, which is the frontend critical path. Job-level queue wait
+> across the 12 runs before the change: worst 3s, median 2s, at 14-16 jobs — the
+> 20-slot ceiling was not binding. It is pinned by
+> `frontend/scripts/check-perf-lab-gate.test.mjs`, which fails if the job leaves
+> `ci.yml`, leaves the `frontend` roll-up's `needs` or its assertions, or if
+> `merge_group` leaves the triggers.
+>
+> Not everything moved. `backend-postgres` (34 success, **4 failure**, spanning
+> several pg test files at once — a broken tree, not a flake) and `file-size`
+> (2 real findings) stayed in presubmit. A job earns presubmit by having caught
+> something; those two have.
 
 ---
 
@@ -118,6 +165,7 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
+| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` (`frontend-perf` RETURNED to `ci.yml` 2026-08-21, #2591 — see the re-reversal note above) | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | #2412 |
 | `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
 | `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
 | `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
@@ -269,7 +317,13 @@ it.** A CI run finishes when its slowest job finishes; that used to be
 > **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
 > story.** `frontend` was then split three ways and the Playwright browser
 > cached; on `origin/main` today `frontend` is a ROLL-UP job over
-> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`), not the one
+> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`). That
+> membership went out and came back: `frontend-perf` moved to `postsubmit.yml` on
+> 2026-08-18 and RETURNED on 2026-08-21 (#2591), so the roll-up covers
+> `frontend-checks`, `frontend-typecheck`, `frontend-build` and `frontend-perf`
+> again, plus `lint`. **Read the membership from `ci.yml`, not from here** — a job
+> absent from the roll-up's `needs` is advisory no matter what any doc says, which
+> is exactly the failure #2591 fixed. Not the one
 > serial block described below. The paragraph is kept because the ANALYSIS below
 > is what identified the two candidates that #2142 acted on — read it as the
 > diagnosis, not as the current shape of the job.
@@ -293,14 +347,44 @@ gh api users/hello-houzs --jq '.type'   ->  "User"
 
 **GitHub's merge queue is organization-only.** `hello-houzs` is a personal
 account, so the "Require merge queue" checkbox never appears on the ruleset
-page no matter what else is configured. This was found the slow way — by
+page no matter what else is configured. *(True as written on 2026-08-14; the
+repo has since moved to an organization — see the resolution note below.)* This was found the slow way — by
 recommending it, watching the owner look for a checkbox that does not exist,
 and only then checking the account type. Check `owner.type` before proposing
 anything org-scoped.
 
-The `merge_group` work already merged is not wasted: the trigger and the
-`scale-postgres-contract` gate are correct, and they become live the moment the
-repo moves under an organization. Until then:
+> **RESOLVED 2026-08-18. The repo moved, and the queue is on.**
+> `hello-houzs/Houzs-ERP` -> **`Houzs-Century/Houzs-ERP`**, by TRANSFER, not by
+> converting the account. That distinction is the point: converting a user into
+> an organization is irreversible, kills the ability to sign in as that user,
+> uninstalls its GitHub Apps, and **disables Actions until someone re-enables
+> them**. Transferring a repository keeps secrets, webhooks, deploy keys, issues,
+> PRs, stars and watchers — verified after the move: the `main-protection`
+> ruleset survived intact with the same two required contexts, all 10 Actions
+> secrets came across, and CI ran on the new owner within three minutes.
+>
+> The queue is configured `merge_method: SQUASH`, `max_entries_to_build: 3`,
+> `grouping_strategy: HEADGREEN` (only the head commit of a group must be green,
+> which is the cheap setting and the right one against a slot ceiling), and
+> `check_response_timeout_minutes: 30`.
+>
+> **Measured on the first real queued merge (#2409):** entered the queue and its
+> CI started at 07:03:50, CI finished 07:07:22, merged 07:07:40. **212s of CI,
+> 18s of queue overhead, 230s total.** The `min_entries_to_merge_wait_minutes: 5`
+> setting does NOT add five minutes to a lone PR — a single entry already meets
+> `min_entries_to_merge: 1`, so nothing waits for a group to fill. That was an
+> open question when the queue was switched on and it was settled by measurement,
+> not by reading the docs, which do not say.
+>
+> One trap did NOT bite, because `ci.yml` had carried the `merge_group` trigger
+> since before any of this: **a required check whose workflow does not run on
+> `merge_group` leaves every queued PR hanging forever.** Both required contexts
+> (`backend-typecheck`, `frontend`) live in `ci.yml`, so both fire in the queue.
+> Verify that before enabling a queue anywhere else.
+
+The `merge_group` work already merged was not wasted: the trigger and the
+`scale-postgres-contract` gate were correct, and went live the moment the repo
+moved. The options weighed at the time, kept for the reasoning:
 
 | option | effect | cost |
 | --- | --- | --- |
@@ -411,6 +495,24 @@ running.** It surfaced only because an unrelated `package.json` conflict on
 Fixed in #2146: the suite is invoked by name in `backend-typecheck`, the two
 assertions now match the invariant rather than the formatting, and a **new**
 assertion fails if the workflow ever stops calling this suite by name.
+
+> **The `scale-postgres-contract` assertion broke a THIRD time, on 2026-08-18
+> (#2412), and that is the useful part of this entry.** #2146 rewrote it to
+> "match the invariant rather than the formatting" — but the invariant it then
+> pinned was still *runs on `pull_request` in `ci.yml`*, which is a LOCATION.
+> When the job moved to `postsubmit.yml` the assertion failed again, on a change
+> that took nothing away from the evidence.
+>
+> The property it actually exists to protect is: the 100k run **executes once
+> per change, in a workflow that really triggers, and its report is retained**.
+> It now finds whichever workflow defines the job, asserts exactly one does, and
+> accepts `pull_request` or `push`. Moving the job again will not break it;
+> deleting it, duplicating it, or hiding it behind `workflow_dispatch` will.
+>
+> Twice is a coincidence, three times is a pattern: each rewrite pinned one
+> layer further out — YAML layout, then the event name, then the file. The guard
+> was verified RED against all three violations before being trusted, not merely
+> observed green.
 
 ## Lessons
 

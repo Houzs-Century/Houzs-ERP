@@ -33,6 +33,7 @@
    according to this repo's vocabulary, not English.** */
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,8 +42,20 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const GEN = path.join(ROOT, "backend/scripts/gen-bug-index.mjs");
 const INDEX = path.join(ROOT, "docs/generated/bug-index.md");
 
+/* The index is GENERATED and, since 2026-08-18, no longer tracked — a committed
+   copy of a file every PR rewrites made every pair of concurrent PRs conflict.
+   So this test builds the thing it reads instead of assuming someone committed
+   it. That changes nothing about WHAT is asserted below: the subject was always
+   the classifier, and the file was only ever how its output was reached. */
+function ensureIndex(): void {
+  if (fs.existsSync(INDEX)) return;
+  execFileSync(process.execPath, [GEN], { cwd: ROOT, stdio: "pipe" });
+  assert.ok(fs.existsSync(INDEX), "the generator ran but produced no index — that is a broken generator.");
+}
+
 /** area -> [titles], read out of the generated index. */
 function indexByArea(): Map<string, string[]> {
+  ensureIndex();
   const out = new Map<string, string[]>();
   let area = "";
   for (const line of fs.readFileSync(INDEX, "utf8").split(/\r?\n/)) {
@@ -127,8 +140,15 @@ test("no PRODUCT entry is dragged into the tooling area by a repo-vocabulary wor
   /* This list was short by two on its first run and flagged "The working-agreement
      gate…" and "The file-size gate…", both of which genuinely belong here. The
      assertion was right about the SHAPE and wrong about the vocabulary — worth
-     recording, because it is the same mistake the pattern made, one level up. */
-  const realToolWord = /\b(ratchet|linter|eslint|vitest|coverage|generator|test file|test suite|shebang|audit script|derived doc|working-agreement|file-size)/i;
+     recording, because it is the same mistake the pattern made, one level up.
+
+     SHORT BY ONE MORE, 2026-08-21: "The docs-drift gate could not see the first
+     23 characters of any line". `docs-drift` is a script name, and it was
+     already in the GENERATOR's tooling vocabulary (gen-bug-index.mjs's tooling
+     regex carries `docs.drift`) — this list is a mirror of that one and had
+     drifted from it. Two lists for one job, disagreeing: the same defect the
+     entry itself is about. Keep them together. */
+  const realToolWord = /\b(ratchet|linter|eslint|vitest|coverage|generator|test file|test suite|shebang|audit script|derived doc|working-agreement|file-size|docs.drift|bug.index|bug.history)/i;
   const onlyGate = tooling.filter((t) => /\bgate\b/i.test(t) && !realToolWord.test(t));
   assert.deepEqual(
     onlyGate,

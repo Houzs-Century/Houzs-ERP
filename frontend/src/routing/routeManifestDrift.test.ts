@@ -44,13 +44,12 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    // 145 since 2026-08-18: /scm/settlement-setup, reconciliation setup — one screen, every company.
-    // 144 since 2026-08-17: /scm/bank-recon, step two — the bank statement against what the merchants owe.
-    // 143 since 2026-08-16: /scm/merchant-recon, the merchant statement against the ERP (accounting phase 2B layer 3).
+    // 146 since 2026-08-24 (feat/acc-settlement merged main): /scm/merchant-recon,
+    //     /scm/bank-recon and /scm/settlement-setup — the settlement screens, +3 on main's 143.
+    // 143 since 2026-08-21: /scm/do-load, the DO print's loading-QR landing page.
     // 142 since 2026-08-16: /scm/daily-bank, the Daily Bank board (accounting phase 2B).
-    // 141 since 2026-08-15: /autocount-sync, the AutoCount write-back queue.
-    // (140 since 2026-08-03: /scm/dp-orders, the DP Order list.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(145);
+    // (141 since 2026-08-15: /autocount-sync, the AutoCount write-back queue.)
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(146);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -71,11 +70,11 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 154 since 2026-08-18 — see the staff-route count above.
+    // 155 since 2026-08-24 (feat/acc-settlement merged main) — see the staff-route count above.
+    // (152 since 2026-08-21.)
     // (151 since 2026-08-16.)
     // (150 since 2026-08-15.)
-    // (149 since 2026-08-06: /privacy, the App Store's policy URL.)
-    expect(ROUTE_CONTRACT).toHaveLength(154);
+    expect(ROUTE_CONTRACT).toHaveLength(155);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

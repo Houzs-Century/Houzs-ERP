@@ -165,6 +165,31 @@ pinned by the lowered ceilings: reverting one to the inline destructure now take
 `purchase-invoices.ts` from 38 to 39 and fails `audit:swallowed-reads`, which at
 the old ceiling of 40 it would not have.
 
+### The second descent — the count that is DISPLAYED, not the one that decides
+
+*Added 2026-08-18.* The descent above ranked sites by what an absent read
+AUTHORISES, and a count that only feeds a display field was ranked low. That
+ranking hid a whole half of the class, and it cost production: the six paginated
+SCM lists (PO, PI, SI, GRN, DO, SO) each folded a failed `count:'exact'` query
+into `count ?? 0`, so the tab said zero while the rows were still there — measured
+against prod on 2026-08-17 as `all:27 delivered:0` on the DO list, with 37
+delivery orders reachable from no tab. Nothing was authorised; the operator was
+simply told a number that was not true, and a number on screen is acted on.
+
+Fixed through `backend/src/scm/lib/status-counts.ts` (`readStatusCounts`,
+`tallyStatusRows`), which refuses an `error` and refuses a null answer while
+keeping a genuine zero, and gated by
+`backend/tests/statusCountsFailLoud.test.mjs` — one entry per HANDLER, not per
+file, because a whole-file substring test answers "does some handler here guard
+its counts", which is not the question.
+
+`PATCH /fabric-tracking/:id/tier` belongs to this half and was first filed with
+the *authorising* half by mistake: its `affectedProducts` decides nothing on the
+server, it is returned and printed to the operator as a sentence. It cannot 500 —
+the tier write has already committed when the count runs — so it answers
+`affectedProducts: null` and the frontend says the number could not be read
+rather than showing nothing (`backend/tests/fabricTierAffectedCount.test.ts`).
+
 **Deliberately not touched:** the POST-insert over-receipt verifiers in `grns.ts`
 and `purchase-invoices.ts`. Those run after the row is committed, so refusing means
 deleting a receipt the operator watched succeed — the fail-closed answer is not free
@@ -292,6 +317,100 @@ regenerated in this PR.
 
 ---
 
+## E. One rule, spelled by hand at every site that needs it
+
+**Shape.** A rule that has no single home gets re-derived wherever it is needed.
+Each copy is individually reasonable and locally correct, so nothing looks wrong
+in review, and the copies then drift apart one edit at a time. The class is
+recognisable before it drifts: the same sentence appears in more than one file's
+comments, each time as if for the first time.
+
+**Count — the date format, measured 2026-08-18.** The rule was written down
+**twice**, both times as the system-wide standard:
+
+- `frontend/src/lib/utils.ts` — *"House style is numeric DD/MM/YYYY (owner
+  requirement — no 'Jun'/'Jul' month names anywhere on the desktop app)"*
+- `frontend/src/vendor/shared/format.ts` — *"day-first DD/MM/YYYY (Malaysian
+  standard). System-wide canonical display format (Commander 2026-06-18)"* under
+  a header reading *"SOLE source of truth — no inline duplicates anywhere in
+  client OR server"*
+
+and was then re-derived by hand about **thirty** more times in **five** spellings:
+`2026/08/16` on all eleven V2 list pages, `16/08/2026` from a copied regex on
+their eight detail pages, `16 Aug 2026` from month-name arrays in the print
+routes, raw `2026-08-16` on the Fleet screens, and the **viewer's OS locale** at
+**175** native `<input type="date">`. A list page and the detail page one click
+from it spelled the same date two different ways. Two comments cited the owner
+for *opposite* rules about month names.
+
+Same shape, twice more in the same week and already recorded in `BUG-HISTORY.md`:
+the transfer-label vocabulary, and the both-dates-or-neither rule. Each was found
+written five times, each enforced slightly differently, each missing from at
+least one path.
+
+**Worst consequence.** The 175 native inputs are not a style problem. A native
+`<input type="date">` renders in the **operating system's** locale, so one field
+read `16/08/2026` on one machine and `08/16/2026` on another — the literal
+「有时候 MMDDYYYY」 bug the owner reported on 2026-06-18. `DateField` was built
+that day to fix it and reached **14** of 189 date inputs. The screenshot that
+reopened this on 2026-08-18 shows a Sales Order header reading `Aug 16, 2026`
+next to a line row reading `Sep 12, 2026` — a string this repo authors nowhere
+and cannot control.
+
+**And then the same shape one layer down, inside the fix.** All 175 native date
+inputs were converted the same day and a gate shipped with them — and both the
+sweep and the gate keyed on a **literal** `type="date"`, so two spellings of the
+identical OS-locale bug went straight through. `<input type="datetime-local">`
+renders its *date half* in the OS locale by exactly the same mechanism, and the
+`raw-date-input` pattern cannot match it (`["']date["']` needs the closing quote
+immediately after `date`). Six survived, and the sharpest pair was on one
+screen: in the delivery-planning drawer **Arrival** and **Departure** were
+native `datetime-local` while **Shipout Date**, directly beneath them in the
+same column, was already a `DateField` — the owner's own complaint, reproduced
+one field apart inside the component built to end it. Two more spellings hid the type from
+every rule keyed on a quote after `type=`: `type={f.type === "date" ? "date" :
+"text"}` (an *expression*), and `const type = … ? "date" : "text"` with
+`type={type}` (a *variable*, one line up). Both survived the June build, the
+August sweep, **and** the gate that sweep shipped. The second was **user
+reachable with no code change** — `"date"` is a first-class `UdfFieldType`, so
+every operator who added a date column to a table got a native OS-locale input
+in the grid. Fixed 2026-08-18 with `DateTimeField` (the date half goes through
+`DateField`; the time half stays a native `type="time"`, which carries no
+day/month ambiguity), plus `raw-datetime-input`, `computed-date-input-type`
+and `date-input-type-in-a-variable` in the gate. The lesson is narrower than "write it down once": **a gate is only
+as wide as the spellings it imagines**, so each rule now names what it cannot
+see.
+
+**Why prose failed here specifically.** The rule was not forgotten. It was
+written down, in the right words, by the right person, in the file most likely to
+be read — and then reproduced anyway, because *there was no import that would
+have given it to you*. `fmtCenti` shows the counterfactual: money lives in
+`shared/format.ts` and the V2 pages import it, and those same files then
+hand-wrote their own `fmtDate` immediately below the import.
+
+**THE CHECK.**
+
+| What was wrong | Fix | Name |
+| --- | --- | --- |
+| The date format was written at ~30 sites in 5 spellings, and at 175 more it was whatever the viewer's OS said | One `fmtDate`/`fmtDateTime` in `shared/format.ts`; a reviewed allowlist fails the build on a new hand-spelled date | `npm --prefix backend run audit:date-format` |
+
+Its limits are stated in its own header and are real: it is a **reviewed
+allowlist over date-format shapes**, not a meaning detector. It cannot see a
+format assembled at runtime, it cannot tell a date from a fraction, and an
+argument-less `.toLocaleString()` on a variable not named like a date is
+invisible to it. `backend/tests/dateFormatGate.test.ts` plants a violation
+outside the source tree on every CI run and asserts the gate exits 1, then that
+it exits 0 once the plant is gone — and separately that it does **not** fire on
+money or row counts, because a gate that cries wolf is a gate somebody deletes.
+
+The format itself is proven by
+`frontend/src/vendor/shared/format.date.canonical.test.ts`, which pins the two
+defects the old body had and nobody in Malaysia could reproduce: `new
+Date('2026-08-16')` is UTC midnight and rendered as **15/08/2026** west of
+Greenwich, and `fmtDate(null)` returned **01/01/1970**.
+
+---
+
 ## Classes with no check yet
 
 These recurred and cost real money. They are here **without** a check, named
@@ -332,15 +451,36 @@ copy per script, and they had drifted apart"* — the weakest copy is what produ
 stored. Measured today: **18 files exist in both `backend/src/scm/shared/` and
 `frontend/src/vendor/shared/`, and 11 of the 18 pairs differ.**
 
-**Why no check here.** The repo already has the right idiom twice
-(`backend/tests/phoneNormaliseMirror.test.ts`, `variantAxesMirror.test.ts`), and
-generalising it is a byte-equality test over the 18 pairs with a
-`DELIBERATE_DIVERGENCE` map. The blocker is that **11 pairs differ today and
-nothing distinguishes a deliberate difference from a regression** — that
-classification is a judgement call per pair, needs the owner of each file, and
-turning the gate on before it is done would either fail main or bake 11 unreviewed
-exemptions into an allowlist. Shipping the empty gate would be theatre of exactly
-the kind class D is about. It is the next piece of work, and it is scoped: 18 pairs.
+**THE CHECK — `npm --prefix backend run audit:duplicated-decisions`**
+(`backend/scripts/check-duplicated-decisions.mjs`, wired into ci.yml
+`backend-typecheck`). Added 2026-08-18, on the owner's ask: *"同一条规则两个家 …
+然后系统也是要查看这些类型的问题"*.
+
+The paragraph this replaces said no check was possible yet, because the blocker
+was classification: 11 same-named pairs differed and nothing distinguished a
+deliberate difference from a regression. That blocker was real, and the answer
+was to stop trying to decide it mechanically. The check finds the SITES and a
+person records the decision — 223 reviewed entries in
+`scripts/data/duplicated-decision-allowlist.json`, each with a reason, a NEW hit
+failing until somebody decides about it. Three detectors: a same-valued string
+set carried by two or more FILES (which sees the case same-named pair comparison
+cannot — a rule re-implemented under a different filename); NEAR-MISS pairs at
+Jaccard ≥ 0.75, which is what finds a rule enforced at N-1 of N; and a
+configured guard symbol missing from the balanced-brace slice of a sibling route
+handler.
+
+**What it does not cover, stated so a green run is not over-read.** A semantic
+duplicate whose copies share no literal is invisible to it — the total-height
+family (divan + leg + gap, sixteen surfaces) shares every literal and diverges
+only in CONTROL FLOW, so D1 and D2 call those copies identical. So is a rule
+expressed once in TypeScript and once in SQL, and so is any set below the
+three-member floor: the PO receivable threshold is two members at four homes and
+the detector cannot see it. Those are covered by tests instead
+(`backend/tests/duplicatedDecisionPins.test.ts`), which is the other half of the
+answer to this class: where a rule must genuinely keep two homes, one corpus is
+fed through BOTH implementations and the answers compared. The same-named-pair
+comparison is still `check-shared-mirrors.mjs`, widened on the same day to walk
+`scm/lib` as well as `scm/shared`.
 
 ### H. A view's output column set, frozen at `CREATE VIEW` time
 

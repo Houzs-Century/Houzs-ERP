@@ -1,16 +1,17 @@
 // ----------------------------------------------------------------------------
-// StockCard — per-SKU drilldown at /inventory/stock-card/:productCode
+// StockCard — per-SKU drilldown at /inventory/stock-card/:itemCode
 // (Inv PR2). Optional ?warehouseId=… scopes the ledger + lots to one
 // warehouse; otherwise we sum across all warehouses.
 //
 // Read-only — no new tables, no new API endpoints. Reuses:
-//   useInventoryMovements({ productCode, warehouseId? })
-//   useInventoryLots(productCode, { warehouseId?, includeClosed? })
-//   useInventoryProductBreakdown(productCode) — per-warehouse balances
+//   useInventoryMovements({ itemCode, warehouseId? })
+//   useInventoryLots(itemCode, { warehouseId?, includeClosed? })
+//   useInventoryProductBreakdown(itemCode) — per-warehouse balances
 //
 // Layout (full page, PurchaseOrderDetail chrome):
 //   1. Header + back link
-//   2. Stats: Total Qty · Warehouses · Last Movement · FIFO Value
+//   2. Stats: Total Qty · Warehouses · Last Movement · Owned Value
+//      (owned = consignment excluded from VALUE, shown as quantity beside it)
 //   3. Warehouse filter pills (when no ?warehouseId param)
 //   4. Per-Warehouse Balance card (All-mode only)
 //   5. Movements ledger w/ running balance (computed client-side)
@@ -27,33 +28,18 @@ import {
   useInventoryLots,
   useInventoryProductBreakdown,
   useWarehouses,
+  buildStockBreakdown,
   type InventoryMovement,
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
-import { adjustmentReasonLabel, fmtCenti, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared';
+import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
-
-const fmtDateTime = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return fmtDateShared(d);
-};
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 /** Best-effort route for a source doc on the ledger row. Inventory writes
  *  carry source_doc_id (the UUID of the originating GRN/DO/etc) — when
@@ -73,25 +59,25 @@ const docHrefFor = (m: InventoryMovement): string | null => {
 };
 
 export const StockCard = () => {
-  const { productCode = '' } = useParams<{ productCode: string }>();
+  const { itemCode = '' } = useParams<{ itemCode: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const warehouseId = searchParams.get('warehouseId') || undefined;
   const [includeClosed, setIncludeClosed] = useState(false);
   const [lotsOpen, setLotsOpen] = useState(true);
 
   const warehousesQ = useWarehouses();
-  const breakdownQ = useInventoryProductBreakdown(productCode || null);
+  const breakdownQ = useInventoryProductBreakdown(itemCode || null);
   const movementsQ = useInventoryMovements({
-    productCode: productCode || undefined,
+    itemCode: itemCode || undefined,
     warehouseId,
   });
-  const lotsQ = useInventoryLots(productCode || null, {
+  const lotsQ = useInventoryLots(itemCode || null, {
     warehouseId,
     includeClosed,
   });
 
   const warehouses = warehousesQ.data ?? [];
-  const breakdownAll = (breakdownQ.data?.balances ?? []).filter((b) => b.product_code === productCode);
+  const breakdownAll = (breakdownQ.data?.balances ?? []).filter((b) => b.item_code === itemCode);
   // When filtered, only show the matching warehouse row in the summary stats.
   const breakdown = warehouseId
     ? breakdownAll.filter((b) => b.warehouse_id === warehouseId)
@@ -274,9 +260,14 @@ export const StockCard = () => {
   const totalQty = breakdown.reduce((s, b) => s + (b.qty ?? 0), 0);
   const warehouseCount = breakdown.filter((b) => (b.qty ?? 0) !== 0).length;
   const lastMovementAt = movementsDesc[0]?.created_at ?? null;
-  const fifoValue = lots.reduce(
-    (s, l) => s + l.qty_remaining * l.unit_cost_sen, 0,
-  );
+  /* Consignment stock is in our warehouse and is the supplier's until it sells:
+     quantity yes, value never. This stat used to be a raw
+     `qty_remaining x unit_cost_sen` over EVERY lot labelled "FIFO Value", which
+     contradicted the per-warehouse table right below it — that one comes from
+     /breakdown/:itemCode, which has excluded consignment since BUG-HISTORY
+     2026-07-25. Same shared transform mobile's Stock Card uses, so there is one
+     split and one owned-value sum for all three surfaces. */
+  const bd = useMemo(() => buildStockBreakdown(lots), [lots]);
 
   return (
     <div className={chrome.page}>
@@ -290,7 +281,7 @@ export const StockCard = () => {
           <div>
             <h1 className={chrome.title}>
               <Boxes size={20} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              Stock Card · <span className={styles.codeChip} style={{ fontSize: 'var(--fs-18)' }}>{productCode}</span>
+              Stock Card · <span className={styles.codeChip} style={{ fontSize: 'var(--fs-18)' }}>{itemCode}</span>
             </h1>
             <p className={chrome.subtitle}>
               {productName ?? 'No movements yet for this SKU.'}
@@ -321,8 +312,13 @@ export const StockCard = () => {
           <span className={styles.statCaption}>{lastMovementAt ? fmtDateTime(lastMovementAt) : 'No activity yet'}</span>
         </div>
         <div className={styles.statCard}>
-          <span className={styles.statLabel}>FIFO Value</span>
-          <span className={styles.statValue}>{fmtRm(fifoValue)}</span>
+          <span className={styles.statLabel}>Owned Value</span>
+          <span className={styles.statValue}>{fmtRm(bd.ownedValueSen)}</span>
+          <span className={styles.statCaption}>
+            {bd.consignmentQty > 0
+              ? `Consignment (not owned) · ${fmtQty(bd.consignmentQty)} units`
+              : 'FIFO, consignment excluded'}
+          </span>
         </div>
       </div>
 

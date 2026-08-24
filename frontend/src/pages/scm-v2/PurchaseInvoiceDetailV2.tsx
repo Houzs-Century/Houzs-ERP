@@ -2,9 +2,10 @@
 // page. Procurement-side twin of SalesInvoiceDetailV2: money-forward,
 // Outstanding-as-hero, but flipped — this is what WE owe to the supplier.
 
-import { lazy, Suspense, useMemo, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, useMemo, type ReactNode } from "react";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -44,6 +45,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -55,15 +57,15 @@ type PiStatus =
   | "CANCELLED"
   | string;
 
-type PiHeader = {
+type PiHeader = HoldFields & {
   id: string;
   invoice_number: string;
   supplier_invoice_ref?: string | null;
   status: PiStatus;
   invoice_date: string | null;
   due_date: string | null;
-  total_centi: number;
-  paid_centi?: number;
+  total_sen: number;
+  paid_sen?: number;
   currency: string;
   /* Multi-currency / landed cost (Phase 1-A). exchange_rate = MYR per 1 unit of
      `currency`; allocation_method = the freight "平摊" basis for the SERVICE-line
@@ -88,7 +90,6 @@ type PiHeader = {
 
 type PiItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   /* Supplier's own code — PI has no column of its own; the detail GET carries it
      down from the source GRN line (grn_item_id → grn_items.supplier_sku). */
@@ -99,10 +100,10 @@ type PiItem = {
   variants?: Record<string, unknown> | null;
   uom?: string;
   qty?: number;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
-  allocated_charge_centi?: number | null;
+  allocated_charge_sen?: number | null;
 };
 
 /* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
@@ -111,15 +112,7 @@ const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By val
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const daysPast = (iso: string | null | undefined): number => {
   if (!iso) return -1;
@@ -136,15 +129,20 @@ const sourceOf = (h: PiHeader): string =>
   h.grn?.grn_number || h.purchase_order?.po_number || "—";
 
 const outstandingOf = (h: PiHeader): number =>
-  Math.max(0, (h.total_centi ?? 0) - (h.paid_centi ?? 0));
+  Math.max(0, (h.total_sen ?? 0) - (h.paid_sen ?? 0));
 
 // PI effective lifecycle.
-type Effective = "draft" | "posted" | "partial" | "paid" | "overdue" | "cancelled";
+type Effective = "draft" | "posted" | "partial" | "paid" | "overdue" | "cancelled" | "on_hold";
 const effectiveOf = (h: PiHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
+  /* BEFORE the money checks (mig 0320). They read paid_sen, so a partly-paid
+     invoice that was then put ON HOLD would have shown "Partially paid" and the
+     hold would have been invisible on the one screen a person opens to decide
+     whether to pay the rest. */
+  if (s === "ON_HOLD") return "on_hold";
   if (s === "PAID" || outstandingOf(h) === 0) return "paid";
-  if (s === "PARTIALLY_PAID" || (h.paid_centi ?? 0) > 0) return "partial";
+  if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
   if (s === "DRAFT") return "draft";
   const overdueDays = daysPast(h.due_date);
   if (overdueDays > 0 && outstandingOf(h) > 0) return "overdue";
@@ -156,7 +154,8 @@ const EFFECTIVE_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }
 > = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "warning", label: "Posted", blurb: "Posted · awaiting payment" },
+  posted: { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting payment" },
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · payment blocked until released" },
   partial: { tone: "warning", label: "Partially paid", blurb: "Partially paid · balance still due" },
   paid: { tone: "success", label: "Paid", blurb: "Paid · loop closed" },
   overdue: { tone: "error", label: "Overdue", blurb: "Overdue · past due date" },
@@ -263,8 +262,8 @@ function ActivityRow({ title, meta, dot, isLast }: { title: string; meta: string
 function OwedHeroCard({ header }: { header: PiHeader }) {
   const eff = effectiveOf(header);
   const t = EFFECTIVE_TONE[eff];
-  const total = header.total_centi ?? 0;
-  const paid = header.paid_centi ?? 0;
+  const total = header.total_sen ?? 0;
+  const paid = header.paid_sen ?? 0;
   const outstanding = outstandingOf(header);
   const isPaid = outstanding === 0;
   // Multi-currency (Phase 1-A) — MYR-equivalent for a foreign PI (no-op for MYR).
@@ -337,18 +336,25 @@ const PurchaseInvoiceDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and the
    lazy inline editor (the two children have different hook counts). */
 export function PurchaseInvoiceDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`pi-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <PurchaseInvoiceDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <PurchaseInvoiceDetailV2ReadOnly />;
@@ -461,7 +467,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   };
   const doMarkPaid = () => {
     if (!purchaseInvoice) return;
-    recordPayment.mutate({ id: purchaseInvoice.id, amountCenti: outstanding });
+    recordPayment.mutate({ id: purchaseInvoice.id, amountSen: outstanding });
   };
 
   const lineColumns: Column<PiItem>[] = [
@@ -469,14 +475,14 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary: this
          was the pre-#647 SalesOrderDetailV2 cell exactly. The code still BINDS
          via getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -503,14 +509,14 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       width: "132px",
       getValue: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         return code === "—" ? "" : code;
       },
       render: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         if (code === "—") return <span className="text-ink-muted">—</span>;
@@ -534,10 +540,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi ?? 0,
+      getValue: (l) => l.unit_price_sen ?? 0,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi ?? 0, purchaseInvoice?.currency)}
+          {fmtMoney(l.unit_price_sen ?? 0, purchaseInvoice?.currency)}
         </span>
       ),
     },
@@ -546,13 +552,13 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi ?? 0,
+      getValue: (l) => l.line_total_sen ?? 0,
       render: (l) => {
-        const freight = Number(l.allocated_charge_centi ?? 0);
+        const freight = Number(l.allocated_charge_sen ?? 0);
         return (
           <span className="inline-flex flex-col items-end">
             <span className="font-money text-[13px] font-semibold text-ink">
-              {fmtMoney(l.line_total_centi ?? 0, purchaseInvoice?.currency)}
+              {fmtMoney(l.line_total_sen ?? 0, purchaseInvoice?.currency)}
             </span>
             {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
             {freight > 0 && (
@@ -613,7 +619,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         <div className="px-4 pb-4 pt-3">
           <h1 className="font-display text-[19px] font-bold leading-tight text-white">{supplierNameOf(purchaseInvoice)}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
+            </span>
             {isOverdue && (
               <span className="inline-flex items-center gap-1 rounded-md bg-err/20 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wider text-err">
                 <AlertTriangle size={10} /> {overdueDays}d overdue
@@ -639,7 +649,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {supplierNameOf(purchaseInvoice)}
                 </h1>
-                <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
+                </span>
                 {isOverdue && (
                   <span className="inline-flex items-center gap-1 rounded-md bg-err-soft px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-err">
                     <AlertTriangle size={11} /> {overdueDays}d overdue
@@ -694,10 +708,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             {outstanding === 0 ? "Paid in full" : "Owed to supplier"}
           </div>
           <div className={cn("mt-1 font-money text-[26px] font-bold leading-none tracking-tight", outstanding === 0 ? "text-synced" : "text-err")}>
-            {fmtMoney(outstanding === 0 ? purchaseInvoice.total_centi : outstanding, purchaseInvoice.currency)}
+            {fmtMoney(outstanding === 0 ? purchaseInvoice.total_sen : outstanding, purchaseInvoice.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
-            Total {fmtMoney(purchaseInvoice.total_centi, purchaseInvoice.currency)} · Paid {fmtMoney(purchaseInvoice.paid_centi ?? 0, purchaseInvoice.currency)}
+            Total {fmtMoney(purchaseInvoice.total_sen, purchaseInvoice.currency)} · Paid {fmtMoney(purchaseInvoice.paid_sen ?? 0, purchaseInvoice.currency)}
           </div>
         </div>
 
@@ -843,9 +857,9 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                   meta={fmtDate(purchaseInvoice.invoice_date)}
                   dot={EFFECTIVE_TONE[effectiveOf(purchaseInvoice)].tone === "success" ? "success" : "primary"}
                 />
-                {(purchaseInvoice.paid_centi ?? 0) > 0 && (
+                {(purchaseInvoice.paid_sen ?? 0) > 0 && (
                   <ActivityRow
-                    title={`Payment sent (${fmtMoney(purchaseInvoice.paid_centi ?? 0, purchaseInvoice.currency)})`}
+                    title={`Payment sent (${fmtMoney(purchaseInvoice.paid_sen ?? 0, purchaseInvoice.currency)})`}
                     meta={fmtDate(purchaseInvoice.invoice_date)}
                     dot="success"
                   />
@@ -903,7 +917,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
           {
             label: "Invoice total",
-            value: fmtMoney(purchaseInvoice.total_centi, purchaseInvoice.currency),
+            value: fmtMoney(purchaseInvoice.total_sen, purchaseInvoice.currency),
           },
         ]}
         {...print.handlers}

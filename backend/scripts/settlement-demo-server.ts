@@ -147,7 +147,7 @@ const acquirerView = (): Row[] => COMPANY_LINKS.map((l) => {
 });
 
 const soPay = (id: string, docNo: string, paidAt: string, sen: number, approval: string | null, provider: string): Row => ({
-  id, so_doc_no: docNo, paid_at: paidAt, amount_centi: sen, approval_code: approval,
+  id, so_doc_no: docNo, paid_at: paidAt, amount_sen: sen, approval_code: approval,
   method: 'merchant', merchant_provider: provider, company_id: CO,
 });
 
@@ -249,7 +249,7 @@ const seed = () => ({
   sales_invoice_payments: [
     {
       id: 'q1', sales_invoice_id: 'INV-2608-777', paid_at: '2026-08-03T09:15:00',
-      amount_centi: 120000, approval_code: 'A1004', method: 'installment',
+      amount_sen: 120000, approval_code: 'A1004', method: 'installment',
       merchant_provider: 'MBB', company_id: CO,
     },
   ],
@@ -465,7 +465,7 @@ app.post('/api/scm/demo/seed-from-statement', async (c) => {
       id: `seed-${stamp + i + 1}`,
       so_doc_no: docNo,
       paid_at: `${row.txnDate}T12:00:00`,
-      amount_centi: row.grossSen,
+      amount_sen: row.grossSen,
       /* The mistyped code: the till captured it wrong, which the owner says he
          cannot rule out (我没办法确定 authorised code salesperson 一定填对). */
       approval_code: imperfect && i === 0 ? `${row.ref ?? '000000'}9` : row.ref,

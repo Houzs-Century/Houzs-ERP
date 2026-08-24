@@ -46,6 +46,7 @@
 // below — which is the whole point of (1).
 // ----------------------------------------------------------------------------
 
+import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -68,17 +69,23 @@ unbilledDeliveries.use('*', supabaseAuth);
        value the enum does NOT have makes Postgres throw ("invalid input value for
        enum do_status") — a 500, not an empty result. The tree's enum is
        {DRAFT, LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED,
-       CANCELLED} (base schema + mig 0040 adds DRAFT), but delivery-orders-mfg.ts
-       ALSO carries 'COMPLETED' in DO_STATUSES / DO_STOCK_OUT_STATUSES, and the
-       scm schema is maintained OUTSIDE this migration tree (see BUG-HISTORY:
-       "audit vs PROD information_schema") — so the tree cannot settle whether
-       prod's enum has COMPLETED. Naming only the three values that certainly
-       exist makes this query correct EITHER WAY: it can never throw, and a
-       post-ship state we don't know about is INCLUDED rather than dropped.
+       CANCELLED} (base schema + mig 0040 adds DRAFT). This comment used to add
+       that delivery-orders-mfg.ts "ALSO carries 'COMPLETED'", and that the tree
+       therefore could not settle whether prod's enum had it. PROD SETTLED IT on
+       2026-08-17: `?status=delivered` returned 500 `invalid input value for enum
+       do_status: "COMPLETED"` in both tenants, so the enum is exactly the eight
+       above and COMPLETED has been removed from the shared declaration. This
+       report was the one place that guessed the safe way and never broke.
      • The fail direction is deliberate. An unknown status surfaces a row he can
        dismiss; a positive list would have hidden that row's money silently —
        which is the exact failure this whole report exists to catch. */
-const NOT_SHIPPED_STATES = '("DRAFT","LOADED","CANCELLED")';
+/* Was a hand-typed '("DRAFT","LOADED","CANCELLED")'. This file was the ONLY
+   consumer of the delivered-sum engine that had LOADED right, and it had it
+   right by hand — which is exactly how the other six sites could be wrong at
+   the same time and nothing said so. The list now comes from
+   DO_NOT_DELIVERED_STATES; the comment above still explains what the set MEANS
+   here, because that is the half a constant cannot carry. */
+const NOT_SHIPPED_STATES = DO_NOT_DELIVERED_IN_LIST;
 
 /* Ageing buckets, days since do_date. Same shape + lookup as the inventory
    ageing report (routes/inventory.ts BUCKETS) so the two read alike.
@@ -118,17 +125,17 @@ const ageDaysBetween = (fromYmd: string, toYmd: string): number => {
    delivery-orders-mfg.ts. DO lines carry NO tax column (unlike SI lines), so
    there is no tax term to pro-rate. The line discount is a whole-line amount, so
    a PARTIAL quantity takes its pro-rata share of it. When n == delivered this is
-   exactly the stored line_total_centi, so a fully-unbilled line reports the
+   exactly the stored line_total_sen, so a fully-unbilled line reports the
    document's own number and nothing is invented. */
 const valueOfUnits = (
   n: number,
   delivered: number,
-  unitPriceCenti: number,
-  discountCenti: number,
+  unitPriceSen: number,
+  discountSen: number,
 ): number => {
   if (n <= 0 || delivered <= 0) return 0;
-  const share = Math.round((discountCenti * n) / delivered);
-  return Math.max(0, n * unitPriceCenti - share);
+  const share = Math.round((discountSen * n) / delivered);
+  return Math.max(0, n * unitPriceSen - share);
 };
 
 type Row = {
@@ -144,10 +151,10 @@ type Row = {
   debtor_name: string | null;
   phone: string | null;
   salesperson: string | null;
-  delivered_centi: number;
-  invoiced_centi: number;
-  returned_centi: number;
-  unbilled_centi: number;
+  delivered_sen: number;
+  invoiced_sen: number;
+  returned_sen: number;
+  unbilled_sen: number;
   lines_total: number;
   lines_pending: number;
   partly_invoiced: boolean;
@@ -243,7 +250,7 @@ unbilledDeliveries.get('/', async (c) => {
      offer him when he acts on a row — the report cannot promise money the picker
      then refuses to bill.
      It also gives three exclusions for free, as VALUE rather than as guesswork —
-     see the unbilled_centi > 0 filter below.
+     see the unbilled_sen > 0 filter below.
 
      COST — read this before widening the default. doLineRemaining is built for a
      PICKER (a handful of DOs): it chunks every id list at 200 and issues a
@@ -257,7 +264,18 @@ unbilledDeliveries.get('/', async (c) => {
      remaining = delivered − invoiced − returned formula here: a second copy of
      that formula is how the report and the SI picker would start disagreeing
      about what is billable, which is worse than a slow report. */
-  const remainingByItem = await doLineRemaining(sb, headers.map((h) => h.id));
+  /* 'delivered' — this report is money we are OWED, which needs the goods to
+     have actually gone. A LOADED delivery may now be invoiced (owner
+     2026-08-20) but nobody owes for it yet, so it is not a finding here. */
+  const ledger = await doLineRemaining(sb, headers.map((h) => h.id), 'delivered');
+  /* REFUSE TO RENDER rather than report a clean book. Every row of this report
+     is gated on `a.unbilled > 0` below, so an unreadable ledger drops EVERY row
+     and the answer becomes "nothing is outstanding" — on the one screen whose
+     entire job is to find money that was delivered and never billed. The
+     headers read above already answers a failure this way; the ledger is the
+     more expensive half of the same question and gets the same answer. */
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  const remainingByItem = ledger.lines;
 
   // Fold the line ledger up to one row per DO.
   type Agg = { delivered: number; invoiced: number; returned: number; unbilled: number; lines: number; pending: number };
@@ -265,7 +283,7 @@ unbilledDeliveries.get('/', async (c) => {
   for (const line of remainingByItem.values()) {
     const a = aggByDo.get(line.deliveryOrderId)
       ?? { delivered: 0, invoiced: 0, returned: 0, unbilled: 0, lines: 0, pending: 0 };
-    const val = (n: number) => valueOfUnits(n, line.delivered, line.unitPriceCenti, line.discountCenti);
+    const val = (n: number) => valueOfUnits(n, line.delivered, line.unitPriceSen, line.discountSen);
     a.delivered += val(line.delivered);
     a.invoiced += val(line.invoiced);
     a.returned += val(line.returned);
@@ -279,7 +297,7 @@ unbilledDeliveries.get('/', async (c) => {
   const rows: Row[] = [];
   for (const h of headers) {
     const a = aggByDo.get(h.id);
-    /* EXCLUSIONS — all three fall out of `unbilled_centi > 0`, none is a
+    /* EXCLUSIONS — all three fall out of `unbilled_sen > 0`, none is a
        hand-maintained flag list that could rot:
          • FULLY INVOICED — every line's invoiced qty consumed its delivered qty,
            so remaining = 0. (This is also how a DO whose header status was never
@@ -321,10 +339,10 @@ unbilledDeliveries.get('/', async (c) => {
       phone: h.phone,
       // Filled from the staff batch below.
       salesperson: h.agent,
-      delivered_centi: a.delivered,
-      invoiced_centi: a.invoiced,
-      returned_centi: a.returned,
-      unbilled_centi: a.unbilled,
+      delivered_sen: a.delivered,
+      invoiced_sen: a.invoiced,
+      returned_sen: a.returned,
+      unbilled_sen: a.unbilled,
       lines_total: a.lines,
       lines_pending: a.pending,
       /* The expensive case: SOME of this DO was billed and the rest was not. A
@@ -358,7 +376,7 @@ unbilledDeliveries.get('/', async (c) => {
   }
 
   // Oldest money first — the tail is the finding, the current month is the noise.
-  rows.sort((x, y) => y.age_days - x.age_days || y.unbilled_centi - x.unbilled_centi);
+  rows.sort((x, y) => y.age_days - x.age_days || y.unbilled_sen - x.unbilled_sen);
 
   // Buckets + totals over the ROWS RETURNED, so the summary always reconciles
   // with the list (a filtered read never shows a total it isn't showing rows for).
@@ -366,39 +384,39 @@ unbilledDeliveries.get('/', async (c) => {
   const byKey = new Map(buckets.map((b) => [b.key, b]));
   for (const r of rows) {
     const b = byKey.get(r.bucket);
-    if (b) { b.rows += 1; b.unbilled_centi += r.unbilled_centi; }
+    if (b) { b.rows += 1; b.unbilled_sen += r.unbilled_sen; }
   }
   const totals = {
     rows: rows.length,
-    unbilled_centi: rows.reduce((s, r) => s + r.unbilled_centi, 0),
+    unbilled_sen: rows.reduce((s, r) => s + r.unbilled_sen, 0),
     /* The headline. Steady-state un-invoiced is 1–3%/month and the current month
        is billing lag — so the number that means something is the tail that never
        got billed at all. Surfaced separately so a caller (or a KPI card) doesn't
        have to re-derive it and get the boundary wrong. */
     over_365: {
       rows: rows.filter((r) => r.age_days > 365).length,
-      unbilled_centi: rows.filter((r) => r.age_days > 365).reduce((s, r) => s + r.unbilled_centi, 0),
+      unbilled_sen: rows.filter((r) => r.age_days > 365).reduce((s, r) => s + r.unbilled_sen, 0),
     },
     /* Partly-invoiced value, called out because it is invisible to any
        header-status report and is the likeliest place for silent leakage. */
     partly_invoiced: {
       rows: rows.filter((r) => r.partly_invoiced).length,
-      unbilled_centi: rows.filter((r) => r.partly_invoiced).reduce((s, r) => s + r.unbilled_centi, 0),
+      unbilled_sen: rows.filter((r) => r.partly_invoiced).reduce((s, r) => s + r.unbilled_sen, 0),
     },
   };
 
   return c.json({ as_of: asOf, rows, buckets, totals });
 });
 
-function emptyBuckets(): Array<{ key: string; label: string; rows: number; unbilled_centi: number }> {
-  return BUCKETS.map((b) => ({ key: b.key, label: b.label, rows: 0, unbilled_centi: 0 }));
+function emptyBuckets(): Array<{ key: string; label: string; rows: number; unbilled_sen: number }> {
+  return BUCKETS.map((b) => ({ key: b.key, label: b.label, rows: 0, unbilled_sen: 0 }));
 }
 
 function emptyTotals() {
   return {
     rows: 0,
-    unbilled_centi: 0,
-    over_365: { rows: 0, unbilled_centi: 0 },
-    partly_invoiced: { rows: 0, unbilled_centi: 0 },
+    unbilled_sen: 0,
+    over_365: { rows: 0, unbilled_sen: 0 },
+    partly_invoiced: { rows: 0, unbilled_sen: 0 },
   };
 }

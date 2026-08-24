@@ -24,7 +24,7 @@ import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { PageHeader } from '../../components/Layout';
 import { EmptyState } from '../../components/EmptyState';
-import { fmtCenti } from '@2990s/shared';
+import { fmtSen } from '@2990s/shared';
 import { formatDate } from '../../lib/utils';
 import { useAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -34,6 +34,7 @@ import {
   useHrCommission, useHrPayoutPeriods, useCloseHrPayout, useReopenHrPayout,
   type HrCommissionRow,
 } from '../../vendor/scm/lib/hr-queries';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -89,14 +90,14 @@ export const HrCommission = () => {
   const onClose = async () => {
     if (!data || data.closed) return;
     const total = data.showrooms.reduce(
-      (acc, s) => acc + s.rows.reduce((a, r) => a + r.totalCenti, 0),
+      (acc, s) => acc + s.rows.reduce((a, r) => a + r.totalSen, 0),
       0,
     );
     const people = data.showrooms.reduce((acc, s) => acc + s.rows.length, 0);
     const ok = await askConfirm({
       title: 'Close this commission period?',
       body:
-        `${formatDate(data.from)} to ${formatDate(data.to)} — ${people} salespeople, ${fmtCenti(total)} in total.\n\n` +
+        `${formatDate(data.from)} to ${formatDate(data.to)} — ${people} salespeople, ${fmtSen(total)} in total.\n\n` +
         'Closing saves these exact figures and stops them recalculating. After this, changing a rate, ' +
         'a tier or an item KPI will not move what this period pays — the saved figures are what the ' +
         'report will show from now on.\n\n' +
@@ -117,7 +118,7 @@ export const HrCommission = () => {
     const ok = await askConfirm({
       title: 'Reopen this closed period?',
       body:
-        `${formatDate(data.from)} to ${formatDate(data.to)} was closed at ${fmtCenti(data.closed.totalCenti)}` +
+        `${formatDate(data.from)} to ${formatDate(data.to)} was closed at ${fmtSen(data.closed.totalSen)}` +
         `${data.closed.closedByName ? ` by ${data.closed.closedByName}` : ''}.\n\n` +
         'Reopening makes it recalculate against the current rates again, so what it pays can change. ' +
         'The figures saved at close are kept and stay readable, and closing it again saves a new revision beside them.',
@@ -161,13 +162,13 @@ export const HrCommission = () => {
       for (const r of s.rows) {
         rows.push([
           s.showroomName, r.staffName, r.tier,
-          r.personalGoodsCenti / 100,
+          r.personalGoodsSen / 100,
           fmtPct(r.personalRateBps),
-          r.personalCommissionCenti / 100,
+          r.personalCommissionSen / 100,
           r.overrideRateBps === null ? 'chain' : fmtPct(r.overrideRateBps),
-          r.overrideCommissionCenti / 100,
-          r.itemKpiCenti / 100,
-          r.totalCenti / 100,
+          r.overrideCommissionSen / 100,
+          r.itemKpiSen / 100,
+          r.totalSen / 100,
         ]);
       }
     }
@@ -230,11 +231,11 @@ export const HrCommission = () => {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">From</span>
-          <input type="date" className={INPUT_CLASS} value={from} onChange={(e) => setFrom(e.target.value)} />
+          <DateField fullWidth className={INPUT_CLASS} value={from} onChange={(iso) => setFrom(iso)}/>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">To</span>
-          <input type="date" className={INPUT_CLASS} value={to} onChange={(e) => setTo(e.target.value)} />
+          <DateField fullWidth className={INPUT_CLASS} value={to} onChange={(iso) => setTo(iso)}/>
         </label>
         <Button
           variant="primary"
@@ -318,8 +319,8 @@ export const HrCommission = () => {
           <header className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-[14px] font-semibold text-ink">{s.showroomName}</h2>
             <Badge tone={s.showroomKpiHit ? 'success' : 'warning'} variant="soft" caseless>
-              Showroom goods {fmtCenti(s.showroomGoodsCenti)} ·{' '}
-              {fmtCenti(data.config.showroomKpiThresholdCenti)} target{' '}
+              Showroom goods {fmtSen(s.showroomGoodsSen)} ·{' '}
+              {fmtSen(data.config.showroomKpiThresholdSen)} target{' '}
               {s.showroomKpiHit ? 'hit' : 'not hit'}
             </Badge>
           </header>
@@ -399,7 +400,7 @@ export const HrCommission = () => {
                     </Badge>
                   </td>
                   <td className="px-2 py-2 text-right font-mono text-ink-secondary">{p.rowCount}</td>
-                  <td className="px-2 py-2 text-right font-mono">{fmtCenti(p.totalCenti)}</td>
+                  <td className="px-2 py-2 text-right font-mono">{fmtSen(p.totalSen)}</td>
                   <td className="px-2 py-2 text-ink-secondary">
                     {p.closedByName || '—'}
                     {p.closedAt ? ` · ${formatDate(p.closedAt)}` : ''}
@@ -457,34 +458,34 @@ const CommissionRow = ({
           </span>
         </td>
         <td className="px-2 py-2 text-ink-secondary">{row.tier}</td>
-        <td className="px-2 py-2 text-right font-mono">{fmtCenti(row.personalGoodsCenti)}</td>
+        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.personalGoodsSen)}</td>
         <td className="px-2 py-2 text-right font-mono">{fmtPct(row.personalRateBps)}</td>
-        <td className="px-2 py-2 text-right font-mono">{fmtCenti(row.personalCommissionCenti)}</td>
+        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.personalCommissionSen)}</td>
         <td className="px-2 py-2 text-right font-mono">
           {/* null rate = chain mode, where the override is a sum over levels of
               different rates on different bases. Printing a blended rate would
               be a figure nobody can reconcile against a payslip, so the amount
               stands alone and the per-level split lives in the expansion. */}
           {row.overrideRateBps === null
-            ? overrideLevels.length === 0 && row.overrideCommissionCenti === 0
+            ? overrideLevels.length === 0 && row.overrideCommissionSen === 0
               ? '—'
-              : fmtCenti(row.overrideCommissionCenti)
+              : fmtSen(row.overrideCommissionSen)
             : row.overrideRateBps === 0
               ? '—'
-              : `${fmtPct(row.overrideRateBps)} · ${fmtCenti(row.overrideCommissionCenti)}`}
+              : `${fmtPct(row.overrideRateBps)} · ${fmtSen(row.overrideCommissionSen)}`}
         </td>
-        <td className="px-2 py-2 text-right font-mono">{fmtCenti(row.itemKpiCenti)}</td>
-        <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{fmtCenti(row.totalCenti)}</td>
+        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.itemKpiSen)}</td>
+        <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{fmtSen(row.totalSen)}</td>
       </tr>
 
       {open &&
         overrideLevels.map((d) => (
           <tr key={`${row.staffId}-lvl${d.level}`} className="border-t border-border-subtle bg-bg/30 text-[11px]">
             <td className="px-3 py-1.5 pl-9 text-ink-secondary" colSpan={5}>
-              Level {d.level} downline goods {fmtCenti(d.goodsCenti)} @ {fmtPct(d.rateBps)}
+              Level {d.level} downline goods {fmtSen(d.goodsSen)} @ {fmtPct(d.rateBps)}
             </td>
             <td className="px-2 py-1.5 text-right font-mono text-ink-secondary" colSpan={3}>
-              {fmtCenti(d.commissionCenti)}
+              {fmtSen(d.commissionSen)}
             </td>
           </tr>
         ))}
@@ -493,10 +494,10 @@ const CommissionRow = ({
         row.kpiDetail.map((d, i) => (
           <tr key={`${row.staffId}-kpi${i}`} className="border-t border-border-subtle bg-bg/30 text-[11px]">
             <td className="px-3 py-1.5 pl-9 text-ink-secondary" colSpan={5}>
-              {d.label} × {d.qty} @ {fmtCenti(d.bonusCenti)}
+              {d.label} × {d.qty} @ {fmtSen(d.bonusSen)}
             </td>
             <td className="px-2 py-1.5 text-right font-mono text-ink-secondary" colSpan={3}>
-              {fmtCenti(d.lineCenti)}
+              {fmtSen(d.lineSen)}
             </td>
           </tr>
         ))}

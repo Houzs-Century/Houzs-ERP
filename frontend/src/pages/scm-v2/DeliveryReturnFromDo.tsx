@@ -27,9 +27,10 @@
 // Routing: /delivery-returns/from-do.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { writeScmHandoff } from '../../lib/scmHandoffStorage';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -40,11 +41,11 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const STORAGE_KEY = 'pr-g.dr-from-do-lines.layout.v1';
 
@@ -74,18 +75,63 @@ export const DeliveryReturnFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useReturnableDoLines();
 
+  /* WHICH delivery order the operator came FROM, if any — the same mechanism
+     the SI picker uses, so the Delivery Order list's "Transfer to Delivery
+     Return" lands on the note that was right-clicked instead of on every
+     returnable delivery in the company. No parameter → the full picker, which
+     is what the Delivery Returns list toolbar's own button wants. */
+  const [searchParams] = useSearchParams();
+  const scope = useMemo(
+    () => readConvertScope('doToDr', searchParams, []),
+    [searchParams],
+  );
+
   // Map<doItemId, { picked, qty, condition }>. Defaults: picked = false; when
   // ticked, qty defaults to the line's remaining, condition to NEW.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
-  const rows = useMemo<DoRemainingLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const allRows = useMemo<DoRemainingLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const rows = useMemo<DoRemainingLine[]>(
+    () => (scope.keys.size === 0
+      ? allRows
+      : allRows.filter((r) => scope.keys.has(r.deliveryOrderId))),
+    [allRows, scope.keys],
+  );
 
   const rowById = useMemo(() => {
     const m = new Map<string, DoRemainingLine>();
     for (const r of rows) m.set(r.doItemId, r);
     return m;
   }, [rows]);
+
+  /* A scoped entry pre-ticks the note's returnable lines at their full remaining
+     quantity, so the screen is a ready-to-review draft rather than a filtered
+     list to re-tick by hand — same as the SI picker. Nothing is returned here
+     and no stock moves back IN; Continue only carries the picks to the New
+     Delivery Return form. */
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    if (scope.keys.size === 0) return;
+    if (linesQ.isLoading) return;
+    prefilled.current = true;
+    const mine = rows.filter((r) => r.remaining > 0);
+    const first = mine[0];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
+    if (!first) return;
+    // Honour the one-customer-per-return lock: tick only the first line's
+    // customer, even if the scope somehow spans two.
+    const lockTo = custKey(first);
+    setPicks(() => {
+      const next: Record<string, Pick> = {};
+      for (const l of mine) {
+        if (custKey(l) !== lockTo) continue;
+        next[l.doItemId] = { picked: true, qty: l.remaining, condition: 'NEW' };
+      }
+      return next;
+    });
+  }, [rows, linesQ.isLoading, scope.keys]);
 
   const lockedCustomer = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
@@ -280,9 +326,9 @@ export const DeliveryReturnFromDo = () => {
           uom: r.uom,
           qty: v.qty,
           condition: v.condition,
-          unitPriceCenti: r.unitPriceCenti,
-          discountCenti: r.discountCenti,
-          unitCostCenti: r.unitCostCenti,
+          unitPriceSen: r.unitPriceSen,
+          discountSen: r.discountSen,
+          unitCostSen: r.unitCostSen,
           variants: r.variants,
         };
       })
@@ -344,6 +390,21 @@ export const DeliveryReturnFromDo = () => {
         quantity is shown. Continuing opens the normal New Delivery Return form, prefilled for review — no
         stock goes back IN until you click Create on that screen.
       </p>
+      <UnrecognisedScopeNotice unknown={scope.unknown} />
+      {scope.keys.size > 0 && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Showing the returnable lines of{' '}
+          <strong>
+            {scope.keys.size === 1
+              ? (rows[0]?.doNumber ?? 'this Delivery Order')
+              : `${scope.keys.size} Delivery Orders`}
+          </strong>{' '}
+          only.{' '}
+          <Link to="/scm/delivery-returns/from-do" style={{ color: 'var(--c-burnt)', textDecoration: 'underline' }}>
+            Show all Delivery Orders
+          </Link>
+        </p>
+      )}
       {lockedCustomerName && (
         <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
           One customer per Delivery Return — locked to <strong>{lockedCustomerName}</strong>. Other
@@ -367,10 +428,22 @@ export const DeliveryReturnFromDo = () => {
         /* A failed read must NEVER render as the sentence below. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen used to
+           report an empty result as a finished job — "every line has been
+           fully ...". An empty result is only ever evidence that THE QUERY
+           FOUND NOTHING: the read is scoped to the active company and
+           scopeToCompany FAILS CLOSED (scm/lib/companyScope.ts ->
+           .in('company_id', []) returns [] with error: null), PostgREST
+           truncates at db-max-rows without saying so, and a swallowed read
+           error is shaped identically to an empty one. The same claim was
+           removed from the from-PO picker in #2367 and reintroduced five
+           commits later, which is why backend/scripts/check-empty-state-claims.mjs
+           now gates it instead of a comment asking nicely. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No returnable Delivery Order lines — every line has been fully returned or invoiced (or there are no Delivery Orders)."}
+          : "This search came back with no returnable Delivery Order lines. That is not the same as everything having been returned or invoiced — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the delivery order and check its balance before treating this as nothing left to return."}
       />
 
       {dialog && (

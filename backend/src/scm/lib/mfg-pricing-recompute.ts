@@ -14,7 +14,7 @@
 //      so the caller can decide which scope (master / customer:<uuid>) won;
 //      route code resolves once per request and threads it through.
 //
-// Drift: caller compares `clientUnitPriceCenti` against the returned
+// Drift: caller compares `clientUnitPriceSen` against the returned
 // `unitPriceSen` via `mfgPricingDriftExceeds`. On drift > 0.5% the route
 // returns HTTP 400 with the diff (see CLAUDE.md non-negotiable).
 // ----------------------------------------------------------------------------
@@ -31,6 +31,7 @@ import {
   type MfgSeatHeightPrice,
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
+import { chunkIn } from './paginate-all';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -101,7 +102,7 @@ export type MfgItemForRecompute = {
   itemCode:       string;
   itemGroup:      string;          // 'bedframe' | 'sofa' | 'mattress' | 'accessory' | 'others'
   qty:            number;
-  unitPriceCenti: number;          // what the client SAID — to be drift-checked
+  unitPriceSen: number;          // what the client SAID — to be drift-checked
   variants?:      MfgItemVariants | null;
 };
 
@@ -115,12 +116,12 @@ export type RecomputedLine = {
   /** Persistable as custom_specials jsonb. Mirrors the client breakdown +
    *  any free-text specials the client wanted to keep verbatim. */
   custom_specials:      Array<{ description: string; surchargeSen: number }> | null;
-  total_centi:          number;     // qty * unit (minus discount, applied by caller)
+  total_sen:          number;     // qty * unit (minus discount, applied by caller)
   breakdown:            MfgPricingBreakdown;
   /** COST snapshot from `computeMfgLineCost` (Commander 2026-05-28: backend
    *  `priceSen` tables ARE the cost). `unit_cost_sen` = base + Σ priceSen
    *  surcharges; `line_cost_sen` = unit_cost_sen × qty. Caller persists these
-   *  onto mfg_sales_order_items.unit_cost_centi / line_cost_centi. Computed
+   *  onto mfg_sales_order_items.unit_cost_sen / line_cost_sen. Computed
    *  from the same (product, fabric, config) snapshot so cost stays in
    *  lockstep with the selling breakdown. NOT drift-checked (cost is a
    *  server-only snapshot, separate from the selling-total drift validation). */
@@ -209,15 +210,15 @@ const normalizeSpecials = (s: string[] | string | null | undefined): string[] =>
   return [String(s).trim()].filter(Boolean);
 };
 
-const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean => {
+const driftThresholdExceeded = (clientSen: number, serverSen: number): boolean => {
   // Both columns are sen-equivalent integers (centi == sen × 1 in 2990s).
-  // Commander 2026-05-29 — a client unitPriceCenti of 0 means "not provided"
+  // Commander 2026-05-29 — a client unitPriceSen of 0 means "not provided"
   // (e.g. the backend SO line editor couldn't resolve the price client-side).
   // Trust the server's own recompute instead of rejecting the whole SO. The
   // anti-tamper guard still catches a NON-zero client price below the server's.
-  if (clientCenti === 0 && serverSen > 0) return false;
-  if (serverSen <= 0) return clientCenti !== 0;
-  const drift = Math.abs(clientCenti - serverSen) / serverSen;
+  if (clientSen === 0 && serverSen > 0) return false;
+  if (serverSen <= 0) return clientSen !== 0;
+  const drift = Math.abs(clientSen - serverSen) / serverSen;
   return drift > 0.005;
 };
 
@@ -230,6 +231,7 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
  *                    hand-entered price wins, but only when they entered one.
  *                    0 still means "not provided" and takes the catalogue fill.
  *   'including-zero' additionally believes a stored 0.
+ *   'operator-zero'  believes a 0 the OPERATOR typed on THIS request.
  *
  * 'including-zero' exists for MIGRATED documents (linked_ac_docno IS NOT NULL)
  * and nothing else. Their prices came from AutoCount, where a sofa set is
@@ -238,11 +240,44 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
  * on the next approved amendment and the customer would be billed for the set
  * several times over; under 'including-zero' the AutoCount shape survives.
  *
- * Do NOT reach for it on a line the operator is authoring now — there a 0 really
- * does mean the client could not resolve a price, and the catalogue fill is the
- * correct answer.
+ * Do NOT reach for 'including-zero' on a line the operator is authoring now —
+ * there a 0 really does mean the client could not resolve a price, and the
+ * catalogue fill is the correct answer. That instruction stands unchanged: the
+ * exception below is a DIFFERENT mode, so the migrated rationale is not diluted
+ * and `isMigratedTrust` keeps meaning exactly "migrated".
+ *
+ * 'operator-zero' is the sanctioned exception to the paragraph above, added
+ * 2026-08-18 on the owner's requirement that a salesperson be able to set an SO
+ * line to RM 0 in Houzs ERP. It exists because the ambiguity was never about
+ * trust — it was that `0` carries two meanings on one wire: "the client could
+ * not resolve a price" and "this line is free". The ERP line editor knows which
+ * it sent, so it now says so (`zeroPriceIntended`), and ONLY that explicit
+ * statement selects this mode. A 0 arriving without it is still "not provided"
+ * and still takes the catalogue fill, which is every other caller in the system.
+ *
+ * It is NOT 'including-zero' with another name. It deliberately does not make
+ * `isMigratedTrust` true, so the surcharge-suppression arm that protects the
+ * 10,856 zero-priced migrated lines stays exclusive to migrated documents; an
+ * operator-authored zero still prices its director-authored surcharges normally.
  */
-export type TrustSelling = boolean | 'including-zero';
+export type TrustSelling = boolean | 'including-zero' | 'operator-zero';
+
+/** The trust an ERP line write earns. ONE home, because it is now asked in two
+ *  places (line PATCH and line ADD) and they must not drift: editing a line to
+ *  RM 0 while adding one at RM 0 took the catalogue price is exactly the defect
+ *  this closes.
+ *
+ *  `'operator-zero'` ONLY when the editor states the 0 was typed rather than
+ *  unresolved — strict `=== true`, and only at 0, so every other caller's 0
+ *  still means "not provided" and takes the catalogue fill. A POS session never
+ *  reaches it: `posTablet` short-circuits both arms, because the POS cannot make
+ *  that statement and its 0 is the documented "not provided" case. */
+export const erpLineTrust = (
+  posTablet: boolean,
+  unitPriceSen: number,
+  zeroPriceIntended: unknown,
+): TrustSelling =>
+  !posTablet && unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : !posTablet;
 
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
@@ -376,14 +411,14 @@ export function recomputeFromSnapshot(
      `breakdown` is still computed so the surcharge component columns
      (divan/leg/special) reflect any director-set SELLING surcharges. */
   const breakdown = computeMfgLinePrice(pricingInput, effectiveConfig);
-  const manualUnitSelling = Math.max(0, Math.round(Number(item.unitPriceCenti ?? 0)));
+  const manualUnitSelling = Math.max(0, Math.round(Number(item.unitPriceSen ?? 0)));
   const safeQty = Math.max(0, Math.floor(item.qty || 0));
 
   /* Commander 2026-05-28 — COST snapshot. Same (product, fabric, variants,
      config) snapshot, but `computeMfgLineCost` reads the backend maintenance
      `priceSen` tables as the cost (base + Σ priceSen surcharges). This is the
-     SEPARATE cost path — UNCHANGED — and is what drives unit_cost_centi /
-     line_cost_centi / line_margin_centi. Never drift-checked (cost is a
+     SEPARATE cost path — UNCHANGED — and is what drives unit_cost_sen /
+     line_cost_sen / line_margin_sen. Never drift-checked (cost is a
      server-only snapshot). Margin = manual selling − computed cost. */
   const costBreakdown = computeMfgLineCost(pricingInput, effectiveConfig);
 
@@ -577,7 +612,7 @@ export function recomputeFromSnapshot(
     baseModelOverride,
     compartmentFabricOverrides ?? new Map(),
   );
-  const fabricAddonCenti = (fabricAddonConfig && (category === 'SOFA' || category === 'BEDFRAME'))
+  const fabricAddonSen = (fabricAddonConfig && (category === 'SOFA' || category === 'BEDFRAME'))
     ? fabricTierAddon(category, sellingTier, fabricAddonConfig, modelOverride) * 100
     : 0;
 
@@ -623,7 +658,7 @@ export function recomputeFromSnapshot(
          and never charged — it could only ever reduce margin. Σ modules is the
          BASE here, exactly as Σ module costs is the base there, so the
          surcharges belong on top of it on both sides. */
-      const authoritativeSofaSen = sofaSellingSen + chargeableSurchargesSen + fabricAddonCenti + extraSen;
+      const authoritativeSofaSen = sofaSellingSen + chargeableSurchargesSen + fabricAddonSen + extraSen;
       drift = driftThresholdExceeded(manualUnitSelling, authoritativeSofaSen);
       unitToPersistSen = authoritativeSofaSen;
     } else {
@@ -638,7 +673,7 @@ export function recomputeFromSnapshot(
     // + SELLING fabric-tier Δ (migration 0124). Non-zero only for BEDFRAME (the
     // shared fabricTierAddon returns 0 for mattress/accessory/service). POS adds
     // the same Δ so the gate matches; 0 with default data (no tier / no config).
-    const authoritativeWithFabric = authoritativeSellingSen + fabricAddonCenti + extraSen;
+    const authoritativeWithFabric = authoritativeSellingSen + fabricAddonSen + extraSen;
     drift = driftThresholdExceeded(manualUnitSelling, authoritativeWithFabric);
     unitToPersistSen = authoritativeWithFabric;
   } else {
@@ -658,8 +693,15 @@ export function recomputeFromSnapshot(
      whole set price on ONE lead module line with 0 on its siblings, so under
      plain `true` every sibling would still be handed a catalogue price and the
      set would be billed several times over. Never use it for a line the operator
-     is authoring now — there a 0 really does mean "not provided". */
-  if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
+     is authoring now — there a 0 really does mean "not provided".
+
+     'operator-zero' is the one sanctioned way for an authored 0 to survive: the
+     ERP line editor stated that the operator typed it (see TrustSelling). Same
+     effect HERE, deliberately different mode — it must not read as migrated. */
+  if (trustOperatorSelling
+      && (manualUnitSelling > 0
+          || trustOperatorSelling === 'including-zero'
+          || trustOperatorSelling === 'operator-zero')) {
     unitToPersistSen = manualUnitSelling;
   }
 
@@ -673,7 +715,7 @@ export function recomputeFromSnapshot(
     leg_price_sen:     breakdown.legSurchargeSen,
     special_order_sen: breakdown.specialsSurchargeSen,
     custom_specials:   customSpecials,
-    total_centi:       unitToPersistSen * safeQty,
+    total_sen:       unitToPersistSen * safeQty,
     breakdown,
     unit_cost_sen:     unitCostSen,
     line_cost_sen:     unitCostSen * safeQty,
@@ -939,11 +981,20 @@ export async function loadFabricSellingTiersByIds(
 ): Promise<Map<string, { sofaTier: FabricTier | null; bedframeTier: FabricTier | null }>> {
   const uniq = Array.from(new Set(ids.map((i) => (i ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
-  const { data } = await sb
-    .from('fabric_library')
-    .select('id, sofa_tier, bedframe_tier')
-    .in('id', uniq);
-  return new Map((((data as Array<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>) ?? [])).map((r) => [
+  /* chunkIn — sales-analysis hands this the distinct fabricId of every SO line
+     in its window (uuids), while its two sibling reads there were already
+     chunked and this one was not. Keyed by id, so merging batches is a no-op on
+     the result. */
+  const { data } = await chunkIn<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>(
+    uniq,
+    (batch, from, to) => sb
+      .from('fabric_library')
+      .select('id, sofa_tier, bedframe_tier')
+      .in('id', batch)
+      .order('id')
+      .range(from, to),
+  );
+  return new Map(data.map((r) => [
     r.id,
     {
       sofaTier:     (r.sofa_tier ?? null) as FabricTier | null,
@@ -1054,7 +1105,7 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 
 /** End-to-end: given an item draft, load product + fabric + config and
  *  return the recompute. The caller assembles the DB row from the result.
- *  Returns drift=true when the client's unitPriceCenti differs > 0.5%
+ *  Returns drift=true when the client's unitPriceSen differs > 0.5%
  *  from the server compute — caller decides whether to reject (HTTP 400).
  *
  *  `opts.trustOperatorSelling` is an OPTIONS OBJECT, not a 5th positional, on

@@ -85,11 +85,11 @@ describe('loadPaymentCandidates', () => {
   it('takes card money from BOTH sales panels, and leaves cash and transfers alone', async () => {
     const sb = world({
       mfg_sales_order_payments: [
-        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_centi: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
-        { id: 'p2', so_doc_no: 'SO-2', paid_at: '2026-08-01T11:00:00', amount_centi: 500, approval_code: null, method: 'cash', merchant_provider: 'MBB', company_id: 1 },
+        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_sen: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
+        { id: 'p2', so_doc_no: 'SO-2', paid_at: '2026-08-01T11:00:00', amount_sen: 500, approval_code: null, method: 'cash', merchant_provider: 'MBB', company_id: 1 },
       ],
       sales_invoice_payments: [
-        { id: 'q1', sales_invoice_id: 'INV-9', paid_at: '2026-08-02T09:00:00', amount_centi: 2500, approval_code: 'B7', method: 'installment', merchant_provider: 'MBB', company_id: 1 },
+        { id: 'q1', sales_invoice_id: 'INV-9', paid_at: '2026-08-02T09:00:00', amount_sen: 2500, approval_code: 'B7', method: 'installment', merchant_provider: 'MBB', company_id: 1 },
       ],
     });
     const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03');

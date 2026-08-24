@@ -217,3 +217,128 @@ export function soStockLocationError(i: SoLocationGuardInput): SoFormError | nul
     body: "Ask an administrator to map that State to a warehouse, then try again.",
   };
 }
+
+export interface SoRequiredFieldsInput {
+  customerName: string;
+  phone: string;
+  /** True when at least one line has a product picked (itemCode) AND qty > 0. */
+  hasNamedLine: boolean;
+  /** Save-as-draft: a draft needs none of the confirm-only fields. */
+  asDraft: boolean;
+  /** Resolved venue — false when none picked. Confirm-only. */
+  hasVenue: boolean;
+  /** Resolved salesperson — false when none. Confirm-only. */
+  hasSalesperson: boolean;
+  /** Stock-location gate input — only its "no State picked" case counts as a
+      missing FIELD here; the "State has no warehouse" config case stays with
+      soStockLocationError, run separately AFTER this returns empty. */
+  location: SoLocationGuardInput;
+}
+
+/**
+ * Collect EVERY missing always-required field for a CREATE/CONFIRM in ONE pass,
+ * so the operator sees them together instead of one dialog per field (owner
+ * 2026-08-20, live QA: "为什么要慢慢爆呢" — why does it pop one at a time).
+ *
+ * Returns the human-readable labels of the missing fields (empty = all present).
+ * The CONDITIONAL / SEQUENTIAL guards deliberately stay OUT of this and run after
+ * it, because each only applies once an earlier choice is made: soDateGuardError
+ * (only with dates), the sofa-mix rule (only with those lines), the
+ * Processing-Date proceed gate (only with a date), the "State has no warehouse"
+ * config error (only once a State is picked), and payment sub-fields (only with
+ * payments). Shared by desktop SalesOrderNew and mobile MobileNewSO so the
+ * required set can't drift between surfaces.
+ */
+export function soRequiredFieldErrors(i: SoRequiredFieldsInput): string[] {
+  const missing: string[] = [];
+  if (!i.customerName.trim()) missing.push("Customer name");
+  if (!i.phone.trim()) missing.push("Phone number");
+  if (!i.hasNamedLine) missing.push("At least one line item with a product");
+  if (!i.asDraft) {
+    if (!i.hasVenue) missing.push("Venue");
+    if (!i.hasSalesperson) missing.push("Salesperson");
+    // "No State picked yet" is a missing field the operator can fill now, so it
+    // joins the list. The "picked State has no warehouse" case is an admin
+    // config problem, not a field the operator forgot — it keeps its own
+    // sentence via soStockLocationError, which the caller runs once this is empty.
+    const l = i.location;
+    const locationRequired =
+      !l.asDraft && !l.isEdit && l.mappingsLoaded !== false &&
+      companyRequiresStockLocation(l.companyCode);
+    if (locationRequired && l.salesLocation.trim() === "" && l.state.trim() === "") {
+      missing.push("Delivery State (it sets the shipping warehouse)");
+    }
+  }
+  return missing;
+}
+
+/** What a PROCEEDING order needs on top of the always-required set.
+ *
+ * WHY IT IS HERE AND NOT LEFT TO THE CALLER. Its condition — "a Processing Date
+ * was entered" — is known at the moment the button is pressed, exactly like
+ * every field above it. So it is NOT one of the sequential guards that can only
+ * be judged after an earlier choice; it only READ like one because it sat in a
+ * second `if` further down the handler, and the first `if` returned before
+ * reaching it.
+ *
+ * The cost of that, live: Venue and Delivery State on the first press, address
+ * line 1 and postcode on the second. Owner 2026-08-23: 「create salesorder 要两
+ * 次？」 — and 2026-08-20 already, 「为什么要慢慢爆呢」, which is when the
+ * always-required set became one pass. This is the half that was left.
+ *
+ * Every parameter is REQUIRED, none optional: each one DECIDES whether a label
+ * appears, and an optional one would let a caller silently keep the old
+ * behaviour (CLAUDE.md's optional-param-noop rule).
+ */
+export interface SoProceedingAddressInput {
+  /** Empty = the order is not proceeding, and none of this applies. */
+  processingDate: string;
+  customerName: string;
+  /** Ticked BLANKS the address out of the payload, so it counts as missing. */
+  fillAddressLater: boolean;
+  address1: string;
+  postcode: string;
+  deliveryDate: string;
+}
+
+export function soProceedingAddressErrors(i: SoProceedingAddressInput): string[] {
+  if (!i.processingDate.trim()) return [];
+  const missing: string[] = [];
+  if (!i.customerName.trim()) missing.push("customer name");
+  if (i.fillAddressLater || !i.address1.trim()) missing.push("address line 1");
+  if (i.fillAddressLater || !i.postcode.trim()) missing.push("postcode");
+  if (!i.deliveryDate.trim()) missing.push("delivery date");
+  return missing;
+}
+
+/** Render BOTH collected lists as ONE dialog/toast error.
+ *
+ *  Both arguments are required. Passing the proceeding list separately rather
+ *  than concatenating it keeps its EXPLANATION — a Processing Date is what makes
+ *  those fields required, and an operator who is not told that reads them as
+ *  arbitrary.
+ */
+export function soRequiredFieldsMessage(missing: string[], proceeding: string[]): SoFormError {
+  const all = [...missing, ...proceeding];
+  /* The bare "X is required." shortcut is for the ALWAYS-required fields only.
+     A lone proceeding field must keep its reason: "postcode is required" does
+     not tell an operator that a postcode became required the moment they set a
+     Processing Date, and they have no way to work that out. */
+  if (all.length === 1 && proceeding.length === 0) {
+    return { title: `${all[0]} is required.` };
+  }
+  const body = `Still missing: ${all.join(", ")}.`;
+  /* Only the proceeding half is missing — lead with the reason it is required. */
+  if (missing.length === 0) {
+    return {
+      title: "A Processing Date means this order is proceeding, so it needs a delivery address.",
+      body,
+    };
+  }
+  return {
+    title: "Fill in the required fields before creating this order.",
+    body: proceeding.length > 0
+      ? `${body}\n\nThe address fields are required because a Processing Date is set — this order is proceeding.`
+      : body,
+  };
+}

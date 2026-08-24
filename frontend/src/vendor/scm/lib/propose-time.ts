@@ -26,6 +26,7 @@
 // ----------------------------------------------------------------------------
 import type { PlanningOrder } from './delivery-planning-queries';
 import type { SequenceAssignResponse } from './delivery-zones-queries';
+import { warehouseLabel } from './warehouse-label';
 
 /** The fields the date-grouping reads — a subset so tests build rows cheaply. */
 export type ConfirmedDateRow = Pick<
@@ -78,7 +79,7 @@ export function depotForDocNos(orders: DepotRow[], docNos: string[]): DepotPick 
     if (cur) cur.count += 1;
     else votes.set(o.warehouse_id, {
       count: 1,
-      label: o.warehouse_name || o.warehouse_code || o.warehouse_id,
+      label: warehouseLabel({ code: o.warehouse_code, name: o.warehouse_name }) ?? o.warehouse_id,
       seen: seen++,
     });
   }
@@ -136,7 +137,7 @@ export function pinAssignToDate(r: SequenceAssignResponse, date: string): Sequen
         group: t.group,
         orders: t.stops.map((s) => s.ref),
         sets: t.sets,
-        revenueCenti: t.revenueCenti,
+        revenueSen: t.revenueSen,
         reason: `own fleet full on ${date} — could not fit these on the confirmed date`,
       });
     }

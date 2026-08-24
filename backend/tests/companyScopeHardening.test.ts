@@ -85,6 +85,13 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
       from: (t: string) => new FakeQuery((tables[t] ||= []), t, log),
+      /* `.schema('public')` — the real client returns one scoped to that schema.
+         These stubs model ONE table namespace, so it returns the stub itself.
+         Needed because jePrefixForCompany reads `public.companies` while the SCM
+         client is pinned to `scm`; without it the stub throws
+         `sb.schema is not a function` and the handler 500s. See docs/bugs/0522. */
+      schema(_s: string) { return this; },
+
       // The entity-audit pre-flight probe. Reports writable so the handlers get
       // past it to the statement under test; without it every one of them 409s
       // on an unreachable audit sink and the scope assertions never run.
@@ -115,8 +122,8 @@ const jsonPatch = (app: Hono, url: string, body?: Row) =>
 // ── Item 3 — grns.ts: posts stock IN against another company's GRN ───────────
 describe('item 3 — GRN confirm (writes inventory IN + rolls up the PO)', () => {
   const grns = (): Row[] => [
-    { id: 'g-a', grn_number: 'GRN-A-1', company_id: CO_A, status: 'DRAFT', warehouse_id: 'w1', total_centi: 100 },
-    { id: 'g-b', grn_number: 'GRN-B-1', company_id: CO_B, status: 'DRAFT', warehouse_id: 'w9', total_centi: 500 },
+    { id: 'g-a', grn_number: 'GRN-A-1', company_id: CO_A, status: 'DRAFT', warehouse_id: 'w1', total_sen: 100 },
+    { id: 'g-b', grn_number: 'GRN-B-1', company_id: CO_B, status: 'DRAFT', warehouse_id: 'w9', total_sen: 500 },
   ];
 
   test('A cannot confirm B\'s GRN, and B\'s GRN stays DRAFT', async () => {
@@ -177,12 +184,12 @@ describe('item 4 — PV cancel (reverses the GL entry)', () => {
    voucher's company ledger, so this is the money half. */
 describe('item 4b — PV post (writes the GL entry)', () => {
   const pvs = (): Row[] => [
-    { id: 'pv-a', pv_number: 'PV-A-2', company_id: CO_A, status: 'DRAFT', total_centi: 100, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'A', currency: 'MYR', exchange_rate: 1 },
-    { id: 'pv-b', pv_number: 'PV-B-2', company_id: CO_B, status: 'DRAFT', total_centi: 900, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'B', currency: 'MYR', exchange_rate: 1 },
+    { id: 'pv-a', pv_number: 'PV-A-2', company_id: CO_A, status: 'DRAFT', total_sen: 100, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'A', currency: 'MYR', exchange_rate: 1 },
+    { id: 'pv-b', pv_number: 'PV-B-2', company_id: CO_B, status: 'DRAFT', total_sen: 900, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'B', currency: 'MYR', exchange_rate: 1 },
   ];
   const lines = (): Row[] => [
-    { pv_id: 'pv-a', line_no: 1, description: 'a', debit_account_code: '5000', amount_centi: 100 },
-    { pv_id: 'pv-b', line_no: 1, description: 'b', debit_account_code: '5000', amount_centi: 900 },
+    { pv_id: 'pv-a', line_no: 1, description: 'a', debit_account_code: '5000', amount_sen: 100 },
+    { pv_id: 'pv-b', line_no: 1, description: 'b', debit_account_code: '5000', amount_sen: 900 },
   ];
 
   test("A cannot post B's voucher — it stays DRAFT and writes NO journal entry", async () => {
@@ -238,7 +245,7 @@ describe('item 5 — stock take post (writes ADJUSTMENT movements)', () => {
     const t: Record<string, Row[]> = {
       stock_takes: takes(),
       stock_take_lines: [
-        { stock_take_id: 'st-b', product_code: 'SKU-B', product_name: 'B thing', variant_key: '', counted_qty: 40, notes: null },
+        { stock_take_id: 'st-b', item_code: 'SKU-B', product_name: 'B thing', variant_key: '', counted_qty: 40, notes: null },
       ],
       inventory_balances: [],
       inventory_movements: [],
@@ -260,11 +267,11 @@ describe('item 5 — stock take post (writes ADJUSTMENT movements)', () => {
 // ── Item 6 — purchase-invoices.ts: posts a PI ────────────────────────────────
 describe('item 6 — PI post (Dr Inventory / Cr Payables)', () => {
   const pis = (): Row[] => [
-    { id: 'pi-a', invoice_number: 'PI-A-1', company_id: CO_A, status: 'DRAFT', total_centi: 100 },
-    { id: 'pi-b', invoice_number: 'PI-B-1', company_id: CO_B, status: 'DRAFT', total_centi: 900 },
+    { id: 'pi-a', invoice_number: 'PI-A-1', company_id: CO_A, status: 'DRAFT', total_sen: 100 },
+    { id: 'pi-b', invoice_number: 'PI-B-1', company_id: CO_B, status: 'DRAFT', total_sen: 900 },
     // Already POSTED: reaches the ensure-post GL branch from the LOAD alone,
     // without ever touching the UPDATE. Scoping only the flip would miss it.
-    { id: 'pi-b-posted', invoice_number: 'PI-B-2', company_id: CO_B, status: 'POSTED', total_centi: 900 },
+    { id: 'pi-b-posted', invoice_number: 'PI-B-2', company_id: CO_B, status: 'POSTED', total_sen: 900 },
   ];
 
   test('A cannot post B\'s PI, and B\'s PI stays DRAFT', async () => {
@@ -291,8 +298,8 @@ describe('item 6 — PI post (Dr Inventory / Cr Payables)', () => {
 // ── Item 8 (status half) — SI + DO status flips ──────────────────────────────
 describe('item 8 — SI status flip (reverses revenue, mints credits)', () => {
   const sis = (): Row[] => [
-    { id: 'si-a', invoice_number: 'SI-A-1', company_id: CO_A, status: 'SENT', paid_centi: 0, total_centi: 100 },
-    { id: 'si-b', invoice_number: 'SI-B-1', company_id: CO_B, status: 'SENT', paid_centi: 0, total_centi: 900 },
+    { id: 'si-a', invoice_number: 'SI-A-1', company_id: CO_A, status: 'SENT', paid_sen: 0, total_sen: 100 },
+    { id: 'si-b', invoice_number: 'SI-B-1', company_id: CO_B, status: 'SENT', paid_sen: 0, total_sen: 900 },
   ];
 
   test('A cannot cancel B\'s invoice, and B\'s invoice stays SENT', async () => {

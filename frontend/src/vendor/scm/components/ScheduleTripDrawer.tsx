@@ -26,7 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, MapPinned, ExternalLink, GripVertical, AlertTriangle } from "lucide-react";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { Button } from "../../../components/Button";
-import { fmtDateOrDash } from "@2990s/shared";
+import { fmtDateOrDash } from "../../shared/format";
 import { useDrivers } from "../lib/drivers-queries";
 import { useLorries } from "../lib/lorries-queries";
 import { useWarehouses } from "../lib/inventory-queries";
@@ -43,10 +43,12 @@ import {
 } from "../lib/propose-schedule-queries";
 import { ScheduleRouteMap, type RoutePoint } from "./ScheduleRouteMap";
 import { useNotify } from "./NotifyDialog";
+import { DateField } from "./DateField";
+import { warehouseLabel } from "../lib/warehouse-label";
 
 /* One order's effective delivery date — amended wins over the customer's
    original (the same rule derivePlanningState uses), null-safe. Sliced to the
-   YYYY-MM-DD a <input type="date"> wants. */
+   YYYY-MM-DD DateField takes. */
 function effectiveDateOf(o: PlanningOrder): string {
   const iso = o.effective_delivery_date ?? o.amended_delivery_date ?? o.customer_delivery_date ?? "";
   return iso ? iso.slice(0, 10) : "";
@@ -395,10 +397,10 @@ export function ScheduleTripDrawer({
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
               <span className="mb-1 block text-[11.5px] font-semibold text-ink-secondary">Trip date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 value={tripDate}
-                onChange={(e) => setAllDates(e.target.value)}
+                onChange={(iso) => setAllDates(iso)}
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               />
             </label>
@@ -440,7 +442,7 @@ export function ScheduleTripDrawer({
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               >
                 <option value="">None</option>
-                {activeWarehouses.map((w) => <option key={w.id} value={w.id}>{w.code || w.name}</option>)}
+                {activeWarehouses.map((w) => <option key={w.id} value={w.id}>{warehouseLabel(w)}</option>)}
               </select>
             </label>
             <label className="block">
@@ -597,10 +599,10 @@ export function ScheduleTripDrawer({
                         </div>
                         <div className="mt-2 flex items-center gap-2">
                           <span className="text-[11px] font-semibold text-ink-secondary">Delivery date</span>
-                          <input
-                            type="date"
+                          <DateField
+                            fullWidth
                             value={dateFor(o.so_doc_no)}
-                            onChange={(e) => setDates((p) => ({ ...p, [o.so_doc_no]: e.target.value }))}
+                            onChange={(iso) => setDates((p) => ({ ...p, [o.so_doc_no]: iso }))}
                             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px] text-ink focus:border-primary focus:outline-none"
                           />
                           <span className="text-[11px] text-ink-muted">

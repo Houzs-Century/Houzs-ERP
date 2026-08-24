@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
 import { NEXT_STAGE, STAGE_FUNNEL_DESC } from "./serviceCaseStages";
 import { createPortal } from "react-dom";
+import { useAnchoredPanel, anchoredPanelStyle } from "../lib/anchoredPanel";
 import { Link, useSearchParams, useNavigate, useParams, Navigate } from "react-router-dom";
 import {
   Plus,
@@ -90,6 +91,12 @@ import { readAssrListFilter, writeAssrListFilter } from "../lib/assrListFilter";
    why the two changes ship together. 5 minutes matches the reference-data
    callsites in Team.tsx. */
 const LOOKUP_CACHE = { staleTime: 300_000 } as const;
+
+/* How tall the SO typeahead lists on this page want to be when there is room
+   (what the old `max-h-72` class asked for). lib/anchoredPanel shortens them
+   to the room actually available on the side it opens, so the last suggestion
+   is never below the bottom of the window. */
+const SO_SUGGEST_MAX_H = 288;
 import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
@@ -112,7 +119,9 @@ import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
-import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
+import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
   Paginated,
   AssrCase,
@@ -121,6 +130,14 @@ import type {
   AssrStage,
   PurchaseOrder,
 } from "../types";
+import { fmtDate } from "../vendor/shared/format";
+import { DateField } from "../vendor/scm/components/DateField";
+import {
+  ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+  categoryChipList,
+  splitCategories,
+  toggleCategory,
+} from "../lib/assrProductCategories";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -136,7 +153,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
-  { value: "voided", label: "Voided — Not Valid" },
+  { value: "voided", label: ASSR_STAGE_LABEL.voided },
 ];
 
 const RESOLUTION_OPTIONS = [
@@ -592,18 +609,15 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status detail (Nick 2026-07-15: the list must show e.g.
-        // "Pending Inspection" under Verification rows) — second muted
-        // line so the stage name + badges stay single-line above it.
-        //
-        // Owner 2026-07-16 ("duplicate 了"): the stage is shown ONCE. The sub
-        // line renders only when it ADDS information — a sub-status that just
-        // restates the stage ("Supplier Pickup" over "Pending Supplier Pickup")
-        // is suppressed; a distinguishing one ("Pending Supplier Return") stays.
+        // Sub-status rides a second muted line (Nick 2026-07-15). Owner 2026-07-16:
+        // hide a sub that merely restates its stage — except the combined Supplier
+        // stage, where naming the leg is the point (Nico 2026-08-22, chase list).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
-          sub && assrSubStatusAddsInfo(stageText, sub.label) ? sub.label : null;
+          sub && (r.stage === "pending_supplier_pickup" || assrSubStatusAddsInfo(stageText, sub.label))
+            ? sub.label
+            : null;
         return (
           <div>
             <div className="flex items-center gap-1.5">
@@ -612,9 +626,7 @@ function CasesView({
                   Archived
                 </Badge>
               )}
-              {/* Funnel-consistent dot: red when this row is SLA-breached
-                  (the funnel box goes red for the same reason), else the
-                  stage's own colour (amber open / green completed). */}
+              {/* Funnel-consistent dot: red = SLA-breached, else the stage's own colour. */}
               <StatusDot
                 variant={
                   r.stage !== "completed" && r.is_breached === 1
@@ -624,16 +636,14 @@ function CasesView({
                 label={stageText}
               />
               {r.stage !== "completed" && (r.is_breached === 1 || r.escalated_at) && (
-                // One SLA badge: solid red = breached, outline = escalated
-                // only (overdue >24h). Merged from the old separate SLA + Esc
-                // pills to calm the row.
+                // One SLA badge: solid = breached, outline = escalated (>24h overdue).
                 <Badge
                   tone="error"
                   variant={r.is_breached === 1 ? "solid" : "outline"}
                   title={
                     r.is_breached === 1
                       ? `SLA breached by ${Math.abs(r.hours_to_deadline ?? 0)}h${r.escalated_at ? " · escalated" : ""}`
-                      : `Auto-escalated ${r.escalated_at?.slice(0, 10)} — SLA overdue >24h`
+                      : `Auto-escalated ${fmtDate(r.escalated_at)} — SLA overdue >24h`
                   }
                 >
                   SLA
@@ -648,10 +658,12 @@ function CasesView({
           </div>
         );
       },
-      // caseStageLabel (not the legacy StatusDot stageLabel) — the old
-      // helper only maps the 5 legacy slugs, so 9-stage rows fell through
-      // to raw slugs in the funnel filter + CSV export.
-      getValue: (r) => caseStageLabel(r.stage),
+      // caseStageLabel, plus the sub label so the column FILTER and CSV split
+      // the legs (pickup vs return, inspection vs QC issue result).
+      getValue: (r) => {
+        const sub = assrSubStatus(r.stage, r.sub_status ?? null);
+        return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
+      },
     },
     {
       key: "assr_no",
@@ -1213,7 +1225,7 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-type StageFunnelRow = { stage: string; total: number; breached: number };
+type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number };
 type AssrSummary = {
   total?: number;
   active_count?: number;
@@ -1304,8 +1316,7 @@ function StageStatStrip({
         />
       </div>
 
-      {/* Stage pipeline — compact horizontal funnel; click a stage to filter
-          the list/board/calendar, click again (or All) to clear. */}
+      {/* Stage funnel — click a stage to filter; click again (or All) to clear. */}
       <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[13px] font-bold text-ink">Stage funnel</div>
@@ -1314,22 +1325,27 @@ function StageStatStrip({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {[
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
-            ...stages.map((s) => ({
-              value: s.value as StageFilter,
-              label: s.label,
-              desc: STAGE_FUNNEL_DESC[s.value] ?? "",
-              total: byStage.get(s.value)?.total ?? 0,
-              breached: byStage.get(s.value)?.breached ?? 0,
-            })),
+            ...stages.map((s) => {
+              const row = byStage.get(s.value);
+              // Supplier bucket names its two legs (Nico 2026-08-22) so ops sees
+              // at a glance how many suppliers to chase for pickup vs return.
+              const desc =
+                s.value === "pending_supplier_pickup" && ready && row?.total
+                  ? `${row.total - (row.sub_return ?? 0)} await pickup · ${row.sub_return ?? 0} await return`
+                  : STAGE_FUNNEL_DESC[s.value] ?? "";
+              return {
+                value: s.value as StageFilter,
+                label: s.label,
+                desc,
+                total: row?.total ?? 0,
+                breached: row?.breached ?? 0,
+              };
+            }),
           ].map((s) => {
             const isActive = stage === s.value;
             const empty = ready && s.total === 0;
-            // Dot severity: red = stage holds SLA-breached cases,
-            // dimmed grey = empty, green = All aggregate, solid grey =
-            // Completed (archived), petrol = open work otherwise.
-            // Nico 2026-07-09 — Completed split off from All so the
-            // closed-cases bucket reads as neutral grey (archived), not
-            // healthy green (which stays for the All summary).
+            // Dot: red = holds breached cases, dim grey = empty, green = All,
+            // solid grey = Completed split off All (Nico 2026-07-09), petrol = open.
             const dot =
               s.breached > 0
                 ? "bg-err"
@@ -2019,12 +2035,7 @@ function CaseDayModal({
   onClose: () => void;
   onOpen: (id: number) => void;
 }) {
-  const label = new Date(iso + "T00:00:00").toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  const label = `${new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long" })} ${fmtDate(iso)}`;
   return createPortal(
     <div
       className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-ink/30 p-4 backdrop-blur-sm sm:p-10"
@@ -2240,7 +2251,6 @@ function SoNoSearchEdit({
   >([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
     setDraft(current);
@@ -2272,25 +2282,10 @@ function SoNoSearchEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, current]);
 
-  // Track the input rect so the portaled dropdown follows it.
-  useLayoutEffect(() => {
-    if (!suggestions.length || !inputRef.current) {
-      setRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!inputRef.current) return;
-      const r = inputRef.current.getBoundingClientRect();
-      setRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 320) });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [suggestions]);
+  /* Track the input rect so the portaled dropdown follows it — shared
+     geometry (lib/anchoredPanel), so the list flips above the field when the
+     room below cannot hold it and is never taller than the space it is in. */
+  const rect = useAnchoredPanel(inputRef, suggestions.length > 0, SO_SUGGEST_MAX_H);
 
   async function commit(next: string) {
     setSuggestions([]);
@@ -2350,8 +2345,11 @@ function SoNoSearchEdit({
       {rect &&
         createPortal(
           <div
-            style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width, zIndex: 60 }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            /* The SO list needs a readable minimum even under a narrow field,
+               so the width floor overrides the anchor's own width. zIndex
+               stays this page's 60. */
+            style={{ ...anchoredPanelStyle(rect), width: Math.max(rect.width, 320), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {suggestions.map((s) => (
               <button
@@ -2405,12 +2403,13 @@ function CategoryChips({
   onChange: (next: string[]) => void;
   disabled?: boolean;
 }) {
-  const extras = value.filter((v) => !options.includes(v));
-  const toggle = (n: string) =>
-    onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
+  /* Which chips exist, and what a toggle produces, come from the SHARED rule
+     the phone reads too (lib/assrProductCategories.ts). Only the markup below
+     is desktop's. Re-deriving either here is how the phone ended up writing
+     free text into this column. */
   return (
     <div className="flex flex-wrap gap-1.5">
-      {[...options, ...extras].map((n) => {
+      {categoryChipList(options, value).map((n) => {
         const on = value.includes(n);
         return (
           <button
@@ -2418,7 +2417,7 @@ function CategoryChips({
             type="button"
             disabled={disabled}
             aria-pressed={on}
-            onClick={() => toggle(n)}
+            onClick={() => onChange(toggleCategory(value, n))}
             className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
               on
                 ? "border-primary bg-primary/10 text-primary"
@@ -2431,15 +2430,6 @@ function CategoryChips({
       })}
     </div>
   );
-}
-
-/** "Bedframe, Mattress" -> ["Bedframe","Mattress"]. The API keeps sending
- *  the flat string on the case row for every read-only surface. */
-function splitCategories(v: string | null | undefined): string[] {
-  return (v ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 function CreatePanel({
@@ -2481,7 +2471,6 @@ function CreatePanel({
   // otherwise clip suggestions extending below the section. Track the
   // input's viewport rect and re-render dropdown in fixed coordinates.
   const soInputRef = useRef<HTMLInputElement | null>(null);
-  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [lookupItems, setLookupItems] = useState<{ item_code: string; item_description: string | null; qty?: number }[] | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   // Per-item affected quantity (owner 2026-07: multiselect + per-product
@@ -2508,7 +2497,7 @@ function CreatePanel({
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   // Mig 065 — pull issue categories from the lookup endpoint so the
   // intake form mirrors what admins maintain in Service Maintenance.
-  // Fall back to the legacy ISSUE_CATEGORIES constant if the call
+  // Fall back to the shared ASSR_ISSUE_CATEGORIES list if the call
   // hasn't returned yet.
   const issueCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
@@ -2520,8 +2509,8 @@ function CreatePanel({
   // Product Category options mirror AutoCount's item groups (Nick
   // 2026-07-14) — admin-maintained in Service Maintenance until the
   // AutoCount reconnect back-fills the authoritative list.
-  const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/product-categories",
-    () => api.get("/api/assr/lookups/product-categories"),
+  const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>(ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+    () => api.get(ASSR_PRODUCT_CATEGORIES_ENDPOINT),
     [],
     LOOKUP_CACHE,
   );
@@ -2637,28 +2626,14 @@ function CreatePanel({
     return () => clearTimeout(handle);
   }, [docNo, pickedDocNo]);
 
-  // Sync the portaled dropdown's coords to the input rect whenever
-  // results or visibility change, and on scroll/resize so the menu
-  // tracks if the panel body scrolls.
-  useLayoutEffect(() => {
-    const open = soSuggestions.length > 0 && pickedDocNo !== docNo.trim();
-    if (!open || !soInputRef.current) {
-      setDropdownRect(null);
-      return;
-    }
-    const compute = () => {
-      if (!soInputRef.current) return;
-      const r = soInputRef.current.getBoundingClientRect();
-      setDropdownRect({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("scroll", compute, true);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("scroll", compute, true);
-    };
-  }, [soSuggestions, pickedDocNo, docNo]);
+  /* Sync the portaled dropdown to the input rect, tracking scroll/resize so
+     the menu follows if the panel body scrolls — shared geometry, same flip
+     and clamp as every other picker here. */
+  const dropdownRect = useAnchoredPanel(
+    soInputRef,
+    soSuggestions.length > 0 && pickedDocNo !== docNo.trim(),
+    SO_SUGGEST_MAX_H,
+  );
 
   function pickSuggestion(s: { doc_no: string; ref?: string | null; debtor_name: string | null; phone: string | null }) {
     setDocNo(s.doc_no);
@@ -2824,14 +2799,8 @@ function CreatePanel({
             the section. Coords are tracked in `dropdownRect`. */}
         {dropdownRect && createPortal(
           <div
-            style={{
-              position: "fixed",
-              top: dropdownRect.top,
-              left: dropdownRect.left,
-              width: dropdownRect.width,
-              zIndex: 60,
-            }}
-            className="max-h-72 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+            style={{ ...anchoredPanelStyle(dropdownRect), zIndex: 60 }}
+            className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
             {soSuggestions.map((s) => (
               <button
@@ -3054,7 +3023,7 @@ function CreatePanel({
             className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             <option value="">— select —</option>
-            {(issueCatOptions.length ? issueCatOptions : [...ISSUE_CATEGORIES]).map((c) => (
+            {(issueCatOptions.length ? issueCatOptions : [...ASSR_ISSUE_CATEGORIES]).map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -3251,7 +3220,8 @@ function DetailContent({
           onUpdated();
         }
       } catch {
-        // Silent — no perm, non-fatal.
+        // silent-write-ok: this also fires for callers WITHOUT the permission,
+      // where a 403 is the expected answer and nothing on screen depends on it.
       }
     })();
   }, [detail.data]);
@@ -3274,8 +3244,8 @@ function DetailContent({
     [],
     LOOKUP_CACHE,
   );
-  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/product-categories",
-    () => api.get("/api/assr/lookups/product-categories"),
+  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>(ASSR_PRODUCT_CATEGORIES_ENDPOINT,
+    () => api.get(ASSR_PRODUCT_CATEGORIES_ENDPOINT),
     [],
     LOOKUP_CACHE,
   );
@@ -3313,9 +3283,7 @@ function DetailContent({
   // inputs open — add an Edit button"); toggling exposes the InlineEdit
   // fields, incl. the SO-No mirror re-match.
   const [custEditing, setCustEditing] = useState(false);
-  const [noteCategory, setNoteCategory] = useState<"service" | "customer" | "supplier" | "sales">(
-    "service",
-  );
+  const [noteCategory, setNoteCategory] = useState<AssrNoteAudience>("service");
   // Activity timeline filter. 'all' = show everything; the others
   // narrow to one stored category (four buckets + system since mig
   // 0108): service / customer / supplier / sales cover authored notes
@@ -3733,7 +3701,7 @@ function DetailContent({
               onSave={(v) => patch({ issue_category: v })}
               dialog={dialog}
               categories={
-                issueOptions.length ? issueOptions : [...ISSUE_CATEGORIES]
+                issueOptions.length ? issueOptions : [...ASSR_ISSUE_CATEGORIES]
               }
             />
             <InlineEdit
@@ -4872,19 +4840,20 @@ function DetailContent({
                 <div className="mb-2 flex items-center gap-2">
                   <select
                     value={noteCategory}
-                    onChange={(e) =>
-                      setNoteCategory(e.target.value as "service" | "customer" | "supplier" | "sales")
-                    }
+                    onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
                     className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
                     title="Where this note is visible"
                   >
-                    <option value="service">Service (internal)</option>
-                    <option value="customer">Customer-visible</option>
-                    <option value="supplier">Supplier (internal)</option>
-                    <option value="sales">Sales (internal)</option>
+                    {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
+                        two lists had already drifted on the one label that
+                        matters: this side promised "Customer-visible", the phone
+                        said only "Customer". */}
+                    {ASSR_NOTE_AUDIENCES.map((a) => (
+                      <option key={a.value} value={a.value}>{a.label}</option>
+                    ))}
                   </select>
                   <span className="text-[10px] text-ink-muted">
-                    {noteCategory === "customer"
+                    {assrNoteIsCustomerVisible(noteCategory)
                       ? "The customer will see this note on the portal."
                       : "Internal only — hidden from the customer."}
                   </span>
@@ -4896,7 +4865,7 @@ function DetailContent({
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
                   }}
                   placeholder={
-                    noteCategory === "customer"
+                    assrNoteIsCustomerVisible(noteCategory)
                       ? "Write a note for the customer…"
                       : "Internal note…"
                   }
@@ -5337,14 +5306,10 @@ type CustomerHistoryRow = {
 // label. Stored as plain text on the case so existing free-text
 // values still display; selecting "Other" lets ops capture niche
 // cases without locking them into the standard set.
-
-const ISSUE_CATEGORIES = [
-  "Product defect",
-  "Incorrect item delivered",
-  "Missing / short item",
-  "Warranty / service request",
-  "Installation / assembly issue",
-] as const;
+//
+// The five live in vendor/scm/lib/assr/case-fields — mobile carried an
+// identical second copy, which is what the note-audience labels looked like
+// the day before THEY drifted.
 
 const OTHER_SENTINEL = "__other__";
 
@@ -5518,17 +5483,16 @@ const VERIFICATION_OPTIONS = [
 // 5-cell status summary bar. The full accordion + resolution-driven flow
 // filtering land in later PRs; this PR only refreshes the header strip.
 
-// desc — one-line caption under each funnel dot (Nick 2026-07-23:
-// 在 stage funnel 每个 stage 加上 description).
-const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] = [
-  { id: "pending_review",              short: "Review",       long: "Review",                  desc: "New case — first review" },
-  { id: "pending_solution",            short: "Solution",     long: "Solution",                desc: "Decide fix & assign supplier" },
-  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
-  { id: "pending_supplier_pickup",     short: "Supplier",     long: "Supplier Pickup / Return", desc: "Item with supplier for repair" },
-  { id: "pending_item_ready",          short: "Pending Item Ready", long: "Pending Item Ready", desc: "Repair done — QC check" },
-  { id: "pending_delivery_service",    short: "Delivery",     long: "Delivery / Service",      desc: "Schedule return delivery" },
-  { id: "completed",                   short: "Completed",    long: "Completed",               desc: "Closed & rated" },
-];
+// READ from the canonical table, never retyped. This WAS a sixth hand-written
+// copy of the stage vocabulary and four of its rows had drifted: it printed
+// "Review" / "Solution" / "Verification" / "Delivery / Service" where the shared
+// table — and therefore the phone, the portal and the printed report — says
+// "Pending Review" / "Pending Solution" / "Under Verification" / "Pending
+// Delivery / Service". One stage, two names, decided by which device the reader
+// picked up. `id` is this page's own name for the stage key; everything else,
+// including the funnel-dot caption, now comes from stages.ts.
+const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] =
+  ASSR_STAGES.map((s) => ({ id: s.key as AssrStage, short: s.short, long: s.long, desc: s.desc }));
 
 // `resolutionRoute` — which side of the flow a resolution method routes to —
 // now lives in the shared vendor/scm/lib/assr/stages module (imported above)
@@ -5725,12 +5689,18 @@ function WorkflowCard({
                 className="h-8 rounded-md border border-border bg-bg px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary disabled:opacity-60"
                 title="Move this case to any stage"
               >
-                {DETAIL_STAGES.map((s) => (
+                {/* The FILTERED prop, not the module table. This mapped
+                    DETAIL_STAGES while the counter two lines up read `stages` —
+                    so an internal-resolution case said "Step 2 / 5" and then
+                    offered all 7, the two supplier-only stages included. That is
+                    the exact drift vendor/scm/lib/assr/stages.ts exists to stop,
+                    and mobile (activeAssrStages) never had it. */}
+                {stages.map((s) => (
                   <option key={s.id} value={s.id}>{s.long}</option>
                 ))}
                 {/* Terminal alt-outcome — not a pipeline step, offered as
                     a final option (Nico 2026-07-29). */}
-                <option value="voided">Voided — Not Valid</option>
+                <option value="voided">{ASSR_STAGE_LABEL.voided}</option>
               </select>
               {onSubChange && ASSR_SUB_STATUSES[currentStage] && (
                 <select
@@ -5755,7 +5725,7 @@ function WorkflowCard({
             ✕
           </span>
           <div>
-            <div className="text-[13px] font-bold text-err">Voided — Not Valid</div>
+            <div className="text-[13px] font-bold text-err">{ASSR_STAGE_LABEL.voided}</div>
             <div className="text-[11px] text-ink-muted">
               {voidReason
                 ? `Reason: ${voidReason}`
@@ -6661,10 +6631,10 @@ function LogisticsRow({
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date</span>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={draft.scheduled_date}
-              onChange={(e) => setDraft((d) => ({ ...d, scheduled_date: e.target.value }))}
+              onChange={(iso) => setDraft((d) => ({ ...d, scheduled_date: iso }))}
               className="h-8 w-full rounded border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary"
             />
           </label>
@@ -7187,7 +7157,7 @@ function IssueCategoryField({
   dialog: ReturnType<typeof useDialog>;
   // Mig 065 — passed in from the parent so the picker reflects what
   // admins added in Service Maintenance. Falls back to the legacy
-  // ISSUE_CATEGORIES constant inside the parent if the API hasn't
+  // shared ASSR_ISSUE_CATEGORIES list if the API hasn't
   // returned yet.
   categories: readonly string[];
 }) {
@@ -8005,10 +7975,10 @@ function LogisticsForm({
           <option value="pickup">Pickup</option>
           <option value="delivery">Delivery</option>
         </select>
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(iso) => setDate(iso)}
           className="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:border-primary"
         />
       </div>

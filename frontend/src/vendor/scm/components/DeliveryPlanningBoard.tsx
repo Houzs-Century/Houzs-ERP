@@ -8,7 +8,7 @@
 // from DeliveryPlanning.tsx so it can be reused UNCHANGED in two places:
 //
 //   1. DeliveryPlanning.tsx  — the full board: all 4 state tabs, every bulk
-//      action (Convert to DO, Schedule), region chips, expand, multiselect.
+//      action (Transfer to Delivery Order, Schedule), region chips, expand, multiselect.
 //   2. Trips.tsx "To schedule" panel — the SAME board LOCKED to
 //      state=PENDING_SCHEDULE (no state-tab row), still with the full column
 //      set, region chips, expandable line-item detail and multiselect wired to
@@ -20,13 +20,14 @@
 // it reuses useScheduleDelivery / useDeliveryPlanningLines exactly as before.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { fmtCenti, fmtDateOrDash, fmtDateTime, buildVariantSummary } from '@2990s/shared';
+import { useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { Button } from '../../../components/Button';
+import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
 import {
   useDeliveryPlanningLines,
@@ -44,7 +45,9 @@ import {
 } from '../lib/delivery-planning-queries';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
+import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
+import { DateField } from "./DateField";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -159,6 +162,21 @@ function TypeChip({ order }: { order: PlanningOrder }) {
 /* A muted em-dash cell — the shared "not applicable" render for columns that
    don't apply to an ASSR row (stock, driver, lorry). */
 const NotApplicable = () => <span style={{ color: '#767b6e' }}>—</span>;
+
+/* ── SO-list type ramp (owner 2026-08-19: "要和 sales order design 设计,字体,
+   颜色一样") — the three cell voices the DataTable lists speak, mirrored here:
+   doc numbers = Plex Mono 12.5 semibold ink (`font-docno`), primary names =
+   13 semibold ink, detail text = 12.5 ink-secondary. Hexes written out for the
+   usual vendor-cascade reason (several --c-* tokens resolve differently here). */
+const DOCNO_STYLE: CSSProperties = {
+  fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace",
+  fontSize: 12.5, fontWeight: 600, color: '#11140f',
+};
+const MONEY_STYLE: CSSProperties = { fontSize: 13, fontWeight: 600, color: '#11140f' };
+const strong = (v: ReactNode) => <span style={{ fontSize: 13, fontWeight: 600, color: '#11140f' }}>{v}</span>;
+const detail = (v: ReactNode) => (
+  <span style={{ fontSize: 12.5, color: '#414539', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+);
 
 /* Region chips — CONFIG-DRIVEN buckets (migration 0053) classified by customer
    STATE. The bucket list comes from the API's `regions` master (owner-
@@ -346,10 +364,10 @@ function LorryEditCell({ order, sched, lorries }: { order: PlanningOrder; sched:
 }
 
 /* Balance source-of-truth (mirrors the SO list's liveBalance, PR #83):
-   the payment-totals view's balance_centi_live (local_total − Σpayments) when
-   present, else the header's stored balance_centi. */
+   the payment-totals view's balance_sen_live (local_total − Σpayments) when
+   present, else the header's stored balance_sen. */
 const liveBalance = (o: PlanningOrder): number =>
-  typeof o.balance_centi_live === 'number' ? o.balance_centi_live : o.balance_centi;
+  typeof o.balance_sen_live === 'number' ? o.balance_sen_live : o.balance_sen;
 
 /* The days_left cell renderer lived here until the owner's 2026-08-04 column
    pass removed that column. It is gone rather than left dangling — the Overdue
@@ -521,7 +539,7 @@ export type DeliveryPlanningBoardProps = {
   lorries: LorryRow[];
   msgStatuses?: Record<string, { success: boolean; http_code: number | null; created_at: string }>;
 
-  /* Extra buttons rendered at the right of the bulk bar (Convert to DO,
+  /* Extra buttons rendered at the right of the bulk bar (Transfer to Delivery Order,
      Schedule, …). The page injects them since they open page-owned drawers. */
   bulkExtras?: ReactNode;
 
@@ -599,6 +617,9 @@ export function DeliveryPlanningBoard({
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
+  /* Salesperson column — agent text / salesperson_id resolved against the staff
+     roster, same helper as the SO list (never renders a raw UUID). */
+  const { nameOf: salespersonNameOf } = useStaffLookup();
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -727,18 +748,20 @@ export function DeliveryPlanningBoard({
          that pass — Days Left, Delivered Date, Property, Possession, Referral,
          Internal Est. — and the address moved INTO the default view, because
          where the lorry is going is a planning question. */
-      // What is this row, and who is it for
-      'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'phone', 'wa_message',
+      // What is this row, and who is it for (owner 2026-08-19: + who sold it
+      // and at which venue — Salesperson / Venue joined the default view)
+      'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'salesperson', 'venue', 'phone', 'wa_message',
       // Where it is going
       'region', 'address', 'postcode',
       // Where it stands
       'delivery_state', 'stock_remark',
-      // When
-      'customer_delivery_date', 'amended_delivery_date',
+      // When (owner 2026-08-19: + Processing Date, the internal expected
+      // delivery date — same field the SO list shows under that name)
+      'processing_date', 'customer_delivery_date', 'amended_delivery_date',
       // Who takes it
       'driver', 'lorry',
-      // What proves it
-      'do',
+      // What proves it, and what it's worth (owner 2026-08-19: + Total Amount)
+      'do', 'total_amount',
       // Cross-border, shown ONLY on the EM / SG region tabs (defaultHidden:
       // !isEmSg) — noise on the other four, essential on those two.
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
@@ -760,7 +783,7 @@ export function DeliveryPlanningBoard({
       // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Document + money
-      'so_date', 'warehouse', 'do_date', 'balance_centi',
+      'so_date', 'warehouse', 'do_date', 'balance_sen',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
@@ -782,7 +805,7 @@ export function DeliveryPlanningBoard({
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
       key: 'so_doc_no', label: 'SO No.', width: 150, sortable: true,
       accessor: (o) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', fontWeight: 700, color: '#0c3f39', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', ...DOCNO_STYLE }}>
           {isDp(o) ? (o.dp_no ?? '— not scheduled') : isAssr(o) ? (o.ref ?? '—') : o.so_doc_no}
         </span>
       ),
@@ -802,14 +825,33 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'debtor_name', label: 'Customer', width: 200, sortable: true, groupable: true,
-      accessor: (o) => o.debtor_name ?? o.debtor_code ?? '—',
+      accessor: (o) => strong(o.debtor_name ?? o.debtor_code ?? '—'),
       searchValue: (o) => `${o.debtor_name ?? ''} ${o.debtor_code ?? ''}`.trim(),
       groupValue: (o) => o.debtor_name ?? o.debtor_code ?? '(none)',
       sortFn: (a, b) => (a.debtor_name ?? '').localeCompare(b.debtor_name ?? ''),
     },
     {
+      /* Who SOLD the order (owner 2026-08-19) — same roster-resolved name the
+         SO list shows (never a raw UUID). SO rows only; n/a on job rows. */
+      key: 'salesperson', label: 'Salesperson', width: 150, sortable: true, groupable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(salespersonNameOf(o.agent, o.salesperson_id, '—'))),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
+      groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : salespersonNameOf(o.agent, o.salesperson_id, '(none)')),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
+      sortFn: (a, b) => salespersonNameOf(a.agent, a.salesperson_id, '').localeCompare(salespersonNameOf(b.agent, b.salesperson_id, '')),
+    },
+    {
+      /* Where it was SOLD (owner 2026-08-19) — the SO's sales venue; PMS
+         project rows carry their event venue. */
+      key: 'venue', label: 'Venue', width: 160, groupable: true,
+      accessor: (o) => detail(o.venue?.trim() || '—'),
+      searchValue: (o) => o.venue ?? '',
+      groupValue: (o) => o.venue?.trim() || '(none)',
+      exportValue: (o) => o.venue ?? '',
+    },
+    {
       key: 'phone', label: 'Phone', width: 150,
-      accessor: (o) => formatPhone(o.phone) || '—',
+      accessor: (o) => detail(formatPhone(o.phone) || '—'),
       searchValue: (o) => o.phone ?? '',
     },
     {
@@ -822,7 +864,7 @@ export function DeliveryPlanningBoard({
         if (!s) return '—';
         return (
           <span style={{ fontWeight: 600, color: s.success ? '#2e7d32' : '#b3261e' }}>
-            {s.success ? `Sent ${String(s.created_at).slice(5, 10)}` : 'Failed'}
+            {s.success ? `Sent ${fmtDate(s.created_at)}` : 'Failed'}
           </span>
         );
       },
@@ -836,7 +878,7 @@ export function DeliveryPlanningBoard({
       /* Default-hidden since the 2026-07-22 header tidy — product brand rarely
          drives scheduling; re-show it from the Columns drawer when needed. */
       key: 'branding', label: 'Branding', width: 130, groupable: true, defaultHidden: true,
-      accessor: (o) => o.branding ?? '—',
+      accessor: (o) => detail(o.branding ?? '—'),
       searchValue: (o) => o.branding ?? '',
       groupValue: (o) => o.branding ?? '(none)',
     },
@@ -844,12 +886,12 @@ export function DeliveryPlanningBoard({
        where the lorry is going is a planning question, not a detail lookup. */
     {
       key: 'address', label: 'Address', width: 220,
-      accessor: (o) => o.address ?? '—',
+      accessor: (o) => detail(o.address ?? '—'),
       searchValue: (o) => o.address ?? '',
     },
     {
       key: 'postcode', label: 'Postcode', width: 100,
-      accessor: (o) => o.postcode ?? '—',
+      accessor: (o) => detail(o.postcode ?? '—'),
       searchValue: (o) => o.postcode ?? '',
     },
     /* `building_type` ("Property") was REMOVED in the owner's 2026-08-04 column
@@ -876,7 +918,7 @@ export function DeliveryPlanningBoard({
          BUCKET. The bucket is the tab row above; which states roll up into which
          bucket is owner-maintained in Delivery Regions. */
       key: 'region', label: 'State', width: 140, sortable: true, groupable: true,
-      accessor: (o) => o.customer_state?.trim() || '—',
+      accessor: (o) => detail(o.customer_state?.trim() || '—'),
       searchValue: (o) => o.customer_state ?? '',
       groupValue: (o) => o.customer_state?.trim() || '(none)',
       exportValue: (o) => o.customer_state ?? '',
@@ -890,18 +932,31 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'so_date', label: 'SO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.so_date),
+      accessor: (o) => detail(fmtDateOrDash(o.so_date)),
       searchValue: (o) => o.so_date ?? '',
       sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
       filterType: 'date', dateValue: (o) => o.so_date,
     },
     {
+      /* Processing Date (owner 2026-08-19) — the internal expected delivery
+         date (mfg_sales_orders.processing_date), the SAME field + name the SO
+         list shows. Was on this board as "Internal Est." until the 2026-08-04
+         column pass removed it; back by request. SO rows ONLY: the synthetic
+         job rows mirror their leg date into the payload field for the
+         effective-date fallback, but a job has no processing date, so the
+         column must not dress that mirror up as one (delivery-tms.md §"
+         processing_date is the SALES ORDER's Processing Date and nothing
+         else"). */
+      key: 'processing_date', label: 'Processing Date', width: 140, sortable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(fmtDateOrDash(o.processing_date))),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
+      sortFn: (a, b) => String(a.row_type === 'so' ? a.processing_date ?? '' : '').localeCompare(String(b.row_type === 'so' ? b.processing_date ?? '' : '')),
+      filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
+    },
+    {
       key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
-      accessor: (o) => (
-        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {fmtDateOrDash(o.customer_delivery_date)}
-        </span>
-      ),
+      accessor: (o) => detail(fmtDateOrDash(o.customer_delivery_date)),
       searchValue: (o) => o.customer_delivery_date ?? '',
       sortFn: (a, b) => String(a.customer_delivery_date ?? '').localeCompare(String(b.customer_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.customer_delivery_date,
@@ -912,14 +967,14 @@ export function DeliveryPlanningBoard({
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
       key: 'amended_delivery_date', label: 'Est. New Delivery Date', width: 130, sortable: true,
-      accessor: (o) => fmtDateOrDash(o.amended_delivery_date),
+      accessor: (o) => detail(fmtDateOrDash(o.amended_delivery_date)),
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
       key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.amend_date_from_customer),
+      accessor: (o) => detail(fmtDateOrDash(o.amend_date_from_customer)),
       searchValue: (o) => o.amend_date_from_customer ?? '',
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
@@ -932,14 +987,19 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.amend_reason ?? '',
     },
     {
-      key: 'stock_remark', label: 'Stock', width: 150, groupable: true,
+      key: 'stock_remark', label: 'Stock', width: 170, groupable: true,
       /* ASSR + DP rows carry no stock/DO data → non-applicable. */
+      /* The shared pill (components/StockRemarkPill.tsx), 2026-08-17. This cell
+         used to carry its own third pair of hard-coded hexes keyed off
+         stock_status while the SO list used grey text and ConsignmentOrders
+         used the designed pill — one value, three looks. `|| o.stock_status`
+         stays: readinessRowFields emits a remark for every stock-bearing row,
+         and the fallback covers a row that predates it. */
       accessor: (o) => (isAssr(o) || isDp(o) ? <NotApplicable /> : (
-        <span style={{ fontSize: 'var(--fs-12)', color: o.stock_status === 'PENDING' ? '#767b6e' : '#2f5d4f' }}>
-          {o.stock_remark || o.stock_status}
-        </span>
+        <StockRemarkPill remark={o.stock_remark || o.stock_status} />
       )),
       searchValue: (o) => (isAssr(o) || isDp(o) ? '' : `${o.stock_remark} ${o.stock_status}`.trim()),
+      sortFn: (a, b) => stockRemarkSortFn(a.stock_remark || a.stock_status, b.stock_remark || b.stock_status),
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
     },
     {
@@ -1019,7 +1079,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'shipout_date', label: 'Ship-out Date', width: 120, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => fmtDateOrDash(o.shipout_date),
+      accessor: (o) => detail(fmtDateOrDash(o.shipout_date)),
       searchValue: (o) => o.shipout_date ?? '',
       sortFn: (a, b) => String(a.shipout_date ?? '').localeCompare(String(b.shipout_date ?? '')),
       filterType: 'date', dateValue: (o) => o.shipout_date,
@@ -1034,7 +1094,7 @@ export function DeliveryPlanningBoard({
        (these cross-border columns only matter for the EM trip). */
     {
       key: 'arrives_em_warehouse_date', label: 'Arrives EM Warehouse', width: 150, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => fmtDateOrDash(o.arrives_em_warehouse_date),
+      accessor: (o) => detail(fmtDateOrDash(o.arrives_em_warehouse_date)),
       searchValue: (o) => o.arrives_em_warehouse_date ?? '',
       sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
       filterType: 'date', dateValue: (o) => o.arrives_em_warehouse_date,
@@ -1082,14 +1142,35 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.crew?.lorry_plate ?? '',
     },
     {
+      /* Total Amount (owner 2026-08-19) — the SO's grand total (local_total_sen),
+         same figure as the SO list's Amount column. Default-VISIBLE, unlike the
+         Balance beside it: the outstanding balance is a finance lookup, but the
+         order's value is a planning fact. n/a on job rows (their total is a
+         structural 0, and RM 0.00 would read as a paid-up order). */
+      key: 'total_amount', label: 'Total Amount', width: 140, align: 'right', sortable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : (
+        <span style={MONEY_STYLE}>{fmtSen(o.local_total_sen)}</span>
+      )),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : String(o.local_total_sen)),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : o.local_total_sen / 100),
+      sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
+      numberValue: (o) => (o.row_type !== 'so' ? null : o.local_total_sen / 100),
+    },
+    {
       /* Default-HIDDEN since the 2026-08-04 tidy-up. The release gate — which is
          what a dispatcher actually needs from the money side — already rides on
          the row; the raw balance is a finance figure, and it is 0 on every ASSR /
          DP / project row by construction. */
-      key: 'balance_centi', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
+      key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
+      /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
+         the muted grey that means "nothing owed" (owner 2026-08-16); a live
+         balance reads in the SO list's ink since the 2026-08-19 restyle. */
       accessor: (o) => (
-        <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700, color: liveBalance(o) > 0 ? '#0c3f39' : '#767b6e' }}>
-          {fmtCenti(liveBalance(o))}
+        <span style={{
+          ...MONEY_STYLE,
+          color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#11140f' : '#767b6e',
+        }}>
+          {fmtSen(liveBalance(o))}
         </span>
       ),
       searchValue: (o) => String(liveBalance(o)),
@@ -1099,7 +1180,9 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'do', label: 'DO No.', width: 130, groupable: true,
-      accessor: (o) => (o.delivery_orders.length > 0 ? o.delivery_orders.map((d) => d.do_number).join(', ') : '—'),
+      accessor: (o) => (o.delivery_orders.length > 0
+        ? <span style={DOCNO_STYLE}>{o.delivery_orders.map((d) => d.do_number).join(', ')}</span>
+        : '—'),
       searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
     },
     /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
@@ -1109,7 +1192,7 @@ export function DeliveryPlanningBoard({
        it is blank on every ASSR / DP / project row. */
     {
       key: 'do_date', label: 'DO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.do_date),
+      accessor: (o) => detail(fmtDateOrDash(o.do_date)),
       searchValue: (o) => o.do_date ?? '',
       sortFn: (a, b) => String(a.do_date ?? '').localeCompare(String(b.do_date ?? '')),
       filterType: 'date', dateValue: (o) => o.do_date,
@@ -1121,8 +1204,9 @@ export function DeliveryPlanningBoard({
   // The EM/SG cross-border default-show (isEmSg) depends on activeRegion →
   // recompute the columns on region change. The editable Status/Date/Driver/Lorry
   // accessors close over `sched` + the driver/lorry option lists, so they join the
-  // deps (a new driver/lorry list must re-render the pickers).
-  }, [isEmSg, sched, drivers, lorries, msgStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
+  // deps (a new driver/lorry list must re-render the pickers); ditto the
+  // Salesperson cells over the staff-roster lookup.
+  }, [isEmSg, sched, drivers, lorries, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Map-open column narrowing: everything NOT in the override hides at render
      time (DataGrid overlayHidden). The user's persisted layout is untouched —
@@ -1228,7 +1312,7 @@ export function DeliveryPlanningBoard({
       {/* Compact bulk-edit bar — appears once one or more rows are ticked.
           "<N> selected · Set [field] → [value] [Apply]" mass-writes one field
           across every selected SO via useScheduleDelivery; the value control's
-          TYPE follows the chosen field. Page-specific actions (Convert to DO,
+          TYPE follows the chosen field. Page-specific actions (Transfer to Delivery Order,
           Schedule) are injected via `bulkExtras` on the right. */}
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>
@@ -1265,12 +1349,12 @@ export function DeliveryPlanningBoard({
             </select>
           )}
           {bulkField === 'DATE' && (
-            <input
-              type="date"
+            <DateField
+              fullWidth
               className={styles.bulkControl}
               value={bulkValue}
               disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
+              onChange={(iso) => setBulkValue(iso)}
               aria-label="New delivery date"
             />
           )}

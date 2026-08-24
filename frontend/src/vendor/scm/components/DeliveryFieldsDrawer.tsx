@@ -34,15 +34,19 @@ import { useCreateAmendment } from '../lib/so-amendment-queries';
 import { procLockActive } from '../lib/so-detail-gates';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { DateField } from "./DateField";
+import { DateTimeField } from "./DateTimeField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A TIMESTAMPTZ ISO string → the value a <input type="datetime-local"> wants
-   (local-ish YYYY-MM-DDTHH:mm). Best-effort: slice the ISO; empty when null. */
+/* A TIMESTAMPTZ ISO string → the wall-clock YYYY-MM-DDTHH:mm that DateTimeField
+   reads and writes (the same shape a native datetime-local used, unchanged when
+   Arrival/Departure moved onto DateTimeField on 2026-08-18).
+   Best-effort: slice the ISO; empty when null. */
 const toDtLocal = (iso: string | null): string =>
   iso ? String(iso).slice(0, 16) : '';
-/* A YYYY-MM-DD date string → the value a <input type="date"> wants. */
+/* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
 export const DeliveryFieldsDrawer = ({
@@ -179,9 +183,13 @@ export const DeliveryFieldsDrawer = ({
 
           <label style={fieldRow}>
             <div className={styles.eyebrow}>Possession Date</div>
-            <input type="date" className={styles.searchInput} style={inputStyle}
+            <DateField
+              fullWidth
+              className={styles.searchInput}
+              style={inputStyle}
               value={form.possessionDate}
-              onChange={(e) => set('possessionDate', e.target.value)} />
+              onChange={(iso) => set('possessionDate', iso)}
+            />
           </label>
 
           <label style={fieldRow}>
@@ -247,30 +255,40 @@ export const DeliveryFieldsDrawer = ({
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Arrival</div>
-              <input type="datetime-local" className={styles.searchInput} style={inputStyle}
+              <DateTimeField fullWidth className={styles.searchInput} style={inputStyle}
+                aria-label="Arrival"
                 value={form.arrivalAt}
-                onChange={(e) => set('arrivalAt', e.target.value)} />
+                onChange={(v) => set('arrivalAt', v)} />
             </label>
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Departure</div>
-              <input type="datetime-local" className={styles.searchInput} style={inputStyle}
+              <DateTimeField fullWidth className={styles.searchInput} style={inputStyle}
+                aria-label="Departure"
                 value={form.departureAt}
-                onChange={(e) => set('departureAt', e.target.value)} />
+                onChange={(v) => set('departureAt', v)} />
             </label>
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Shipout Date (EM/SG)</div>
-              <input type="date" className={styles.searchInput} style={inputStyle}
+              <DateField
+                fullWidth
+                className={styles.searchInput}
+                style={inputStyle}
                 value={form.shipoutDate}
-                onChange={(e) => set('shipoutDate', e.target.value)} />
+                onChange={(iso) => set('shipoutDate', iso)}
+              />
             </label>
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Customer Delivered Date</div>
-              <input type="date" className={styles.searchInput} style={inputStyle}
+              <DateField
+                fullWidth
+                className={styles.searchInput}
+                style={inputStyle}
                 value={form.customerDeliveredDate}
-                onChange={(e) => set('customerDeliveredDate', e.target.value)} />
+                onChange={(iso) => set('customerDeliveredDate', iso)}
+              />
             </label>
 
             <label style={fieldRow}>

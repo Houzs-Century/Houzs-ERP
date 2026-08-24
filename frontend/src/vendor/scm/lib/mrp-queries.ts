@@ -10,7 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 
 export type MrpAllocSource = 'stock' | 'po' | 'shortage';
 
@@ -103,6 +103,21 @@ export type MrpResponse = {
   warehouses: MrpWarehouse[];
   skus: MrpSku[];
   sofaSets: SofaSet[];
+  /* Demand with no delivery date, counted whether or not it was RENDERED —
+     `hidden` is the server saying which it did. The page must show this: a
+     filter the operator cannot see turned a real shortage into an invisible one
+     (owner, 2026-08-16). Optional on the type only so a response from a backend
+     that predates the field still parses. */
+  undated?: {
+    /** General (non-sofa) path — respects the category + warehouse filters. */
+    lines: number;
+    shortageUnits: number;
+    /** Sofa path — SOFA-by-construction and NOT category-filtered, so read it
+        on the sofa view only or it overstates every other tab. */
+    sofaSets: number;
+    sofaShortageUnits: number;
+    hidden: boolean;
+  };
   totals: {
     skuCount: number;
     shortageSkuCount: number;
@@ -110,22 +125,56 @@ export type MrpResponse = {
     sofaSetCount: number;
     sofaSetShortageCount: number;
   };
+  /* Stored-planning-snapshot metadata (backend option B, 2026-08-19). `stored`
+     is true when this response came from the saved snapshot (the default view),
+     false when it was computed live (a filtered/undated view, or before the
+     company's first snapshot). `computedAt` is when the plan was calculated, so
+     the page can show "as of <time>". Optional so a response from a backend that
+     predates the snapshot still parses. */
+  computedAt?: string;
+  stored?: boolean;
 };
 
 /** Stock Status Report / MRP — recomputed server-side on every call. */
 export function useMrp(params: { category: string; warehouseId: string; includeUndated?: boolean }) {
   const { category, warehouseId, includeUndated } = params;
+  /* Undated demand is HIDDEN unless the caller asks for it (owner 2026-08-18;
+     same default as the server's parseIncludeUndated). Kept in one place so the
+     cache key and the query string can never disagree about what was asked for
+     — and it must keep matching the server: two defaults for one flag is the
+     "one rule, two homes" shape that this codebase keeps paying for. */
+  const wantUndated = includeUndated ?? false;
   return useQuery({
-    queryKey: ['mrp', category, warehouseId, includeUndated ?? false],
+    queryKey: ['mrp', category, warehouseId, wantUndated],
     queryFn: () => {
       const q = new URLSearchParams();
       if (category && category !== 'all') q.set('category', category);
       if (warehouseId && warehouseId !== 'all') q.set('warehouseId', warehouseId);
-      if (includeUndated) q.set('includeUndated', 'true');
+      /* ALWAYS sent, in BOTH directions. The old `if (includeUndated) set(...)`
+         expressed "hide" by SILENCE, which only worked while the server default
+         happened to agree. Now that the default is true, silence would mean
+         "show" and unticking the box would have changed nothing on screen —
+         the omitted-parameter no-op this repo keeps re-learning. The client
+         states what it wants and the response's `undated.hidden` states what it
+         got, so a flag the server did not honour is visible from the answer. */
+      q.set('includeUndated', wantUndated ? 'true' : 'false');
       const qs = q.toString();
       return authedFetch<MrpResponse>(`/mrp${qs ? `?${qs}` : ''}`);
     },
     staleTime: 30_000,
+  });
+}
+
+/* Manual "Regenerate" — recompute the stored MRP snapshot server-side and
+   refresh every MRP view. POSTs /mrp/regenerate (option B, 2026-08-19); on
+   success the whole 'mrp' query family is invalidated so the page re-reads the
+   fresh snapshot. */
+export function useRegenerateMrp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => authedFetch<MrpResponse>(`/mrp/regenerate`, { method: 'POST' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['mrp'] }); },
+    onError: writeFailedAs('Could not regenerate the MRP plan'),
   });
 }
 

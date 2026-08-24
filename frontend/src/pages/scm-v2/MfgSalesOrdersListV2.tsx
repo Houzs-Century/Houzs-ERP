@@ -20,6 +20,9 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { salesOrderRowMenu } from "./row-menus";
+import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -37,9 +40,13 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { salesOrderPrintChain } from "../../lib/printChain";
+import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
@@ -58,13 +65,15 @@ import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../compon
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
-import { shortCompanyName } from "../../lib/branding";
+import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import {
-  useMfgSalesOrdersPaged,
-  useUpdateMfgSalesOrderStatus,
-  useMfgSalesOrderDetail,
-} from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
+import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
+import { holdPrompt } from "./use-hold-action";
+import { makeCloseAction } from "./use-close-action";
+import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -72,6 +81,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
@@ -80,7 +90,7 @@ import { poCellChips } from "../../lib/soPoChips";
 import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -88,7 +98,7 @@ import { formatPhone } from "@2990s/shared/phone";
 // .tsx) has 60+ fields; we pluck what the redesign shows. Everything is
 // typed loosely as any-safe (nullable) because the backend legacy fields.
 
-type SoRow = {
+type SoRow = HoldFields & {
   doc_no: string;
   so_date: string;
   debtor_name: string;
@@ -101,22 +111,22 @@ type SoRow = {
   po_doc_no: string | null;
   ref: string | null;
   branding: string | null;
-  first_item_branding: string | null;
+  first_item_branding: string | null; first_item_category: string | null;
   status: string;
-  local_total_centi: number;
+  local_total_sen: number;
   /* Stored snapshots — NOT the truth, and never read without the live
-     fallbacks below. `balance_centi` is rewritten to the gross grandTotal by
+     fallbacks below. `balance_sen` is rewritten to the gross grandTotal by
      the backend's recomputeTotals on every edit (so it never reflects a
-     payment) and `paid_centi` is a deprecated column no writer maintains. The
+     payment) and `paid_sen` is a deprecated column no writer maintains. The
      list payload carries the ledger-derived pair; prefer them. */
-  balance_centi: number;
-  paid_centi: number;
+  balance_sen: number;
+  paid_sen: number;
   /* Ledger-derived, from mfg_sales_orders_with_payment_totals — already in the
-     backend's LIST_COLS. paid_total_centi = Σ payments, balance_centi_live =
+     backend's LIST_COLS. paid_total_sen = Σ payments, balance_sen_live =
      local_total − Σ payments. Same source the mobile SO list and Delivery
      Planning read. Optional so an absent view row falls back, not crashes. */
-  paid_total_centi?: number | null;
-  balance_centi_live?: number | null;
+  paid_total_sen?: number | null;
+  balance_sen_live?: number | null;
   phone: string | null;
   email: string | null;
   address1: string | null;
@@ -134,6 +144,13 @@ type SoRow = {
   building_type: string | null;
   customer_country: string | null;
   do_nos?: string[] | null;
+  /** The same delivery orders and the sales invoices raised against this order,
+   *  each with the id the right-click "Print Delivery Order" needs — a PDF is
+   *  fetched by ADDRESS and `do_nos` carries only the number. Optional: a page
+   *  and the Worker deploy independently, so a bundle can talk to a worker that
+   *  does not send them yet, and the menu simply offers fewer entries. */
+  do_refs?: Array<{ id: string; docNo: string }> | null;
+  si_refs?: Array<{ id: string; docNo: string }> | null;
   stock_remark?: string;
   /** System Purchase Order numbers this SO was converted into (empty when
    *  none). Server-derived via the SO-line→PO-item→PO chain. LEGACY raise-link
@@ -155,70 +172,31 @@ type SoRow = {
   //    backend OMITS these keys entirely for non-finance callers
   //    (canViewScmFinance), so every one is optional. margin_pct_basis is
   //    basis points (margin/total x 10000).
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
-  deposit_centi?: number;
+  deposit_sen?: number;
 };
 
-/* Every status the backend vocabulary carries (mfg-sales-orders.ts
-   SO_STATUSES), in lifecycle order — the strip shows ALL of them with live
-   counts so the buckets always sum to All and no order can look lost inside a
-   hidden status (owner 2026-07-24: "ALL 68 but CONFIRMED 35 — where did they
-   go?"). `other` is the server's catch-all for legacy/unknown spellings and
-   only earns a pill when its count is non-zero. */
-type StatusTab =
-  | "all"
-  | "draft"
-  | "confirmed"
-  | "in_production"
-  | "ready_to_ship"
-  | "shipped"
-  | "delivered"
-  | "invoiced"
-  | "closed"
-  | "on_hold"
-  | "cancelled"
-  | "other";
 
-const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "draft", label: "Draft" },
-  { value: "confirmed", label: "Confirmed" },
-  { value: "in_production", label: "In Production" },
-  { value: "ready_to_ship", label: "Ready to Ship" },
-  { value: "shipped", label: "Shipped" },
-  { value: "delivered", label: "Delivered" },
-  { value: "invoiced", label: "Invoiced" },
-  { value: "closed", label: "Closed" },
-  { value: "on_hold", label: "On Hold" },
-  { value: "cancelled", label: "Cancelled" },
-];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return "—";
-  // Accept "2026-07-04" / "2026/07/04" / ISO datetime — normalise to yyyy/mm/dd.
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
 // Ref number". Prefer po_doc_no (populated by the SO New form's "Customer
@@ -227,34 +205,14 @@ const refOf = (r: SoRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
-// BEDFRAME = accent (bedframe-only SOs, derived server-side), other brands =
-// warning (amber). Falls back to first_item_branding when the header brand is
-// blank (mixed-line SOs / bedframe-only SOs).
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("BEDFRAME")) return "accent";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+// BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
+// dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
+const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
+/* This surface carries the line's CATEGORY, so it uses the accurate entry
+   point: colour and label then share one bucket rule and cannot disagree.
+   ../../lib/brandingTone has the whole story. */
+const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
-// Status → tone + label. The upstream `status` string is one of the SO
-// lifecycle values plus a couple of AutoCount-legacy synonyms. Anything not
-// matched falls through as neutral.
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string }> = {
-  draft: { tone: "warning", label: "Draft" },
-  confirmed: { tone: "success", label: "Confirmed" },
-  cancelled: { tone: "error", label: "Cancelled" },
-  cancel: { tone: "error", label: "Cancelled" },
-  invoiced: { tone: "success", label: "Invoiced" },
-  delivered: { tone: "success", label: "Delivered" },
-  completed: { tone: "success", label: "Completed" },
-};
-
-const statusFor = (s: string): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
-  STATUS_TONE[s?.toLowerCase() ?? ""] ?? { tone: "neutral", label: s || "—" };
 
 // ─── Salesperson dropdown / split-menu ──────────────────────────────────────
 
@@ -406,13 +364,13 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.doc_no}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {r.debtor_name || "—"}
             </div>
             <div className="mt-1 flex items-center gap-2">
-              <Badge tone={brandTone(brand)} variant="soft" size="xs">
+              <Badge tone={brandTone(r)} variant="soft" size="xs">
                 {brand}
               </Badge>
               <span className="text-[11.5px] text-ink-muted">{fmtDate(r.so_date)}</span>
@@ -427,7 +385,7 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.local_total_centi)}
+                {fmtRm(r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -468,11 +426,11 @@ function DetailDrawer({
 }) {
   const detailQ = useMfgSalesOrderDetail(row?.doc_no ?? null);
   // API (GET /mfg-sales-orders/:docNo) returns raw item columns: description,
-  // item_code, qty, unit_price_centi, discount_centi, total_centi. Read those
-  // exact names (matches SalesOrderDetailV2). The old product_name/product_code/
-  // amount_centi names never existed → "—" for every SO, and for mirrored 2990
-  // POS lines (money in total_centi, unit_price_centi≈0) the qty×unit fallback
-  // rendered RM 0.00. Prefer the authoritative total_centi.
+  // item_code, qty, unit_price_sen, discount_sen, total_sen. Read those
+  // exact names (matches SalesOrderDetailV2). The old product_name/item_code/
+  // amount_sen names never existed → "—" for every SO, and for mirrored 2990
+  // POS lines (money in total_sen, unit_price_sen≈0) the qty×unit fallback
+  // rendered RM 0.00. Prefer the authoritative total_sen.
   // Owner 2026-07-15 — the quick-view line must read like the customer doc:
   // "order line must show description, colour, divan etc." The detail response
   // already carries item_group / description2 / variants for every line (they
@@ -486,8 +444,8 @@ function DetailDrawer({
     item_group?: string | null;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_centi?: number;
-    total_centi?: number;
+    unit_price_sen?: number;
+    total_sen?: number;
   }> =
     (detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
       item_code?: string;
@@ -496,8 +454,8 @@ function DetailDrawer({
       item_group?: string | null;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_centi?: number;
-      total_centi?: number;
+      unit_price_sen?: number;
+      total_sen?: number;
     }> ?? [];
 
   const open = !!row;
@@ -509,15 +467,15 @@ function DetailDrawer({
   // prices are quoted SST-inclusive (mirrors SalesOrderDetailV2's "SST ·
   // Inclusive" line). Adding another 6 % double-taxed the drawer's Total
   // against the aside on the detail page. Total is now just subtotal.
-  const subtotalCenti =
+  const subtotalSen =
     items.length > 0
-      ? items.reduce((sum, l) => sum + (l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0)), 0)
-      : row?.local_total_centi ?? 0;
-  const totalCenti = subtotalCenti;
-  // Ledger-derived paid (Σ payments); the stored paid_centi is a deprecated
+      ? items.reduce((sum, l) => sum + (l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0)), 0)
+      : row?.local_total_sen ?? 0;
+  const totalSen = subtotalSen;
+  // Ledger-derived paid (Σ payments); the stored paid_sen is a deprecated
   // column no writer maintains, kept only as the absent-view fallback.
-  const paidCenti = row?.paid_total_centi ?? row?.paid_centi ?? 0;
-  const outstandingCenti = totalCenti - paidCenti;
+  const paidSen = row?.paid_total_sen ?? row?.paid_sen ?? 0;
+  const outstandingSen = totalSen - paidSen;
 
   return (
     <ResizableDetailDrawer
@@ -560,7 +518,7 @@ function DetailDrawer({
               {/* customer + brand + date */}
               <div className="text-[19px] font-bold text-ink">{row.debtor_name || "—"}</div>
               <div className="mt-1.5 flex items-center gap-2.5">
-                <Badge tone={brandTone(brandOf(row))} variant="soft" size="xs">
+                <Badge tone={brandTone(row)} variant="soft" size="xs">
                   {brandOf(row)}
                 </Badge>
                 <span className="text-[12.5px] text-ink-muted">
@@ -639,7 +597,7 @@ function DetailDrawer({
                   </div>
                 )}
                 {items.map((l, i) => {
-                  const amt = l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+                  const amt = l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   /* Item CODE first, then the variant subtitle; description
                      dropped (owner 2026-07-24) — the shared order-line rule
                      (vendor/shared/line-identity.ts). Live variant summary wins
@@ -682,13 +640,13 @@ function DetailDrawer({
 
               {/* totals */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="Subtotal" v={fmtRm(subtotalCenti)} />
-                <TotalRow k="Total" v={fmtRm(totalCenti)} strong />
-                {paidCenti > 0 ? (
-                  <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
+                <TotalRow k="Subtotal" v={fmtRm(subtotalSen)} />
+                <TotalRow k="Total" v={fmtRm(totalSen)} strong />
+                {paidSen > 0 ? (
+                  <TotalRow k="Paid" v={fmtRm(paidSen)} tone="success" />
                 ) : null}
-                {outstandingCenti > 0 ? (
-                  <TotalRow k="Outstanding" v={fmtRm(outstandingCenti)} tone="error" />
+                {outstandingSen !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
+                  <TotalRow k={outstandingSen < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingSen)} tone="error" />
                 ) : null}
               </div>
             </div>
@@ -717,16 +675,18 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (s === "confirmed") {
+                if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
+                  /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
+                     "Delivered" STATUS, and statuses report while buttons act. */
                   return (
                     <Button
                       variant="primary"
                       icon={<Truck size={14} />}
                       onClick={onDeliver}
                     >
-                      Deliver
+                      {transferToLabel('do')}
                     </Button>
                   );
                 }
@@ -851,11 +811,11 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. Only the mismatched key
-// ("amount" → "local_total_centi") needs a map; doc_no / so_date / debtor_name
+// ("amount" → "local_total_sen") needs a map; doc_no / so_date / debtor_name
 // / status already match the backend names 1:1. Columns not in this map that
 // are also not backend-sortable are marked `disableSort` on the column def.
 const SORT_COL_MAP: Record<string, string> = {
-  amount: "local_total_centi",
+  amount: "local_total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -873,8 +833,8 @@ type DrillItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   qty?: number;
-  unit_price_centi?: number;
-  total_centi?: number;
+  unit_price_sen?: number;
+  total_sen?: number;
   /* Per-line readiness — all already stamped by GET /mfg-sales-orders/:docNo
      (the same payload this expansion fetches); the old four-column layout just
      dropped them on the floor (owner 2026-07-24: "怎么没有每一个 line 的
@@ -934,7 +894,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
           <span>Incoming PO</span>
         </div>
         {items.map((l, i) => {
-          const amt = l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+          const amt = l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0);
           /* Item CODE first, then the variant subtitle; description dropped
              (owner 2026-07-24) — the shared order-line rule
              (vendor/shared/line-identity.ts). This drill-down row is the TWIN
@@ -966,7 +926,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
                 {l.qty ?? 0}
               </span>
               <span className="text-right font-money text-[12px] text-ink-secondary">
-                {fmtRm(l.unit_price_centi ?? 0)}
+                {fmtRm(l.unit_price_sen ?? 0)}
               </span>
               <span className="text-right font-money text-[12px] font-semibold text-ink">
                 {fmtRm(amt)}
@@ -1040,8 +1000,15 @@ export function MfgSalesOrdersListV2() {
 
   const [selected, setSelected] = useState<SoRow | null>(null);
   // Server-side sort, formatted "<col>:<dir>" for the backend whitelist
-  // (so_date/doc_no/debtor_name/status/local_total_centi/customer_delivery_date).
+  // (so_date/doc_no/debtor_name/status/local_total_sen/customer_delivery_date).
   const [sort, setSort] = useState<string | undefined>(undefined);
+  // Gate the list query until the DataTable has reported its localStorage-
+  // restored sort up to us (its one-shot mount effect → setSortAndReset below).
+  // Without this the first fetch fires sort-less, then the restored sort lands
+  // and immediately aborts+re-fires it — one wasted round trip on every open.
+  // The report ALWAYS arrives once (even null when nothing is persisted), so
+  // this never hangs the no-persisted-sort case.
+  const [sortReady, setSortReady] = useState(false);
   // Debounced search — the URL `q` updates on every keystroke (so the input
   // stays controlled + shareable) but we only re-query the server 300ms after
   // the user stops typing.
@@ -1061,6 +1028,7 @@ export function MfgSalesOrdersListV2() {
     status,
     q: debouncedSearch,
     sort,
+    enabled: sortReady,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1078,11 +1046,12 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
   // wrong on a partial page).
-  const rows = (data?.salesOrders ?? []) as SoRow[];
+  const rows = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
   const total = data?.total ?? 0;
   // Status tab counts come from the server over the FULL scoped set (not the
   // page), so the pills stay correct while paging / searching.
@@ -1097,18 +1066,18 @@ export function MfgSalesOrdersListV2() {
   const aggregates = data?.aggregates;
   const stats = useMemo(() => {
     if (aggregates) return { ...aggregates, fullSet: true };
-    let revenueCenti = 0;
-    let outstandingCenti = 0;
-    let paidCenti = 0;
+    let revenueSen = 0;
+    let outstandingSen = 0;
+    let paidSen = 0;
     // Client-side fallback sum (legacy non-paginated path only — the paginated
     // path uses the server's full-set `aggregates`). Same ledger-derived
     // columns the server now sums, so both paths agree.
     for (const r of rows) {
-      revenueCenti += r.local_total_centi ?? 0;
-      outstandingCenti += r.balance_centi_live ?? r.balance_centi ?? 0;
-      paidCenti += r.paid_total_centi ?? r.paid_centi ?? 0;
+      revenueSen += r.local_total_sen ?? 0;
+      outstandingSen += r.balance_sen_live ?? r.balance_sen ?? 0;
+      paidSen += r.paid_total_sen ?? r.paid_sen ?? 0;
     }
-    return { revenueCenti, outstandingCenti, paidCenti, fullSet: false };
+    return { revenueSen, outstandingSen, paidSen, fullSet: false };
   }, [aggregates, rows]);
 
   // Write the page index to the URL. p<=0 drops the param (clean default).
@@ -1149,6 +1118,9 @@ export function MfgSalesOrdersListV2() {
     setSort(s ? `${SORT_COL_MAP[s.key] ?? s.key}:${s.dir}` : undefined);
     if (!sortSyncedRef.current) {
       sortSyncedRef.current = true;
+      // First (mount) report: the restored sort is now in state, so release the
+      // gate — the one and only list fetch fires with `sort` already applied.
+      setSortReady(true);
       return;
     }
     setPageParam(0); // sort change → back to page 0
@@ -1168,14 +1140,14 @@ export function MfgSalesOrdersListV2() {
   const goImport = () => navigate("/scm/sales-orders/maintenance?tab=import");
   const goDuplicate = () => navigate("/scm/sales-orders/maintenance?tab=duplicate");
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
-  const goPrint = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
   const doConfirm = (r: SoRow) =>
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "confirmed" },
+      { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
-  const doDeliver = (r: SoRow) => navigate(`/scm/delivery-orders/from-so?so=${r.doc_no}`);
+  const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SoRow) => {
@@ -1188,7 +1160,7 @@ export function MfgSalesOrdersListV2() {
     )
       return;
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "CONFIRMED" },
+      { docNo: r.doc_no, status: "CONFIRMED", expectedStatus: r.status },
       {
         onSuccess: () => setSelected(null),
         onError: (e) =>
@@ -1200,6 +1172,44 @@ export function MfgSalesOrdersListV2() {
       }
     );
   };
+
+  /* The four statuses the route accepted and no screen ever sent — the owner's
+     own lifecycle, minus the two the machine writes. See row-menus.ts. */
+  const setSoStatus = async (r: SoRow, status: string) => {
+    if (!(await askConfirm({
+      title: `${r.doc_no} → ${status.replace(/_/g, " ").toLowerCase()}?`,
+      body: "This changes the order's status. It does not move stock or create any document.",
+      confirmLabel: "Change status",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status, expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
+     Cancel and they do opposite things to the money. Both live in ./use-close-action. */
+  const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
+  const doCancelSo = async (r: SoRow) => {
+    if (!(await askConfirm({
+      title: `Cancel ${r.doc_no}?`,
+      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
+      confirmLabel: "Cancel Sales Order",
+    }))) return;
+    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
+      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
+     wording lives in ./use-hold-action; this screen runs it through askConfirm
+     because every other action here does. */
+  const setSoHold = async (r: SoRow, onHold: boolean) => {
+    if (!(await askConfirm(holdPrompt(r.doc_no, onHold)))) return;
+    setHold.mutate({ key: r.doc_no, onHold });
+  };
+  const soContextMenu = salesOrderRowMenu<SoRow>({
+    open: goFullPage, edit: goEdit, print: printDocument,
+    confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+  });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
@@ -1219,47 +1229,14 @@ export function MfgSalesOrdersListV2() {
   const clearSelection = () => setSelectedIds(new Set());
 
   // One SO's full PDF bundle — detail (header + items + pwpCodes) and the
-  // payments ledger, both via the vendored authedFetch (→ /api/scm). Mirrors
-  // the V1 MfgSalesOrdersList fetchSoBundle.
-  //
-  // 2026-07-19 — payments were "best-effort": `.catch(() => ({ payments: [] }))`
-  // so the PDF "still renders". But this PDF LEAVES THE BUILDING — it is the
-  // document the customer is handed. Rendering it with an empty Payments table
-  // does not degrade gracefully, it states a FALSE FACT: that the customer has
-  // paid nothing and owes the full total. "The read failed" became "nothing was
-  // paid" — reference_houzs_nullish_hides_ignorance, the same shape as #653
-  // (MobilePOD told a driver to re-collect a paid order) and #1158.
-  //
-  // A failed payments read now propagates. printSelectedSos already wraps this
-  // in try/catch → notify(tone:'error'), and authedFetch has already run the
-  // response through humanApiError, so the operator gets a plain sentence and
-  // NO document — which is the correct outcome. Not printing is recoverable;
-  // handing a customer a wrong statement of what they owe is not.
-  const fetchSoBundle = async (
-    docNo: string
-  ): Promise<{
-    header: unknown;
-    items: unknown[];
-    payments: unknown[];
-    pwpCodes: unknown[];
-  }> => {
-    const [detail, paymentsRes] = await Promise.all([
-      authedFetch<{ salesOrder: unknown; items: unknown[]; pwpCodes?: unknown[] }>(
-        `/mfg-sales-orders/${docNo}`
-      ),
-      authedFetch<{ payments?: unknown[] }>(
-        `/mfg-sales-orders/${docNo}/payments`
-      ),
-    ]);
-    return {
-      header: detail.salesOrder,
-      items: detail.items,
-      /* `?? []` is safe HERE and nowhere above it: we are past the await, so the
-         request SUCCEEDED and the server simply omitted the key on an SO with no
-         payments. An empty array is an answer; the absence of a response is not. */
-      payments: paymentsRes.payments ?? [],
-      pwpCodes: detail.pwpCodes ?? [],
-    };
+  // payments ledger. Delegated to lib/printDocumentPdf, the ONE place that
+  // knows a Sales Order is addressed by its NUMBER and that a failed payments
+  // read must PROPAGATE rather than render a PDF claiming nothing was paid —
+  // that reasoning now lives beside the fetch it governs. The row menu's print
+  // calls the same function, so batch and single cannot drift apart.
+  const fetchSoBundle = async (docNo: string) => {
+    const b = await fetchPrintBundle({ doc: "so", docNo, key: docNo });
+    return { ...b, payments: b.payments ?? [], pwpCodes: b.pwpCodes ?? [] };
   };
 
   // Batch "Print all" — one ticked SO downloads straight; several prompt
@@ -1426,7 +1403,7 @@ export function MfgSalesOrdersListV2() {
       render: (r) => {
         const b = brandOf(r);
         return (
-          <Badge tone={brandTone(b)} variant="soft" size="xs">
+          <Badge tone={brandTone(r)} variant="soft" size="xs">
             {b}
           </Badge>
         );
@@ -1442,11 +1419,8 @@ export function MfgSalesOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -1455,10 +1429,10 @@ export function MfgSalesOrdersListV2() {
       label: "Amount",
       width: "128px",
       align: "right",
-      getValue: (r) => r.local_total_centi,
+      getValue: (r) => r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_centi)}
+          {fmtRm(r.local_total_sen)}
         </span>
       ),
     },
@@ -1623,9 +1597,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.paid_total_centi ?? r.paid_centi ?? 0,
+      getValue: (r) => r.paid_total_sen ?? r.paid_sen ?? 0,
       render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_centi ?? r.paid_centi ?? 0)}</span>
+        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>
       ),
     },
     {
@@ -1636,9 +1610,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_centi_live ?? r.balance_centi ?? 0,
-      render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.balance_centi_live ?? r.balance_centi ?? 0)}</span>
+      getValue: (r) => r.balance_sen_live ?? r.balance_sen, // `?? 0` was dead: balance_sen is `number`, never nullish
+      render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
+        <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
@@ -1672,13 +1646,12 @@ export function MfgSalesOrdersListV2() {
       key: "stock_status",
       group: "Logistics",
       label: "Stock Status",
-      width: "150px",
+      width: "170px",
       defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => r.stock_remark ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.stock_remark || "—"}</span>
-      ),
+      disableSort: true,                       // client-side; sortValue orders it
+      getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
+      render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
     {
       key: "processing_date",
@@ -1697,7 +1670,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "customer_delivery_date",
       group: "Logistics",
-      label: "Customer Delivery Date",
+      label: "Delivery Date",
       width: "160px",
       defaultHidden: true,
       disableSort: true,
@@ -1763,159 +1736,159 @@ export function MfgSalesOrdersListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             group: "Finance",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             group: "Finance",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             group: "Finance",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             group: "Finance",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_centi",
+            key: "service_sen",
             group: "Finance",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_centi ?? 0,
+            getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             group: "Finance",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             group: "Finance",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             group: "Finance",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             group: "Finance",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_centi",
+            key: "service_cost_sen",
             group: "Finance",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_centi ?? 0,
+            getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             group: "Finance",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             group: "Finance",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1932,16 +1905,16 @@ export function MfgSalesOrdersListV2() {
             ),
           },
           {
-            key: "deposit_centi",
+            key: "deposit_sen",
             group: "Amounts",
             label: "Deposit",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.deposit_centi ?? 0,
+            getValue: (r) => r.deposit_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_sen ?? 0)}</span>
             ),
           },
         ] satisfies Column<SoRow>[])
@@ -2048,7 +2021,7 @@ export function MfgSalesOrdersListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} order{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(stats.revenueCenti)}</span>
+            <span className="font-money">{fmtRm(stats.revenueSen)}</span>
           </div>
         </div>
       </div>
@@ -2110,14 +2083,14 @@ export function MfgSalesOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Revenue"
-              value={fmtRm(stats.revenueCenti)}
+              value={fmtRm(stats.revenueSen)}
               subtitle={stats.fullSet ? "All matching orders" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
-              value={fmtRm(stats.outstandingCenti)}
+              value={fmtRm(stats.outstandingSen)}
               subtitle={stats.fullSet ? "Balance due" : "Balance on this page"}
               tone="error"
               rail="bg-err"
@@ -2125,7 +2098,7 @@ export function MfgSalesOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Paid"
-              value={fmtRm(stats.paidCenti)}
+              value={fmtRm(stats.paidSen)}
               subtitle={stats.fullSet ? "Receipts to date" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"
@@ -2247,6 +2220,7 @@ export function MfgSalesOrdersListV2() {
               onToggle: toggleSelect,
               onToggleAll: toggleSelectAll,
             }}
+            contextMenu={soContextMenu}
             exportName="sales-orders"
             serverSort
             onSortChange={setSortAndReset}
@@ -2328,7 +2302,7 @@ export function MfgSalesOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
         onConfirm={() => selected && doConfirm(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}

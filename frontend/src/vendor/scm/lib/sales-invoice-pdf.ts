@@ -13,6 +13,7 @@
 // as before. The SI carries ONE flat address, not the SO's
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
+import { siDepositAppliedSen } from './si-outstanding';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
@@ -21,8 +22,14 @@ type SiHeader = {
   invoice_number: string; status: string;
   so_doc_no: string | null; debtor_code: string | null; debtor_name: string;
   invoice_date: string; due_date: string | null; currency: string;
-  subtotal_centi: number; discount_centi: number; tax_centi: number;
-  total_centi: number; paid_centi: number; notes: string | null;
+  subtotal_sen: number; discount_sen: number; tax_sen: number;
+  total_sen: number; paid_sen: number; notes: string | null;
+  /* The slice of the source Sales Order's deposit that settles this invoice,
+     served on both the list row and the detail header. Optional because a
+     caller may hand this function a header from before that field existed;
+     absent reads as 0, which prints the LARGER outstanding — the only
+     direction a customer's copy may be wrong in. */
+  so_deposit_applied_sen?: number | null;
   /* The route has always CAPTURED these (sales-invoices.ts HEADER + the from-DO
      convert copies them off the DO header) — they were simply never printed, so
      the invoice went to the customer with no address on it. Optional because the
@@ -43,12 +50,12 @@ type SiHeader = {
 };
 type SiItem = {
   item_code: string; description: string | null;
-  qty: number; unit_price_centi: number;
+  qty: number; unit_price_sen: number;
   // Older items table rows in 2990s may omit these — keep optional so the
   // detail-page items shape is assignable without forcing a schema-wide
   // type widening.
-  discount_centi?: number; tax_centi?: number;
-  line_total_centi: number;
+  discount_sen?: number; tax_sen?: number;
+  line_total_sen: number;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
 };
@@ -130,9 +137,9 @@ export async function renderSalesInvoiceInto(
     it.item_code,
     [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—',
     String(it.qty),
-    fmtRm(it.unit_price_centi, header.currency),
-    (it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi ?? 0, header.currency) : '—',
-    fmtRm(it.line_total_centi, header.currency),
+    fmtRm(it.unit_price_sen, header.currency),
+    (it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen ?? 0, header.currency) : '—',
+    fmtRm(it.line_total_sen, header.currency),
   ]);
   autoTable(doc, {
     startY: y,
@@ -164,16 +171,33 @@ export async function renderSalesInvoiceInto(
   };
   doc.setFontSize(9);
   let ty = lastY;
-  drawRow('Subtotal', fmtRm(header.subtotal_centi, header.currency), ty); ty += 4;
-  drawRow('Discount', fmtRm(header.discount_centi, header.currency), ty); ty += 4;
-  drawRow('Tax',      fmtRm(header.tax_centi,      header.currency), ty); ty += 5;
+  drawRow('Subtotal', fmtRm(header.subtotal_sen, header.currency), ty); ty += 4;
+  drawRow('Discount', fmtRm(header.discount_sen, header.currency), ty); ty += 4;
+  drawRow('Tax',      fmtRm(header.tax_sen,      header.currency), ty); ty += 5;
   doc.setDrawColor(0); doc.line(totalsX, ty - 2, pageW - margin, ty - 2);
   doc.setFontSize(11);
-  drawRow('GRAND TOTAL', fmtRm(header.total_centi, header.currency), ty + 2, true);
+  drawRow('GRAND TOTAL', fmtRm(header.total_sen, header.currency), ty + 2, true);
   ty += 6;
   doc.setFontSize(9);
-  drawRow('Paid',        fmtRm(header.paid_centi, header.currency), ty + 4); ty += 4;
-  drawRow('Outstanding', fmtRm(header.total_centi - header.paid_centi, header.currency), ty + 4, true);
+  /* THIS IS THE CUSTOMER'S COPY, so it is the one place the old bug was worst:
+     until 2026-08-23 it printed the full invoice total as Outstanding on an
+     invoice whose order had already collected a deposit, and handed that to the
+     person who paid it (vendor/scm/lib/si-outstanding.ts). The deposit prints
+     as its OWN line naming the order — a customer reading a smaller number with
+     no explanation has the same question the office had. */
+  const siDeposit = siDepositAppliedSen(header);
+  drawRow(siDeposit > 0 ? 'Paid (this invoice)' : 'Paid',
+          fmtRm(header.paid_sen, header.currency), ty + 4); ty += 4;
+  if (siDeposit > 0) {
+    drawRow(`Deposit (${header.so_doc_no ?? 'sales order'})`,
+            fmtRm(siDeposit, header.currency), ty + 4); ty += 4;
+  }
+  /* Unfloored, exactly as before: an over-payment must print negative so the
+     customer sees the credit rather than a silent "0". The deposit cannot make
+     this MORE negative — the allocation never exceeds what the invoice still
+     owed, so `paid + deposit <= total` whenever `paid <= total`. */
+  drawRow('Outstanding',
+          fmtRm(header.total_sen - header.paid_sen - siDeposit, header.currency), ty + 4, true);
   ty += 12;
 
   ty = drawSignatureBoxes(doc, ty, 'Customer Acknowledgement', `${COMPANY.name} Authorised Signature`);

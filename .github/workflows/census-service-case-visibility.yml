@@ -1,0 +1,65 @@
+name: Census — Service Case visibility (read-only)
+
+# Answers "who GAINS and who LOSES Service Case access" for the owner's
+# 2026-08-20 decision (docs/SERVICE-CASE-VISIBILITY-DECISION.md) without anyone
+# opening a SQL console. The numbers live only in production and the standing
+# rule forbids putting the DSN in front of a human for a SELECT, so the count
+# runs here against secrets.DATABASE_URL.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Exit 0 for every
+# legitimate answer — the ANSWER is the output; a red job would read as "the
+# check broke".
+#
+# Manual trigger only — a question, not a gate; never on a schedule.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy's concurrency group: this touches nothing and must
+# never queue behind (or displace) a release.
+concurrency:
+  group: census-service-case-visibility
+  cancel-in-progress: true
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/census-service-case-visibility.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # Delivery-Planning board company census — the OTHER Service-Case scope
+      # question you cannot answer by reading code: how many board-eligible cases
+      # carry no resolvable company_id, and would therefore drop off EVERY
+      # board once the union carries the caller's company predicate (owner
+      # ruling 2026-08-21).
+      #
+      # It rides this workflow rather than a new one on purpose: a
+      # workflow_dispatch file is only dispatchable once it is on the default
+      # branch, so a brand-new workflow answers HTTP 404 until it merges — which
+      # is exactly when the answer is still needed. Extending a workflow that is
+      # already dispatchable lets `--ref <branch>` run THIS version of the file
+      # before the PR lands. Same reasoning as do-integrity-check.yml.
+      #
+      # `if: always()` so the census still reports when the step above fails.
+      # They answer different questions and neither is a gate.
+      - run: node scripts/census-assr-board-company.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

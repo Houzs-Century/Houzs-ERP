@@ -101,10 +101,13 @@ import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
-import { ACCESS_RANK } from "../types";
+import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
+import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
+import { PROJECT_STATUS_OPTIONS, paymentPillOptions, type ProjectStatus as SharedProjectStatus } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -121,6 +124,9 @@ import { MediaLightbox } from "../components/MediaLightbox";
 import { ResetFiltersButton } from "../components/ResetFiltersButton";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
+import { fmtDate } from "../vendor/shared/format";
+import { DateField } from "../vendor/scm/components/DateField";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 
 // ── Types (module-local) ─────────────────────────────────────
 // Kept in this file until something else imports them. Promoting to
@@ -142,7 +148,7 @@ type ChecklistStatus = "pending" | "done" | "na" | "blocked";
 // mig 088 — boss-facing lifecycle, drives the calendar tint and replaces
 // the old Go Live button. Independent from `stage` which keeps driving
 // the internal workflow + section tracker.
-type ProjectStatus = "confirmed" | "pending" | "cancelled";
+type ProjectStatus = SharedProjectStatus;
 
 interface ProjectRow {
   id: number;
@@ -680,11 +686,10 @@ function composeEventName(p: {
 
 // Default project-name format used by the create form.
 //   "{state} [{brand}] {organizer | SOLO} @ {venue}"
-// SOLO is event-type-driven: when the event type is "solo", the
-// organizer slot is the literal "SOLO" regardless of whether an
-// organizer was picked (a solo event is by definition not organised
-// by anyone). For non-solo event types, the chosen organizer fills
-// the slot; if empty, it's omitted.
+// A picked organizer always fills the slot — solo events included (owner
+// 2026-08-17, IOI Mall Damansara: the calendar said SOLO while the Excel
+// organizer column said MALL MGMT). "SOLO" appears only when no organizer is
+// chosen. Mirrors deriveProjectName in backend/src/services/project-naming.ts.
 function composeDefaultProjectName(p: {
   state?: string | null;
   brand?: string | null;
@@ -697,7 +702,7 @@ function composeDefaultProjectName(p: {
   const organizer = (p.organizer || "").trim();
   const venue = (p.venue || "").trim();
   const isSolo = (p.event_type_slug || "").toLowerCase() === "solo";
-  const orgSlot = isSolo ? "SOLO" : organizer;
+  const orgSlot = organizer || (isSolo ? "SOLO" : "");
 
   const head: string[] = [];
   // State leads the name UPPERCASE (owner 2026-07-24): the 2026-07-22 canonical
@@ -804,11 +809,16 @@ const stageVariant = pmsStageVariant;
 // blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
 // `chip`/`ring` are the matching pill tints used by the list view + the
 // status dropdown.
-const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string; hex: string; chip: string; ring: string }> = [
-  { value: "confirmed", label: "Confirmed", hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  { value: "pending",   label: "Pending",   hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  { value: "cancelled", label: "Cancelled", hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
-];
+// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
+// shared with mobile. Only the palette is desktop's — mobile styles inline, so
+// the value->label contract is the part that must not drift (the same split
+// pms-status.ts uses for stages).
+const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
+  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
+  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
+  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
+};
+const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
 
 const STATUS_BY_VALUE: Record<ProjectStatus, typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
   (acc, s) => ({ ...acc, [s.value]: s }),
@@ -1071,12 +1081,9 @@ function DateRangeFilter({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  const fmt = (d: string) => {
-    if (!d) return "…";
-    const [y, m, day] = d.split("-");
-    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
-    return `${parseInt(day, 10)} ${mon} ${y}`;
-  };
+  /* Was a month-NAME array — the exact thing utils.ts says the owner ruled
+     out ("no 'Jun'/'Jul' month names anywhere on the desktop app"). */
+  const fmt = (d: string) => (d ? fmtDate(d) : "…");
   const active = !!(from || to);
   return (
     <div className="relative" ref={boxRef}>
@@ -1104,21 +1111,21 @@ function DateRangeFilter({
           </div>
           <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
             From
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={from}
               max={to || undefined}
-              onChange={(e) => onChange(e.target.value, to)}
+              onChange={(iso) => onChange(iso, to)}
               className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
             />
           </label>
           <label className="block text-[11px] font-semibold text-ink-secondary">
             To
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={to}
               min={from || undefined}
-              onChange={(e) => onChange(from, e.target.value)}
+              onChange={(iso) => onChange(from, iso)}
               className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
             />
           </label>
@@ -1404,10 +1411,9 @@ function ProjectsListView() {
     !!user?.permissions?.includes("*") ||
     /\b(super admin|sales director|finance manager)\b/i.test(_pos);
   const _isDriver = /\bdriver\b/i.test(_pos);
-  // Helpers/storekeepers are FORCE-scoped to their assigned events server-side
-  // (isCrewScopedUser in backend); drivers are not (they opt in).
-  const _isForceScopedCrew = /\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos);
-  const _isCrew = _isDriver || _isForceScopedCrew;
+  // Helpers/storekeepers are FORCE-scoped server-side, drivers are not (they opt
+  // in). The predicate — and why it moved here — is in auth/crewScope.ts.
+  const _isCrew = _isDriver || isCrewScopedUser(user);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const cohortTickOnly = can("projects.checklist.tick") && !can("projects.write");
@@ -2048,12 +2054,13 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Status filter (owner 2026-08-14: "all section word change to status,
-            remove current status dropdown"). One section-level dropdown; each
-            option carries how many tasks that section holds. The old task-title
-            "Status" dropdown that used to sit beside it is gone. */}
+        {/* Task filter — the tasklist-section dropdown; each option carries how
+            many tasks that section holds. Labelled "Status" on 2026-08-14, then
+            "Task" on 2026-08-19 (owner: "the left one change word status to
+            task") because the real project-status chip sits two along and two
+            chips reading "status" was the confusion this rename removes. */}
         <MultiSelectFilter
-          placeholder="Status"
+          placeholder="Task"
           title="Filter by tasklist section"
           summary={(n) => `${n} sections`}
           selected={sectionList}
@@ -3253,18 +3260,18 @@ function FinanceListView() {
       {/* Filters */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
         <FilterField label="From">
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(iso) => setDateFrom(iso)}
             className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </FilterField>
         <FilterField label="To">
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(iso) => setDateTo(iso)}
             className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </FilterField>
@@ -3551,10 +3558,10 @@ function ProjectsAnalyticsView() {
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             From
           </div>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(iso) => setDateFrom(iso)}
             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
           />
         </div>
@@ -3562,10 +3569,10 @@ function ProjectsAnalyticsView() {
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             To
           </div>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(iso) => setDateTo(iso)}
             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
           />
         </div>
@@ -4424,9 +4431,7 @@ export function buildProjectsCalendarModel({
   const matchesStatus = (project: CalendarProject): boolean =>
     !status || (project.status || "").toLowerCase() === status;
 
-  // Free-text search — case-insensitive, matches ANY of the visible/label
-  // fields so someone typing "mid valley" finds every event with that venue
-  // regardless of casing. Owner 2026-07-20.
+  // Free-text search — case-insensitive over the visible/label fields.
   const needle = q.trim().toLowerCase();
   const matchesQuery = (project: CalendarProject): boolean => {
     if (!needle) return true;
@@ -4588,12 +4593,8 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
-  // 2026-07-20 — free-text search (matches venue / organizer / brand /
-  // project code / event title). Owner: "where is search button on calender?".
+  // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
   "q",
-  // Also removed the 'Tasks' toggle button from the toolbar the same day
-  // — the personal pref key `projects:cal:showTasks` in localStorage is
-  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -5013,10 +5014,8 @@ function ProjectsCalendarView() {
 
         {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Owner 2026-07-20 — "where is search button on calender?".
-              Free-text search across venue / organizer / brand / project code
-              / event title. Live-filters both the bars and any task chips
-              beside them. URL-persisted (?q=) so a Ctrl+F5 keeps the search. */}
+          {/* Free-text search (owner 2026-07-20) — live-filters bars + task
+              chips; URL-persisted (?q=). */}
           <label className="relative inline-flex h-8 items-center">
             <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
             <input
@@ -5436,7 +5435,9 @@ function ProjectsCalendarView() {
                           ? composeDefaultProjectName({
                               state: seg.project.state,
                               brand: seg.project.brand,
-                              organizer: seg.project.organizer,
+                              // Bars always say SOLO (owner 2026-08-19); organizer
+                              // stays in the field / lists / stored names (08-17 rule).
+                              organizer: null,
                               venue: seg.project.venue,
                               event_type_slug: "solo",
                             })
@@ -5489,14 +5490,7 @@ function CalendarBarPopover({
 }) {
   const p = info.project;
   const opt = STATUS_BY_VALUE[p.status] ?? STATUS_BY_VALUE.pending;
-  const fmt = (iso: string | null) => {
-    if (!iso) return null;
-    const [y, m, d] = iso.slice(0, 10).split("-");
-    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString(
-      "en-GB",
-      { day: "2-digit", month: "2-digit", year: "numeric" }
-    );
-  };
+  const fmt = (iso: string | null) => (iso ? fmtDate(iso) : null);
   const span =
     p.end_date && p.end_date.slice(0, 10) !== p.start_date.slice(0, 10)
       ? `${fmt(p.start_date)} – ${fmt(p.end_date)}`
@@ -5571,12 +5565,7 @@ function CalendarTaskPopover({
   const opt = STATUS_BY_VALUE[t.project_status ?? "pending"] ?? STATUS_BY_VALUE.pending;
   const overdue = t.is_overdue === 1;
   const due = (() => {
-    if (!t.due_date) return "—";
-    const [y, m, d] = t.due_date.slice(0, 10).split("-");
-    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString(
-      "en-GB",
-      { day: "2-digit", month: "2-digit", year: "numeric" }
-    );
+    return fmtDate(t.due_date);
   })();
 
   const W = 268;
@@ -5671,13 +5660,9 @@ function CalendarDayModal({
 
   const heading = (() => {
     const [y, m, d] = iso.split("-");
-    const date = new Date(Number(y), Number(m) - 1, Number(d));
-    return date.toLocaleDateString("en-GB", {
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
+    const weekday = new Date(Number(y), Number(m) - 1, Number(d))
+      .toLocaleDateString("en-GB", { weekday: "long" });
+    return `${weekday} ${fmtDate(iso)}`;
   })();
 
   // Portal into document.body so the fixed-position overlay escapes any
@@ -5907,16 +5892,13 @@ function CreateProjectPanel({
   brands: string[];
   eventTypes: EventType[];
 }) {
-  const { can, user } = useAuth();
-  // Owner 2026-07-18: setting the PIC at creation is open to EVERYONE holding
-  // projects.write EXCEPT the Sales Director — mirrors the assignment-on-an-
-  // existing-project rule (canAssignPeople in ProjectDetailContent) and the
-  // backend POST / gate. Sales Director matched by EXACT normalised name
-  // (isSalesDirectorUser), never a \b substring. When false we hide the PIC
-  // picker entirely so the project is created unassigned (admin PICs it later).
-  // Owner 2026-07-21: the 2026-07-18 Sales-Director assignment block is fully
-  // reversed (backend already open) — anyone with projects.write may assign.
-  const canAssignPeople = can("projects.write");
+  // Owner 2026-08-19: the Ownership/PIC section is REMOVED from creation
+  // (supersedes the 2026-07-18/07-21 back-and-forth on who may assign at
+  // create). The creator does not know the PIC — only the Sales Director
+  // does, and they assign it AFTER creation on the detail page (which also
+  // surfaces the "Set Sales PIC" duty in their My Pending while it is
+  // empty). Projects are therefore always created unassigned; row scope
+  // falls back to created_by via COALESCE(p.pic_id, p.created_by).
   const [eventTypeId, setEventTypeId] = useState<string>("");
   const [brand, setBrand] = useState<string>("");
   const [startDate, setStartDate] = useState("");
@@ -5926,7 +5908,6 @@ function CreateProjectPanel({
   // Not user-editable — the venue is the single source of truth.
   const [stateName, setStateName] = useState("");
   const [organizer, setOrganizer] = useState("");
-  const [picId, setPicId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
   const eventTypeSlug =
@@ -5942,28 +5923,6 @@ function CreateProjectPanel({
   });
 
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
-
-  // Users list for PIC picker — narrowed to the picked brand's
-  // department coverage so admins can't assign someone whose dept
-  // doesn't cover the brand. Empty brand → empty list (with a hint
-  // shown in the dropdown rendering).
-  const usersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users?brand=:",
-    () =>
-      brand
-        ? api.get(`/api/users?brand=${encodeURIComponent(brand)}`)
-        : Promise.resolve({ users: [] }),
-    [brand]
-  );
-  const users = usersQ.data?.users ?? [];
-
-  // If the picked PIC is no longer in the filtered list (e.g. brand
-  // changed), drop them so the form doesn't submit a stale id.
-  useEffect(() => {
-    if (!picId) return;
-    if (!users.some((u) => String(u.id) === picId)) {
-      setPicId("");
-    }
-  }, [users, picId]);
 
   // The backend derives the project code from state/venue/brand and
   // throws when any are missing. Validate all three client-side so the
@@ -6000,7 +5959,6 @@ function CreateProjectPanel({
         venue: venue.trim(),
         state: stateName.trim() || undefined,
         organizer: organizer.trim() || undefined,
-        pic_id: picId ? parseInt(picId, 10) : undefined,
       });
       toast.success(`Created ${res.code}`);
       onCreated(res.id);
@@ -6108,10 +6066,10 @@ function CreateProjectPanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               Start
             </div>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(iso) => setStartDate(iso)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
             />
           </div>
@@ -6119,11 +6077,11 @@ function CreateProjectPanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               End
             </div>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={endDate}
               min={startDate || undefined}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(iso) => setEndDate(iso)}
               className={cn(
                 "w-full rounded-md border bg-surface px-3 py-2 text-[13px]",
                 dateInvalid ? "border-err" : "border-border"
@@ -6185,41 +6143,8 @@ function CreateProjectPanel({
         </div>
       </PanelSection>
 
-      {canAssignPeople && (
-      <PanelSection title="Ownership">
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            PIC
-          </div>
-          <select
-            value={picId}
-            onChange={(e) => setPicId(e.target.value)}
-            disabled={!brand}
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:bg-bg disabled:text-ink-muted"
-          >
-            <option value="">
-              {brand ? "— default to me —" : "Pick a brand first"}
-            </option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name || u.email}
-              </option>
-            ))}
-          </select>
-          <div className="mt-1.5 text-[10px] text-ink-muted">
-            {brand
-              ? `Only users in a department covering "${brand}" can be picked. Their direct reports inherit visibility of this project.`
-              : "The PIC dropdown unlocks once you choose a brand."}
-            {brand && users.length === 0 && !usersQ.loading && (
-              <span className="mt-1 block text-warning-text">
-                No user has a department covering this brand yet — assign
-                the brand to a department first under Team → Departments.
-              </span>
-            )}
-          </div>
-        </div>
-      </PanelSection>
-      )}
+      {/* Ownership/PIC section removed at creation (owner 2026-08-19) — the
+          Sales Director assigns the PIC on the detail page after creation. */}
     </Panel>
   );
 }
@@ -6369,13 +6294,20 @@ function ProjectDetailContent({
   }
 
   async function setItemStatus(item: ChecklistItem, status: ChecklistStatus) {
-    // Owner 2026-07-15: never surface a permission-error toast on a checklist
-    // control. The tick / status buttons are rendered disabled when the user
-    // can't tick (off, not error); this is the belt-and-suspenders no-op so a
-    // control reached any other way silently does nothing instead of firing a
-    // 403 that lands as a "Forbidden: requires one of ..." toast.
+    // 07-15: silent no-op, never a permission toast. 08-17 (0488): the key
+    // gates only non-na/pending. 08-21 (0489): keyless N/A is scoped to the
+    // BADGED function — write does not extend it; projects.manage may.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
-    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
+    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) {
+      if (status !== "na" && status !== "pending") return;
+      const badge = (item.role_label || "").trim().toUpperCase();
+      const role = (user?.role_name || "").trim().toUpperCase();
+      const admits = !badge || badge.split("&").some((s) => {
+        const l = s.trim();
+        return l === role || (l === "DRIVER" && (role === "HELPER" || role === "STOREKEEPER"));
+      });
+      if (!admits && !can("projects.manage")) return;
+    }
     try {
       await api.post(`/api/projects/checklist/${item.id}/status`, { status });
       detail.reload();
@@ -6413,6 +6345,9 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
+            {/* Both items POST /:id/archive|/unarchive = projects.manage. Their
+                `disabled` is STATE, never permission; the button carries the gate. */}
+            {can("projects.manage") && (
             <div className="relative">
               <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
                 {p.archived_at ? "Restore" : "Archive"} <ChevronDown size={12} />
@@ -6463,6 +6398,7 @@ function ProjectDetailContent({
                 </>
               )}
             </div>
+            )}
             <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
@@ -6481,7 +6417,9 @@ function ProjectDetailContent({
               ]}
               onPrint={projectPrint.handlers.onPrint}
             />
-            {!p.archived_at && (
+            {/* PATCH /:id = projects.write; canEditDetail is the PMS-EDIT term
+                mobile also carries (owner 2026-07-20) and was never applied here. */}
+            {can("projects.write") && canEditDetail && !p.archived_at && (
               <ProjectStatusSelect
                 value={p.status}
                 disabled={transitioning}
@@ -6501,8 +6439,6 @@ function ProjectDetailContent({
         ) : undefined
       }
     >
-      {/* DetailLayout owns the loading/error chrome — keep this no-op for legacy in-page loading hint */}
-      {false && <div className="hidden">noop</div>}
       {detail.loading && (
         <div className="space-y-4 p-6">
           <Skeleton className="h-6 w-1/3" />
@@ -6578,7 +6514,6 @@ function ProjectDetailContent({
                 projectId={id}
                 projectCode={p.code}
                 projectName={p.name}
-                canWrite={can("sales.write")}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
                 onTotalSaved={() => detail.reload()}
@@ -7266,11 +7201,11 @@ function ProjectSpecStrip({
         </>)}
         <SpecCell label="Start">
           {editing ? (
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={p.start_date ?? ""}
-              onChange={async (e) => {
-                const v = e.target.value || null;
+              onChange={async (iso) => {
+                const v = iso || null;
                 if (v && p.end_date && p.end_date < v) {
                   // New start is past the current end — don't block; shift the
                   // whole event forward, keeping its length (owner reschedule).
@@ -7291,11 +7226,10 @@ function ProjectSpecStrip({
         </SpecCell>
         <SpecCell label="End">
           {editing ? (
-            <input
-              type="date"
+            <DateField
               value={p.end_date ?? ""}
-              onChange={async (e) => {
-                const v = e.target.value || null;
+              onChange={async (iso) => {
+                const v = iso || null;
                 if (v && p.start_date && v < p.start_date) {
                   // New end is before the current start — don't block; shift the
                   // whole event earlier, keeping its length (owner reschedule).
@@ -8820,17 +8754,10 @@ const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-synced/15 text-synced" },
 };
 
-// The submit/approve/reject review workflow applies ONLY to these
-// checklist items. Every other row shows no review controls.
-const REVIEWABLE_TITLES = new Set([
-  "Agreement / Quotation",
-  "Stock Out Transfer Record",
-  "Stock In Transfer Record",
-  "Display Floor Plan",
-  "3D Design",
-  "2D Design",
-  "Exchange List",
-]);
+// Which rows carry the submit/approve/reject workflow is decided by
+// isReviewableTitle (pms-reviewable-titles.ts), shared with mobile. It is a
+// PREFIX rule: this Set of seven EXACT titles used to withhold the workflow
+// from "3D Design (Revision 2)" on desktop while mobile granted it.
 
 // Documents that are view-only: a medium preview opens (image → lightbox,
 // other files → inline new tab) and there's no download button.
@@ -8952,7 +8879,7 @@ function DocRow({
   // Free-text remark notes on this document (excludes the review decision trail).
   const remarkNotes = comments.filter((c) => c.kind !== "submit" && c.kind !== "reject" && c.kind !== "approve" && c.kind !== "amend" && c.body);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
   const latest = attachments[0];
   // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
   // VERSION to the approve/reject decision made while it was the newest file, so
@@ -9124,14 +9051,9 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): every action on this
-                  task — uploads, removes, approves, rejects. 'submit' entries
-                  (the internal "hey reviewer, this is ready" ping) are hidden
-                  as noise; the upload comment right next to it says the same
-                  thing with better context (the filename). Owner 2026-07-20:
-                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
-                  Sim · 06/08 10:33" removes the confusion about why the
-                  Approve button reappeared after a re-upload. */}
+              {/* Chronological history (oldest → newest): uploads, removes,
+                  approves, rejects. 'submit' pings hidden as noise — the
+                  upload comment beside them carries the filename instead. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
@@ -9151,7 +9073,15 @@ function DocRow({
                           {showFile && (
                             <>
                               {" "}
-                              <span className="max-w-[220px] truncate align-baseline text-ink">
+                              {/* inline-block, not inline: truncate is dead on
+                                  inline elements, which is how full 100-char
+                                  filenames wrapped the whole cell (owner
+                                  2026-08-17: "make it short and fit in box
+                                  only"). Full name stays on hover. */}
+                              <span
+                                title={c.body ?? undefined}
+                                className="inline-block max-w-[150px] truncate align-bottom text-ink"
+                              >
                                 {c.body}
                               </span>
                             </>
@@ -9735,7 +9665,7 @@ function ChecklistRow({
       toast?.success("Uploaded");
       // Reviewable items auto-submit on upload so the approver's
       // Approve/Reject reappear (and a prior decision is superseded).
-      if (REVIEWABLE_TITLES.has(item.title)) {
+      if (isReviewableTitle(item.title)) {
         await onReview("submit", {});
       }
       // Floorplan → read the m² automatically (owner 2026-08-04: "once display
@@ -9789,16 +9719,13 @@ function ChecklistRow({
     new Date(item.due_date) < new Date(todayInAppTz());
   const reviewBadge = item.review_status ? REVIEW_BADGES[item.review_status] : null;
   const awaitingReview = item.review_status === "pending_review" || item.review_status === "amended";
-  const reviewable = REVIEWABLE_TITLES.has(item.title);
+  const reviewable = isReviewableTitle(item.title);
 
   // mig 090 — payment / deposit rows render as multi-state pills instead
   // of the done/pending circle. pill_value is stored via the standard
   // checklist PATCH; the row's status stays 'na' (off the progress bar).
   if (item.pill_kind) {
-    const opts: [string, string][] =
-      item.pill_kind === "rental_payment"
-        ? [["none", "N/A"], ["unpaid", "Pending"], ["fully_paid", "Fully paid"]]
-        : [["none", "N/A"], ["unpaid", "Pending"], ["refunded", "Refunded"]];
+    const opts = paymentPillOptions(item.pill_kind);
     const cur = item.pill_value || "unpaid";
     // Terminal pill values (N/A, FULLY PAID, REFUNDED) = treat the row as done:
     // green check + greyed title. Only PENDING ("unpaid") stays "not done".
@@ -10123,6 +10050,13 @@ function ChecklistRow({
           keeps Approve/Reject once a file exists — approved ones included — so
           a decision can be reviewed or reversed. Mirrors the mobile
           checklistReviewVisible gate; the decision stays on the review badge. */}
+      {/* Owner 2026-08-10 toggle, applied here 2026-08-17 ("i cant click
+          approve"): show only the button that REVERSES the current decision.
+          The table rows (DocRow) got this on 08-10 but this card block kept
+          showing an enabled Approve on an already-approved item — the backend
+          approve is idempotent (08-08), so the click was a silent no-op that
+          read as a dead button. Approved → Reject only; rejected → Approve
+          only; undecided → both. */}
       {!!attachments && attachments.length > 0 && (item.required_perm
         ? canApprove
         : reviewable && awaitingReview && canApprove) && (
@@ -10133,29 +10067,33 @@ function ChecklistRow({
               placeholder="Management remark (required to reject)…"
               className="min-w-[160px] flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] outline-none focus:border-primary/40"
             />
-            <button
-              onClick={async () => {
-                if (reason.trim()) await onReview("comment", { note: reason.trim() });
-                await onReview("approve", {});
-                setReason("");
-              }}
-              className="rounded-md bg-synced/90 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-synced"
-            >
-              Approve
-            </button>
-            <button
-              onClick={async () => {
-                if (!reason.trim()) {
-                  toast?.error("Add a remark to reject");
-                  return;
-                }
-                await onReview("reject", { reason: reason.trim() });
-                setReason("");
-              }}
-              className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[10px] font-semibold text-err hover:bg-err/5"
-            >
-              Reject
-            </button>
+            {item.review_status !== "approved" && (
+              <button
+                onClick={async () => {
+                  if (reason.trim()) await onReview("comment", { note: reason.trim() });
+                  await onReview("approve", {});
+                  setReason("");
+                }}
+                className="rounded-md bg-synced/90 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-synced"
+              >
+                Approve
+              </button>
+            )}
+            {item.review_status !== "rejected" && (
+              <button
+                onClick={async () => {
+                  if (!reason.trim()) {
+                    toast?.error("Add a remark to reject");
+                    return;
+                  }
+                  await onReview("reject", { reason: reason.trim() });
+                  setReason("");
+                }}
+                className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[10px] font-semibold text-err hover:bg-err/5"
+              >
+                Reject
+              </button>
+            )}
           </div>
         )}
 
@@ -10298,10 +10236,10 @@ function AddChecklistItem({
         className="mb-2 w-full resize-y rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
       />
       <div className="mb-2 flex items-center gap-2">
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
+          onChange={(iso) => setDueDate(iso)}
           placeholder="Due date"
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px]"
         />
@@ -10338,11 +10276,10 @@ function AddChecklistItem({
 }
 
 // ── Datetime field (inline commit on blur) ───────────────────
-// The existing InlineEdit only supports text/date/number. This is a
-// thin analog for datetime-local values so the logistics schedule
-// section can edit start/end times without extra round-trips.
+// InlineEdit supports only text/date/number; this is the logistics analog, and
+// NOT the shared DateTimeField also imported here — they differ in CONTRACT.
 
-function DateTimeField({
+function LogisticsDateTimeField({
   label,
   value,
   onSave,
@@ -10390,11 +10327,11 @@ function DateTimeField({
         {label}
       </div>
       <div className="flex gap-1.5">
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={datePart}
           disabled={readOnly}
-          onChange={(e) => setDatePart(e.target.value)}
+          onChange={(iso) => setDatePart(iso)}
           onBlur={readOnly ? undefined : commit}
           className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
         />
@@ -10701,10 +10638,10 @@ function AddStockTransferForm({
         New {direction === "out" ? "OUT" : "RETURN"} transfer
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <input
-          type="datetime-local"
+        <DateTimeField
+          aria-label="Transferred at"
           value={transferredAt}
-          onChange={(e) => setTransferredAt(e.target.value)}
+          onChange={setTransferredAt}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
         <input
@@ -11464,7 +11401,7 @@ function LogisticsCrewSection({
         />
       )}
       <div>
-        <DateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
+        <LogisticsDateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
       </div>
       <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} />
       <div className="my-3 border-t border-dashed border-border" />
@@ -11480,7 +11417,7 @@ function LogisticsCrewSection({
         readOnly={readOnly}
         emptyHint="Leave empty if same as setup"
         headerExtra={
-          <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
+          <LogisticsDateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
       {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
@@ -11589,12 +11526,12 @@ function LogisticsScheduleSection({
         driverName={setupDriverName}
       />
       <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup Start"
           value={project.setup_start_at}
           onSave={(v) => patch({ setup_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup End"
           value={project.setup_end_at}
           onSave={(v) => patch({ setup_end_at: v })}
@@ -11675,12 +11612,12 @@ function LogisticsScheduleSection({
           driverName={dismantleDriverName}
         />
         <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle Start"
           value={project.dismantle_start_at}
           onSave={(v) => patch({ dismantle_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle End"
           value={project.dismantle_end_at}
           onSave={(v) => patch({ dismantle_end_at: v })}
@@ -12721,7 +12658,6 @@ function ProjectSalesEntriesSection({
   projectId,
   projectCode,
   projectName,
-  canWrite,
   canManage,
   currentTotalSales,
   onTotalSaved,
@@ -12730,7 +12666,6 @@ function ProjectSalesEntriesSection({
   projectId: number;
   projectCode: string | null;
   projectName: string;
-  canWrite: boolean;
   canManage: boolean;
   currentTotalSales: number | null;
   onTotalSaved: () => void;
@@ -12739,18 +12674,18 @@ function ProjectSalesEntriesSection({
   const dialog = useDialog();
   const auth = useAuth();
   const meId = auth.user?.id;
-  // Sales-section visibility (owner 2026-07): mirror the backend read gate
-  // (requirePageAccessOrSalesView("sales")) exactly so the query fires iff it
-  // would be authorised — the "sales" page-access matrix ≥ partial OR a
-  // code-keyed Sales-staff / director. A Sales Director (no matrix "sales" row)
-  // now qualifies and gets data; a user who genuinely can't access sales
-  // neither renders this section nor fires the request (off, not hide) — no
-  // render-then-403.
+  // Three gates, three DIFFERENT server rules — they were two, and the write
+  // half asked for the flat sales.write key, which neither write route reads.
+  //   view  GET  /api/sales/entries        requirePageAccessOrSalesView("sales")
+  //   log   POST /api/sales/entries        requirePageAccess("sales")
+  //   total PATCH /api/projects/:id/finance  projects.write + denyFinance
+  // The org-position arm belongs to the READ gate only (owner 2026-07: a Sales
+  // Director has no matrix "sales" row and must still see the list), so it is
+  // ORed on canViewSales alone — off, not hide, and no render-then-403.
   const salesLevel = usePageAccess("sales");
-  const canViewSales =
-    ACCESS_RANK[salesLevel] >= ACCESS_RANK["partial"] ||
-    isSalesStaff(auth.user) ||
-    isDirectorUser(auth.user);
+  const canLogSale = canLogSalesEntry(salesLevel);
+  const canSetTotalSales = canWriteProjectFinance(auth.user, auth.can);
+  const canViewSales = canLogSale || isSalesStaff(auth.user) || isDirectorUser(auth.user);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<SalesEntry | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -12939,7 +12874,7 @@ function ProjectSalesEntriesSection({
           >
             <Download size={11} /> Export
           </button>
-          {canWrite && (
+          {canSetTotalSales && (
             <button
               onClick={() => {
                 setQtValue(
@@ -12958,7 +12893,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Total Sales
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setQuickLogOpen((v) => !v)}
               className={cn(
@@ -12972,7 +12907,7 @@ function ProjectSalesEntriesSection({
               <Plus size={11} /> Quick Log
             </button>
           )}
-          {canWrite && (
+          {canLogSale && (
             <button
               onClick={() => setCreating(true)}
               className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-accent/40 bg-accent-soft/60 px-2 text-[10.5px] font-semibold text-accent hover:bg-accent hover:text-white"
@@ -13064,10 +12999,10 @@ function ProjectSalesEntriesSection({
                 if (ev.key === "Enter") saveQuickLog();
               }}
             />
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={qlDate}
-              onChange={(ev) => setQlDate(ev.target.value)}
+              onChange={(ev) => setQlDate(ev)}
               className="rounded-md border border-amber-500/40 bg-surface px-2.5 py-1.5 text-[11.5px] outline-none focus:border-amber-500"
             />
             <button
@@ -13097,7 +13032,7 @@ function ProjectSalesEntriesSection({
           compact
           message="No sales drafted yet for this exhibition."
           cta={
-            canWrite
+            canLogSale
               ? { label: "Draft your first sale", onClick: () => setCreating(true) }
               : undefined
           }
@@ -13150,7 +13085,7 @@ function ProjectSalesEntriesSection({
                           <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
                             Quick log
                           </span>
-                          {canWrite && (
+                          {canLogSale && (
                             <button
                               onClick={() => setEditing(e)}
                               className="text-[10px] font-semibold text-accent hover:underline"
@@ -13323,54 +13258,9 @@ function Stat({
 // computed client-side so edits feel instant; the backend keeps
 // project_finance in sync for list-view rollups.
 
-// Mirrors backend/src/services/projects.ts → LEDGER_COST_CATEGORIES.
-// Backend accepts arbitrary strings on write; this list is the picker
-// surface only. 2026-05-08 — boss's Financial Snapshot model split
-// COGS into product sub-categories and transport into rate-driven
-// fee + actual logistics cost. Legacy `cogs` and `transport` slugs
-// stay in the picker so old data is still pickable on edit but new
-// rows should pick from the sub-categories.
-const LEDGER_COST_CATS = [
-  "rental",
-  "cogs", "cogs_matt_sofa", "cogs_bedframe", "cogs_accessories",
-  "setup",
-  "transport", "transport_fee", "transport_setup_dismantle",
-  "commission", "merchandise",
-  "contractor", "license", "deposit", "permit",
-  "accommodation", "staffing", "marketing", "misc",
-];
-const LEDGER_INCOME_CATS = ["sales", "deposit_refund", "rebate", "other_income"];
-
-function catLabel(cat: string): string {
-  switch (cat) {
-    case "cogs":
-      return "COGS";
-    case "cogs_matt_sofa":
-      return "COGS — Matt/Sofa";
-    case "cogs_bedframe":
-      return "COGS — Bedframe";
-    case "cogs_accessories":
-      return "COGS — Accessories";
-    case "transport":
-      return "Transport";
-    case "transport_fee":
-      return "Transport Fee";
-    case "transport_setup_dismantle":
-      return "Transport Setup & Dismantle";
-    case "contractor":
-      return "Contractor";
-    case "license":
-      return "License";
-    case "deposit":
-      return "Deposit paid";
-    case "deposit_refund":
-      return "Deposit refund";
-    case "other_income":
-      return "Other income";
-    default:
-      return cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, " ");
-  }
-}
+// The picker lists and their labels live in pms-ledger-categories.ts, shared
+// with mobile — which used to humanize() the slugs, so one P&L row read
+// "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone.
 
 function FinanceLedgerSection({
   projectId,
@@ -13448,7 +13338,7 @@ function FinanceLedgerSection({
           kind: "cost",
           category,
           amount: nextAmount,
-          description: `${catLabel(category)} (snapshot)`,
+          description: `${ledgerCategoryLabel(category)} (snapshot)`,
           r2_key: withReceipt?.r2_key ?? undefined,
           file_name: withReceipt?.file_name ?? undefined,
           mime_type: withReceipt?.mime_type ?? undefined,
@@ -14176,7 +14066,7 @@ function LedgerGroup({
                   tone === "synced" ? "bg-synced/10 text-synced" : "bg-err/10 text-err"
                 )}
               >
-                {catLabel(l.category)}
+                {ledgerCategoryLabel(l.category)}
               </span>
               <div className="min-w-0 flex-1">
                 <div
@@ -14353,7 +14243,7 @@ function AddFinanceLineForm({
     <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
         New {kind} line
-        {categoryDefault && ` · ${catLabel(categoryDefault)}`}
+        {categoryDefault && ` · ${ledgerCategoryLabel(categoryDefault)}`}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {!categoryDefault && (
@@ -14364,7 +14254,7 @@ function AddFinanceLineForm({
           >
             {categories.map((c) => (
               <option key={c} value={c}>
-                {catLabel(c)}
+                {ledgerCategoryLabel(c)}
               </option>
             ))}
           </select>
@@ -14386,10 +14276,10 @@ function AddFinanceLineForm({
           placeholder="Description"
           className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={occurredAt}
-          onChange={(e) => setOccurredAt(e.target.value)}
+          onChange={(iso) => setOccurredAt(iso)}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
           title="Payment date"
         />
@@ -14499,11 +14389,11 @@ function EditFinanceLineRow({
         >
           {categories.map((c) => (
             <option key={c} value={c}>
-              {catLabel(c)}
+              {ledgerCategoryLabel(c)}
             </option>
           ))}
           {!categories.includes(line.category) && (
-            <option value={line.category}>{catLabel(line.category)}</option>
+            <option value={line.category}>{ledgerCategoryLabel(line.category)}</option>
           )}
         </select>
         <input
@@ -14520,10 +14410,10 @@ function EditFinanceLineRow({
           placeholder="Description"
           className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={occurredAt}
-          onChange={(e) => setOccurredAt(e.target.value)}
+          onChange={(iso) => setOccurredAt(iso)}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
           title="Payment date"
         />

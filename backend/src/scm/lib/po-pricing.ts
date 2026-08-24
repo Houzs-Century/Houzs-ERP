@@ -77,9 +77,9 @@ export async function resolveMaintenanceConfigForSupplier(
    per-line base-cost derivation the "Create PO from SO" path runs in its
    auto-cost pre-pass (mfg-purchase-orders.ts /from-sos, the `baseCostByItem`
    loop): the supplier's own material binding (`price_matrix` P2/P1 cells + flat
-   `unit_price_centi` fallback) projected through the fabric tier resolved from
+   `unit_price_sen` fallback) projected through the fabric tier resolved from
    the line's fabricCode, plus the supplier's maintenance surcharges (divan /
-   leg / specials), via the shared pure `computeMfgPoUnitCost`.
+   leg / total height / specials), via the shared pure `computeMfgPoUnitCost`.
 
    Reused by reviseBoundPo (Approve-PO amendment engine) so a revised bound-PO
    line re-derives its supplier cost from the now-revised SO line's spec instead
@@ -94,10 +94,46 @@ export async function resolveMaintenanceConfigForSupplier(
    revision — only the per-module matrix/surcharge cost is re-derived.
 
    Returns the per-unit supplier cost in sen. When the SO line has NO item_group
-   (can't project a matrix) it returns the binding's flat `unit_price_centi`,
+   (can't project a matrix) it returns the binding's flat `unit_price_sen`,
    mirroring the create path's non-category fallback. When the SKU has no live
    binding for this supplier it returns 0 (the create path's zero-priced
    pseudo-binding — price keyed in at PI time). */
+/** The variant half of `computeMfgPoUnitCost`'s input — the five spec fields
+ *  whose values come off the line's `variants` blob, in ONE place.
+ *
+ *  IT IS ONE PLACE BECAUSE IT WAS THREE. Every backend caller hand-copied this
+ *  object, and each copy silently decided which surcharge pools existed: all
+ *  three omitted `totalHeight`, so a PO raised from a Sales Order was costed
+ *  with the total-height surcharge at 0 — RM80 short on 2990-PO-2608-003's 18"
+ *  CODY-(SS) (SO line cost RM487.50, PO RM407.50), and invisible on every line
+ *  at 20"+ where that tier is priced 0. The five FRONTEND callers had always
+ *  passed it, which is why a hand-keyed PO priced correctly and only the
+ *  converted ones came out short. A shared constructor makes the next added
+ *  pool reach all three callers by construction instead of by three people
+ *  remembering.
+ *
+ *  Category gating is preserved exactly as each copy had it: seat size and the
+ *  sofa leg pool are SOFA-only, the bedframe leg pool is BEDFRAME-only, and
+ *  divan / total height are passed unconditionally (the engine reads them for
+ *  BEDFRAME and ignores them elsewhere) — matching what the frontend sends. */
+export function poVariantPricingInput(
+  category: 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE',
+  variants: Record<string, unknown>,
+): {
+  seatSize: string | null; divanHeight: string | null; legHeight: string | null;
+  totalHeight: string | null; sofaLegHeight: string | null; specials: string[];
+} {
+  const str = (k: string): string | null => (variants[k] as string | undefined) ?? null;
+  return {
+    seatSize:      category === 'SOFA' ? str('seatHeight') : null,
+    divanHeight:   str('divanHeight'),
+    legHeight:     category === 'BEDFRAME' ? str('legHeight') : null,
+    totalHeight:   str('totalHeight'),
+    sofaLegHeight: category === 'SOFA' ? str('legHeight') : null,
+    specials:      Array.isArray(variants.specials) ? (variants.specials as string[]) : [],
+  };
+}
+
 export async function deriveMfgPoUnitCost(
   sb: any,
   input: {
@@ -110,26 +146,26 @@ export async function deriveMfgPoUnitCost(
   // (1) The supplier's own binding for this SKU (price_matrix + flat fallback).
   const { data: bindingRow } = await sb
     .from('supplier_material_bindings')
-    .select('unit_price_centi, price_matrix')
-    .eq('material_code', input.itemCode)
+    .select('unit_price_sen, price_matrix')
+    .eq('item_code', input.itemCode)
     .eq('material_kind', 'mfg_product')
     .eq('supplier_id', input.supplierId)
     .order('is_main_supplier', { ascending: false })
     .limit(1)
     .maybeSingle();
   const binding = bindingRow as
-    | { unit_price_centi?: number | null; price_matrix?: Record<string, unknown> | null }
+    | { unit_price_sen?: number | null; price_matrix?: Record<string, unknown> | null }
     | null;
   // No live binding for this supplier → zero-priced (mirrors the create path's
   // pseudo-binding; real cost is keyed in at Purchase Invoice time).
-  const flatPriceCenti = Number(binding?.unit_price_centi ?? 0);
+  const flatPriceSen = Number(binding?.unit_price_sen ?? 0);
   const priceMatrix = (binding?.price_matrix ?? null) as PoPriceMatrix;
 
   const variants = (input.variants ?? {}) as Record<string, unknown>;
   const category = (input.itemGroup?.toUpperCase() ?? '') as
     'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
   // No category on the SO line → can't project a matrix; keep the flat price.
-  if (!category) return flatPriceCenti;
+  if (!category) return flatPriceSen;
 
   // (2) Fabric tier from the line's fabricCode (sofa vs bedframe column),
   //     mirroring the create path's resolveFabricTier.
@@ -138,18 +174,13 @@ export async function deriveMfgPoUnitCost(
   // (3) The supplier's maintenance config (supplier scope → master fallback).
   const { config } = await resolveMaintenanceConfigForSupplier(sb, input.supplierId);
 
-  const specials = Array.isArray(variants.specials) ? (variants.specials as string[]) : [];
   return computeMfgPoUnitCost(
     {
       category,
       priceMatrix,
-      unitPriceCenti: flatPriceCenti,
+      unitPriceSen: flatPriceSen,
       fabricTier,
-      seatSize:      category === 'SOFA' ? ((variants.seatHeight as string | undefined) ?? null) : null,
-      divanHeight:   (variants.divanHeight as string | undefined) ?? null,
-      legHeight:     category === 'BEDFRAME' ? ((variants.legHeight as string | undefined) ?? null) : null,
-      sofaLegHeight: category === 'SOFA' ? ((variants.legHeight as string | undefined) ?? null) : null,
-      specials,
+      ...poVariantPricingInput(category, variants),
     },
     config,
   ).unitPriceSen;

@@ -73,6 +73,11 @@ export async function mintNextDpNo(
       sb.from('trip_stops').select('dp_no').like('dp_no', like),
       sb.from('dp_orders').select('dp_no').like('dp_no', like),
     ]);
+    // supabase-js RESOLVES a failed select as { data: null, error } — it does NOT
+    // throw, so the catch below never sees a read failure. Inspect the error
+    // explicitly: otherwise data:null reads as an empty registry and mints 01 over
+    // a live number. An unread registry must yield NO number, never a low one.
+    if (stops.error || orders.error) return null;
     const existing = [...collectDpNos(stops.data), ...collectDpNos(orders.data)];
     const prefix = dpNoPrefix(args.tripDate, args.plate);
     return formatDpNo(prefix, nextDpSeq(existing, prefix));

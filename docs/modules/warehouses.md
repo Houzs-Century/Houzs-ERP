@@ -4,13 +4,23 @@
 > 2. SalesOrderMaintenance.tsx:38-41 dropped useCreateWarehouse/useUpdateWarehouse — that view only READS.
 > 3. The type enum shipped in 0177_scm_warehouse_type_and_unify.sql, not “mig 0171” (0171 is idempotency; the file's internal header was never renumbered).
 > 4. The OR-include at inventory.ts:357-359 reads is_consignment, not is_showroom.
-> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap).
+> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap). — *warehouse-label CLOSED 2026-08-21: see §1, "The display rule has a FRONTEND home now". The other three remain open.*
 
 # Module: Warehouses (SCM master)
 
 Per-module technical doc for `scm.warehouses` — the master list of physical
 stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 / SO reserve / inventory balance / venue resolve reads from it.
+
+> **Naming (vocabulary registry).** The building an order ships from is
+> `warehouse_id` (uuid -> `scm.warehouses`), per line; its one display rule is
+> `warehouse-label.ts` (code first, then name). It is declared in
+> `backend/scripts/lib/vocabulary.mjs`. The SO header still keeps a free-text
+> snapshot `sales_location`; unifying that onto `warehouse_id` is a STAGED backfill
+> migration (it lands on `scm.mfg_sales_orders` and its grant-bearing
+> `mfg_sales_orders_with_payment_totals` view — the 0189 hazard), not yet shipped.
+> `purchase_location_id` (PO header) and `showroom_warehouse_id` are separate
+> columns, not drift.
 
 > Convention: money in **sen**, dates UTC. Reads/writes via `/api/scm/*`.
 >
@@ -38,6 +48,41 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 `useWarehouses()` is the single read hook every consumer (PO, DO, GRN, SO,
 Inventory board, Racks) reaches through. Do not open a per-page fetch — the
 5-min staleness is intentional and shared.
+
+### The display rule has a FRONTEND home now (2026-08-21)
+
+`warehouseLabel` — **code first, then name**, trimmed, `null` when neither is
+set — used to exist only at `backend/src/scm/lib/warehouse-label.ts`, and the
+frontend cannot import from `backend/src`. So every frontend surface that showed
+a warehouse hand-wrote its own order and they drifted in both directions: the
+Purchase Orders list printed the NAME and the grid truncated it to
+`BALAKONG WAREHO…`, while the same page's PDF export printed the code.
+
+| | |
+|---|---|
+| the rule | `backend/src/scm/lib/warehouse-label.ts` |
+| the frontend MIRROR | `frontend/src/vendor/scm/lib/warehouse-label.ts` — **byte-identical**, and it must stay at the top level of `vendor/scm/lib` |
+| the referee | `frontend/src/vendor/scm/lib/warehouse-label.canonical.test.ts` (byte-identity + the order + a corpus pin) and `node backend/scripts/check-shared-mirrors.mjs --strict`, which already enumerates that exact directory pair |
+
+**Import it; do not spell it.** The corpus pin in that test fails by NAMING any
+file under `frontend/src` that re-grows a private `?.name || ?.code` warehouse
+fallback, so a new screen cannot quietly add the fifteenth copy. Where a row
+carries the warehouse as FLAT snapshot columns instead of a nested object
+(`warehouse_code` / `warehouse_name`, `warehouseLocationCode` /
+`warehouseLocationName`), wrap the two into the rule with a one-line local
+adapter — `GrnFromPo.tsx` is the worked example — rather than writing a second
+rule.
+
+Two sites are deliberately still private copies. Both are already code-first, so
+both render correctly:
+
+- `pages/scm-v2/SalesOrderDetail.tsx` resolves a venue's warehouse by hand. It is
+  the corpus test's shrink-only `PENDING` entry — converting it makes the test
+  fail until the entry is deleted.
+- `pages/scm-v2/Inventory.tsx`, three cells over the flat columns. Converting it
+  needs an adapter, and that file is AT its file-size ceiling, which
+  `npm run check:file-size` will not let a change grow. Do it when that file is
+  next split.
 
 ---
 
@@ -111,6 +156,23 @@ key off the older `is_showroom` flag and will migrate to `type` incrementally:
   `is_showroom = true`.
 - **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
   rows into the balances read so consignment/showroom stock stays visible.
+- **Free-to-sell** (`inventory.ts`, `deliveredReturnedBySoItem`) subtracts a
+  Sales Order line's delivered qty, and only counts a DO whose status is NOT in
+  `DO_NOT_DELIVERED_STATES`. **That set gained LOADED on 2026-08-20** — a
+  delivery still on the lorry was taking its units OUT of Reserved before any
+  stock had moved, which inflates free-to-sell towards over-sell. One predicate
+  now (`doCountsAsDelivered`); the trace is in `docs/modules/delivery-order.md`
+  under *"Has this delivery counted?" is ONE predicate now*.
+- **FIFO lot feeds carry the consignment verdict on the ROW** (2026-08-20).
+  `GET /inventory/lots/:itemCode` now stamps `is_consignment` on every lot, the
+  way `GET /inventory/reservations` already did, from the one classifier
+  `isConsignmentLotSource` (`scm/lib/inventory-movements.ts`) over the lot's
+  `source_doc_type` / `source_doc_no`. It was the only lot feed that did not say,
+  and its consumer — the desktop Stock Card — therefore valued the supplier's
+  goods as ours while the per-warehouse table beneath it, fed by
+  `/breakdown/:itemCode`, excluded them. Both clients now split the same feed
+  through the shared `buildStockBreakdown`, so a new lot surface adds no third
+  filter.
 
 Rule of thumb when adding a new consumer: if you want "sales point", filter
 `type='showroom'`; if you want "stock location", filter `type='warehouse'`; if
@@ -132,6 +194,15 @@ you want "everything selectable", filter `is_active=true` and skip type.
   default warehouse.
 - **CONSIGN-OUT is 2990-only and inactive.** It's a historical consignment-out
   placeholder; do not copy it to HOUZS on any future unification pass.
+- **Consignment is QUANTITY, never VALUE — and the verdict is by SOURCE.** Stock
+  fed by a Purchase Consignment Receive belongs to the supplier until it sells,
+  so it counts on hand and must stay out of every value total. Classify with
+  `isConsignmentLotSource(source_doc_type, source_doc_no)`, never with the
+  warehouse's own `is_consignment` flag: a PCR mis-posted into a normal
+  warehouse defeats the flag and leaks into owned value (BUG-HISTORY
+  2026-07-25). On the client, never write a fourth filter — `buildStockBreakdown`
+  (`frontend/src/vendor/scm/lib/inventory-queries.ts`) is the one split, and it
+  returns `ownedValueSen` beside `consignmentQty` so a surface can show both.
 - **Do not delete a warehouse with movement history.** FK from
   `inventory_movements` will refuse (409 `in_use`). Deactivate (`is_active=false`)
   instead — the master row stays, historical rows keep pointing at it.

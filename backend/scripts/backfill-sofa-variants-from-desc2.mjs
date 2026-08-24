@@ -93,7 +93,7 @@ async function main() {
   const knownColour = (t) => (exactRow.has(normColour(t)) || findColour(t) ? String(t).trim() : null);
 
   const po = (await sql`
-    SELECT i.id, p.po_number AS doc, i.material_code AS code, i.description2 AS d2, i.variants
+    SELECT i.id, p.po_number AS doc, i.item_code AS code, i.description2 AS d2, i.variants
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND i.item_group = 'sofa'

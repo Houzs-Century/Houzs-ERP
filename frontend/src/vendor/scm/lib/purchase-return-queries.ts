@@ -64,6 +64,25 @@ export const usePurchaseReturnDetail = (id: string | null) => useQuery({
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
+/* The pool a PO-sourced return draws from (2026-08-21): the PO's POSTED GRN
+   lines with remaining (accepted − returned) > 0, each carrying its grnItemId
+   so the created return is capped, consumes the receipt, and deducts the
+   RECEIVING warehouse — not the company default. HOUZS-only addition (no
+   source twin yet); port to 2990 with the page that reads it. */
+export type ReturnableGrnLine = {
+  grnItemId: string; grnNumber: string | null; materialKind: string | null;
+  itemCode: string; materialName: string | null; itemGroup: string | null;
+  variants: Record<string, unknown> | null; unitPriceSen: number;
+  rejectionReason: string | null; remaining: number;
+};
+export const useReturnableGrnLines = (poId: string | null) => useQuery({
+  queryKey: ['pr-returnable-grn-lines', poId],
+  queryFn: () => authedFetch<{ lines: ReturnableGrnLine[]; supplierId: string | null }>(
+    `/purchase-returns/returnable-grn-lines?poId=${encodeURIComponent(poId as string)}`,
+  ),
+  enabled: Boolean(poId), staleTime: 15_000, retry: retryUnlessClientError,
+});
+
 /* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
    rest-spread would otherwise post it as a return field. Pass one per return
    intent (see lib/idempotency.ts): the middleware replays the first response —

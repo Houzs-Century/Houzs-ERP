@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -14,12 +14,13 @@ import { registerDialogService } from "../vendor/scm/lib/dialog-service";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { useApplyHtmlLang } from "./mobileI18n";
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
+import { MobileCrashBoundary } from "./MobileCrashBoundary";
 import { IosInstallGuide } from "../components/IosInstallGuide";
 import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 // Heavy mobile screens are lazy-loaded so the initial mobile chunk stays small
 // (desktop routes were already lazy — this closes the mobile gap that made the
 // first mobile paint download/parse a ~10k-line monolith). Rendered under the
-// <Suspense> boundaries in MobileAppInner. Types import separately so they don't
+// MobileCrashBoundary slots in MobileAppInner. Types import separately so they don't
 // pull a module into the eager bundle. MobileModuleList stays EAGER: its
 // MODULE_CONFIGS / FORM_MEMBERS_EDIT are read synchronously by the routing +
 // form logic below, so it can't be deferred without splitting those out first.
@@ -89,7 +90,11 @@ type Screen =
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
-  | { t: "pod"; docNo: string }
+  /* `from` is the return address. Back/Done out of POD normally drops to the
+     tab, which is right when POD was opened from a document card — but the
+     delivery-planning board sends the driver here MID-RUN, and dumping them on
+     the home tab loses the run sheet they were working through. */
+  | { t: "pod"; docNo: string; from?: "delivery-planning" }
   /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
@@ -137,7 +142,15 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
     const tab = new URLSearchParams((to.split("?")[1] || "")).get("tab");
     // Positions is owner-managed through backend/tooling only. Keep it out of
     // every mobile route, not merely out of the visible Profile row.
-    const teamKey = tab === "members" ? "members" : tab === "departments" ? "departments" : null;
+    // The redesigned desktop tab values (directory / departments2) land on the
+    // same classic mobile modules; the legacy values stay accepted for old
+    // bookmarks until cutover.
+    const teamKey =
+      tab === "directory" || tab === "members"
+        ? "members"
+        : tab === "departments2" || tab === "departments"
+          ? "departments"
+          : null;
     if (teamKey && MODULE_CONFIGS[teamKey]) return { t: "module", key: teamKey, title: label };
     return { t: "stub", title: label };
   }
@@ -407,8 +420,12 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      to this user). So this row bypasses the desktop nav gate
      (announcements.read = the desktop ADMIN list/composer permission). */
   { to: "/announcements", label: "Announcements", alwaysShow: true },
-  { to: "/team?tab=members", label: "Members" },
-  { to: "/team?tab=departments", label: "Departments" },
+  /* Team destinations follow the desktop redesign's NAV_TABS rows
+     (?tab=directory / ?tab=departments2) so each mobile row keeps its exact
+     query-bearing gate; the screens themselves stay the classic mobile
+     members/departments modules until the handoff's mobile pass (S8). */
+  { to: "/team?tab=directory", label: "Directory" },
+  { to: "/team?tab=departments2", label: "Departments" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated
@@ -427,7 +444,7 @@ function MobileDialogBridge() {
 }
 
 // Shown while a lazy screen's chunk is in flight. Absolutely positioned so it
-// fills its Suspense container (the overlay slot or the tab-content slot) without
+// fills its boundary container (the overlay slot or the tab-content slot) without
 // disturbing the persistent tab bar, which lives outside the boundary.
 function MobileScreenFallback() {
   return (
@@ -569,6 +586,10 @@ function MobileAppInner() {
   const [tab, setTab] = useState<Tab>(initialRoute.t === "tab" ? initialRoute.tab : firstTab);
   const [menuOpen, setMenuOpen] = useState(false);
   const [screen, setScreen] = useState<Screen>(() => initialScreenFor(initialRoute));
+  /* The crash-reset key for the overlay boundaries. Mobile navigation lives in
+     `screen`, never in the URL, so the desktop shell's pathname key is useless
+     here — serialise the state itself, which is a small discriminated union. */
+  const screenKey = JSON.stringify(screen);
   const back = () => setScreen({ t: "tab" });
   const leaveUrlDeadEnd = () => {
     navigate("/", { replace: true });
@@ -677,13 +698,16 @@ function MobileAppInner() {
      pop-up would show is by definition un-acked, so it is always counted, and
      gating on the count keeps the chunk off the wire on a quiet day. */
   const annPopup = screen.t === "announcements" || annUnread === 0 ? null : (
-    <Suspense fallback={null}>
+    /* Boundaried like the screens: this is a NON-route lazy that renders over
+       whatever the operator has open, so a stale chunk here used to take the
+       whole app down through main.tsx's unkeyed top-level boundary. */
+    <MobileCrashBoundary resetKey={`ann:${screenKey}`} fallback={null}>
       <MobileAnnouncementPopup onOpenList={() => setScreen({ t: "announcements" })} />
-    </Suspense>
+    </MobileCrashBoundary>
   );
 
   // Overlay screens (pushed above the tab bar). These resolve to lazy-loaded
-  // components, so the chosen element is returned under a single <Suspense>
+  // components, so the chosen element is returned under a single crash+Suspense
   // boundary (full-screen fallback — an overlay owns the whole viewport anyway).
   let overlay: ReactNode = null;
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
@@ -780,7 +804,7 @@ function MobileAppInner() {
   else if (screen.t === "module-detail" && screen.key === "inventory") {
     // Inventory row → the richer per-SKU stock card (replaces the generic detail).
     overlay = <MobileStockCard
-      productCode={screen.row?.product_code ?? ""}
+      itemCode={screen.row?.item_code ?? ""}
       productName={screen.row?.product_name ?? null}
       canTransfer={allowed("/scm/stock-transfers")}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
@@ -814,10 +838,15 @@ function MobileAppInner() {
         onSaved={() => setScreen({ t: "module", key: screen.key, title })} />
     );
   }
-  else if (screen.t === "pod") overlay = <MobilePOD docNo={screen.docNo} onBack={back} onDone={back} />;
+  else if (screen.t === "pod") {
+    const leavePod = screen.from === "delivery-planning"
+      ? () => setScreen({ t: "delivery-planning" })
+      : back;
+    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={leavePod} />;
+  }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
-  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
+  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
@@ -828,7 +857,9 @@ function MobileAppInner() {
   else if (screen.t === "stub") overlay = <Stub title={screen.title} onBack={back} />;
   if (overlay !== null) return (
     <>
-      <Suspense fallback={<MobileScreenFallback />}>{overlay}</Suspense>
+      <MobileCrashBoundary resetKey={`overlay:${screenKey}`} fallback={<MobileScreenFallback />}>
+        {overlay}
+      </MobileCrashBoundary>
       {annPopup}
     </>
   );
@@ -836,10 +867,10 @@ function MobileAppInner() {
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, background: "var(--app-bg)", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {/* Suspense wraps only the tab CONTENT — the tab bar below stays mounted,
+        {/* The boundary wraps only the tab CONTENT — the tab bar below stays mounted,
             so switching to a not-yet-loaded tab shows a content skeleton without
             the nav flashing. */}
-        <Suspense fallback={<MobileScreenFallback />}>
+        <MobileCrashBoundary resetKey={`tab:${tab}`} fallback={<MobileScreenFallback />}>
           {/* Each content tab mounts its screen ONLY when the user can reach the
               destination (same makeNavVisible gate as the nav). A tab the user
               can't access renders a locked placeholder instead of the real screen
@@ -871,7 +902,7 @@ function MobileAppInner() {
             />
           ) : <TabLocked title="Calendar" />)}
           {tab === "profile" && <MobileProfile onLogout={logout} orgItems={profileOrgItems} onOpenOrg={openRoute} />}
-        </Suspense>
+        </MobileCrashBoundary>
       </div>
 
       <div className="navwrap">

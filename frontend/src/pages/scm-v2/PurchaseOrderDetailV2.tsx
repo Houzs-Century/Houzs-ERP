@@ -6,13 +6,14 @@
 //
 // Route: /scm/purchase-orders/:id (App.tsx flips ScmPurchaseOrderDetailV2 here).
 // Data: usePurchaseOrderDetail / useCancelPurchaseOrder /
-//       useSubmitPurchaseOrder / useConfirmPurchaseOrder / useReopenPurchaseOrder
+//       useConfirmPurchaseOrder / useReopenPurchaseOrder
 //       (vendored suppliers-queries slice).
 
-import { Suspense, lazy, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, useMemo, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
@@ -25,7 +26,6 @@ import {
   Phone as PhoneIcon,
   MoreHorizontal,
   CheckCircle2,
-  Send,
   RotateCcw,
   Package,
   FilePenLine,
@@ -34,6 +34,11 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  grnTransferBlockReason,
+  poConfirmBlockReason,
+} from "../../vendor/scm/lib/po-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import {
@@ -46,7 +51,6 @@ import {
   usePurchaseOrderDetail,
   useCancelPurchaseOrder,
   useReopenPurchaseOrder,
-  useSubmitPurchaseOrder,
   useConfirmPurchaseOrder,
   useSupplierDetail,
   type PoHeaderRow,
@@ -75,39 +79,44 @@ import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocation
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const supplierNameOf = (h: PoHeaderRow): string =>
   h.supplier?.name || h.supplier_id || "—";
 const supplierCodeOf = (h: PoHeaderRow): string => h.supplier?.code || "—";
 
 const totalOf = (h: PoHeaderRow): number =>
-  h.total_centi ?? h.subtotal_centi ?? 0;
+  h.total_sen ?? h.subtotal_sen ?? 0;
 
 // PO effective lifecycle for hero + tone.
 type Effective =
+  | "on_hold"
   | "draft"
   | "submitted"
   | "partial"
   | "received"
   | "cancelled";
+/* THE LAST LINE USED TO BE `return "cancelled"`, and that is why ON_HOLD had to
+   be added here and not only to the label maps: a status this chain does not
+   name reads as CANCELLED, so a HELD purchase order would have told the buyer
+   his order was cancelled. A hold is the opposite of a cancel — it is the
+   reversible one — so the wrong word here is not a cosmetic slip.
+
+   The fall-through is now CANCELLED only for CANCELLED. Anything genuinely
+   unrecognised falls to "on_hold"'s neighbour rather than to a terminal claim:
+   an unknown status is not evidence that an order is dead. */
 const effectiveOf = (h: PoHeaderRow): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "DRAFT") return "draft";
   if (s === "SUBMITTED") return "submitted";
   if (s === "PARTIALLY_RECEIVED") return "partial";
   if (s === "RECEIVED") return "received";
+  if (s === "ON_HOLD") return "on_hold";
   return "cancelled";
 };
 
@@ -120,6 +129,10 @@ const EFFECTIVE_TONE: Record<
   partial: { tone: "warning", label: "Partially received", blurb: "Partially received · balance still due" },
   received: { tone: "success", label: "Received", blurb: "Received · loop closed" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
+  /* ON_HOLD (mig 0318). A held PO is not receivable — grns.ts filters
+     receivable POs through an allow-list — and it is REVERSIBLE, which is
+     the whole reason it exists beside CANCELLED. */
+  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · receiving paused, reversible" },
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -128,6 +141,10 @@ const STAGE_LABEL: Record<string, string> = {
   PARTIALLY_RECEIVED: "Partially received",
   RECEIVED: "Received",
   CANCELLED: "Cancelled",
+  /* A status with no label here renders as nothing, or as its raw slug. ASSR
+     paid for that when `voided` reached the customer portal as the word
+     "voided", so every value the column can hold gets a word. */
+  ON_HOLD: "On Hold",
 };
 
 const initialsOf = (name: string | null | undefined): string => {
@@ -306,8 +323,8 @@ function PoTotalHeroCard({
       </div>
 
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-        <HeroLine k="Subtotal" v={fmtMoney(header.subtotal_centi, header.currency)} />
-        <HeroLine k="Tax" v={fmtMoney(header.tax_centi ?? 0, header.currency)} />
+        <HeroLine k="Subtotal" v={fmtMoney(header.subtotal_sen, header.currency)} />
+        <HeroLine k="Tax" v={fmtMoney(header.tax_sen ?? 0, header.currency)} />
         <HeroLine k="Total" v={fmtMoney(total, header.currency)} strong />
       </div>
 
@@ -367,18 +384,25 @@ const PurchaseOrderDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — only calls useSearchParams so Rules of Hooks are respected when
+/* Thin router — only calls useSearchParams and useLocation (both unconditional,
+   at the top) so Rules of Hooks are respected when
    the ?edit=1 flip swaps between the read-only body and the lazy inline editor
    (the two children have different hook counts). */
 export function PurchaseOrderDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`po-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <PurchaseOrderDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <PurchaseOrderDetailV2ReadOnly />;
@@ -390,7 +414,6 @@ function PurchaseOrderDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = usePurchaseOrderDetail(id ?? null);
-  const submitPo = useSubmitPurchaseOrder();
   const confirmPo = useConfirmPurchaseOrder();
   const cancelPo = useCancelPurchaseOrder();
   const reopenPo = useReopenPurchaseOrder();
@@ -523,7 +546,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
-    id && navigate(`/scm/grns/from-po?poId=${id}`);
+    id && navigate(convertToLink('poToGrn', id));
 
   /* Email this PO to its supplier — a HUMAN action (the agent only drafts). The
      PDF is rendered here in the browser (the backend has no PDF engine) and posted
@@ -590,15 +613,16 @@ function PurchaseOrderDetailV2ReadOnly() {
     }
   };
 
-  const doSubmit = () => {
-    if (!id) return;
-    if (window.confirm("Submit this PO to the supplier?")) {
-      submitPo.mutate(id);
-    }
-  };
+  /* ONE control commits a draft PO, and it calls the endpoint that writes.
+     `doSubmit` (PATCH /submit) is gone — see po-next-step.ts for the handler
+     that never had an update in it. The confirm dialog is kept because
+     confirming is what makes the PO live supply and drops its SO lines out of
+     the From-SO picker; the wording now matches what the button does. */
   const doConfirm = () => {
     if (!id) return;
-    confirmPo.mutate(id);
+    if (window.confirm("Confirm this PO? It becomes live supply and its sales-order lines leave the From-SO picker.")) {
+      confirmPo.mutate(id);
+    }
   };
   const doCancel = () => {
     if (!purchaseOrder) return;
@@ -636,10 +660,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code,
+      getValue: (l) => l.item_code,
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). JUDGEMENT CALL, stated rather than
-         silently taken: this is PURCHASE vocabulary (material_code), and every
+         silently taken: this is PURCHASE vocabulary (item_code), and every
          owner precedent for the rule is sales-side, so it is not covered by the
          letter of any report. It is swept because the SHAPE is identical, not
          the vocabulary — this render was byte-for-byte the pre-#647
@@ -653,7 +677,7 @@ function PurchaseOrderDetailV2ReadOnly() {
          search / export value. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code,
+          code: l.item_code,
           description: l.description || l.material_name,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -766,8 +790,17 @@ function PurchaseOrderDetailV2ReadOnly() {
       ),
     },
     {
+      /* Labelled "Transfer to" until 2026-08-17, which was the one place the
+         document-lineage words named a WAREHOUSE. Once every conversion button
+         says "Transfer to <Document>", that label meant two different things on
+         one screen — and `?edit=1` on this same route heads a table "Transfer To
+         (GRN)" meaning the downstream document. Now matches what
+         StockTransferNew/Detail already call it: "To Warehouse".
+         The `key` stays `transferTo`: it is persisted in the operator's saved
+         column layout, so renaming it would silently reset their columns. It is
+         listed for the identifier stage in docs/modules/document-conversion.md §9. */
       key: "transferTo",
-      label: "Transfer to",
+      label: "To Warehouse",
       width: "132px",
       getValue: (l) => (l.warehouse_id ? warehouseNameById.get(l.warehouse_id) ?? "" : ""),
       render: (l) => {
@@ -854,7 +887,7 @@ function PurchaseOrderDetailV2ReadOnly() {
                 type="button"
                 onClick={() => setAllocLineId(l.id)}
                 title="Split this line across the Sales Orders it was bought for"
-                aria-label={`Edit allocations for ${l.material_code}`}
+                aria-label={`Edit allocations for ${l.item_code}`}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
               >
                 <Split size={12} />
@@ -869,10 +902,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, purchaseOrder?.currency)}
+          {fmtMoney(l.unit_price_sen, purchaseOrder?.currency)}
         </span>
       ),
     },
@@ -881,10 +914,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_centi ?? 0, purchaseOrder?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)}
         </span>
       ),
     },
@@ -925,15 +958,22 @@ function PurchaseOrderDetailV2ReadOnly() {
   };
 
   const rawStatus = (purchaseOrder.status || "").toUpperCase();
-  const canSubmit = rawStatus === "DRAFT";
-  const canConfirm = rawStatus === "SUBMITTED";
-  const canConvertToGrn = rawStatus === "SUBMITTED" || rawStatus === "PARTIALLY_RECEIVED";
+  /* Both status questions now come from vendor/scm/lib/po-next-step.ts, which
+     also records why the old pair was wrong: `canSubmit` gated a DRAFT onto
+     PATCH /submit, a handler with no write path that 409s every draft, while
+     `canConfirm` gated /confirm — the endpoint that actually performs the
+     DRAFT → SUBMITTED write — onto SUBMITTED, where it is an explicit no-op.
+     The predicates were inverted relative to their endpoints. */
+  const confirmReason = poConfirmBlockReason(purchaseOrder.status);
+  const canConfirm = confirmReason === null;
+  const grnReason = grnTransferBlockReason(purchaseOrder.status);
+  const canConvertToGrn = grnReason === null;
   const canCancel = rawStatus !== "CANCELLED" && rawStatus !== "RECEIVED";
   const canReopen = rawStatus === "CANCELLED";
   const isCancelled = rawStatus === "CANCELLED";
 
   return (
-    <div className="pb-24 md:pb-0">
+    <div className="pb-56 md:pb-0">
       {/* Mobile-only dark sticky header */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
@@ -961,9 +1001,13 @@ function PurchaseOrderDetailV2ReadOnly() {
             {supplierNameOf(purchaseOrder)}
           </h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">
-              {stageLabel}
-            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">
+                {stageLabel}
+              </Badge>
+              {/* mig 0324 — BESIDE the status, never instead of it. */}
+              <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -985,9 +1029,13 @@ function PurchaseOrderDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {supplierNameOf(purchaseOrder)}
                 </h1>
-                <Badge tone={badgeTone} size="sm">
-                  {stageLabel}
-                </Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">
+                    {stageLabel}
+                  </Badge>
+                  {/* mig 0324 — BESIDE the status, never instead of it. */}
+                  <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 {/* _R suffix (owner 2026-07-27): a revised PO's number shows its
@@ -1012,7 +1060,8 @@ function PurchaseOrderDetailV2ReadOnly() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
               History
             </Button>
@@ -1042,21 +1091,30 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Reopen
               </Button>
             )}
-            {canSubmit && (
-              <Button variant="secondary" icon={<Send size={14} />} onClick={doSubmit}>
-                Submit
-              </Button>
-            )}
-            {canConfirm && (
-              <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doConfirm}>
-                Confirm
-              </Button>
-            )}
-            {canConvertToGrn && (
-              <Button variant="secondary" icon={<Package size={14} />} onClick={goGrnFromPo}>
-                Convert to GRN
-              </Button>
-            )}
+            {/* ── ALWAYS RENDERED, disabled with the reason. Two fixed slots:
+                "commit this document" and "produce the next document", each
+                keeping one meaning at every status, so the operator never has to
+                read the status badge to learn what a button will do. ── */}
+            <Button
+              variant="secondary"
+              icon={<CheckCircle2 size={14} />}
+              onClick={doConfirm}
+              disabled={!canConfirm}
+              title={confirmReason ?? undefined}
+              aria-describedby={confirmReason ? "po-confirm-reason" : undefined}
+            >
+              Confirm PO
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Package size={14} />}
+              onClick={goGrnFromPo}
+              disabled={!canConvertToGrn}
+              title={grnReason ?? undefined}
+              aria-describedby={grnReason ? "po-grn-reason" : undefined}
+            >
+              {transferToLabel('grn')}
+            </Button>
             {/* Raise amendment — a live (confirmed, non-cancelled) PO can be
                 revised through the single-approver amendment flow. The backend
                 one-open guard 409s a second request; the modal surfaces that. */}
@@ -1068,6 +1126,13 @@ function PurchaseOrderDetailV2ReadOnly() {
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
             </Button>
+          </div>
+          {/* The reasons as TEXT, not only as a `title` — a tooltip needs a
+              hover and says nothing on a touch screen. */}
+          <div className="flex max-w-[440px] flex-col items-end gap-0.5 text-right">
+            <NextStepNote id="po-confirm-reason" reason={confirmReason} />
+            <NextStepNote id="po-grn-reason" reason={grnReason} />
+          </div>
           </div>
         </div>
       </div>
@@ -1320,34 +1385,51 @@ function PurchaseOrderDetailV2ReadOnly() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone) */}
+      {/* Fixed bottom action bar (phone).
+
+          ONE SLOT USED TO HOLD THREE DIFFERENT ACTIONS — Submit, then Transfer
+          to GRN, then Edit — chosen by status, in the same green full-width
+          button, same pixels. Whichever one a purchaser pressed yesterday, the
+          same tap does something else today, and nothing on the bar says which.
+          That is the owner's complaint in its phone-shaped form.
+
+          Now: the commit slot and the transfer slot each keep one meaning and
+          are disabled with their reason when the state forbids them, and Edit
+          stops impersonating them. The reasons render as TEXT because a `title`
+          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
+        <div className="mb-1.5 flex flex-col gap-0.5">
+          <NextStepNote id="po-confirm-reason-phone" reason={confirmReason} />
+          <NextStepNote id="po-grn-reason-phone" reason={grnReason} />
+        </div>
+        <div className="mb-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={doConfirm}
+            disabled={!canConfirm}
+            aria-describedby={confirmReason ? "po-confirm-reason-phone" : undefined}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim disabled:opacity-40"
+          >
+            <CheckCircle2 size={16} /> Confirm PO
+          </button>
+          <button
+            type="button"
+            onClick={goGrnFromPo}
+            disabled={!canConvertToGrn}
+            aria-describedby={grnReason ? "po-grn-reason-phone" : undefined}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:bg-primary/40"
+          >
+            <Package size={16} /> {transferToLabel('grn')}
+          </button>
+        </div>
         <div className="flex items-center gap-2">
-          {canSubmit ? (
-            <button
-              type="button"
-              onClick={doSubmit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Send size={16} /> Submit
-            </button>
-          ) : canConvertToGrn ? (
-            <button
-              type="button"
-              onClick={goGrnFromPo}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Package size={16} /> Convert to GRN
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={goEdit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Edit3 size={16} /> Edit
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={goEdit}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
+          >
+            <Edit3 size={16} /> Edit
+          </button>
           <button
             type="button"
             onClick={print.openPreview}

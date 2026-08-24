@@ -44,7 +44,7 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
       '28': { P2: 320000 },
     });
     // Flat fallback lane tracks base_price_sen.
-    expect(patch.unit_price_centi).toBe(250000);
+    expect(patch.unit_price_sen).toBe(250000);
   });
 
   it('a tier-less seat row defaults to P2 (PRICE_2), PRICE_3 maps to P3', () => {
@@ -59,7 +59,7 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
     const patch = patchOf(productToBindingPatch(product, sofaBinding));
     expect(patch.price_matrix).toEqual({ '24': { P2: 300000, P3: 350000 } });
     // base_price_sen null → the flat lane is left untouched (not forced to 0).
-    expect(patch.unit_price_centi).toBeUndefined();
+    expect(patch.unit_price_sen).toBeUndefined();
   });
 
   it('MONEY-SAFE: a seat row with no priceSen (selling-only) is skipped, never mirrored as 0', () => {
@@ -73,7 +73,7 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
     // No priced row → matrix untouched (NOT wiped, NOT zero-filled); only the
     // flat fallback follows base_price_sen.
     expect(patch.price_matrix).toBeUndefined();
-    expect(patch.unit_price_centi).toBe(250000);
+    expect(patch.unit_price_sen).toBe(250000);
   });
 
   it('MONEY-SAFE: a product with NO sofa cost at all does not wipe the binding (skipped)', () => {
@@ -93,7 +93,7 @@ describe('bindingToProductPatch — SOFA stays one-way (a supplier edit cannot o
   it('a supplier-side sofa binding cost edit is skipped, leaving the product authoritative', () => {
     const binding: BindingCost = {
       category: 'SOFA',
-      unit_price_centi: 999999,
+      unit_price_sen: 999999,
       price_matrix: { '24': { P2: 999999 } },
     };
     const result = bindingToProductPatch(binding);
@@ -106,28 +106,28 @@ describe('bindingToProductPatch — SOFA stays one-way (a supplier edit cannot o
 // Non-sofa sync must remain bidirectional and unchanged by this fix.
 // ─────────────────────────────────────────────────────────────────────────
 describe('non-sofa sync is unchanged (bidirectional)', () => {
-  it('FLAT (mattress) binding→product mirrors unit_price_centi to base_price_sen', () => {
+  it('FLAT (mattress) binding→product mirrors unit_price_sen to base_price_sen', () => {
     const patch = patchOf(
-      bindingToProductPatch({ category: 'MATTRESS', unit_price_centi: 12345, price_matrix: null }),
+      bindingToProductPatch({ category: 'MATTRESS', unit_price_sen: 12345, price_matrix: null }),
     );
     expect(patch.base_price_sen).toBe(12345);
   });
 
-  it('FLAT (mattress) product→binding mirrors base_price_sen to unit_price_centi', () => {
+  it('FLAT (mattress) product→binding mirrors base_price_sen to unit_price_sen', () => {
     const patch = patchOf(
       productToBindingPatch(
         { base_price_sen: 12345, price1_sen: null },
         { category: 'MATTRESS', price_matrix: null },
       ),
     );
-    expect(patch.unit_price_centi).toBe(12345);
+    expect(patch.unit_price_sen).toBe(12345);
     // Flat categories never touch the matrix.
     expect(patch.price_matrix).toBeUndefined();
   });
 
   it('BEDFRAME binding→product mirrors matrix P2/P1 to base_price_sen/price1_sen', () => {
     const patch = patchOf(
-      bindingToProductPatch({ category: 'BEDFRAME', unit_price_centi: null, price_matrix: { P2: 5000, P1: 4000 } }),
+      bindingToProductPatch({ category: 'BEDFRAME', unit_price_sen: null, price_matrix: { P2: 5000, P1: 4000 } }),
     );
     expect(patch.base_price_sen).toBe(5000);
     expect(patch.price1_sen).toBe(4000);

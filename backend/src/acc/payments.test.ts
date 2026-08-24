@@ -21,7 +21,7 @@ const PAY = (over: Partial<Row> = {}): Row => ({
   paid_at: '2026-08-10T14:00:00+08:00',
   method: 'merchant',
   merchant_provider: 'MBB',
-  amount_centi: 50000,
+  amount_sen: 50000,
   company_id: 1,
   ...over,
 });
@@ -122,7 +122,7 @@ describe('postSiPayment — the invoice-side twin', () => {
     accounts: CHART, acc_account_roles: [], acc_acquirers: [],
     sales_invoices: [si], journal_entries: [], journal_entry_lines: [],
   });
-  const SIPAY: Row = { id: 'sp-1', sales_invoice_id: 'si-1', paid_at: '2026-08-10', method: 'cash', merchant_provider: null, amount_centi: 1000, company_id: 1 };
+  const SIPAY: Row = { id: 'sp-1', sales_invoice_id: 'si-1', paid_at: '2026-08-10', method: 'cash', merchant_provider: null, amount_sen: 1000, company_id: 1 };
 
   it('books Dr CASH / Cr AR against the invoice', async () => {
     const sb = siWorld();
@@ -177,7 +177,7 @@ describe('backfillSoPayments — converges, never double-posts', () => {
 
 describe('payments that never reached the ledger', () => {
   const payRow = (id: string, docNo: string, paidAt: string, sen: number, method = 'merchant') => ({
-    id, so_doc_no: docNo, paid_at: paidAt, amount_centi: sen, method, company_id: 1,
+    id, so_doc_no: docNo, paid_at: paidAt, amount_sen: sen, method, company_id: 1,
   });
   const je = (docNo: string, entryDate: string, over: Record<string, unknown> = {}) => ({
     id: `je-${docNo}`, je_no: `JE-${docNo}`, company_id: 1, source_type: 'SOPAY',
@@ -258,7 +258,7 @@ describe('payments that never reached the ledger', () => {
         payRow('late', 'SO-9', '2026-08-20', 10000),
       ],
       sales_invoice_payments: [
-        { id: 'q1', sales_invoice_id: 'INV-1', paid_at: '2026-08-10', amount_centi: 30000, method: 'merchant', company_id: 1 },
+        { id: 'q1', sales_invoice_id: 'INV-1', paid_at: '2026-08-10', amount_sen: 30000, method: 'merchant', company_id: 1 },
       ],
     }), 1);
     expect(r.ok).toBe(true);

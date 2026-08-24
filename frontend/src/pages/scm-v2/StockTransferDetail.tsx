@@ -15,13 +15,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, History, X, Ban } from 'lucide-react';
+import { ArrowRight, History, X, Ban, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { buildVariantSummary, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -34,21 +34,16 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TRANSFER_AUDIT_LABELS } from './entity-audit-labels';
+import { DateField } from "../../vendor/scm/components/DateField";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 type LineDraft = StockTransferItemInput & { _key: string };
 
 const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-const fmtDateTime = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
 
 export const StockTransferDetail = () => {
   const { id }   = useParams<{ id: string }>();
@@ -84,7 +79,7 @@ export const StockTransferDetail = () => {
     setNotes(t.notes ?? '');
     setLines(detail.data.lines.map((l) => ({
       _key:        newKey(),
-      productCode: l.product_code,
+      itemCode: l.item_code,
       productName: l.product_name ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
@@ -93,6 +88,33 @@ export const StockTransferDetail = () => {
 
   const status: StockTransferStatus | undefined = detail.data?.transfer.status;
   const isPosted = status === 'POSTED';
+
+  /* Print. This document had no print handler at all until now, on any
+     surface. (A fabricated owner quote was attached here and has been removed —
+     see row-menus.ts for the provenance note.)
+
+     The SERVER rows, not the LineDraft state above: the draft drops
+     `variant_key`, and which bucket moved is exactly what a warehouse hand-off
+     sheet has to say. "Print now" goes through the PDF (action: 'print') and
+     never window.print() — index.css's @media print block hides `body *`, so
+     printing this page directly yields a blank sheet (PrintPreviewModal's own
+     header records what that cost the Delivery Order). */
+  const deliverPrintPdf = (action: PdfAction) => {
+    const d = detail.data;
+    if (!d) return;
+    return import('../../vendor/scm/lib/stock-transfer-pdf')
+      .then(({ generateStockTransferPdf }) =>
+        generateStockTransferPdf(d.transfer, d.lines, { action }))
+      .catch((e) => notify({
+        title: 'PDF generation failed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  /* The list's right-click Print navigates here with ?print=1 — same contract
+     every other document's row menu uses. */
+  useOpenPrintPreviewFromUrl(print.openPreview, !!detail.data);
 
   // ── Cancel ───────────────────────────────────────────────────────────
   const onCancel = async () => {
@@ -143,6 +165,11 @@ export const StockTransferDetail = () => {
               <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
                 <History {...ICON} /> History
               </Button>
+              {/* Unconditional, like History: a cancelled transfer is still a
+                  record somebody has to be able to put on paper. */}
+              <Button variant="ghost" size="md" onClick={print.openPreview}>
+                <Printer {...ICON} /> Print PDF
+              </Button>
               {isPosted && (
                 <Button variant="ghost" size="md" onClick={onCancel} disabled={cancel.isPending}>
                   <Ban {...ICON} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
@@ -189,7 +216,9 @@ export const StockTransferDetail = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Transfer Date</span>
-              <input type="date" value={transferDate} className={styles.fieldInput} disabled />
+              {/* Read-only: the transfer date is stamped on post and never
+                  edited here, so there is no onChange to give. */}
+              <DateField fullWidth value={transferDate} onChange={() => {}} className={styles.fieldInput} disabled/>
             </label>
 
             <label className={styles.field}>
@@ -221,7 +250,7 @@ export const StockTransferDetail = () => {
               )}
               {lines.map((ln) => (
                 <tr key={ln._key}>
-                  <td><span className={styles.codeCell}>{ln.productCode}</span></td>
+                  <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
                   <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
                   {/* "Description 2": variant/spec summary in its own column.
                       Prefers a stored description2, falls back to the computed
@@ -264,6 +293,23 @@ export const StockTransferDetail = () => {
           onClose={closeHistory}
         />
       )}
+
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Stock Transfer"
+        docNo={t.transfer_no}
+        rows={[
+          { label: 'From', value: warehouseLabel(t.from_warehouse) ?? t.from_warehouse_id },
+          { label: 'To', value: warehouseLabel(t.to_warehouse) ?? t.to_warehouse_id },
+          { label: 'Date', value: fmtDate(t.transfer_date) },
+          {
+            label: 'Items',
+            value: `${detail.data.lines.length} line${detail.data.lines.length === 1 ? '' : 's'}`,
+          },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 };

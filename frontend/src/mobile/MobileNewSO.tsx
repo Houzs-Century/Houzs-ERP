@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
+import {
+  cascadeMasterVariants,
+  seedFollowerVariants,
+  seedableMasterVariants,
+  FABRIC_IDENTITY_KEYS,
+  type MasterVariantSnapshot,
+} from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
-import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
+import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
-import { SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
+import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
+import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
@@ -20,13 +28,14 @@ import {
   hasAmendmentHeaderChanges,
   withFrozenHeaderFieldsReverted,
 } from "../vendor/scm/lib/so-amendment-header";
+import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
+import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
 import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
   preferredCustomerTypeValue,
-  FALLBACK_OPTIONS,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import {
   useLocalities,
@@ -46,6 +55,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
+import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -76,8 +86,11 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
+/* parseInches is imported, not redeclared: this file's private copy also served
+   sortNumeric below, and a shared parser serves both readers. */
+import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
@@ -117,6 +130,9 @@ type LineItem = {
   name: string;
   qty: string;
   price: string; // RM, as typed — display/default only; server recomputes
+  /* Typed into the price box? Tells a deliberate RM 0 from an unpriced SKU.
+     Client-only like overriddenKeys; sent as `zeroPriceIntended`, not stored. */
+  priceAuthored: boolean;
   ddate: string; // per-line delivery date (ISO yyyy-mm-dd)
   remark: string;
   cat: LineCat;
@@ -199,8 +215,8 @@ type SoItem = {
   item_code: string | null;
   item_group: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  discount_centi: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
   line_delivery_date: string | null;
   remark: string | null;
   variants: Record<string, unknown> | null;
@@ -231,7 +247,7 @@ type SoPayment = {
   id: string;
   paid_at: string | null;
   method: string | null;
-  amount_centi: number | null;
+  amount_sen: number | null;
   approval_code: string | null;
   account_sheet: string | null;
   collected_by_name: string | null;
@@ -265,12 +281,12 @@ type PaymentsResp = { payments: SoPayment[] };
    static allowlist here: the SHARED reconciler (vendor/scm/lib/scan-prefill) has
    already snapped those against the LIVE catalog before the value reaches this
    file, so both the interactive seed and the headless createDraftFromPrefill
-   trust the reconciled value. PAY_METHODS stays (fixed 4-value enum), single-
-   sourced from the shared FALLBACK_OPTIONS. */
-const PAY_METHODS = FALLBACK_OPTIONS.payment_method.map((o) => o.value);
-/* Sentinel for "the signed-in creator has no scm.staff row" — shows their name
-   in the Salesperson select but sends null so the backend stamps the caller. */
-const SELF_SALESPERSON = "__self__";
+   trust the reconciled value. The payment METHOD joined that rule 2026-08-20:
+   a PAY_METHODS list from the static FALLBACK_OPTIONS re-checked a value that
+   reconcilePayment had ALREADY snapped against the live catalog (scan-prefill.ts:
+   snapValue returns null, never a bad method). It dropped nothing while that list
+   was a superset, and was one edit from silently blanking a scanned method — the
+   re-guard this paragraph records removing for customer type. */
 const LINE_CATS: Array<{ value: LineCat; label: string }> = [
   { value: "", label: "General item" },
   { value: "sofa", label: "Sofa" },
@@ -285,31 +301,26 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
-const toCenti = (s: string) => Math.round(num(s) * 100);
+const toSen = (s: string) => Math.round(num(s) * 100);
 // centi → a BARE editable ringgit string ("1,234.56") for seeding the price/amount
-// form fields. NOT a display formatter — it must stay prefix-free so num()/toCenti
-// can parse it back. Display money uses the shared fmtCenti() instead.
-const fromCenti = (c: number | null | undefined) =>
+// form fields. NOT a display formatter — it must stay prefix-free so num()/toSen
+// can parse it back. Display money uses the shared fmtSen() instead.
+const fromSen = (c: number | null | undefined) =>
   ((c ?? 0) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /* Fabric-identity variant keys a colour pick writes (FabricPicker.onPick /
    SoLineCard.pickFabricColour). Colour auto-sync mirrors exactly these across
    the compartments of one sofa. */
-const FABRIC_SYNC_KEYS: string[] = [
-  "fabricCode", "colourId", "fabricId", "fabricLabel", "colourLabel", "colourHex",
-];
+const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-/* Inches parser — mirrors SoLineCard.parseInches (handles `10"`, `10`, `-2`). */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
-};
+/* Mobile renders variant panels for sofa + bedframe only, so the cascade is
+   scoped to those. Desktop passes null (every category). */
+const MOBILE_CASCADE_CATEGORIES: ReadonlySet<string> = new Set(["sofa", "bedframe"]);
 
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
-    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "",
+    name: "", qty: "1", price: "0.00", ddate: "", remark: "", cat: "", priceAuthored: false,
     variants: {}, overriddenKeys: [], photoKeys: [], photoFiles: [],
   };
 }
@@ -338,15 +349,22 @@ function defaultSofaLegValue(maint: MaintenanceConfig | null | undefined): strin
 
 /* Build a line's outgoing `variants` blob for the create/edit body. We fold in
    the remark + a fresh computed totalHeight for bedframes (kept for the backend
-   even though the readout is hidden). */
+   even though the readout is hidden).
+
+   THE TOTAL HEIGHT IS ASSIGNED UNCONDITIONALLY NOW. This function used to say
+   `if (th > 0) variants.totalHeight = …`, which was a third answer to "what is
+   written when divan/leg/gap are blank" — it both left a STALE height on a line
+   whose parts were cleared (the blob is spread from l.variants, so the old
+   number survived) and omitted the key on a fresh line. Writing '' matches the
+   fourteen purchasing screens; '' and an absent key are interchangeable to
+   every consumer (computeVariantKey drops empty axes, the pricing lookups and
+   the allowed-options gate all short-circuit on a falsy value), so the only
+   thing that changes is that a cleared spec now actually clears. */
 function buildVariants(l: LineItem): Record<string, unknown> {
   const variants: Record<string, unknown> = { ...(l.variants ?? {}) };
   if (l.remark.trim()) variants.remark = l.remark.trim();
   else delete variants.remark;
-  if (l.cat === "bedframe") {
-    const th = parseInches(variants.divanHeight) + parseInches(variants.legHeight) + parseInches(variants.gap);
-    if (th > 0) variants.totalHeight = `${th}"`;
-  }
+  if (isTotalHeightCategory(l.cat)) variants.totalHeight = computeTotalHeight(l.cat, variants);
   return variants;
 }
 
@@ -368,7 +386,9 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
        headless scan-draft path. */
     description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
-    unitPriceCenti: toCenti(l.price),
+    unitPriceSen: toSen(l.price),
+    /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
@@ -453,6 +473,13 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
        date-less SO landed CONFIRMED (owner hit this on the legacy scan path). */
     asDraft: true,
     emergencyContactPhone: ecPhoneOut,
+    /* Slip + receipt provenance (migrations 0033 / 0034) — the R2 keys
+       /scan-so/extract answered with, so the SO detail can show the slip this
+       order was read from. Desktop sends the same pair; this path sent neither,
+       leaving a phone-scanned order's "Scanned photos" card permanently empty.
+       Omitted rather than "" when absent — the handler stores it verbatim. */
+    ...(prefill.slipImageKey ? { slipImageKey: prefill.slipImageKey } : {}),
+    ...(prefill.receiptImageKey ? { receiptImageKey: prefill.receiptImageKey } : {}),
     items,
   };
 
@@ -483,7 +510,8 @@ function lineFromItem(it: SoItem): LineItem {
     itemGroup: (it.item_group ?? "").toLowerCase(),
     name: it.description ?? it.item_code ?? "",
     qty: String(it.qty ?? 1),
-    price: fromCenti(it.unit_price_centi),
+    price: fromSen(it.unit_price_sen),
+    priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
     remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
     cat,
@@ -580,7 +608,11 @@ export function MobileNewSO({
      collected_by_name (PaymentInfoBlock), so no full roster is needed here. */
   // Salesperson picker (owner 2026-07-22) — sales-only, mirrors desktop
   // SalesOrderNew's narrowed dropdown.
-  const pickableStaffQ = usePickableStaff({ onlySales: true });
+  /* The PERSISTED salesperson (edit mode), kept apart from the editable
+     `salespersonId`: it is the id the picker must be able to NAME, and feeding
+     the live state to `include` would re-key the roster query on every pick. */
+  const [origSalespersonId, setOrigSalespersonId] = useState<string>("");
+  const pickableStaffQ = usePickableStaff({ onlySales: true, include: [origSalespersonId] });
   const { staff: authStaff } = useAuth();
   /* FIX A — the app-level Houzs auth exposes the permission gate + the signed-in
      user (name/email/id), which the vendor auth bridge doesn't. Drives the
@@ -653,8 +685,6 @@ export function MobileNewSO({
   });
   const seededLineMeta: Record<string, ScanLineMetaSeed> = {};
   for (const { line, meta } of scanLines) seededLineMeta[line.key] = meta;
-  const inList = (v: string, list: string[]) => (list.includes(v) ? v : "");
-
   /* Seed ONE payment row per captured payment slip. */
   const scanPaymentSlips = scanPrefill?.payments ?? [];
   const scanSlipFilesInit: Record<string, File> = {};
@@ -662,7 +692,7 @@ export function MobileNewSO({
     ? scanPaymentSlips.map((ps) => {
         const row: Payment = {
           ...newPayment(),
-          method: inList(ps.method, PAY_METHODS),
+          method: ps.method,
           amount: ps.amount || "0.00",
           approval: ps.approval ?? "",
           slipName: ps.file.name,
@@ -672,7 +702,7 @@ export function MobileNewSO({
         return row;
       })
     : scanPrefill?.payment
-      ? [{ ...newPayment(), method: inList(scanPrefill.payment.method, PAY_METHODS), amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
+      ? [{ ...newPayment(), method: scanPrefill.payment.method, amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
       : [];
 
   // Customer
@@ -780,11 +810,11 @@ export function MobileNewSO({
   const [origState, setOrigState] = useState<string>("");
   const [origPostcode, setOrigPostcode] = useState<string>("");
   const [origCity, setOrigCity] = useState<string>("");
-  /* Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — the
-     PERSISTED values pair with addr1/addr2 exactly as origCity pairs with city,
-     so a locked-SO address edit diffs into the amendment request. */
+  // Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — persisted pair for addr1/addr2.
   const [origAddress1, setOrigAddress1] = useState<string>("");
   const [origAddress2, setOrigAddress2] = useState<string>("");
+  // Customer info joined 2026-08-21 (DELIVERY lane). phone kept E164 = state seed = pristine baseline.
+  const [origContact, setOrigContact] = useState({ debtorName: "", phone: "", email: "" });
   /* PERSISTED SO status — feeds the SHARED procLockActive() so the processing
      lock keeps a DRAFT / CANCELLED SO editable (status guard), matching the
      mobile detail screen + desktop instead of the old status-blind copy. */
@@ -913,6 +943,7 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
+        setOrigContact({ debtorName: h.debtor_name ?? "", phone: toE164(h.phone), email: h.email ?? "" });
         /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
            salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
            直接变成我的名字了，那么奇怪".
@@ -927,6 +958,7 @@ export function MobileNewSO({
            below is seeded to the SAME value, so an untouched picker still diffs
            to {} and still sends nothing. */
         setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
+        setOrigSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         originalHeaderPatchRef.current = soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
@@ -1080,10 +1112,12 @@ export function MobileNewSO({
   const outgoingVenueId = effectiveVenueId;
   const outgoingVenueName = effectiveVenueName;
 
-  /* Salesperson to SEND — the "self" sentinel maps to null so the backend
-     stamps the logged-in caller (a real staff id is sent as-is). */
-  const outgoingSalespersonId =
-    salespersonId && salespersonId !== SELF_SALESPERSON ? salespersonId : null;
+  /* Salesperson to SEND — always a real scm.staff uuid. The `__self__` sentinel
+     that used to stand in for "the creator has no staff row" is gone: the
+     roster now always carries the caller (staff.ts, THE ALWAYS-HOLDS RULE), so
+     there is nothing to map. Null only while the roster is still loading, where
+     the backend falls back to its own caller-based resolution. */
+  const outgoingSalespersonId = salespersonId || null;
 
   /* ── FIX A — locality cascade (desktop SalesOrderNew parity) ──────────────
      State → City → Postcode all derive from the my_localities dataset. City
@@ -1159,26 +1193,27 @@ export function MobileNewSO({
 
   /* ── FIX A — Salesperson default (desktop parity) ─────────────────────────
      The creator IS the salesperson: default to the signed-in user. If they have
-     a matching scm.staff row (by id / email / name) seed its canonical id;
-     otherwise seed a UI-only "self" sentinel so their NAME shows (never blank).
-     Only seeds when nothing is picked yet (never stomps an admin's manual pick,
-     or a scan-provided salesperson). Non-admins can't re-pick (gated select). */
-  const selfStaffMatch = useMemo(() => {
-    const email = (currentUser?.email ?? "").trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? "").trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const nm = (currentUser?.name ?? "").trim().toLowerCase();
-    return nm ? staffList.find((s) => (s.name ?? "").trim().toLowerCase() === nm) : undefined;
-  }, [staffList, currentUser?.email, currentUser?.name]);
-  const selfDisplayName =
-    (currentUser?.name ?? "").trim() || (currentUser?.email ?? "").trim() || "Me";
+     a matching scm.staff row seed its canonical id; otherwise seed a UI-only
+     "self" sentinel so their NAME shows (never blank). Only seeds when nothing
+     is picked yet (never stomps an admin's manual pick, or a scan-provided
+     salesperson). Non-admins can't re-pick (gated select).
+
+     The MATCH is the SHARED `resolveSelfStaff` — user_id first, the key the
+     backend joins on. This file matched email-then-name while the comment above
+     it advertised an id match it never ran; of 140 production scm.staff rows 18
+     carry an email and 102 carry user_id, so most salespeople were not
+     recognised as themselves here and could be blocked by the confirm gate
+     below (#2049). */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id, email: currentUser?.email, name: currentUser?.name,
+    }),
+    [staffList, currentUser?.id, currentUser?.email, currentUser?.name],
+  );
   useEffect(() => {
     if (isEdit) return; // edit keeps the persisted salesperson
     if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
-    else if (selfDisplayName) setSalespersonId((prev) => prev || SELF_SALESPERSON);
-  }, [isEdit, selfStaffMatch, selfDisplayName]);
+  }, [isEdit, selfStaffMatch]);
 
   /* Customer Type default (owner 2026-07-03, re-stated 2026-07-16) — a NEW SO
      defaults to the real DB option whose label reads "New Customer". The pick
@@ -1209,7 +1244,7 @@ export function MobileNewSO({
 
   // ---- Totals ---------------------------------------------------------------
   const subtotal = useMemo(
-    () => lines.reduce((a, l) => a + toCenti(l.price) * num(l.qty), 0),
+    () => lines.reduce((a, l) => a + toSen(l.price) * num(l.qty), 0),
     [lines],
   );
 
@@ -1265,64 +1300,53 @@ export function MobileNewSO({
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
 
-  /* Per-category variants captured from the FIRST line of that category that
-     has any variants set. Mirrors SalesOrderNew.inheritVariantsByCategory. */
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) out[cat] = l.variants;
-    }
-    return out;
-  }, [lines]);
+  /* The lines as the shared cascade layer sees them. A line with no SKU picked
+     has no category, so it neither drives nor follows. */
+  const cascadeLines = useMemo(
+    () => lines.map((l) => ({ category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '', variants: l.variants })),
+    [lines],
+  );
 
-  /* Follower-line inherit cascade (mirror SoLineCard master-follower): when the
-     FIRST same-category line's variants change, copy each variant key onto
-     follower lines of that category — UNLESS the follower manually overrode that
-     key (overriddenKeys wins). The first line of each category is the master. */
+  /* Per-category variants captured from the FIRST line of that category that
+     has any variants set — the PICK-TIME seed. Same shared helper the desktop
+     form calls; this file used to carry its own copy of it. */
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(cascadeLines),
+    [cascadeLines],
+  );
+
+  /* Follower-line cascade — the FIRST same-category line is the master and its
+     variants travel to the rest. The rule is the shared layer
+     (vendor/scm/lib/so-variant-cascade), imported by the desktop SalesOrderNew
+     too; this file used to carry a second copy whose comment claimed it
+     mirrored the desktop while behaving differently.
+
+     Owner ruling 2026-08-21 — the master's LATEST change always wins, so a
+     follower already typed by hand IS overwritten when the master moves again.
+     `overriddenKeys` no longer vetoes this cascade; it still guards the
+     per-sofa colour sync in the FabricPicker below, which is a different rule.
+     The dep is now the LINES, not a JSON string of the inherit map: the
+     snapshot ref is what decides whether the master actually moved a key. */
+  const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
+    const { variants, masters } = cascadeMasterVariants(
+      cascadeLines,
+      masterSnapshotRef.current,
+      /* Mobile only shows variant panels for sofa + bedframe, so only those
+         cascade here. Passed explicitly because desktop answers differently. */
+      MOBILE_CASCADE_CATEGORIES,
+    );
+    masterSnapshotRef.current = masters;
     setLines((prev) => {
-      const masterByCat = new Map<string, LineItem>();
-      for (const l of prev) {
-        if (!l.itemCode.trim() || !l.itemGroup) continue;
-        if (!masterByCat.has(l.itemGroup)) masterByCat.set(l.itemGroup, l);
-      }
       let mutated = false;
-      const next = prev.map((l) => {
-        if (!l.itemCode.trim() || !l.itemGroup) return l;
-        const master = masterByCat.get(l.itemGroup);
-        if (!master || master.key === l.key) return l; // masters are untouched
-        if (l.cat !== "sofa" && l.cat !== "bedframe") return l;
-        const overrides = new Set(l.overriddenKeys);
-        const merged: Record<string, unknown> = { ...l.variants };
-        /* Fabric COLOUR only follows within the SAME sofa: when master and this
-           follower are distinct split sofas (different variants.buildKey), keep
-           the master's fabric-identity keys out of it (the per-sofa colour sync
-           in the FabricPicker handles same-buildKey compartments). Other axes
-           keep the category-wide inherit. */
-        const masterBk = (master.variants as { buildKey?: unknown }).buildKey;
-        const followerBk = (l.variants as { buildKey?: unknown }).buildKey;
-        const differentSofa =
-          typeof masterBk === "string" && masterBk !== "" &&
-          typeof followerBk === "string" && followerBk !== "" &&
-          masterBk !== followerBk;
-        let changed = false;
-        for (const [k, v] of Object.entries(master.variants)) {
-          if (k === "remark") continue; // remark is per-line, never inherited
-          if (overrides.has(k)) continue; // manual override wins
-          if (differentSofa && FABRIC_SYNC_KEYS.includes(k)) continue;
-          if (merged[k] !== v) { merged[k] = v; changed = true; }
-        }
-        if (changed) { mutated = true; return { ...l, variants: merged }; }
-        return l;
+      const next = prev.map((l, idx) => {
+        if (variants[idx] === undefined || variants[idx] === l.variants) return l;
+        mutated = true;
+        return { ...l, variants: variants[idx]! };
       });
       return mutated ? next : prev;
     });
-    // Depend on the master variants (JSON) so the cascade re-runs on any master
-    // edit; overriddenKeys guards keep manual follower values.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(inheritVariantsByCategory)]);
+  }, [cascadeLines]);
 
   /* Scanned hint — a field the scan filled shows a subtle "scanned" tag. */
   const scanned = (key: keyof ScanBaseline, current: string): boolean => {
@@ -1411,7 +1435,7 @@ export function MobileNewSO({
         return {
           rawText: meta?.rawText || l.name,
           qtyGuess: num(l.qty) || 1,
-          priceRmGuess: toCenti(l.price) > 0 ? toCenti(l.price) / 100 : null,
+          priceRmGuess: toSen(l.price) > 0 ? toSen(l.price) / 100 : null,
           skuMatch: null,
           fabricMatch: null,
           specialsMatch: [],
@@ -1444,7 +1468,7 @@ export function MobileNewSO({
      again. The route accepts a null uploadSessionId and records the row
      slip-less. */
   async function recordNewPayments(createdDocNo: string) {
-    const rows = pays.filter((p) => toCenti(p.amount) > 0);
+    const rows = pays.filter((p) => toSen(p.amount) > 0);
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
@@ -1453,7 +1477,7 @@ export function MobileNewSO({
       const body: Record<string, unknown> = {
         paidAt: p.date,
         method: code,
-        amountCenti: toCenti(p.amount),
+        amountSen: toSen(p.amount),
         accountSheet: p.account.trim() || null,
         approvalCode: p.approval.trim() || null,
         collectedBy: p.collectedBy || null,
@@ -1538,7 +1562,9 @@ export function MobileNewSO({
     itemGroup: l.itemGroup || "others",
     description: l.name.trim(),
     qty: num(l.qty) || 1,
-    unitPriceCenti: toCenti(l.price),
+    unitPriceSen: toSen(l.price),
+    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
+    ...zeroPriceClaim(toSen(l.price), true),
     lineDeliveryDate: l.ddate || null,
     variants: buildVariants(l),
   });
@@ -1555,7 +1581,7 @@ export function MobileNewSO({
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((l.itemGroup || "others") !== ((snap.item_group ?? "others").toLowerCase())) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
+    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (l.name.trim() !== (snap.description ?? "").trim()) return true;
     if ((l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
@@ -1574,7 +1600,7 @@ export function MobileNewSO({
   const amendmentLineChanged = (l: LineItem, snap: SoItem): boolean => {
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
+    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
     /* mig 0280 — the remark is a carryable field now, so a remark-only edit IS
        a request. Stated explicitly rather than relying on the variants compare
@@ -1642,7 +1668,7 @@ export function MobileNewSO({
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
       const variantsSame = canonJson(buildVariants(l)) === canonJson(snap.variants ?? {});
-      const priceSame = toCenti(l.price) === (snap.unit_price_centi ?? 0);
+      const priceSame = toSen(l.price) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
       out.push({
@@ -1651,7 +1677,7 @@ export function MobileNewSO({
         newItemCode: l.itemCode || undefined,
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toCenti(l.price),
+        newUnitPriceSen: toSen(l.price),
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
@@ -1662,7 +1688,7 @@ export function MobileNewSO({
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
           qty: snap.qty,
-          unitPriceSen: snap.unit_price_centi,
+          unitPriceSen: snap.unit_price_sen,
           description2: (snap as { description2?: string | null }).description2 ?? null,
         },
       });
@@ -1677,7 +1703,7 @@ export function MobileNewSO({
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
           qty: snap.qty,
-          unitPriceSen: snap.unit_price_centi,
+          unitPriceSen: snap.unit_price_sen,
           description2: (snap as { description2?: string | null }).description2 ?? null,
         },
       });
@@ -1691,7 +1717,7 @@ export function MobileNewSO({
         newItemCode: l.itemCode,
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toCenti(l.price),
+        newUnitPriceSen: toSen(l.price),
         /* mig 0280 — desktop parity: an added line carries its typed remark to
            the mfg_sales_order_items.remark COLUMN, not only inside the variants
            blob. A service line added purely to carry an instruction is the case
@@ -1712,10 +1738,16 @@ export function MobileNewSO({
       setError(`Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`);
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    if (hasSofaMixConflict(namedLines.map((l) => l.itemGroup))) {
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       INTRODUCED, not flat (desktop parity, #2395): this asked the flat
+       `hasSofaMixConflict`, which is the CREATE path's question, and the guard
+       sits ABOVE the edit branch so it ran on edits too. The server's line paths
+       refuse only a change that INTRODUCES the mix, so an order written before
+       the rule existed stays editable — while this refused EVERY save on one,
+       not even a phone number, blaming a rule the server grandfathers.
+       `origItems` is empty on a create, so there this IS the flat question. */
+    if (sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup))) {
       setError(SOFA_MIX_MESSAGE);
       return;
     }
@@ -1822,7 +1854,7 @@ export function MobileNewSO({
       .map((p, i) => ({
         row: i + 1,
         method: p.method,
-        missing: toCenti(p.amount) > 0
+        missing: toSen(p.amount) > 0
           ? missingMethodSubField({
               methodLabel: p.method,
               merchantProvider: p.bank,
@@ -1860,11 +1892,10 @@ export function MobileNewSO({
             customerState:        state,
             postcode:             postcode.trim(),
             city:                 city.trim(),
-            /* Address lines joined the frozen set 2026-07-27 (two-lane phase
-               2) — collected here so a mobile address edit on a locked SO
-               rides the amendment instead of being silently dropped. */
+            // Addresses frozen 2026-07-27, customer contact 2026-08-21 — collected so a locked-SO edit rides the amendment.
             address1:             addr1.trim(),
             address2:             addr2.trim(),
+            debtorName: name, phone, email,
           },
           {
             processingDate:   origProcDate,
@@ -1874,8 +1905,10 @@ export function MobileNewSO({
             city:                 origCity,
             address1:             origAddress1,
             address2:             origAddress2,
+            ...origContact,
           },
         );
+        // EVERY key collected must appear here — an omitted one reverts to NULL, not "leave alone", and 409s the lock (so-amendment-header.test.ts).
         const outgoingPatch = amendmentMode
           ? withFrozenHeaderFieldsReverted(patch, {
               processingDate:   origProcDate,
@@ -1883,6 +1916,9 @@ export function MobileNewSO({
               customerState:        origState,
               postcode:             origPostcode,
               city:                 origCity,
+              address1:             origAddress1,
+              address2:             origAddress2,
+              ...origContact,
             })
           : patch;
 
@@ -1900,7 +1936,9 @@ export function MobileNewSO({
            server's delivery-date cascade (keyed on PRESENCE, not change) and
            wipes every per-line override. Skipping loses no refresh: this branch
            invalidates everything itself once the whole composite save settles. */
-        if (amendmentMode && hasHeaderChanges(dirtyPatch)) {
+        // Captured once: the plan must ask about the SAME patch this branch sends.
+        const directDirty = hasHeaderChanges(dirtyPatch);
+        if (amendmentMode && directDirty) {
           /* Attach the mandatory loaded token after the dirty check, so `version`
              never turns an otherwise-empty patch into a mutation. A 409 throws;
              the catch leaves every input in place and shows the curated conflict. */
@@ -1914,33 +1952,36 @@ export function MobileNewSO({
 
         if (amendmentMode) {
           const amLines = buildAmendmentLines();
-          /* An amendment may now be header-only (e.g. just a new Delivery Date) —
-             previously a header-only edit hit this empty check and NEVER created
-             an amendment, so nothing ever reached the approval queue. */
-          if (amLines.length === 0 && !hasAmendmentHeaderChanges(headerChanges)) {
-            setSubmitting(false);
-            setError("No changes to submit — edit a line, a date or the delivery location first, then submit the amendment.");
-            return;
-          }
-          const reason = await prompt({
-            title: `Submit amendment for ${docNo}?`,
-            body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Add a short reason (optional).",
-            placeholder: "e.g. customer changed the fabric colour",
-            multiline: true,
-            confirmLabel: "Submit amendment",
+          // Asks about BOTH halves — see vendor/scm/lib/so-amendment-submit.
+          const plan = planAmendmentSubmit({
+            hasLineChanges: amLines.length > 0,
+            hasFrozenHeaderChanges: hasAmendmentHeaderChanges(headerChanges),
+            hasDirectHeaderChanges: directDirty,
+            hasStagedPayments: pays.some((p) => toSen(p.amount) > 0),
           });
-          if (reason == null) { setSubmitting(false); return; } // cancelled the prompt
+          if (plan === "NOTHING") { setSubmitting(false); setError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
           let amendCreatedRes: unknown = null;
-          try {
-            amendCreatedRes = await createAmendment.mutateAsync({
-              docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
-              idempotencyKey: amendIdemKey,
+          // DIRECT_ONLY skips ONLY this block; the tail after it is shared.
+          if (plan === "AMENDMENT") {
+            const reason = await prompt({
+              title: `Submit amendment for ${docNo}?`,
+              body: "This Sales Order is already ordered from the supplier, so your changes go out as an amendment request. Coordinator and supplier confirm it before the order is revised. Add a short reason (optional).",
+              placeholder: "e.g. customer changed the fabric colour",
+              multiline: true,
+              confirmLabel: "Submit amendment",
             });
-          } catch (e) {
-            setSubmitting(false);
-            // authed-fetch already humanises the API error to one plain sentence.
-            setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
-            return;
+            if (reason == null) { setSubmitting(false); return; } // cancelled
+            try {
+              amendCreatedRes = await createAmendment.mutateAsync({
+                docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
+                idempotencyKey: amendIdemKey,
+              });
+            } catch (e) {
+              setSubmitting(false);
+              // authed-fetch already humanises the API error to one plain sentence.
+              setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
+              return;
+            }
           }
           // A payment recorded alongside the amendment still posts, slip or not.
           await recordNewPayments(docNo);
@@ -1951,18 +1992,7 @@ export function MobileNewSO({
           await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
           /* Two-lane rework — the server classifies (and may split) the request:
              product changes wait on Purchasing, delivery changes on Logistics. */
-          {
-            const createdList = ((amendCreatedRes as {
-              amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
-            } | null)?.amendments ?? []);
-            const laneName = (l?: string | null) =>
-              l === "LINES" ? "Purchasing" : l === "DELIVERY" ? "Logistics" : "";
-            void notify(createdList.length > 1
-              ? { title: "Amendment split into two approvals", body: `${createdList.map((a) => `${a.amendment_no ?? ""} → ${laneName(a.lane)}`).join("; ")}. Each applies when its approver signs.` }
-              : createdList[0]?.lane
-                ? { title: "Amendment submitted", body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.` }
-                : { title: "Amendment submitted", body: "It now needs approval before the order is revised." });
-          }
+          void notify(amendmentSubmittedNotice(plan, amendCreatedRes));
           if (onSaved) onSaved(docNo);
           else onBack();
           return;
@@ -2054,10 +2084,10 @@ export function MobileNewSO({
            money it is not about to record. It used to also demand a
            slipSession; once the slip became optional (Owner 2026-08-13) that
            would have re-opened this very deadlock for a slip-less deposit. */
-        pendingDepositCenti: (() => {
+        pendingDepositSen: (() => {
           const c = pays
-            .filter((p) => toCenti(p.amount) > 0)
-            .reduce((sum, p) => sum + toCenti(p.amount), 0);
+            .filter((p) => toSen(p.amount) > 0)
+            .reduce((sum, p) => sum + toSen(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
         items,
@@ -2088,22 +2118,13 @@ export function MobileNewSO({
               version: loadedVersionRef.current,
             }),
           });
-        } catch { /* expiry is the recovery backstop */ }
+        } catch { /* silent-write-ok: RECOVERY arm of an outer catch that already told the operator the save failed; the lease expires anyway. */ }
         activeLineLeaseRef.current = null;
       }
       /* Aggregated save-gate failure (validation_failed) — show EVERY reason at
          once, same popup + list as desktop (owner 2026-07-18). Anything else
          keeps the inline error line. */
-      const problems = parseSaveProblems((e as { body?: string } | undefined)?.body);
-      if (problems && problems.length > 0) {
-        void notify({
-          title: saveProblemsTitle(problems.length),
-          body: <SaveProblemsList problems={problems} />,
-          tone: "error",
-        });
-      } else {
-        setError(e instanceof Error ? e.message : "Couldn't save the sales order. Please try again.");
-      }
+      void notifySaveProblems(notify, e, setError, "Couldn't save the sales order. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -2216,18 +2237,24 @@ export function MobileNewSO({
                       user with scm.so.attribute_other can re-pick (desktop parity).
                       Non-admins see a disabled select pinned to themselves. */}
                   <Field label="Salesperson" style={{ flex: 1 }}>
-                    <select
+                    <SearchableSelect
                       className="fld-i"
+                      ariaLabel="Salesperson"
+                      placeholder="— Pick staff —"
                       value={salespersonId}
-                      onChange={(e) => setSalespersonId(e.target.value)}
+                      onChange={setSalespersonId}
                       disabled={!canChangeSalesperson}
-                    >
-                      {!selfStaffMatch && <option value={SELF_SALESPERSON}>{selfDisplayName} (me)</option>}
-                      {!canChangeSalesperson && selfStaffMatch && (
-                        <option value={selfStaffMatch.id}>{selfStaffMatch.name}</option>
-                      )}
-                      {canChangeSalesperson && staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                      options={[
+                        ...(canChangeSalesperson
+                          ? staffList
+                              .map((s) => ({ value: s.id, label: s.name }))
+                              .sort((a, b) =>
+                                a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+                          : selfStaffMatch
+                            ? [{ value: selfStaffMatch.id, label: selfStaffMatch.name }]
+                            : []),
+                      ]}
+                    />
                   </Field>
                 </div>
                 <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
@@ -2311,10 +2338,24 @@ export function MobileNewSO({
                       then both dates are editable and go out as an amendment
                       request for approval instead of saving directly. */}
                   <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
-                    <input className="fld-i" type="date" value={procDate} disabled={scheduleDatesLocked} min={procLocked ? undefined : today} onChange={(e) => setProcDate(e.target.value)} />
+                    <DateField
+                      fullWidth
+                      className="fld-i"
+                      value={procDate}
+                      disabled={scheduleDatesLocked}
+                      min={procLocked ? undefined : today}
+                      onChange={(iso) => setProcDate(iso)}
+                    />
                   </Field>
                   <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
-                    <input className="fld-i" type="date" value={delivDate} disabled={scheduleDatesLocked} min={today} onChange={(e) => setDelivDate(e.target.value)} />
+                    <DateField
+                      fullWidth
+                      className="fld-i"
+                      value={delivDate}
+                      disabled={scheduleDatesLocked}
+                      min={today}
+                      onChange={(iso) => setDelivDate(iso)}
+                    />
                   </Field>
                 </div>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
@@ -2417,12 +2458,12 @@ export function MobileNewSO({
                     </div>
                     {addressIdentityLocked ? (
                       <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
-                        State, City and Postcode are locked — this order&apos;s processing date has passed and it is now on order to the supplier. Address lines can still be updated.
+                        State, City, Postcode and the address lines are locked — this order&apos;s processing date has passed and it is now on order to the supplier.
                       </div>
                     ) : null}
                     {amendmentMode && (
                       <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
-                        Changing the State, City or Postcode submits an amendment request — it applies once approved. Address lines save straight away.
+                        Changing the State, City, Postcode or an address line submits an amendment request — it applies once approved.
                       </div>
                     )}
               </div>
@@ -2439,7 +2480,8 @@ export function MobileNewSO({
                 {amendmentMode && (
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                    <span>This order is already ordered from the supplier. Edit the lines, dates or delivery location as usual — your <b>Save</b> submits an <b>amendment request</b> that the coordinator and supplier confirm before the order is revised. Contact details and address lines save straight away.</span>
+                    {/* Shared with desktop — both were wrong about addresses. */}
+                    <span>{AMENDMENT_MODE_BANNER}</span>
                   </div>
                 )}
                 {lineEditingBlocked ? (
@@ -2455,7 +2497,7 @@ export function MobileNewSO({
                               because it was copied. minWidth:0 lets a long name
                               wrap instead of shouldering the price off the row. */}
                           <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#11140f", overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "#9aa093" }}>{"×"}{num(l.qty)}</span></span>
-                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "#0c3f39" }}>RM {fmt((toCenti(l.price) * num(l.qty)) / 100)}</span>
+                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "#0c3f39" }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span>
                         </div>
                       </div>
                     )) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "8px 0" }}>No items.</div>}
@@ -2624,19 +2666,18 @@ export function MobileNewSO({
           const group = (sku.itemGroup ?? "").trim().toLowerCase();
           const nextCat = catForGroup(group);
           const inherited = inheritVariantsByCategory[group];
-          const seeded = inherited && Object.keys(inherited).length > 0
-            ? { ...inherited }
-            : (nextCat === base.cat ? base.variants : {});
-          // Don't inherit remark across lines.
-          const seededVariants = { ...seeded };
-          delete (seededVariants as Record<string, unknown>).remark;
+          /* seedFollowerVariants drops the keys that must never travel between
+             lines (remark, and the build identity of another sofa). */
+          const seededVariants = inherited && Object.keys(inherited).length > 0
+            ? seedFollowerVariants(inherited)
+            : seedFollowerVariants(nextCat === base.cat ? base.variants : {});
           return {
             ...base,
             itemCode: code,
             itemGroup: group,
             name: (sku.name ?? "").trim() || code,
             cat: nextCat,
-            price: fromCenti(sku.unitPriceCenti),
+            price: fromSen(sku.unitPriceSen),
             variants: seededVariants,
             overriddenKeys: [],
           };
@@ -3037,11 +3078,11 @@ function LineCard({
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value })}
+              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
-          <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <input className="fld-i" type="date" value={line.ddate} onChange={(e) => onDdateChange(e.target.value)} />
+          <Field label="Line Delivery Date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
+            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
@@ -3617,7 +3658,7 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <input className="fld-i" type="date" value={pay.date} onChange={(e) => onChange({ date: e.target.value })} />
+            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
             <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
@@ -3699,3 +3740,5 @@ const roItemBox: React.CSSProperties = {
   padding: "9px 11px",
   marginBottom: 7,
 };
+
+import { DateField } from "../vendor/scm/components/DateField";

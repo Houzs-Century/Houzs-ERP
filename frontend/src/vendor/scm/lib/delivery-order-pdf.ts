@@ -36,10 +36,16 @@ import {
 } from '../../../lib/branding';
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
+import { drawQrIntoPdf } from './pdf-qr';
 
 type DoHeader = {
   do_number: string;
   status: string;
+  /* When set, the header carries a "scan to mark loaded" QR encoding
+     /scm/do-load?id=<this>. EXPLICIT opt-in by name, not a generic id: the
+     Consignment Note print reuses this renderer, and a CN must never grow a
+     control that flips a DELIVERY ORDER's status. Only the DO surfaces set it. */
+  loadScanId?: string | null;
   do_date: string;
   so_doc_no: string | null;
   debtor_code: string | null;
@@ -72,7 +78,7 @@ type DoItem = {
   description: string | null;
   qty: number;
   m3_milli: number | null;
-  unit_price_centi: number;
+  unit_price_sen: number;
   /* Variant info snapshotted from the SO (migration 0058) — drives the unified
      variant line so DO/Consignment Note read like SO/PO/etc. */
   item_group?: string | null;
@@ -228,7 +234,26 @@ function drawDoHeader(
   doc.text('Issued', rightEdge - dateW - 1.2, issuedBaseline, { align: 'right' });
   rightW = Math.max(rightW, dateW + 1.2 + doc.getTextWidth('Issued'));
 
-  const rightBottom = issuedBaseline + 1.2;
+  let rightBottom = issuedBaseline + 1.2;
+
+  /* "Scan to mark loaded" (2026-08-21): the warehouse scans the paper that
+     travels with the goods; the link lands on /scm/do-load which flips
+     DRAFT → LOADED through the ordinary status PATCH (audited, guarded).
+     Right column only — the header rule clears whichever column ran longer,
+     so growing this column is layout-safe by construction. */
+  if (header.loadScanId && typeof window !== 'undefined') {
+    const QR = 16;
+    const qrTop = rightBottom + 2.5;
+    const url = `${window.location.origin}/scm/do-load?id=${encodeURIComponent(header.loadScanId)}`;
+    drawQrIntoPdf(doc, url, rightEdge - QR, qrTop, QR);
+    doc.setFont(SANS, 'normal');
+    doc.setFontSize(6.5);
+    setInk(doc, T.inkMuted);
+    const labelBaseline = baselineOf(qrTop + QR + 0.8, 6.5);
+    doc.text('SCAN · MARK LOADED', rightEdge, labelBaseline, { align: 'right', charSpace: charSpace(6.5, 0.08) });
+    rightW = Math.max(rightW, QR);
+    rightBottom = labelBaseline + 0.8;
+  }
 
   // ── Left column, wrapped into what the right one left ────────────────────
   const GUTTER = 7; // the handoff's header gap
@@ -647,7 +672,7 @@ export async function renderDeliveryOrderInto(
   // document (Commander 2026-06-16).
   const fabric = await loadCustomerFabricMaps(items);
   // DO is QUANTITY-only (Owner 2026-06-26) — a delivery doc shows quantity /
-  // volume, not money. The unit_price_centi still flows to the Sales Invoice.
+  // volume, not money. The unit_price_sen still flows to the Sales Invoice.
   const listCell = (vals?: string[] | null): string =>
     vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
   const descOf = (it: DoItem): string =>

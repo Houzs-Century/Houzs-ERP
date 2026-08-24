@@ -6,13 +6,16 @@
 // (auth now lives entirely in authed-fetch via localStorage). Everything else
 // is verbatim.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { OriginAssignment } from './flow-queries';
+import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
@@ -80,7 +83,7 @@ export type SupplierRow = {
 /** PR — Commander 2026-05-27 ("跟着 Product Maintenance 的排版"):
  *  Per-category supplier cost matrix on supplier_material_bindings
  *  (migration 0089). Two concrete shapes the UI cares about; everything
- *  else (or null) → fall back to unit_price_centi.
+ *  else (or null) → fall back to unit_price_sen.
  *
  *  SOFA:     { [seatHeight]: { P1?: centi, P2?: centi, P3?: centi } }
  *  BEDFRAME: { P1?: centi, P2?: centi }
@@ -96,10 +99,10 @@ export type BindingRow = {
   id: string;
   supplier_id: string;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string;
-  unit_price_centi: number;
+  unit_price_sen: number;
   currency: Currency;
   lead_time_days: number;
   payment_terms_override: string | null;
@@ -110,20 +113,29 @@ export type BindingRow = {
   notes: string | null;
   /** PR — Commander 2026-05-27: per-category cost matrix mirroring the
    *  Products Maintenance page shape. NULL on existing rows + on categories
-   *  that use the single unit_price_centi (mattress / accessory / service). */
+   *  that use the single unit_price_sen (mattress / accessory / service). */
   price_matrix: PriceMatrix | null;
   /** Migration 0177 — cost anchor. When true, this binding is THE cost anchor
-   *  for its material_code: editing either side's cost (this binding's
-   *  unit_price_centi / price_matrix, or the linked mfg_products
+   *  for its item_code: editing either side's cost (this binding's
+   *  unit_price_sen / price_matrix, or the linked mfg_products
    *  base_price_sen / price1_sen) mirrors onto the other. At most one anchor
-   *  per material_code (enforced server-side). SOFA bindings can be anchored
+   *  per item_code (enforced server-side). SOFA bindings can be anchored
    *  but cost sync is skipped (per-height matrix vs single SKU cost). */
   is_cost_anchor: boolean;
   created_at: string;
   updated_at: string;
 };
 
-export type PoHeaderRow = {
+/** Migration 0324 — every PO row carries the HOLD MARKER, because the list
+ *  renders it BESIDE the status pill rather than instead of it. */
+export type PoHoldFields = {
+  on_hold?: boolean | null;
+  hold_reason?: string | null;
+  held_at?: string | null;
+  held_by?: string | null;
+};
+
+export type PoHeaderRow = PoHoldFields & {
   id: string;
   po_number: string;
   supplier_id: string;
@@ -135,9 +147,9 @@ export type PoHeaderRow = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency: Currency;
-  subtotal_centi: number;
-  tax_centi: number;
-  total_centi: number;
+  subtotal_sen: number;
+  tax_sen: number;
+  total_sen: number;
   notes: string | null;
   submitted_at: string | null;
   received_at: string | null;
@@ -165,7 +177,7 @@ export type PoHeaderRow = {
     address?: string | null;
   } | null;
   /** PR — Commander 2026-05-27: list endpoint embeds a tiny items summary
-      (material_code + qty per line) so the buyer can scan what's inside each
+      (item_code + qty per line) so the buyer can scan what's inside each
       PO row without drilling in. Detail endpoint returns full items[]
       separately, not on the header. Optional because not every consumer
       wants the join. */
@@ -203,7 +215,7 @@ export type PoHeaderRow = {
 };
 
 export type PoItemSummary = {
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty: number;
   /** Supplier's own SKU for this line (owner 2026-08-05) — the list's
@@ -216,12 +228,12 @@ export type PoItemRow = {
   purchase_order_id: string;
   binding_id: string | null;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string | null;
   qty: number;
-  unit_price_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  line_total_sen: number;
   received_qty: number;
   notes: string | null;
   /* PR #41 — variant fields (migration 0056) */
@@ -229,8 +241,8 @@ export type PoItemRow = {
   description?: string | null;
   description2?: string | null;
   uom?: string;
-  discount_centi?: number;
-  unit_cost_centi?: number;
+  discount_sen?: number;
+  unit_cost_sen?: number;
   gap_inches?: number | null;
   divan_height_inches?: number | null;
   divan_price_sen?: number;
@@ -384,7 +396,7 @@ export type SupplierScorecard = {
     poDate: string;
     expectedDate: string | null;
     receivedDate: string | null;
-    totalCenti: number;
+    totalSen: number;
     orderedQty: number;
     receivedQty: number;
   }>;
@@ -433,10 +445,10 @@ export function useUpdateSupplier() {
 
 export type NewBinding = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti?: number;
+  unitPriceSen?: number;
   currency?: Currency;
   leadTimeDays?: number;
   moq?: number;
@@ -512,7 +524,7 @@ export function useDeleteBinding() {
 }
 
 /** Migration 0177 — set/clear this binding as the cost anchor for its
- *  material_code. Setting clears the flag on any other binding for the same
+ *  item_code. Setting clears the flag on any other binding for the same
  *  product (one anchor per code) and pushes the binding's current cost onto the
  *  product (initial sync). We invalidate the supplier detail (flag changed) AND
  *  the mfg-products cache (the product's cost may have just been mirrored). */
@@ -595,6 +607,9 @@ export type PoStatusCounts = {
   partial: number;
   received: number;
   cancelled: number;
+  /* ON_HOLD (mig 0318, owner 2026-08-21). Optional for the same reason
+     `outstanding` is: an older deployment answers without it. */
+  on_hold?: number;
 };
 export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, supplierId, q, sort } = params;
@@ -615,6 +630,73 @@ export function usePurchaseOrdersPaged(params: { page: number; pageSize: number;
   });
 }
 
+/* Deferred PO-list enrichment — the MRP-derived columns (Assigned SO /
+   Delivered) the list no longer computes on its critical path (see
+   listMrpEnrichment.ts). Fired AFTER the list renders, for the POs it just
+   showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
+   request stays bounded; each chunk is cached independently. The backend runs
+   ONE company-wide computeMrp per request regardless of chunk size. */
+const PO_ENRICH_CHUNK = 100;
+
+export function usePoListMrpEnrichmentMap(
+  poIds: string[],
+  enabled: boolean,
+): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean } {
+  const chunks = useMemo(() => {
+    const uniq = [...new Set(poIds.filter(Boolean))].sort();
+    const out: string[][] = [];
+    for (let i = 0; i < uniq.length; i += PO_ENRICH_CHUNK) out.push(uniq.slice(i, i + PO_ENRICH_CHUNK));
+    return out;
+  }, [poIds]);
+
+  const results = useQueries({
+    queries: chunks.map((chunk) => ({
+      enabled: enabled && chunk.length > 0,
+      queryKey: ['mfg-purchase-orders-list-mrp-enrichment', chunk.join(',')],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
+          `/mfg-purchase-orders/list-mrp-enrichment?poIds=${encodeURIComponent(chunk.join(','))}`,
+          { signal },
+        ),
+      staleTime: 30_000,
+      retry: retryUnlessClientError,
+      retryDelay: 800,
+    })),
+  });
+
+  const sig = results.map((r) => r.dataUpdatedAt).join('|');
+  const isFetching = results.some((r) => r.isFetching);
+  const byId = useMemo(() => {
+    const map = new Map<string, ListMrpEnrichment>();
+    for (const r of results) {
+      const e = r.data?.enrichment;
+      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
+  }, [sig]);
+
+  return { byId, isFetching };
+}
+
+/* The overlay the PO list applies: take the rows the list endpoint returned
+   (without the MRP-derived columns), fetch the deferred enrichment for their
+   ids, and return the healed rows. */
+export function useEnrichedPoListRows<T extends EnrichableMrpRow>(
+  rows: T[],
+  enabled: boolean,
+): T[] {
+  const poIds = useMemo(
+    () => rows.map((r) => r.id).filter((x): x is string => !!x),
+    [rows],
+  );
+  const { byId } = usePoListMrpEnrichmentMap(poIds, enabled);
+  return useMemo(
+    () => rows.map((r) => applyListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
+    [rows, byId],
+  );
+}
+
 export function usePurchaseOrderDetail(id: string | null) {
   return useQuery({
     queryKey: ['mfg-purchase-order-detail', id],
@@ -633,11 +715,11 @@ export const fetchPurchaseOrderDetail = (id: string) =>
 
 export type NewPoItem = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   bindingId?: string;
   notes?: string;
   /* PR #41 — variant fields */
@@ -645,8 +727,8 @@ export type NewPoItem = {
   description?: string;
   description2?: string;
   uom?: string;
-  discountCenti?: number;
-  unitCostCenti?: number;
+  discountSen?: number;
+  unitCostSen?: number;
   gapInches?: number | null;
   divanHeightInches?: number | null;
   divanPriceSen?: number;
@@ -685,7 +767,7 @@ export type OutstandingSoItem = {
   qty:            number;
   poQtyPicked:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants:       unknown;
   lineSuffix:     string | null;
   /* Commander 2026-05-28 — PO-from-SO redesign extras. processingDate +
@@ -727,7 +809,7 @@ export type OutstandingPoItem = {
   qty:            number;
   receivedQty:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   warehouseId:    string | null;
   variants:       unknown;
   /* Delivery-carry — the PO line's delivery date, carried into the GRN line. */
@@ -744,12 +826,31 @@ export type OutstandingPoItem = {
   warehouseLocationName: string | null;
 };
 
-export function useOutstandingPoItems() {
+/**
+ * `poIds` is REQUIRED, not optional, per CLAUDE.md's rule about a parameter that
+ * decides something — it decides whether the server reads ONE Purchase Order or
+ * every one in the company. An optional one defaults every forgetful caller to
+ * the unscoped read, which is the LOOSER direction and is exactly the shape that
+ * produced the owner's 2026-08-17 zero-row screen: the scope existed in the URL,
+ * was never sent to the server, and was applied in the browser to an
+ * already-truncated list. Pass `[]` for the open "From PO" picker.
+ *
+ * Returns the whole payload, `scope` included. That block is the WHY behind an
+ * empty `items` and dropping it is how "your PO is a draft" became "every line
+ * has been received" — see `lib/outstandingEmptyReason.ts`.
+ */
+export function useOutstandingPoItems(poIds: string[]) {
+  const scopeParam = [...poIds].sort().join(',');
   return useQuery({
-    queryKey: ['grns', 'outstanding-po-items'],
-    queryFn: () => authedFetch<{ items: OutstandingPoItem[] }>(
-      `/grns/outstanding-po-items`,
-    ).then((r) => r.items),
+    // The scope is part of the identity of this read now that the SERVER applies
+    // it; without it in the key, a scoped and an unscoped picker share a cache
+    // entry and one shows the other's rows.
+    queryKey: ['grns', 'outstanding-po-items', scopeParam],
+    queryFn: () => authedFetch<{ items: OutstandingPoItem[]; scope?: OutstandingScope }>(
+      scopeParam
+        ? `/grns/outstanding-po-items?poId=${encodeURIComponent(scopeParam)}`
+        : `/grns/outstanding-po-items`,
+    ),
     staleTime: 30_000,
   });
 }
@@ -799,7 +900,7 @@ export type OutstandingGrnItem = {
   itemGroup:       string;
   qtyAccepted:     number;
   remaining:       number;
-  unitPriceCenti:  number;
+  unitPriceSen:  number;
   variants:        unknown;
   /* Source note's currency + FX rate (owner 2026-08-06) — one invoice may bill
      several of a supplier's notes, but a PI header carries ONE currency + rate,
@@ -858,7 +959,7 @@ export function useCreatePisFromGrnItems() {
     factual error under it and one real half:
 
     THE ERROR — this hook has TWO live callers, not one. PurchaseOrderFromSo.tsx
-    (routed at /scm/purchase-orders/from-so) is the "Convert from SO" / "Add Line
+    (routed at /scm/purchase-orders/from-so) is the "Transfer from Sales Order" / "Add Line
     Item" picker, and it is an ordinary route-level form: ONE post per mount, and
     it navigates to the PO on success. Its mount IS one intent, so a per-mount
     useIdempotencyKey() is correct there — the same shape as the other 17. That
@@ -905,7 +1006,7 @@ export function useCreatePosFromSoItems() {
          ({ itemCode: supplierId }); wins over the main-supplier binding. */
       supplierByCode?: Record<string, string>;
       /* Commander 2026-05-29 — when set, APPEND the picked lines to this existing
-         PO (the "Convert from SO" / "Add Line Item" picker scoped to a PO)
+         PO (the "Transfer from Sales Order" / "Add Line Item" picker scoped to a PO)
          instead of creating new POs. */
       targetPoId?: string;
       /* Commander 2026-05-31 — converts raised from the MRP page are
@@ -1156,18 +1257,12 @@ export function useDeletePoLineAllocation() {
   });
 }
 
-export function useSubmitPurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; submitted_at: string } }>(
-        `/mfg-purchase-orders/${id}/submit`,
-        { method: 'PATCH' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
-    onError: writeFailed,
-  });
-}
+/* useSubmitPurchaseOrder (PATCH /mfg-purchase-orders/:id/submit) was REMOVED
+   2026-08-18. Its endpoint had no write path — it read the row, echoed an
+   already-SUBMITTED PO and then returned 409 cannot_submit unconditionally — so
+   the only caller left, the read-only PO detail page, failed on every DRAFT it
+   was offered on. /confirm is the one verb that commits a draft; see
+   vendor/scm/lib/po-next-step.ts for the full account. */
 
 /** Confirm a DRAFT PO → SUBMITTED (Draft/Confirmed two-state). This is where a
     draft commits: it stamps submitted_at server-side and advances the source
@@ -1186,6 +1281,13 @@ export function useConfirmPurchaseOrder() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', id] });
     },
+    /* Added 2026-08-18 with the retirement of useSubmitPurchaseOrder. This is
+       now the ONLY way to commit a draft PO, and /confirm has a refusal an
+       operator can act on: PO_WAREHOUSE_REQUIRED 409s a PO with no ship-to
+       warehouse and names the offending lines. Without an onError that refusal
+       reached nobody — the button would simply appear to do nothing, which is
+       the failure mode the retired endpoint already had. */
+    onError: writeFailed,
   });
 }
 

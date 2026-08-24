@@ -5,13 +5,13 @@
 //
 // SCALE: mfg_products cost is in *sen* (base_price_sen = PRICE_2/cost ref,
 // price1_sen = PRICE_1 cost). supplier_material_bindings cost is in *centi*
-// (unit_price_centi flat, or price_matrix cells). centi === sen (both RM×100),
+// (unit_price_sen flat, or price_matrix cells). centi === sen (both RM×100),
 // so the mapping is 1:1 — no unit conversion, only field/shape mapping.
 //
 // DIRECTIONS (bidirectional for FLAT/BEDFRAME; SOFA is one-way product→binding):
-//   FLAT  (unit_price_centi; MATTRESS/ACCESSORY/SERVICE)
-//        binding→product: base_price_sen = unit_price_centi
-//        product→binding: unit_price_centi = base_price_sen
+//   FLAT  (unit_price_sen; MATTRESS/ACCESSORY/SERVICE)
+//        binding→product: base_price_sen = unit_price_sen
+//        product→binding: unit_price_sen = base_price_sen
 //   BEDFRAME (price_matrix {P1,P2})
 //        binding→product: base_price_sen = matrix.P2, price1_sen = matrix.P1
 //        product→binding: matrix.P2 = base_price_sen, matrix.P1 = price1_sen
@@ -24,7 +24,7 @@
 //        WRONG product field (base_price_sen); the real mapping is a shape
 //        transform, not ambiguous.
 //        product→binding: price_matrix ⇐ seat_height_prices (grouped by height,
-//          tier→P1/P2/P3); unit_price_centi ⇐ base_price_sen (flat fallback).
+//          tier→P1/P2/P3); unit_price_sen ⇐ base_price_sen (flat fallback).
 //        binding→product: SKIPPED — a supplier-side edit must NEVER overwrite
 //          the authoritative product cost.
 // ─────────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ export type AnchorCategory = 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | 'BEDFRAME' |
 /** Minimal binding cost shape this helper reads/writes. */
 export type BindingCost = {
   category: AnchorCategory | null;
-  unit_price_centi: number | null;
+  unit_price_sen: number | null;
   price_matrix: unknown; // JSONB — { P1,P2 } (bedframe) | { h:{P1,P2,P3} } (sofa) | null
 };
 
@@ -63,7 +63,7 @@ export type ProductPatch = Partial<Pick<ProductCost, 'base_price_sen' | 'price1_
 
 /** Patch to apply to the binding row (only the keys that changed). */
 export type BindingPatch = {
-  unit_price_centi?: number;
+  unit_price_sen?: number;
   price_matrix?: Record<string, unknown>;
 };
 
@@ -74,7 +74,7 @@ export type SyncResult<P> =
 /** Which cost "lane" a binding uses, derived from its category. SOFA is its
  *  own lane purely so it can be skipped; everything that isn't BEDFRAME/SOFA
  *  falls back to the FLAT unit_price lane (matches validatePriceMatrix, where
- *  only BEDFRAME + SOFA carry a matrix and the rest use unit_price_centi). */
+ *  only BEDFRAME + SOFA carry a matrix and the rest use unit_price_sen). */
 function laneFor(category: AnchorCategory | null): 'FLAT' | 'BEDFRAME' | 'SOFA' {
   const cat = (category ?? '').toUpperCase();
   if (cat === 'SOFA') return 'SOFA';
@@ -127,9 +127,9 @@ export function bindingToProductPatch(binding: BindingCost): SyncResult<ProductP
     return { skipped: false, patch };
   }
 
-  // FLAT — 1:1 unit_price_centi → base_price_sen. price1 untouched (flat
+  // FLAT — 1:1 unit_price_sen → base_price_sen. price1 untouched (flat
   // categories have no PRICE_1 lane on the binding side).
-  return { skipped: false, patch: { base_price_sen: asCent(binding.unit_price_centi) } };
+  return { skipped: false, patch: { base_price_sen: asCent(binding.unit_price_sen) } };
 }
 
 /* ── product cost → binding cost ──────────────────────────────────────────
@@ -170,7 +170,7 @@ export function productToBindingPatch(
     // Flat fallback lane (unmatched seat size). Set only when the product has a
     // base cost; a null base leaves the binding's flat price untouched rather
     // than forcing it to 0 (money-safe — a missing cost must stay visible).
-    if (flat !== null) patch.unit_price_centi = flat;
+    if (flat !== null) patch.unit_price_sen = flat;
     if (Object.keys(patch).length === 0) {
       return { skipped: true, reason: 'sofa_product_has_no_cost' };
     }
@@ -191,7 +191,7 @@ export function productToBindingPatch(
     return { skipped: false, patch: { price_matrix: next } };
   }
 
-  // FLAT — 1:1 base_price_sen → unit_price_centi. unit_price_centi is NOT NULL
+  // FLAT — 1:1 base_price_sen → unit_price_sen. unit_price_sen is NOT NULL
   // (default 0) on the binding, so a null product cost maps to 0.
-  return { skipped: false, patch: { unit_price_centi: asSen(product.base_price_sen) ?? 0 } };
+  return { skipped: false, patch: { unit_price_sen: asSen(product.base_price_sen) ?? 0 } };
 }

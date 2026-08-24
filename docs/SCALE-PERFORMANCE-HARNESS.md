@@ -54,31 +54,47 @@ $env:PERF_LOCAL_ACK = "I_UNDERSTAND_THIS_IS_A_DISPOSABLE_LOCAL_DATABASE"
 npm run perf:scale -- --engine=pg --orders=1000 --lines=1000 --skus=500 --users=500 --runs=5
 ```
 
-Run the schema/query contract and route-drift checks before measuring:
+Run the schema/query contract and route-drift checks before measuring. They used
+to be `npm run test:scale-contract` [gone]; since 2026-08-20 those seventeen files
+are ordinary vitest tests in the light project, so the command is:
 
 ```powershell
-npm run test:scale-contract
+npm --prefix backend run test:light
 ```
 
-Pull-request CI also executes the full 100k fixture against an ephemeral
-PostgreSQL service container and uploads the JSON report as a build artifact.
-That job proves the DDL, seed SQL, correctness checks, queries, rollback and
-post-rollback catalogue assertion are executable at the acceptance cardinality.
-It is still database-contract evidence only — see the Boundary section.
+CI executes the full 100k fixture against an ephemeral PostgreSQL service
+container and uploads the JSON report as a build artifact. That job proves the
+DDL, seed SQL, correctness checks, queries, rollback and post-rollback catalogue
+assertion are executable at the acceptance cardinality. It is still
+database-contract evidence only — see the Boundary section.
 
-It runs on the `pull_request` event only. The same commit also fires a `push`
-run of the same workflow, where this job is skipped by design: a second
+**Where it runs changed on 2026-08-18.** It is now `scale-postgres-contract` in
+`.github/workflows/postsubmit.yml`, triggered by `push` to `main`, not by
+`pull_request` in `ci.yml`.
+
+The invariant this section has always asserted is unchanged: **exactly one
+execution per change, and the skip is never the only report.** A second
 ephemeral PostgreSQL container on the same runner image is not an independent
-environment, so running it twice buys nothing. The skip is therefore never the
-only report — every PR has one execution of this job on the merge ref.
+environment, so running it twice still buys nothing. The single execution simply
+happens on `main` after merge instead of on the pre-merge ref — on the tree that
+actually shipped rather than a speculative merge commit.
 
-`npm run test:scale-contract` is wired as `pretest`, not chained inside `test`.
-`npm test -- --shard=i/n` appends its arguments to the LAST command in the
-script, so `"test": "vitest run && npm run test:scale-contract"` would hand
-`--shard` to the contract runner (which ignores it) and leave vitest unsharded —
-silently making all four CI shards run the whole 112-file suite. `pretest` runs
-first with no arguments and leaves `test` a single command, so the shard flag
-still reaches vitest.
+What that trades away: a regression is now reported after the merge, not before
+it. That was accepted on evidence — over the 40 `ci.yml` runs preceding the
+move, this job was 37 success / 0 failure / 3 cancelled, having never once
+failed. If it starts failing on `main`, move it back into `ci.yml`; the decision
+is recorded in `docs/ci-capacity-coe.md`.
+
+**The `pretest` hook this section used to describe is gone, with the script it
+ran.** It is recorded because the reasoning still binds anything wired the same
+way: `npm run test:scale-contract` [gone] was a `pretest`, not a link in a `&&`
+chain, because `npm test -- --shard=i/n` appends its arguments to the LAST
+command in the script — so
+`"test": "vitest run && npm run test:scale-contract"` [gone] would have handed `--shard` to the contract runner (which ignores it) and
+left vitest unsharded, silently making all four CI shards run the whole suite.
+Today those tests are vitest files in the light project and `test` is
+`vitest run --config vitest.light.config.mts && vitest run`, so a `--shard` flag
+reaches the LAST vitest invocation by the same rule. Nothing appends to it.
 
 Then run the required scale and retain its report as a CI/local artifact:
 

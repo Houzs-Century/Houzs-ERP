@@ -14,7 +14,7 @@
 // each carrying a copy that drifts.
 // ----------------------------------------------------------------------------
 
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useLayoutEffect, useMemo, useState, type RefObject } from 'react';
 
 /* Panel geometry, in px. Fixed house values — a caller choosing its own gap or
    floor is how two menus on one page stop looking like one control. Only the
@@ -67,6 +67,44 @@ export function measureAnchoredPanel(
     bottom: flipUp ? viewportHeight - anchor.top + PANEL_GAP : undefined,
     maxHeight: Math.max(PANEL_MIN_H, Math.min(maxHeight, flipUp ? above : below)),
   };
+}
+
+/**
+ * Place a panel whose WIDTH is its own design rather than the trigger's — a
+ * fixed-width menu such as a column funnel popover — and clamp it horizontally
+ * as well. `width` is the PANEL's, which is the whole difference from
+ * `measureAnchoredPanel`, where it is the trigger's and is inherited.
+ *
+ * `maxHeight` stays REQUIRED for the same reason it is there; pass
+ * `viewportHeight - 2 * VIEWPORT_MARGIN` for a menu that may use the whole
+ * window when there is room.
+ */
+export function measureFixedWidthPanel(
+  anchor: { top: number; bottom: number; left: number },
+  width: number,
+  viewport: { width: number; height: number },
+  maxHeight: number,
+): AnchoredPanelPos {
+  const pos = measureAnchoredPanel({ ...anchor, width }, viewport.height, maxHeight);
+  const maxLeft = viewport.width - width - VIEWPORT_MARGIN;
+  return { ...pos, left: Math.max(VIEWPORT_MARGIN, Math.min(pos.left, maxLeft)) };
+}
+
+/** `measureFixedWidthPanel` against the live window, recomputed when the
+ *  anchor changes. For a menu anchored to a rect captured at click time — it
+ *  has no live element to re-measure, and this app's point-anchored menus
+ *  close on scroll rather than following it. */
+export function useFixedWidthPanel(
+  anchor: { top: number; bottom: number; left: number } | null,
+  width: number,
+  maxHeight: number,
+): AnchoredPanelPos | null {
+  return useMemo(
+    () => (anchor
+      ? measureFixedWidthPanel(anchor, width, { width: window.innerWidth, height: window.innerHeight }, maxHeight)
+      : null),
+    [anchor, width, maxHeight],
+  );
 }
 
 function samePos(a: AnchoredPanelPos | null, b: AnchoredPanelPos): boolean {
@@ -134,8 +172,37 @@ export function anchoredPanelStyle(pos: AnchoredPanelPos): React.CSSProperties {
     position: 'fixed',
     left: pos.left,
     width: pos.width,
-    top: pos.top,
-    bottom: pos.bottom,
+    /* BOTH EDGES, ALWAYS — `'auto'` for the one this placement does not use.
+     *
+     * `pos.top` and `pos.bottom` are exclusive: a panel that flips UP carries
+     * only `bottom`. Writing `top: pos.top` then hands React `undefined`, and
+     * React OMITS an undefined style property — so the element keeps whatever
+     * `top` its own class rule sets, and the two combine into a box that is
+     * over-constrained to zero height.
+     *
+     * That is not hypothetical. Measured on production 2026-08-22, the Sales
+     * Order fabric picker:
+     *
+     *   class      position:absolute; top:100%; left:0; right:0
+     *   inline     position:fixed; left:295px; width:286px; bottom:376px
+     *   used       top 816px (=100% of the 816px viewport), height 2px
+     *
+     *   816 - 816 - 376 = -376  ->  clamped to 0; the 2px was its own borders.
+     *
+     * The panel WAS rendering, with all 18 rows in it, parked on the bottom
+     * edge of the window at the height of a hairline. It looked exactly like
+     * "the dropdown does not open".
+     *
+     * The same class also sets `right: 0`, and SoLineCard already passed
+     * `right: 'auto'` by hand to neutralise it — half of this bug had been
+     * found and patched at ONE call site. Neutralising both edges here fixes
+     * it for every consumer at once, and stops the next panel that flips up
+     * from inheriting a stray `top`.
+     *
+     * `'auto'` is the CSS initial value, so this is a no-op for a panel whose
+     * class sets neither. */
+    top: pos.top ?? 'auto',
+    bottom: pos.bottom ?? 'auto',
     maxHeight: pos.maxHeight,
     zIndex: 1000,
   };

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
@@ -8,6 +9,7 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
@@ -17,7 +19,11 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { fmtCenti } from "../lib/scm";
+import {
+  SI_TRANSFER_MOBILE_ROUTE_HINT,
+  siTransferBlockReason,
+} from "../vendor/scm/lib/do-next-step";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -51,15 +57,15 @@ import "./mobile.css";
 //   purchase-consignment-returns GET /purchase-consignment-returns/:id  → { purchaseReturn,         items }
 // ---------------------------------------------------------------------------
 
-// Money is stored as integer *_centi — delegate display to the shared SCM
-// formatter (fmtCenti). The local Number() coercion is what this adds: the
-// callers hand in `unknown` (raw payload fields), which fmtCenti does not take.
-// The non-finite guard now also lives INSIDE fmtCenti/fmtAmt, so this one is
+// Money is stored as integer *_sen — delegate display to the shared SCM
+// formatter (fmtSen). The local Number() coercion is what this adds: the
+// callers hand in `unknown` (raw payload fields), which fmtSen does not take.
+// The non-finite guard now also lives INSIDE fmtSen/fmtAmt, so this one is
 // belt-and-braces — do not read it as the only thing standing between a stray
 // NaN and the user.
 const money = (centi: unknown) => {
   const n = Number(centi);
-  return fmtCenti(Number.isFinite(n) ? n : 0);
+  return fmtSen(Number.isFinite(n) ? n : 0);
 };
 
 /** DD/MM/YYYY (TZ-aware via the shared helper), or em-dash when absent / unparseable. */
@@ -179,8 +185,8 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
-  name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
+function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
+  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
@@ -225,10 +231,10 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
       <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#11140f" }}>
         {name || "—"} <span style={{ color: "#9aa093", fontWeight: 600 }}>{"×"}{qtyLabel}</span>
       </span>
-      <span className="money" style={{ fontSize: 12.5, fontWeight: 800, color: "#11140f", flex: "none" }}>{money(amountCenti)}</span>
+      <span className="money" style={{ fontSize: 12.5, fontWeight: 800, color: "#11140f", flex: "none" }}>{money(amountSen)}</span>
       <div className="money" style={{ flexBasis: "100%", fontSize: 10.5, color: "#9aa093" }}>
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
-        <span>@ {money(unitCenti)}</span>
+        <span>@ {money(unitSen)}</span>
       </div>
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
@@ -334,7 +340,7 @@ type DocMap = {
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
-  line: (it: any) => { name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown };
+  line: (it: any) => { name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown };
   /** Optional amber warning bar between the stats and the line items —
    *  computed from the SAME detail payload (header + items), so no extra
    *  fetch. Return null for "nothing to warn about". */
@@ -363,7 +369,7 @@ const DOC_MODULES: Record<string, DocMap> = {
        document view for EVERYONE (desktop parity — the DO detail Totals·Margin
        card was removed too). Costing moves to the separate Finance module. */
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
     ],
     /* Description ONCE, code NOT displayed — the shared rule
        (vendor/shared/line-identity.ts). `name` already preferred the
@@ -373,8 +379,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       name: lineIdentity({ code: it.item_code, description: it.description }).primary,
       sub: join(it.warehouse_code, dmy(it.line_delivery_date) !== "—" ? dmy(it.line_delivery_date) : ""),
       qty: it.qty,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
   },
 
@@ -394,12 +400,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.total_centi ?? h.local_total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const depositSen = siDepositAppliedSen(h); // own stat, never folded into Paid
+      const bal = siOutstandingSen(Number(h.total_sen ?? h.local_total_sen ?? 0), Number(h.paid_sen ?? 0), depositSen);
       return [
-        ["Total", money(h.total_centi ?? h.local_total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.total_sen ?? h.local_total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
+        ...(depositSen > 0 ? [["SO deposit", money(depositSen), "#2f8a5b"] as [string, string, string]] : []),
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -420,8 +426,8 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: secondary ?? "",
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -444,16 +450,16 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Currency", firstOf(h.currency)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
-      name: firstOf(it.material_name, it.description, it.material_code),
-      sub: join(it.material_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
+      name: firstOf(it.material_name, it.description, it.item_code),
+      sub: join(it.item_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
       qty: it.qty_received ?? it.qty_accepted,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
   },
 
@@ -473,24 +479,24 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Submitted", dmy(h.submitted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
-      name: firstOf(it.material_name, it.description, it.material_code),
+      name: firstOf(it.material_name, it.description, it.item_code),
       /* variant summary FIRST (item #1 of the mobile UI audit — every doc line
-         surfaces the sofa/bedframe colour+composition), then material_code +
+         surfaces the sofa/bedframe colour+composition), then item_code +
          cumulative received_qty. buildVariantSummary returns "" when the row
          has no variants, so a bare material line still reads correctly. */
       sub: join(
         buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-        it.material_code,
+        it.item_code,
         s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
       ),
       qty: it.qty,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
     /* SO→PO drift (desktop parity, Commander 2026-06-16) — the detail payload's
        items already carry so_drift; same status gate as the desktop banner
@@ -507,7 +513,7 @@ const DOC_MODULES: Record<string, DocMap> = {
 
   /* Purchase Invoice — supplier + PI number in the header, supplier code +
      supplier_invoice_ref (their invoice) as subtitle, PO + GRN in the meta
-     grid. Balance = total_centi − paid_centi (mirrors the SI stat trio). */
+     grid. Balance = total_sen − paid_sen (mirrors the SI stat trio). */
   "purchase-invoices": {
     path: "/purchase-invoices",
     headerKey: "purchaseInvoice",
@@ -528,30 +534,30 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Posted", dmy(h.posted_at)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const totalSen = Number(h.total_sen ?? 0);
+      const paidSen = Number(h.paid_sen ?? 0);
+      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
       return [
-        ["Total", money(h.total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
-    /* line: PI items key on material_code (PC/PO family) rather than item_code —
+    /* line: PI items key on item_code (PC/PO family) rather than item_code —
        hand it to lineIdentity as the code, description = material_name, and put
        the variant summary in secondary so the sofa/bedframe spec shows on every
        row. Falls back to the server-stamped description2 for pre-variant rows. */
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -581,11 +587,11 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Completed", dmy(h.completed_at)],
     ],
     stats: (h) => [
-      ["Refund", money(h.refund_centi), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name,
       });
       return {
@@ -595,16 +601,16 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.warehouse_code,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_refund_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_refund_sen,
       };
     },
   },
 
   /* Delivery Return — the SO-side twin of purchase-returns. Customer + return
      number in the header, source DO number as subtitle. Total + Refund stats
-     because the header carries both local_total_centi (line sum) and
-     refund_centi (payable-out); the customer sees both on the printed slip. */
+     because the header carries both local_total_sen (line sum) and
+     refund_sen (payable-out); the customer sees both on the printed slip. */
   "delivery-returns": {
     path: "/delivery-returns",
     headerKey: "deliveryReturn",
@@ -624,8 +630,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Reference", firstOf(h.ref)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
-      ["Refund", money(h.refund_centi), "#a16a2e"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "#a16a2e"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -640,8 +646,8 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.warehouse_code,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -670,12 +676,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.local_total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const totalSen = Number(h.local_total_sen ?? 0);
+      const paidSen = Number(h.paid_sen ?? 0);
+      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
       return [
-        ["Total", money(h.local_total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.local_total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -688,15 +694,15 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.total_sen,
       };
     },
   },
 
   /* Consignment Note — the CN is the CO's delivery twin (a shipped loaner).
      Endpoint /consignment-notes/:id returns { deliveryOrder, items }. Header
-     carries local_total_centi (line sum); no paid/balance because payment on
+     carries local_total_sen (line sum); no paid/balance because payment on
      a consignment happens against the CO, not the note. */
   "consignment-notes": {
     path: "/consignment-notes",
@@ -714,7 +720,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Driver", firstOf(h.driver_name)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -729,15 +735,15 @@ const DOC_MODULES: Record<string, DocMap> = {
           dmy(it.line_delivery_date) !== "—" ? dmy(it.line_delivery_date) : "",
         ),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
 
   /* Consignment Return — the CN's reverse. Endpoint /consignment-returns/:id
      returns { deliveryReturn, items }. Same two-money stats as delivery-returns
-     (Total = local_total_centi, Refund = refund_centi). */
+     (Total = local_total_sen, Refund = refund_sen). */
   "consignment-returns": {
     path: "/consignment-returns",
     headerKey: "deliveryReturn",
@@ -756,8 +762,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Refunded", dmy(h.refunded_at)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
-      ["Refund", money(h.refund_centi), "#a16a2e"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "#a16a2e"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -771,8 +777,8 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.condition,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -796,25 +802,25 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Submitted", dmy(h.submitted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
         name: primary,
         sub: join(
           buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-          it.material_code,
+          it.item_code,
           s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
         ),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -842,31 +848,31 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Posted", dmy(h.posted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
         name: primary,
         sub: join(
           buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-          it.material_code,
+          it.item_code,
           s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : "",
         ),
         qty: it.qty_received ?? it.qty_accepted,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
 
   /* Purchase Consignment Return — the reverse of a PC Receive. Endpoint
-     returns { purchaseReturn, items }. Only stat is refund_centi (a supplier
+     returns { purchaseReturn, items }. Only stat is refund_sen (a supplier
      credit); no per-line warehouse column on this doc's ITEM select. */
   "purchase-consignment-returns": {
     path: "/purchase-consignment-returns",
@@ -890,19 +896,19 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Completed", dmy(h.completed_at)],
     ],
     stats: (h) => [
-      ["Refund", money(h.refund_centi), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name,
       });
       return {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_refund_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_refund_sen,
       };
     },
   },
@@ -960,8 +966,8 @@ type DocAction = {
 
 /** true when total − paid still leaves a balance (Record Payment worth offering). */
 function hasBalance(h: any): boolean {
-  const total = Number(h?.total_centi ?? h?.local_total_centi ?? 0);
-  const paid = Number(h?.paid_centi ?? 0);
+  const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
+  const paid = Number(h?.paid_sen ?? 0);
   const t = Number.isFinite(total) ? total : 0;
   const p = Number.isFinite(paid) ? paid : 0;
   return t > 0 && t - p > 0;
@@ -1013,19 +1019,28 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
   });
 
   switch (moduleKey) {
-    // DO — PATCH /:id/status. A fresh DO is DRAFT (confirm = DRAFT→DISPATCHED) or
-    // DISPATCHED; then DISPATCHED→IN_TRANSIT→SIGNED(→DELIVERED via POD). CANCELLED
-    // is final. Offer the NEXT step + Cancel. DELIVERED is the POD screen's job,
-    // so it is never offered here.
+    // DO — PATCH /:id/status. A fresh DO is DRAFT (confirm = DRAFT→LOADED) or
+    // LOADED; the driver may mark it IN_TRANSIT ("On the way"). SIGNED and
+    // DELIVERED are the Proof-of-Delivery screen's job (it closes the delivery
+    // WITH a signature), so they are never offered here. The "Mark Signed" rung
+    // was REMOVED 2026-08-21 (owner) — a bare status button is not how a delivery
+    // gets signed off. CANCELLED is final. Offer the NEXT step + Cancel.
     case "delivery-orders-mfg": {
       if (st === "CANCELLED" || st === "DELIVERED" || st === "INVOICED") return out;
       const path = `/delivery-orders-mfg/${enc}/status`;
+      /* CONFIRM LANDS ON LOADED, not DISPATCHED — corrected 2026-08-22 with the
+         desktop's identical fault. This rung said `DRAFT: ["DISPATCHED",
+         "Confirm"]`: labelled Confirm, writing the status every screen renders
+         as "Shipped", so the phone's Confirm skipped Confirmed exactly the way
+         the office button did. LOADED is where the stock leaves now (owner:
+         「once confirmed就代表出货了 就是直接扣库存」), so this is the same
+         event under its right name. The LOADED→DISPATCHED rung stays: that is a
+         real, separate step — the goods actually going on the road. */
       const next: Record<string, [string, string]> = {
         "": ["DISPATCHED", "Dispatch"],
-        DRAFT: ["DISPATCHED", "Confirm"],
+        DRAFT: ["LOADED", "Confirm"],
         LOADED: ["DISPATCHED", "Dispatch"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
-        IN_TRANSIT: ["SIGNED", "Mark Signed"],
       };
       const step = next[st];
       if (step) out.push({ key: "next", label: step[1], variant: "solid", request: { path, method: "PATCH", body: { status: step[0] } } });
@@ -1117,8 +1132,8 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         return out;
       }
       // POSTED / PARTIALLY_PAID — cancel allowed only while unpaid; the backend
-      // rejects a cancel once paid_centi > 0, so hide Cancel then.
-      const paid = Number(header?.paid_centi ?? 0);
+      // rejects a cancel once paid_sen > 0, so hide Cancel then.
+      const paid = Number(header?.paid_sen ?? 0);
       if (!(Number.isFinite(paid) && paid > 0)) {
         out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/purchase-invoices/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase invoice?", body: "This voids the PI and reverses its accounting.", confirmLabel: "Cancel PI" } });
       }
@@ -1151,15 +1166,16 @@ function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
 }
 
 /** Record-Payment bottom sheet. `kind` picks the endpoint + payload:
- *  si → POST /sales-invoices/:id/payments { paidAt, method, amountCenti, ... }
- *  pi → PATCH /purchase-invoices/:id/payment { amountCenti, notes }. */
+ *  si → POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }
+ *  pi → PATCH /purchase-invoices/:id/payment { amountSen, notes }. */
 function PaymentSheet({ kind, id, header, onClose, onDone }: {
   kind: PayKind; id: string; header: any; onClose: () => void; onDone: () => void;
 }) {
   const notify = useNotify();
-  const total = Number(header?.total_centi ?? header?.local_total_centi ?? 0);
-  const paid = Number(header?.paid_centi ?? 0);
-  const balance = Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(paid) ? paid : 0));
+  const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
+  const paid = Number(header?.paid_sen ?? 0);
+  // Gated on `kind`, not on the key being absent: this pre-fills an amount to COLLECT.
+  const balance = siOutstandingSen(total, paid, kind === "si" ? siDepositAppliedSen(header) : 0);
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
   const [method, setMethod] = useState("cash");
@@ -1174,19 +1190,19 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const amountCenti = Math.round(Number(amount) * 100);
-      if (!Number.isFinite(amountCenti) || amountCenti <= 0) throw new Error("Enter a valid amount greater than zero.");
+      const amountSen = Math.round(Number(amount) * 100);
+      if (!Number.isFinite(amountSen) || amountSen <= 0) throw new Error("Enter a valid amount greater than zero.");
       if (kind === "si") {
-        const body: Record<string, unknown> = { paidAt: date, method, amountCenti };
+        const body: Record<string, unknown> = { paidAt: date, method, amountSen };
         if (ref.trim()) body.approvalCode = ref.trim();
         await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
           idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
       } else {
-        const body: Record<string, unknown> = { amountCenti };
+        const body: Record<string, unknown> = { amountSen };
         if (ref.trim()) body.notes = ref.trim();
         /* The PI payment PATCH is ADDITIVE — purchase-invoices.ts:644 computes
-           `newPaid = c0.paid_centi + amount`, so a double-fire pays the supplier
-           twice on paper. Its optimistic-concurrency loop gates on the paid_centi
+           `newPaid = c0.paid_sen + amount`, so a double-fire pays the supplier
+           twice on paper. Its optimistic-concurrency loop gates on the paid_sen
            it just read, which stops a concurrent write from being LOST; it does
            nothing about the same payment arriving twice. Hence the key. */
         await authedFetch(`/purchase-invoices/${encodeURIComponent(id)}/payment`,
@@ -1234,7 +1250,7 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
         {kind === "si" && (
           <div style={{ marginBottom: 12 }}>
             <label style={labelStyle}>Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
+            <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
           </div>
         )}
 
@@ -1296,6 +1312,8 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     invalidateModuleShared(qc, moduleKey);
   };
 
+  const zeroCost = useGrnZeroCostRemedy({ grnId: id, onPosted: refresh });
+
   const mutation = useMutation({
     mutationFn: (action: DocAction) =>
       authedFetch(action.request.path, {
@@ -1317,7 +1335,16 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       refresh();
       void notify({ title: "Done" });
     },
-    onError: (e) => { setRunningKey(null); setError(e instanceof Error ? e.message : "Something went wrong. Please try again."); },
+    /* A zero-cost receipt refusal is the one error here that CAN be answered on
+       this screen: the sheet carries the same sentence plus the two remedies the
+       refusal names (a unit price, or a per-line "Received free"). Mobile had
+       neither and sent the receiver to a PC. Everything else keeps the inline
+       line. */
+    onError: (e) => {
+      setRunningKey(null);
+      if (zeroCost.capture(e)) { setError(null); return; }
+      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    },
   });
 
   const run = async (action: DocAction) => {
@@ -1328,8 +1355,38 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     mutation.mutate(action);
   };
 
+  /* ── THE DELIVERY ORDER'S NEXT STEP, SAID OUT LOUD ───────────────────────
+     A SIGNED or DELIVERED delivery order used to reach this footer with NOTHING
+     to show — `statusActionsFor` has no entry for SIGNED and returns early on
+     DELIVERED — so on the phone the document simply looked finished and its
+     Sales Invoice was never raised. The desktop offered the transfer in the same
+     state, which is the "我又不是两套系统" reading moved from company-vs-company
+     to phone-vs-desktop.
+
+     This screen is a screen machine, not a router, so it does not host the
+     convert wizard itself; the sentence therefore names the route that DOES
+     work here (Sales Invoices → "+"), which MobileApp's MODULE_TO_CONVERT and
+     MobileConvertWizard's META.si both confirm exists. Wording comes from
+     vendor/scm/lib/do-next-step.ts — the same module the desktop detail page and
+     the list drawer read, so the three cannot drift apart again.
+
+     The driver ladder above is deliberately UNCHANGED. Its extra rung
+     (DISPATCHED → IN_TRANSIT, "Mark In Transit") is not drift: IN_TRANSIT is the
+     departure marker MobileDeliveryPlanning writes for "On the way"
+     (MobileDeliveryPlanning.tsx:1280), so deleting it to match the desktop's
+     single jump would have removed a step drivers actually use. ── */
+  /* The status guard is not defensive noise: `header` falls back to `{}` when
+     this screen is reached with a synthetic { id } row (the Relationship Map's
+     flowNav does exactly that), and an absent status would otherwise render the
+     GENERIC sentence for a second and then swap it for the real one. Saying the
+     wrong thing briefly is its own version of the bug this note exists to fix. */
+  const doNextStepNote =
+    moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
+      ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
+      : null;
+
   const hasRow = statusActions.length > 0 || !!payKind;
-  if (!hasRow && !podEnabled) return null;
+  if (!hasRow && !podEnabled && !doNextStepNote) return null;
   const busy = mutation.isPending;
 
   return (
@@ -1338,6 +1395,11 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         <div style={{ position: "absolute", left: 0, right: 0, bottom: hasRow && podEnabled ? 130 : 76, padding: "0 16px", textAlign: "center", fontSize: 11.5, color: "#b23a3a", zIndex: 1, maxWidth: "calc(100% - 32px)" }}>{error}</div>
       )}
       <footer className="actbar" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
+        {doNextStepNote && (
+          <p style={{ margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.35, color: "#6b7280" }}>
+            {doNextStepNote}
+          </p>
+        )}
         {podEnabled && (
           <button className="btn" onClick={onPOD} style={{ marginBottom: hasRow ? 9 : 0 }}>Proof of Delivery</button>
         )}
@@ -1355,6 +1417,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       {payOpen && payKind && (
         <PaymentSheet kind={payKind} id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
       )}
+      {zeroCost.sheet}
     </>
   );
 }
@@ -1437,7 +1500,10 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     try {
       if (moduleKey === "delivery-orders-mfg") {
         const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-        await generateDeliveryOrderPdf(header as never, items as never, { action });
+        // loadScanId arms the print's "scan to mark loaded" QR (desktop parity).
+        await generateDeliveryOrderPdf(
+          { ...(header as Record<string, unknown>), loadScanId: (header as { id?: string }).id } as never,
+          items as never, { action });
       } else {
         const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
         await generateSalesInvoicePdf(header as never, items as never, { action });
@@ -1540,7 +1606,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
               {!!error && !isLoading && <div style={{ fontSize: 11.5, color: "#b23a3a", padding: "9px 0" }}>Couldn't load line items. Please try again.</div>}
               {!isLoading && !error && (items.length ? items.map((it, i) => {
                 const l = map.line(it);
-                const code = String(((it?.material_code ?? it?.item_code) ?? "")).trim();
+                const code = String(((it?.item_code ?? it?.item_code) ?? "")).trim();
                 const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
                 /* mig 0235 — PO lines carry their sub-numbered allocations off
                    the same detail read (display-only twin of the desktop
@@ -1567,7 +1633,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>
@@ -1597,7 +1663,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
 /** Humanize a snake_case / camelCase key into a Title-Case label. */
 function humanize(key: string): string {
   return key
-    .replace(/_centi$|_sen$/i, "")
+    .replace(/_sen$|_sen$/i, "")
     .replace(/_id$/i, "")
     .replace(/_/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -1621,7 +1687,7 @@ function rowToFields(row: any): Field[] {
     let value: string;
     let mono = false;
     let wide = false;
-    if (/_centi$|_sen$/i.test(key)) {
+    if (/_sen$|_sen$/i.test(key)) {
       value = money(raw);
       mono = true;
     } else if (/_date$|_at$|^date$/i.test(key)) {
@@ -1654,8 +1720,8 @@ const SIMPLE_META: Record<string, { eyebrow: (r: any) => string; title: (r: any)
     status: () => "",
   },
   inventory: {
-    eyebrow: (r) => firstOf(r.product_code),
-    title: (r) => firstOf(r.product_name, r.product_code),
+    eyebrow: (r) => firstOf(r.item_code),
+    title: (r) => firstOf(r.product_name, r.item_code),
     status: () => "",
   },
   drivers: {
@@ -1790,7 +1856,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   });
 
   // Doc-like simple modules (PI / PR / DR) fetch their full header so the
-  // read-only detail shows the richer fields the list row lacks (paid_centi /
+  // read-only detail shows the richer fields the list row lacks (paid_sen /
   // notes / dates). The 4 richer doc types (DO/SI/GRN/PO) never reach here —
   // they use DocumentDetail.
   const docCfg = SIMPLE_DOC_PATHS[moduleKey];
@@ -1930,3 +1996,5 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   }
   return <SimpleDetail moduleKey={moduleKey} row={row} title={title} onBack={onBack} onEdit={editHandler} />;
 }
+
+import { DateField } from "../vendor/scm/components/DateField";

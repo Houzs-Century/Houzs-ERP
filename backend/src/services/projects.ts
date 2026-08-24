@@ -1,11 +1,10 @@
 import type { Env } from "../types";
 import { recomputeAutoCostLines } from "./projectCostRates";
-import { scopeNotExpiredSql } from "./projectAcl";
 import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
-import { deriveProjectCode, deriveProjectName } from "./project-naming";
+import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -415,30 +414,13 @@ const PATCH_FIELDS = [
 // SEREMBAN, KUANTAN, etc.) get rolled up to their state at write
 // time and during data backfills.
 export const MALAYSIA_STATES = [
-  "JOHOR",
-  "KEDAH",
-  "KELANTAN",
-  "KL",
-  "LABUAN",
-  "MELAKA",
-  "NEGERI SEMBILAN",
-  "PAHANG",
-  "PENANG",
-  "PERAK",
-  "PERLIS",
-  "PUTRAJAYA",
-  "SABAH",
-  "SARAWAK",
-  "SELANGOR",
-  "TERENGGANU",
+  "JOHOR", "KEDAH", "KELANTAN", "KL", "LABUAN", "MELAKA", "NEGERI SEMBILAN",
+  "PAHANG", "PENANG", "PERAK", "PERLIS", "PUTRAJAYA", "SABAH", "SARAWAK",
+  "SELANGOR", "TERENGGANU",
 ] as const;
 
 export const PAYMENT_STATUSES = [
-  "not_started",
-  "deposit_paid",
-  "paid",
-  "refund_pending",
-  "refunded",
+  "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
 
 export async function patchProject(
@@ -499,6 +481,15 @@ export async function patchProject(
   // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
   if ("venue" in body) {
     body.venue = canonicalizeVenue(body.venue as string | null);
+  }
+
+  // Organizer edits follow through to the display name (owner 2026-08-17) —
+  // swap rules in project-naming.ts. An explicit name in the same patch wins.
+  if ("organizer" in body && !("name" in body)) {
+    const cur = await env.DB.prepare(`SELECT name, organizer FROM projects WHERE id = ?`)
+      .bind(id).first<{ name: string | null; organizer: string | null }>();
+    const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
+    if (synced) body.name = synced;
   }
 
   const sets: string[] = [];
@@ -1253,20 +1244,6 @@ export interface ListProjectsFilters {
   include_archived?: boolean;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  /** ACL allow-list. If present, only projects with pic_id IN this list
-   *  are returned. Empty array means "nothing" (scoped user with no PIC
-   *  in their line → zero results, which is correct). */
-  pic_scope?: number[];
-  /** Brand allow-list — paired with pic_scope for sales-dept scoping
-   *  (migration 048). Empty array means the scoped user has no brand
-   *  coverage → zero results. Undefined means no brand ACL applies. */
-  brand_scope?: string[];
-  /** Scoped rep's own user id. When set (only for scope_to_pic reps,
-   *  paired with pic_scope), OR-in the sales-attendee arm so a rep on a
-   *  project's Sales Attending list sees it even when they aren't the PIC
-   *  — mirrors the /calendar/events attendee arm (mig 087). Undefined for
-   *  admins / directors / unscoped roles (they never carry pic_scope). */
-  attendee_user_id?: number;
   /** "My pending tasks" filter (role-based). When set, only return
    *  projects that have at least one PENDING checklist item with this
    *  role_label (e.g. "BD", "PURCHASER", "DRIVER", "SALES PIC",
@@ -1290,7 +1267,7 @@ export interface ListProjectsFilters {
    *  (agreement approvers only), the project's Sales Attending not yet
    *  assigned, and the Sales PIC not yet assigned. The staffing lanes
    *  (attending + pic) only fire once the CONTRACT section is cleared. */
-  pending_director?: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean };
+  pending_director?: { stock?: boolean; stock_titles?: string[]; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean };
   /** Brands this approver is responsible for (owner 2026-08-10: Kris approves
    *  AKEMI + ERGOTEX stock-outs, Peter takes ZANOTTI). When non-empty the
    *  director APPROVAL lanes only surface events of these brands, so each
@@ -1496,6 +1473,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // lane's own binds.
   const dueToday = todayMyt();
   const DUE_GATE = `substr(COALESCE(pc.due_date, p.start_date), 1, 10) <= ?`;
+  // Interpolated (like APPROVER_BRAND_GATE) so the fixed bind order of the
+  // lanes below is untouched; a compile-time date literal, never user input.
+  const MY_PENDING_EPOCH = "2026-08-01";
   // A caller's "My Pending" can have SEVERAL sources; a project qualifies if
   // ANY match, so the lanes below OR together (each caller sets only a few).
   const pendingOr: string[] = [];
@@ -1535,11 +1515,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   const APPROVER_BRAND_GATE = approverBrands.length
     ? ` AND p.brand IN (${approverBrands.join(",")})`
     : "";
-  // Stock-out record submitted by the purchaser, now awaiting director approval.
-  const STOCK_OUT_AWAITING_APPROVAL = `(EXISTS (SELECT 1 FROM project_checklist pc
-                WHERE pc.project_id = p.id AND pc.title = 'Stock Out Transfer Record'
-                  AND pc.status = 'pending'
-                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})${APPROVER_BRAND_GATE})`;
+  // (The stock-awaiting-approval lane is built inline in the pending_director
+  //  arm below — title-driven since 2026-08-21 so Stock In routes too.)
   // The Agreement / Quotation is the APPROVER's pending only once it has been
   // SUBMITTED for review (owner 2026-07-23, weisiang report): before BD uploads
   // it, it sits on BD's own lane, not the approver's. Mirror STOCK_OUT above —
@@ -1703,7 +1680,23 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Sales Director staging (owner 2026-07-21): approve the stock-out record once
   // the purchaser submitted it, and assign the Sales Attending reps.
   if (f.pending_director) {
-    if (f.pending_director.stock) { pendingOr.push(STOCK_OUT_AWAITING_APPROVAL); pendingBinds.push(dueToday); }
+    if (f.pending_director.stock) {
+      // Which stock documents this director approves (owner 2026-08-21: a
+      // submitted Stock IN reached no approver lane — only Stock Out was
+      // watched). The caller passes titles per the keys the user explicitly
+      // holds; default keeps the historical Stock-Out-only behaviour.
+      const stockTitles = f.pending_director.stock_titles?.length
+        ? f.pending_director.stock_titles
+        : ["Stock Out Transfer Record"];
+      const ph = stockTitles.map(() => "?").join(",");
+      pendingOr.push(
+        `(EXISTS (SELECT 1 FROM project_checklist pc
+                WHERE pc.project_id = p.id AND pc.title IN (${ph})
+                  AND pc.status = 'pending'
+                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})${APPROVER_BRAND_GATE})`
+      );
+      pendingBinds.push(...stockTitles, dueToday);
+    }
     if (f.pending_director.agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
     if (f.pending_director.sales_attending) { pendingOr.push(SALES_ATTENDING_EMPTY); pendingBinds.push(dueToday); }
     if (f.pending_director.sales_pic) { pendingOr.push(SALES_PIC_EMPTY); pendingBinds.push(dueToday); }
@@ -1713,6 +1706,24 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Agreement / Quotation on its own timeline (Super Admin / weisiang).
   if (f.pending_agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
   if (pendingOr.length) {
+    // Only CONFIRMED events generate anyone's pending work (owner 2026-08-17:
+    // "why event on status cancelled and pending appear in my pending task??
+    // ... make sure these 2 status event not appear on my pending task").
+    // Measured at the time of the report: 22 lane items sat on cancelled
+    // events and 24 on unconfirmed ('pending'-status) ones. Applied to the
+    // whole OR-block so every lane — role, title, approver, logistic,
+    // director, defect — inherits it; NULL/legacy status still shows.
+    where.push(`COALESCE(p.status, 'confirmed') NOT IN ('cancelled', 'pending')`);
+    // Legacy events never surface (owner 2026-08-24: "event yg lama semua
+    // jangan bagi keluar dekat my pending task ... just start bulan ni and
+    // onward saja / apply to all user"). Events that ENDED before Aug 2026
+    // carry years of deliberately-incomplete checklists (641 overdue items at
+    // the time of the report, oldest from Feb 2025), so every lane skips them.
+    // A FIXED epoch, not a rolling month: rolling would silently drop a
+    // just-ended event's post-event tasks (Filled Floorplan T+3d, Event
+    // Complete T+7d) at every month turn. end_date over start_date so an
+    // event still running into August stays visible.
+    where.push(`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= '${MY_PENDING_EPOCH}'`);
     where.push(`(${pendingOr.join("\n      OR ")})`);
     binds.push(...pendingBinds);
   }
@@ -1803,48 +1814,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     const like = `%${f.search}%`;
     binds.push(like, like, like, like, like, like);
   }
-  // Row-level ACL for a scoped rep (pic_scope present ⇒ getProjectScope was
-  // non-null, i.e. a scope_to_pic sales/CS rep). Mirrors BOTH the
-  // /calendar/events assignment scoping AND services/projectAcl.canSeeProject
-  // so the list, the calendar, and the detail all agree on what a scoped rep
-  // may see (no row that 404s on open; no openable row missing from the list):
-  //   · PIC arm      — the project's PIC (COALESCE(pic_id, created_by) for
-  //                    legacy pre-039 rows) is in their [self, manager] line
-  //                    AND the project's brand is in their department allow-list
-  //                    AND the project is still inside the PIC grace window.
-  //                    This is exactly canSeeProject's inPicLine + brand + grace.
-  //   · Attendee arm — they are on the project's Sales Attending list
-  //                    (project_sales_attendees → sales_reps.user_id, mig 087) —
-  //                    the same linkage the calendar's attendee arm uses.
-  //                    Unconditional (no brand / grace gate), exactly like the
-  //                    calendar: being an attendee is itself an assignment.
-  // Fail-closed: a scoped rep with neither a PIC line nor an attendee record
-  // yields an empty OR set → `1 = 0` → an empty list, never the full list.
-  if (f.pic_scope) {
-    const scopeArms: string[] = [];
-    if (f.pic_scope.length > 0 && f.brand_scope && f.brand_scope.length > 0) {
-      // Fall back to created_by when pic_id is NULL so legacy projects
-      // (pre-migration 039) still attach to their creator's team. Brand-less
-      // projects are intentionally invisible to scoped users — admins fix by
-      // setting the brand. Grace: PIC visibility expires PIC_GRACE_DAYS after
-      // the project ends (owner: "完了的四天之后").
-      scopeArms.push(
-        `(COALESCE(p.pic_id, p.created_by) IN (${f.pic_scope.map(() => "?").join(",")})` +
-        ` AND ${scopeNotExpiredSql}` +
-        ` AND p.brand IS NOT NULL AND p.brand IN (${f.brand_scope.map(() => "?").join(",")}))`
-      );
-      binds.push(...f.pic_scope, ...f.brand_scope);
-    }
-    if (f.attendee_user_id != null) {
-      scopeArms.push(
-        `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
-        ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +
-        ` WHERE psa.project_id = p.id AND sr.user_id = ?)`
-      );
-      binds.push(f.attendee_user_id);
-    }
-    where.push(scopeArms.length ? `(${scopeArms.join(" OR ")})` : "1 = 0");
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
+  // within a company, any user with the projects permission sees ALL that
+  // company's projects. Visibility is governed only by the projects page-access
+  // gate and the company predicate (p.company_id above); crew scoping
+  // (assigned_user_id) is a separate axis and stays.
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const page = f.page && f.page > 0 ? f.page : 1;
@@ -1887,8 +1861,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // variants — the SELECT list is interpolated, not bound). Segments start
   // with '|' so LTRIM(..., '|') strips the lead and keeps the separators;
   // NULLIF collapses "no duty matched" to NULL so the frontend falls back.
-  const STOCK_DUTY_LIT = `EXISTS (SELECT 1 FROM project_checklist pc2
-              WHERE pc2.project_id = p.id AND pc2.title = 'Stock Out Transfer Record'
+  const stockDutyLit = (title: string) => `EXISTS (SELECT 1 FROM project_checklist pc2
+              WHERE pc2.project_id = p.id AND pc2.title = '${title.replace(/'/g, "''")}'
                 AND pc2.review_status IN ('pending_review', 'amended')
                 AND substr(COALESCE(pc2.due_date, p.start_date), 1, 10) <= '${dueToday}')`;
   const ATTENDING_DUTY_LIT = `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= '${dueToday}'
@@ -1902,8 +1876,15 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND pc4.status = 'pending'
                 AND substr(COALESCE(pc4.due_date, p.start_date), 1, 10) <= '${dueToday}')`;
   const directorDutySegs: string[] = [];
-  if (f.pending_director?.stock)
-    directorDutySegs.push(`CASE WHEN ${STOCK_DUTY_LIT} THEN '|Approve Stock Out Transfer' ELSE '' END`);
+  if (f.pending_director?.stock) {
+    const dutyTitles = f.pending_director.stock_titles?.length
+      ? f.pending_director.stock_titles
+      : ["Stock Out Transfer Record"];
+    for (const t of dutyTitles) {
+      const label = t === "Stock In Transfer Record" ? "Approve Stock In Transfer" : "Approve Stock Out Transfer";
+      directorDutySegs.push(`CASE WHEN ${stockDutyLit(t)} THEN '|${label}' ELSE '' END`);
+    }
+  }
   if (f.pending_director?.sales_pic)
     directorDutySegs.push(`CASE WHEN ${PIC_DUTY_LIT} THEN '|Set Sales PIC' ELSE '' END`);
   if (f.pending_director?.sales_attending)
@@ -1916,6 +1897,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
               COALESCE((SELECT group_concat(c3.title, '|') FROM project_checklist c3
                 WHERE c3.project_id = p.id
                   AND c3.status NOT IN ('done', 'na')
+                  AND COALESCE(c3.review_status, '') NOT IN ('pending_review', 'amended')
                   AND c3.role_label LIKE '%${ptl}%'
                   AND substr(COALESCE(c3.due_date, p.start_date), 1, 10) <= '${dueToday}'), '')
               || ${f.pending_sales_attending ? `CASE WHEN ${ATTENDING_DUTY_LIT} THEN '|Set Sales Attending' ELSE '' END` : `''`},
@@ -2920,6 +2902,22 @@ export async function createStockTransfer(
   input: CreateStockTransferInput,
   userId: number
 ) {
+  // A transfer with no date DEFAULTS to today; it is never refused. Both the
+  // mirror task's due_date and its title come from this one field, so a blank
+  // one used to produce a `due_date NULL` row titled bare "Stock OUT" —
+  // invisible to the tasklist's date column, the Gantt and every due-date
+  // rollup, and permanently so, because redateChecklistFromOffsets skips
+  // `notes LIKE 'auto:%'` rows on purpose (their date follows the transfer,
+  // not the project schedule).
+  //
+  // Default-never-refuse is the owner's standing rule for this system — the
+  // same shape the PO expected-date and the journal entry-date already use.
+  // todayMyt() and NOT toISOString(): Workers run in UTC, so before 08:00 MYT
+  // a raw UTC slice files the transfer under YESTERDAY, every morning shift.
+  //
+  // DATE-ONLY on purpose. We know the day; we do not know the time, and a
+  // silently invented 00:00 is a worse answer than an honest date.
+  const transferredAt = input.transferred_at?.trim() || todayMyt();
   const r = await env.DB.prepare(
     `INSERT INTO project_stock_transfers
        (project_id, direction, transferred_at, record_r2_key, file_name, mime_type, notes, created_by)
@@ -2928,7 +2926,7 @@ export async function createStockTransfer(
     .bind(
       input.project_id,
       input.direction,
-      input.transferred_at ?? null,
+      transferredAt,
       input.record_r2_key ?? null,
       input.file_name ?? null,
       input.mime_type ?? null,
@@ -2944,7 +2942,7 @@ export async function createStockTransfer(
     transferId,
     projectId: input.project_id,
     direction: input.direction,
-    transferredAt: input.transferred_at ?? null,
+    transferredAt,
     confirmedAt: null,
     userId,
   });

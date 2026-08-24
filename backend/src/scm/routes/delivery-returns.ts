@@ -21,15 +21,18 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
-import { doLineRemaining, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import { resolveItemGroups } from '../lib/sku-category';
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -44,19 +47,19 @@ deliveryReturns.use('*', supabaseAuth);
    subtotals. All are in HEADER (so they travel in the DR list payload) but must
    reach ONLY a finance-viewer (lib/houzs-perms.canViewScmFinance). Stripped from
    every row for a non-finance caller. The DR header carries FOUR categories (no
-   service_centi, unlike SO/DO/SI). Refund/total shown to everyone
-   (local_total_centi / refund_centi) are NOT listed here. */
+   service_sen, unlike SO/DO/SI). Refund/total shown to everyone
+   (local_total_sen / refund_sen) are NOT listed here. */
 const DR_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
 /* KEPT LOCAL, deliberately — do NOT "converge" DR_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select,
    and the delivery return speaks a narrower money vocabulary than the SO: no
-   service_centi / service_cost_centi and no deposit_centi (a return takes no
-   deposit). refund_centi is in HEADER and deliberately NOT here — the refund is
+   service_sen / service_cost_sen and no deposit_sen (a return takes no
+   deposit). refund_sen is in HEADER and deliberately NOT here — the refund is
    what the customer is owed and everyone who passes the access gate may see it,
    the same line #625 drew and #632 kept. The per-LINE keys ARE shared: they are
    byte-identical across all seven sales documents, so they live in
@@ -85,20 +88,20 @@ function gateDrFinance(
 const HEADER =
   'id, return_number, do_doc_no, delivery_order_id, sales_invoice_id, ' +
   'debtor_code, debtor_name, return_date, reason, status, ' +
-  'received_at, inspected_at, refunded_at, refund_centi, inspection_notes, ' +
+  'received_at, inspected_at, refunded_at, refund_sen, inspection_notes, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, sales_location, customer_state, customer_country, note, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
-  'local_total_centi, total_cost_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
+  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, warehouse_id, notes, created_at, created_by, updated_at';
 
 const ITEM =
   'id, delivery_return_id, do_item_id, item_code, item_group, description, description2, ' +
-  'uom, qty_returned, condition, unit_price_centi, discount_centi, line_total_centi, ' +
-  'unit_cost_centi, line_cost_centi, line_margin_centi, refund_centi, variants, notes, created_at';
+  'uom, qty_returned, condition, unit_price_sen, discount_sen, line_total_sen, ' +
+  'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
   const d = new Date();
@@ -119,10 +122,10 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, deliveryReturnId: string) {
   const { data: items, error: itemsErr } = await sb.from('delivery_return_items')
-    .select('item_group, line_total_centi, line_cost_centi')
+    .select('item_group, line_total_sen, line_cost_sen')
     .eq('delivery_return_id', deliveryReturnId);
   /* A failed READ is not an empty return, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO header AND a ZERO refund_centi on a
+     it folded a transient blip into a ZERO header AND a ZERO refund_sen on a
      return whose lines were intact, i.e. a refund owed to a customer silently
      became no refund. The ERROR is the signal, never the emptiness: a genuinely
      empty return resolves error === null with data === [] and MUST still zero. */
@@ -133,9 +136,9 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost  = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost  = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -146,22 +149,22 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
   }
   const margin = total - totalCost;
   const { error: updErr } = await sb.from('delivery_returns').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    local_total_centi: total,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    local_total_sen: total,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
     // The refund total tracks the returned line value (kept for the legacy
-    // refund_centi column the list + report still read).
-    refund_centi: total,
+    // refund_sen column the list + report still read).
+    refund_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', deliveryReturnId);
   /* The write's own result was discarded until 2026-07-17: a rejected UPDATE left
@@ -181,8 +184,8 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
 
    This is the MIRROR IMAGE of delivery-orders-mfg.ts deductInventoryForDo: it
    writes IN movements (the FIFO trigger from migration 0053/0095 creates a lot
-   per IN row), one row per (product_code, variant_key) bucket. The lot's unit
-   cost is seeded from the line's unit_cost_centi (sen) so returned stock
+   per IN row), one row per (item_code, variant_key) bucket. The lot's unit
+   cost is seeded from the line's unit_cost_sen (sen) so returned stock
    re-enters at its original cost rather than zero. */
 /* ── resolveDrLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
    PER-WAREHOUSE CORRECTNESS for the RETURNS side. A Delivery Return must put
@@ -322,7 +325,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     .select('return_number, warehouse_id, company_id')
     .eq('id', deliveryReturnId).maybeSingle();
   const { data: items } = await sb.from('delivery_return_items')
-    .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_centi')
+    .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
     .eq('delivery_return_id', deliveryReturnId);
   const drHeaderWarehouseId = (drHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const drNo = (drHeader as { return_number: string } | null)?.return_number ?? deliveryReturnId;
@@ -339,7 +342,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
   const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null }>);
 
-  /* Collapse identical (warehouse_id, product_code, variant_key, batch_no) lines
+  /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
      two warehouses (multi-DO merge); bucketing by warehouse keeps each
      warehouse's increase correct + idempotency-safe. batch_no joins the key so a
@@ -347,9 +350,9 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
      cost carried from the first line in the bucket (returned stock re-enters at
      its original per-unit cost). */
   const byKey = new Map<string, {
-    warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
+    warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
   }>();
-  for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_centi?: number | null }>)) {
+  for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>)) {
     /* P1 SO-SKU spec §4.6 — depth guard: a SERVICE line must never write stock
        IN. The route guards reject them at create/edit; this keeps any line
        that slips through (legacy data, direct DB write) inventory-neutral. */
@@ -365,18 +368,18 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     if (cur) { cur.qty += qty; }
     else byKey.set(k, {
       warehouse_id: warehouseId,
-      product_code: it.item_code,
+      item_code: it.item_code,
       variant_key: variantKey,
       product_name: it.description,
       qty,
-      unit_cost_sen: Number(it.unit_cost_centi ?? 0),
+      unit_cost_sen: Number(it.unit_cost_sen ?? 0),
       batch_no: batchNo,
     });
   }
   const movements = [...byKey.values()].map((m) => ({
     movement_type: 'IN' as const,
     warehouse_id: m.warehouse_id,
-    product_code: m.product_code,
+    item_code: m.item_code,
     variant_key: m.variant_key,
     product_name: m.product_name,
     qty: m.qty,
@@ -453,13 +456,13 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the DR's CURRENT lines (mirror of increaseInventoryForReturn's bucketing,
   //    batch_no included so a sofa line targets its OWN dye-lot). A CANCELLED DR
   //    has a target of zero — every bucket must drain back out.
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
   const targetByBucket = new Map<string, Bucket>();
   if (drStatus !== 'CANCELLED') {
     const { data: items } = await sb.from('delivery_return_items')
-      .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_centi')
+      .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_sen')
       .eq('delivery_return_id', deliveryReturnId);
-    const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_centi?: number | null }>;
+    const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>;
     const lineWh = await resolveDrLineWarehouses(
       sb,
       lineRows as Array<{ id: string; do_item_id?: string | null }>,
@@ -481,7 +484,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       const k = `${warehouseId}::${it.item_code}::${variant_key}::${batch_no ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) { cur.qty += qty; }
-      else targetByBucket.set(k, { warehouse_id: warehouseId, product_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_centi ?? 0) });
+      else targetByBucket.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_sen ?? 0) });
     }
   }
 
@@ -492,8 +495,8 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the batch_no column doesn't exist → retry without it (every batch '').
   type Agg = { net_in: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  const addMov = (m: { movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  const addMov = (m: { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let agg = aggByBucket.get(k);
     if (!agg) { agg = { net_in: 0, product_name: m.product_name }; aggByBucket.set(k, agg); }
     const q = Number(m.qty ?? 0);
@@ -503,12 +506,12 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
     if (!agg.product_name) agg.product_name = m.product_name;
   };
   const readDrMovs = async (sourceType: string) => {
-    const sel = 'movement_type, warehouse_id, product_code, variant_key, batch_no, qty, product_name';
+    const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, product_name';
     let res = await sb.from('inventory_movements').select(sel)
       .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     if (res.error && (res.error.message ?? '').includes('batch_no')) {
       res = await sb.from('inventory_movements')
-        .select('movement_type, warehouse_id, product_code, variant_key, qty, product_name')
+        .select('movement_type, warehouse_id, item_code, variant_key, qty, product_name')
         .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     }
     return (res.data ?? []) as any[];
@@ -538,7 +541,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       : `Delivery return ${drNo} line edited — resyncing returned stock`;
     const base = {
       warehouse_id: parts[0] ?? '',
-      product_code: parts[1] ?? '',
+      item_code: parts[1] ?? '',
       variant_key: parts[2] ?? '',
       product_name: t?.product_name ?? a.product_name ?? null,
       source_doc_type: 'ADJUSTMENT' as const,
@@ -641,8 +644,10 @@ async function reopenSoFromReturn(
    remaining_to_return = delivered − invoiced − returned. The SAME pool as
    remaining_to_invoice — invoiced units can't be returned + vice-versa.
    Cancelling a return releases its qty back to Pending. */
-async function doReturnableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
-  return doLineRemaining(sb, doIds);
+async function doReturnableRemaining(sb: any, doIds: string[]): Promise<DoRemainingResult> {
+  /* 'delivered' — goods still on the lorry never left, so nothing can come
+     back. The owner's 2026-08-20 ruling widened the INVOICE pool only. */
+  return doLineRemaining(sb, doIds, 'delivered');
 }
 
 /* Over-return guard for the bulk create POST. Every DO-linked line must respect
@@ -651,10 +656,14 @@ async function doReturnableRemaining(sb: any, doIds: string[]): Promise<Map<stri
    reaching here is DO-linked. Mirrors the convert-from-DO picker's per-line check
    so the New-Return form is not a back door that returns more than was delivered.
    Returns a 409 body to reject, or null to allow. */
+type DrOverRemainingRefusal =
+  | { status: 409; body: { error: string; message: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
+  | { status: 503; body: { error: string; message: string } };
+
 async function checkDrOverRemaining(
   sb: any,
   items: Array<Record<string, unknown>>,
-): Promise<{ error: string; message: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } | null> {
+): Promise<DrOverRemainingRefusal | null> {
   const wanted = new Map<string, number>();
   for (const it of items) {
     const doItemId = (it.doItemId as string | undefined) ?? null;
@@ -669,20 +678,28 @@ async function checkDrOverRemaining(
     .from('delivery_order_items')
     .select('id, delivery_order_id')
     .in('id', ids);
-  if (error) return null; // load failure → don't block; the insert will surface real errors
+  /* WAS `return null` — "load failure → don't block; the insert will surface
+     real errors". It does not: the insert is a plain INSERT with no cap of its
+     own, so the only thing standing between a blip and an over-return WAS this
+     read. A guard that answers "allowed" when it could not run is not a guard. */
+  if (error) return { status: 503, body: remainingUnavailableResponse(`delivery_order_items: ${error.message}`) };
   const doIds = [...new Set((rows ?? []).map((r: { delivery_order_id: string }) => r.delivery_order_id))] as string[];
-  const remainingMap = await doReturnableRemaining(sb, doIds);
+  const remaining = await doReturnableRemaining(sb, doIds);
+  if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
 
   const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
   for (const [doItemId, requested] of wanted) {
-    const remaining = remainingMap.get(doItemId)?.remaining ?? 0;
-    if (requested > remaining) offenders.push({ doItemId, requested, remaining });
+    const open = remaining.lines.get(doItemId)?.remaining ?? 0;
+    if (requested > open) offenders.push({ doItemId, requested, remaining: open });
   }
   if (offenders.length === 0) return null;
   return {
-    error: 'over_remaining',
-    message: 'One or more lines return more than the remaining (delivered − invoiced − returned) quantity.',
-    lines: offenders,
+    status: 409,
+    body: {
+      error: 'over_remaining',
+      message: 'One or more lines return more than the remaining (delivered − invoiced − returned) quantity.',
+      lines: offenders,
+    },
   };
 }
 
@@ -692,8 +709,8 @@ async function checkDrOverRemaining(
    recomputeTotals can roll them up.
 
    `sourceCostByDoItem` (lib/source-cost) is the server's own read of the SOURCE
-   DO line's unit_cost_centi. When the line is DO-linked it WINS over the
-   client's `unitCostCenti` unconditionally — a return must be booked at the cost
+   DO line's unit_cost_sen. When the line is DO-linked it WINS over the
+   client's `unitCostSen` unconditionally — a return must be booked at the cost
    the DO actually shipped at, and that is a historical snapshot, not a catalog
    lookup. Ignoring the client here is what makes stripping the cost off
    /returnable-do-lines safe: a non-finance caller now echoes nothing that can
@@ -705,17 +722,17 @@ function buildItemRow(
   sourceCostByDoItem?: Map<string, number>,
 ) {
   const qty = Number(it.qtyReturned ?? it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceCenti ?? 0);
-  const discount = Number(it.discountCenti ?? 0);
+  const unitPrice = Number(it.unitPriceSen ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   const doItemId = (it.doItemId as string | undefined) ?? undefined;
   const sourceCost = doItemId ? sourceCostByDoItem?.get(doItemId) : undefined;
-  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostCenti ?? 0);
+  const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostSen ?? 0);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string) ?? null;
   const variants = (it.variants as unknown) ?? null;
-  const refund = it.refundCenti !== undefined ? Number(it.refundCenti) : lineTotal;
+  const refund = it.refundSen !== undefined ? Number(it.refundSen) : lineTotal;
   return {
     delivery_return_id: deliveryReturnId,
     do_item_id: (it.doItemId as string | undefined) ?? null,
@@ -726,13 +743,13 @@ function buildItemRow(
     uom: (it.uom as string) ?? 'UNIT',
     qty_returned: qty,
     condition: (it.condition as string) ?? null,
-    unit_price_centi: unitPrice,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
-    refund_centi: refund,
+    unit_price_sen: unitPrice,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
+    refund_sen: refund,
     variants,
     notes: (it.notes as string | undefined) ?? null,
   };
@@ -806,7 +823,7 @@ deliveryReturns.get('/', async (c) => {
    IMPORTANT (route ordering): this STATIC path MUST be registered BEFORE the
    `/:id` param route below, or Hono tries to cast it to an id.
 
-   FINANCE: each descriptor carries the source DO line's `unitCostCenti`, so this
+   FINANCE: each descriptor carries the source DO line's `unitCostSen`, so this
    picker shipped every delivered line's unit cost to any caller who could reach
    it — #632 named it and correctly declined to strip it, because the New-Return
    form echoed the value back and the create path trusted it, so a strip alone
@@ -821,12 +838,17 @@ deliveryReturns.get('/', async (c) => {
 deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
-  if (doIds.length === 0) return c.json({ lines: [] });
-  const remainingMap = await doReturnableRemaining(sb, doIds);
-  const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c), 'delivered');
+  /* Same reasoning as the invoiceable picker: an empty list is a claim that
+     nothing delivered is still returnable, and a failed read is not entitled to
+     make it. Refuse to render. */
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (candidates.doIds.length === 0) return c.json({ lines: [] });
+  const remaining = await doReturnableRemaining(sb, candidates.doIds);
+  if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
+  const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   if (!canViewScmFinance(c)) {
-    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostCenti;
+    for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
   return c.json({ lines });
 });
@@ -865,8 +887,8 @@ deliveryReturns.get('/:id', async (c) => {
     return { ...it, warehouse_id: wid, warehouse_code: wid ? (codeMap.get(wid) ?? null) : null };
   });
   /* Finance gate — cost / margin (header + per line) reach ONLY a finance-viewer.
-     The refund/total everyone is meant to see (local_total_centi / refund_centi /
-     line_total_centi) are deliberately NOT stripped. */
+     The refund/total everyone is meant to see (local_total_sen / refund_sen /
+     line_total_sen) are deliberately NOT stripped. */
   gateDrFinance(c, h.data, items);
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
@@ -912,7 +934,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     sales_invoice_id: (body.salesInvoiceId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: (body.debtorName ?? body.customerName) as string,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string) ?? null,
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
@@ -1006,7 +1028,7 @@ deliveryReturns.post('/', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
-  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (!Array.isArray(items) || items.length === 0) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
@@ -1016,6 +1038,14 @@ deliveryReturns.post('/', async (c) => {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
+
+  /* THE GROUP IS THE SKU'S, AND IT IS DECIDED ONCE — docs/bugs/0524.
+     `item_group` is not a label, it is the input to the stock bucket
+     (shared/variant-key.ts): the IN that puts the returned goods back on hand is keyed from the group
+     STORED on the line, so a client that sends a blank or wrong one picks the
+     bucket. Rewritten here, above every reader, so the value written and the
+     value later keyed from cannot differ. #2660 closed the inbound half. */
+  items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
 
   /* CROSS-COMPANY GUARD (see crossCompanyDoSourceBlocked) — the source DO is
      whatever the caller names: the header's deliveryOrderId and the parent of
@@ -1058,7 +1088,9 @@ deliveryReturns.post('/', async (c) => {
         soItemId: (it.doItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'delivery'), 409);
+    // Refuses on an unreadable DO too — see unlinkedScanRefusal.
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'delivery'));
+    if (bad) return c.json(bad, 409);
   }
 
   /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
@@ -1094,7 +1126,7 @@ deliveryReturns.post('/', async (c) => {
      can't over-return a delivered line. */
   {
     const over = await checkDrOverRemaining(sb, items);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
@@ -1107,7 +1139,7 @@ deliveryReturns.post('/', async (c) => {
      a silent "book at cost 0" (#632). */
   const sourceCostByDoItem = await sourceUnitCostByItemId(
     sb, 'delivery_order_items', items.map((it: Record<string, unknown>) => it.doItemId as string | undefined),
-  );
+    activeCompanyId(c) ?? null);
   const rows = items.map((it) => buildItemRow(h.id, it, sourceCostByDoItem));
   const { error: iErr } = await sb.from('delivery_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -1125,13 +1157,24 @@ deliveryReturns.post('/', async (c) => {
       .map((it) => (it.doItemId as string | undefined) ?? null)
       .filter((x): x is string => !!x))];
     if (drItemDoIds.length > 0) {
-      const { data: rowsForDo } = await sb.from('delivery_order_items')
+      const { data: rowsForDo, error: rowsErr } = await sb.from('delivery_order_items')
         .select('delivery_order_id').in('id', drItemDoIds);
       const doIds = [...new Set(((rowsForDo ?? []) as Array<{ delivery_order_id: string }>)
         .map((r) => r.delivery_order_id))];
-      const recheck = await doReturnableRemaining(sb, doIds);
+      const recheck = rowsErr
+        ? { ok: false as const, reason: `delivery_order_items: ${rowsErr.message}` }
+        : await doReturnableRemaining(sb, doIds);
+      /* Unverifiable → undo, and say so honestly. Stock has NOT been written yet
+         (increaseInventoryForReturn runs below), so the rollback is clean and
+         the operator is out one keystroke rather than the warehouse being out a
+         phantom return. `race_conflict` is reserved for an actual race. */
+      if (!recheck.ok) {
+        await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
+        await sb.from('delivery_returns').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
       const overReturned = drItemDoIds
-        .map((doItemId) => recheck.get(doItemId))
+        .map((doItemId) => recheck.lines.get(doItemId))
         .filter((l): l is DoRemainingLine => l !== undefined && l.remaining < 0);
       if (overReturned.length > 0) {
         await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
@@ -1237,7 +1280,12 @@ export const convertDoLinesToReturn = async (c: any) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
-  const remainingMap = await doReturnableRemaining(sb, doIds);
+  const remainingResult = await doReturnableRemaining(sb, doIds);
+  /* Pre-write refusal — nothing has been created yet, and every per-pick qty
+     below is capped by `line.remaining`. Without this the empty map surfaced as
+     `do_item_not_found`, blaming the operator's pick for a read error. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.lines;
 
   // 2a. Same-customer guard — every picked line must share ONE customer.
   const customers = new Set<string>();
@@ -1355,11 +1403,11 @@ export const convertDoLinesToReturn = async (c: any) => {
     uom: line.uom,
     qtyReturned: pickQtyById.get(line.doItemId)!,
     condition: conditionById.get(line.doItemId) ?? 'NEW',
-    unitPriceCenti: line.unitPriceCenti,
+    unitPriceSen: line.unitPriceSen,
     // Carry the DO line's discount (hardcoding 0 overstated the refund);
     // mirrors the SI convert-from-DO path.
-    discountCenti: line.discountCenti,
-    unitCostCenti: line.unitCostCenti,
+    discountSen: line.discountSen,
+    unitCostSen: line.unitCostSen,
     variants: line.variants,
   }));
   const { error: iErr } = await sb.from('delivery_return_items').insert(stampCompany(rows, c));
@@ -1374,8 +1422,15 @@ export const convertDoLinesToReturn = async (c: any) => {
      picked line went negative. No inventory was written yet → clean rollback. */
   {
     const recheck = await doReturnableRemaining(sb, doIds);
+    /* Same call as the bulk path: undo rather than keep a return whose ceiling
+       could not be re-derived, and never under the race message. */
+    if (!recheck.ok) {
+      await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
+      await sb.from('delivery_returns').delete().eq('id', h.id);
+      return c.json(remainingUnavailableResponse(recheck.reason), 503);
+    }
     const overReturned = pickedIds
-      .map((doItemId) => recheck.get(doItemId))
+      .map((doItemId) => recheck.lines.get(doItemId))
       .filter((l): l is DoRemainingLine => l !== undefined && l.remaining < 0);
     if (overReturned.length > 0) {
       await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
@@ -1436,6 +1491,9 @@ deliveryReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   const { data, error } = await scopeToCompanyId(sb.from('delivery_returns').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
@@ -1467,6 +1525,10 @@ deliveryReturns.post('/:id/items', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* SKU wins, decided once — docs/bugs/0524. Same rule as the create path: the
+     stored group is what the stock movement is keyed from. */
+  it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
+
   /* P1 SO-SKU spec §4.6 — SERVICE lines are not returnable goods. */
   {
     const svc = await findServiceLineCodes(sb, [{
@@ -1484,12 +1546,12 @@ deliveryReturns.post('/:id/items', async (c) => {
   /* Over-return guard for the single-add path too. */
   {
     const over = await checkDrOverRemaining(sb, [it]);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
     sb, 'delivery_order_items', [it.doItemId as string | undefined],
-  ));
+    activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
@@ -1523,9 +1585,25 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
      run against this one. Company scope layered on top so the line can't belong
      to another company's return either. */
   const { data: prev } = await scopeToCompanyId(sb.from('delivery_return_items')
-    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
+    .select('qty_returned, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
     .eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+
+  /* SKU wins on the EDIT half too — docs/bugs/0524. An edit that names a group,
+     or re-points the code, decides which bucket this line's stock resync moves;
+     the group stored is the SKU's. Every reader below takes
+     `it.itemGroup ?? prev.item_group`, so one assignment settles the stored
+     column, description2 and the resync's key together.
+     ONLY when the request touches identity. An edit that changes neither is
+     left exactly as it was: repairing rows this request did not touch is a
+     different, write-shaped job that needs the probe's count first (#2671). */
+  if (it.itemGroup !== undefined || it.itemCode !== undefined) {
+    const [resolved] = await resolveItemGroups(sb, [{
+      itemCode: (it.itemCode ?? prev.item_code) as string | null,
+      itemGroup: (it.itemGroup ?? prev.item_group) as string | null,
+    }], activeCompanyId(c) ?? null);
+    it.itemGroup = resolved?.itemGroup ?? null;
+  }
 
   /* P1 SO-SKU spec §4.6 — block edits that would TURN a return line into a
      SERVICE line (code/group swap). Effective = patch value ?? stored value. */
@@ -1550,15 +1628,15 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     const delta = qty - Number(prev.qty_returned ?? 0);
     if (doItemId && delta > 0) {
       const over = await checkDrOverRemaining(sb, [{ doItemId, qtyReturned: delta } as Record<string, unknown>]);
-      if (over) return c.json(over, 409);
+      if (over) return c.json(over.body, over.status);
     }
   }
 
-  const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
+  const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_centi for a non-finance caller, and DeliveryReturnDetail
-     seeds each line draft straight off that payload (`unit_cost_centi ?? 0`) and
+     strips unit_cost_sen for a non-finance caller, and DeliveryReturnDetail
+     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
      posts the value back here on save — so trusting the client would let the
      stripped field round-trip as a genuine 0 and wipe the line's cost basis
      (recomputeTotals would then roll the DR's cost to 0 and its margin to the
@@ -1566,17 +1644,17 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
      whose `explicitCost > 0` precedence makes a 0 fall through to the stored
      cost — which is why the same strip was safe there (#625). Keep the stored
      cost for a non-finance caller; a finance caller is unaffected. */
-  const unitCost = (canViewScmFinance(c) && it.unitCostCenti !== undefined)
-    ? Number(it.unitCostCenti)
-    : Number(prev.unit_cost_centi);
+  const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
+    ? Number(it.unitCostSen)
+    : Number(prev.unit_cost_sen);
   // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
 
   const updates: Record<string, unknown> = {
-    qty_returned: qty, unit_price_centi: unitPrice, discount_centi: discount, unit_cost_centi: unitCost,
-    line_total_centi: lineTotal, line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
-    refund_centi: lineTotal,
+    qty_returned: qty, unit_price_sen: unitPrice, discount_sen: discount, unit_cost_sen: unitCost,
+    line_total_sen: lineTotal, line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
+    refund_sen: lineTotal,
   };
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
@@ -1589,6 +1667,19 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of the back door. A null doItemId cannot be TYPED here ("no DO,
+     no Return") but still ARRIVES — do_item_id is ON DELETE SET NULL — and on such
+     a row the cap above is skipped. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'delivery-return', {
+      parent: { table: 'delivery_returns', column: 'delivery_order_id', id, companyId: co.companyId },
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').update(updates).eq('id', itemId), co.companyId);
@@ -1654,12 +1745,34 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
+  /* NORMALISE FIRST, as the Delivery Order handler this document sits beside
+     already does (`String(body.status).trim().toUpperCase()`,
+     delivery-orders-mfg.ts) — and as consignment-returns.ts, whose own
+     `dr_cancelled_final` comment cites THIS handler as its model, now does too.
+     The asymmetry was inside this file: resyncInventoryForReturn uppercases the
+     PERSISTED status (:448) while every gate below compared the INCOMING status
+     raw.
+
+     A lowercase 'cancelled' missed the already-cancelled echo, missed the
+     ATOMIC `.neq('status','CANCELLED')` single-flight, fell into the plain
+     `else` write, and never called resyncInventoryForReturn — so the return's
+     inventory IN was NEVER drained back out while the return read as cancelled.
+     That is the Sales Invoice bug (SI_STATUS_CANON) with stock in place of
+     revenue, and delivery-orders-mfg.ts records the same class shipping for real
+     on the DO ("Cancel DO and Mark signed on the V2 detail page both post
+     LOWERCASE, so both had been dead since that page shipped").
+
+     No status whitelist added: `delivery_return_status` is a real vocabulary
+     but it is not declared anywhere this handler can import, and a guessed list
+     would refuse a legitimate status. Recommended separately. */
+  const toStatus = String(body.status).trim().toUpperCase();
+
   // Read the current status so the CANCELLED reversal is idempotent.
   const { data: cur } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
   // Already cancelled → echo back without re-reversing (would double-deduct).
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryReturn: { id, status: 'CANCELLED' } });
   }
   /* Audit 2026-06-10 #3 (IMPORTANT) — a CANCELLED DR is FINAL. Un-cancelling
@@ -1674,10 +1787,10 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   }
 
   const now = new Date().toISOString();
-  const ts: Record<string, string> = { updated_at: now, status: body.status };
-  if (body.status === 'RECEIVED') ts.received_at = now;
-  if (body.status === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
-  if (body.status === 'REFUNDED') ts.refunded_at = now;
+  const ts: Record<string, string> = { updated_at: now, status: toStatus };
+  if (toStatus === 'RECEIVED') ts.received_at = now;
+  if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
+  if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
   /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
      window: two concurrent cancels can both read a non-cancelled status and both
@@ -1687,7 +1800,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
      echo, NO second reversal. Postgres serialises the UPDATEs so exactly one wins
      the row and fires the single reversal. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
       .update(ts).eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
@@ -1709,13 +1822,13 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed
   // ADJUSTMENT (unindexed by the DR source key, carrying variant_key) — we CANNOT
   // reuse reverseMovements: its balancing OUT reuses the DR's (source_doc_type,
-  // source_doc_id, product_code, variant_key) key, which the partial UNIQUE index
+  // source_doc_id, item_code, variant_key) key, which the partial UNIQUE index
   // uq_inv_mov_dr_source (migration 0102, keyed WITHOUT movement_type) rejects →
   // the insert silently fails and the returned stock stays added.
   // Hoisted: the response below is OUTSIDE this block, so a block-scoped
   // declaration would leave the cancel path unable to report its failures.
   let resyncErrs: string[] = [];
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     // Unified rollback: target net = 0 for a cancelled DR, so the resync drains
     // back out exactly the stock still booked by this return (the create IN minus
     // any line-edit adjustments). Same code path as line edit/delete — they can't

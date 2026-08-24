@@ -58,7 +58,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       custom_specials jsonb,
       photo_urls text[] NOT NULL DEFAULT '{}',
       line_no integer,
-      total_centi integer NOT NULL DEFAULT 0 CHECK (total_centi >= 0),
+      total_sen integer NOT NULL DEFAULT 0 CHECK (total_sen >= 0),
       cancelled boolean NOT NULL DEFAULT false,
       warehouse_id uuid,
       line_delivery_date date,
@@ -253,7 +253,7 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       VALUES ('SO-PG-1', 'command', 'lease-a', now() + interval '5 minutes')
     `;
     const inserted = await admin`
-      INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_centi)
+      INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_sen)
       VALUES ('SO-PG-1', 'A', 10), ('SO-PG-1', 'B', 10)
       RETURNING id, item_code
     `;
@@ -261,15 +261,15 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a');
       expect(lease.ok).toBe(true);
       const sb = pgTransactionSupabase(tx as unknown as Sql);
-      await sb.from('mfg_sales_order_items').update({ total_centi: 20 }).eq('id', inserted[0]!.id);
-      // CHECK(total_centi >= 0) is a real mid-command database failure.
-      await sb.from('mfg_sales_order_items').update({ total_centi: -1 }).eq('id', inserted[1]!.id);
+      await sb.from('mfg_sales_order_items').update({ total_sen: 20 }).eq('id', inserted[0]!.id);
+      // CHECK(total_sen >= 0) is a real mid-command database failure.
+      await sb.from('mfg_sales_order_items').update({ total_sen: -1 }).eq('id', inserted[1]!.id);
     })).rejects.toThrow();
     const rows = await admin`
-      SELECT item_code, total_centi FROM scm.mfg_sales_order_items
+      SELECT item_code, total_sen FROM scm.mfg_sales_order_items
       WHERE doc_no = 'SO-PG-1' ORDER BY item_code
     `;
-    expect(rows).toMatchObject([{ item_code: 'A', total_centi: 10 }, { item_code: 'B', total_centi: 10 }]);
+    expect(rows).toMatchObject([{ item_code: 'A', total_sen: 10 }, { item_code: 'B', total_sen: 10 }]);
   });
 
   test('two command connections serialize on the SO lease row and stale lease gets zero writes', async () => {
@@ -279,14 +279,14 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
         (doc_no, note, edit_lease_token, edit_lease_expires_at)
       VALUES ('SO-PG-1', 'command', 'lease-a', now() + interval '5 minutes')
     `;
-    await admin`INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_centi) VALUES ('SO-PG-1', 'A', 10)`;
+    await admin`INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_sen) VALUES ('SO-PG-1', 'A', 10)`;
     const left = postgres(url, { max: 1 });
     const right = postgres(url, { max: 1 });
     const attempt = (sql: Sql, amount: number) => sql.begin(async (tx) => {
       const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a');
       if (!lease.ok) return false;
       const sb = pgTransactionSupabase(tx as unknown as Sql);
-      await sb.from('mfg_sales_order_items').update({ total_centi: amount }).eq('doc_no', 'SO-PG-1');
+      await sb.from('mfg_sales_order_items').update({ total_sen: amount }).eq('doc_no', 'SO-PG-1');
       // Models the composite command's final release: the waiting transaction
       // must re-read after the row lock and reject the now-stale token.
       await sb.from('mfg_sales_orders').update({ edit_lease_token: null, edit_lease_expires_at: null }).eq('doc_no', 'SO-PG-1');
@@ -295,8 +295,8 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
     try {
       const outcomes = await Promise.all([attempt(left, 20), attempt(right, 30)]);
       expect(outcomes.sort()).toEqual([false, true]);
-      const [row] = await admin`SELECT total_centi FROM scm.mfg_sales_order_items WHERE doc_no = 'SO-PG-1'`;
-      expect([20, 30]).toContain(row?.total_centi);
+      const [row] = await admin`SELECT total_sen FROM scm.mfg_sales_order_items WHERE doc_no = 'SO-PG-1'`;
+      expect([20, 30]).toContain(row?.total_sen);
     } finally {
       await Promise.all([left.end(), right.end()]);
     }
@@ -324,7 +324,7 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       INSERT INTO scm.so_amendments (so_doc_no, status)
       VALUES ('SO-PG-1', 'REQUESTED') RETURNING id
     `;
-    await admin`INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_centi) VALUES ('SO-PG-1', 'A', 10)`;
+    await admin`INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, total_sen) VALUES ('SO-PG-1', 'A', 10)`;
     const left = postgres(url, { max: 1 });
     const right = postgres(url, { max: 1 });
     const attempt = (sql: Sql, amount: number) => sql.begin(async (tx) => {
@@ -334,7 +334,7 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
         .eq('id', amendment!.id).eq('version', 1).eq('status', 'REQUESTED')
         .select('id').maybeSingle();
       if (!claimed) return false;
-      await sb.from('mfg_sales_order_items').update({ total_centi: amount }).eq('doc_no', 'SO-PG-1');
+      await sb.from('mfg_sales_order_items').update({ total_sen: amount }).eq('doc_no', 'SO-PG-1');
       return true;
     });
     try {
@@ -342,8 +342,8 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       expect(outcomes.sort()).toEqual([false, true]);
       const [savedAmendment] = await admin`SELECT status, version FROM scm.so_amendments WHERE id = ${amendment!.id}`;
       expect(savedAmendment).toMatchObject({ status: 'SO_APPROVED', version: 2 });
-      const [line] = await admin`SELECT total_centi FROM scm.mfg_sales_order_items WHERE doc_no = 'SO-PG-1'`;
-      expect([20, 30]).toContain(line?.total_centi);
+      const [line] = await admin`SELECT total_sen FROM scm.mfg_sales_order_items WHERE doc_no = 'SO-PG-1'`;
+      expect([20, 30]).toContain(line?.total_sen);
     } finally {
       await Promise.all([left.end(), right.end()]);
     }

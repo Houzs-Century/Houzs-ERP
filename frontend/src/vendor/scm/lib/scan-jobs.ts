@@ -57,3 +57,31 @@ export const hhmm = (t: number): string => {
 /* A job is "active" while the server is still working it — the only states that
    keep a poll interval running. */
 export const isActiveJob = (j: ScanJob): boolean => j.status === "queued" || j.status === "running";
+
+/* ── The known-reps list, shared for the same reason as the jobs poll ────────
+   The salesperson sent with a scan is the OCR LEARNING KEY: the backend loads
+   that rep's distilled rules and few-shot examples to read the slip
+   (`loadPromptInjections(svc, job.salesperson)`), files the resulting sample
+   under that name, and filters the Recent-scans list by it. Desktop's modal
+   defaults it to whoever is signed in and keeps it EDITABLE against this list,
+   "for the occasional someone-else slip"; mobile had a `const` off the signed-in
+   user, so an office person working through a stack of colleagues' slips read
+   every one of them against their OWN handwriting rules. The endpoint is named
+   ONCE here so the two surfaces cannot offer different lists.
+
+   NOT the SO's own salesperson_id: that is stamped server-side from the authed
+   caller (`resolveScanUploaderStaffId`) and is not caller-trusted. */
+export const SCAN_SALESPEOPLE_PATH = "/scan-so/salespeople";
+export type ScanSalespeopleResp = { data?: { salespeople?: unknown } };
+
+/** GET /scan-so/salespeople payload → the datalist. A malformed or missing
+ *  answer is an EMPTY list and never a throw: the field stays free-text either
+ *  way, so a hiccup here must not take the scan screen down with it. */
+export function normalizeScanSalespeople(resp: unknown): string[] {
+  const raw = (resp as ScanSalespeopleResp | undefined)?.data?.salespeople;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+}

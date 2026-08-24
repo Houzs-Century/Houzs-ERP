@@ -34,7 +34,10 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
-import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
+import {
+  SO_PROCESSING_DATE_AC_UDF,
+  SO_PROCESSING_DATE_COLUMN,
+} from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
@@ -198,13 +201,11 @@ export interface ErpSoHeader {
    */
   emergency_contact_phone: string | null;
   ref: string | null;
-  /** The customer's own reference for this order, in the three columns that
-   *  have held it. Only the third is still WRITTEN: PR #140 dropped the
-   *  Customer PO card, so no Houzs surface fills `po_doc_no` or `customer_po`
-   *  any more and the operator's text lands in `customer_so_no`. See
+  /** The customer's own reference for this order. It has lived in three columns;
+   *  `po_doc_no` and `customer_po` were 0%-filled and DROPPED from
+   *  scm.mfg_sales_orders by migration 0310, leaving `customer_so_no` — the only
+   *  one any surface still writes (PR #140 dropped the Customer PO card). See
    *  `soCustomerRef`. */
-  po_doc_no: string | null;
-  customer_po: string | null;
   customer_so_no: string | null;
   /** The SO's "Processing date" — the field with that label in the UI, and the
    *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
@@ -214,6 +215,17 @@ export interface ErpSoHeader {
    *  reliably as two columns did. Do not reintroduce a second source, or a
    *  second name, for it. Goes out as the `PDate` UDF. */
   processing_date?: string | null;
+  /**
+   * The order's delivery date, which THIS BOOK keeps in
+   * `SalesExemptionExpiryDate`.
+   *
+   * Owner 2026-08-16: *"就是用我们 delivery date 放进去 sales exemption date
+   * 而已，一样的东西"*. AutoCount's sales-order HEADER has no delivery date of
+   * its own — the SDK lists `DeliveryDate` on the six DETAIL classes and nowhere
+   * else — so this book uses the exemption expiry, and Inistate, the connector
+   * the ERP replaces, writes it there.
+   */
+  customer_delivery_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -234,6 +246,28 @@ export interface ErpPoHeader {
   agent: string | null;
   ref: string | null;
   notes: string | null;
+  /**
+   * The PURCHASE ORDER'S OWN ship-to warehouse, as a `dbo.Location` code.
+   *
+   * `readPoHeader` resolves it from `scm.purchase_orders.purchase_location_id`
+   * (migration PR #77) through `scm.warehouses.code`, the same id -> code hop
+   * `withLocations` does for the lines.
+   *
+   * IT IS A HEADER FIELD ON BOTH SIDES, which is what an earlier comment here
+   * denied. AutoCount's purchase documents carry `PurchaseLocation`, assigned in
+   * TWO places because the purchase side does not share one header function:
+   * `CreatePo` sets its own master (AcSyncService.cs:934-935) and
+   * `PurchaseHeader` (:2456-2457) is what /so-to-po and the four conversions
+   * apply. `PurchaseHeader`'s own comment records that the ERP "has never been
+   * sent" one, so the book has been defaulting it on every purchase order the
+   * ERP ever wrote. Owner 2026-08-19: 「它的 Purchase Location 也不对」.
+   *
+   * The ERP treats it as the DEFAULT for every line and a line's own
+   * `warehouse_id` OVERRIDES it (outstanding-po-lines.ts:382,
+   * `r.warehouse_id ?? r.po.purchase_location_id`), so `composeCreatePo` passes
+   * it as `defaultLocation` as well as sending it on the header.
+   */
+  purchase_location: string | null;
   linked_ac_docno?: string | null;
 }
 
@@ -254,7 +288,7 @@ export interface ErpLine {
   description: string | null;
   description2?: string | null;
   qty: number;
-  unit_price_centi: number;
+  unit_price_sen: number;
   location?: string | null;
   delivery_date?: string | null;
   variants?: Record<string, unknown> | null;
@@ -352,6 +386,8 @@ export interface AcCreateSoPayload {
   InvAddr2: string | null;
   InvAddr3: string | null;
   InvAddr4: string | null;
+  /** The delivery date — see `customer_delivery_date` on `ErpSoHeader`. */
+  SalesExemptionExpiryDate: string | null;
   UDF: Record<string, string>;
   Details: AcDetail[];
 }
@@ -364,6 +400,12 @@ export interface AcCreatePoPayload {
   Agent: string | null;
   Ref: string | null;
   Description: string | null;
+  /** See `ErpPoHeader.purchase_location`. OMITTED, never null: BOTH service
+   *  copies gate this one key on `ContainsKey` AND non-empty
+   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own
+   *  foreign key error, so `composeCreatePo` leaves the key off when the ERP
+   *  has none. */
+  PurchaseLocation?: string;
   UDF: Record<string, string>;
   Details: AcDetail[];
 }
@@ -622,6 +664,41 @@ export class MissingCreditorError extends Error {
 }
 
 /**
+ * A /so-to-po whose source keys and cost lines do not line up is REFUSED.
+ *
+ * `composeSoToPo` zips them by index — the Nth key gets the Nth cost — and the
+ * two lists are built by different code from different rows: `poTransferShape`
+ * counts ERP purchase-order lines, `composeDetails` COLLAPSES a sofa build into
+ * a single AutoCount line (divergence D9).
+ *
+ * THE CASE THAT REACHES IT IS THE MIXED ONE, and `collapseSofaLines` calls it
+ * "the dangerous one" itself. A build whose compartments carry NO DtlKeys is
+ * passed through and one whose keys are ALL DISTINCT is left separate — either
+ * way the counts match. MIXED keys mean the account book holds the build folded
+ * while the ERP's record of that is incomplete, so the compartments fold to one
+ * line while the transfer still names one source key per ERP row.
+ *
+ * Nothing downstream catches it. `SoToPo`'s own guard compares the lines it
+ * CREATED against `DtlKeys` (AcSyncService.cs:2382-2384), so a short `Details`
+ * passes it and simply leaves the tail lines carrying the CUSTOMER's price
+ * instead of the supplier's cost — a purchase order that saves, looks right,
+ * and pays the wrong number. Refusing composes nothing and writes a readable
+ * outbox row instead.
+ */
+export class AcSoToPoAlignmentError extends Error {
+  constructor(poNumber: string, keys: number, details: number) {
+    super(
+      `Purchase order ${poNumber} cannot be transferred from its sales order: it names ${keys} `
+      + `source line(s) but composes ${details} cost line(s), and the two are matched by position. `
+      + 'This is what a collapsed sofa build looks like from here — several ERP rows become one '
+      + 'AutoCount line while the transfer still names one key per row. The order can still be '
+      + 'sent as a plain create; nothing has been written to the account book.',
+    );
+    this.name = 'AcSoToPoAlignmentError';
+  }
+}
+
+/**
  * The AutoCount Sales Agent a sales order names, from the ERP's two sources.
  *
  * They are not equally trustworthy, and the order below says so:
@@ -679,25 +756,24 @@ export const AC_PURCHASE_AGENT = 'OTHERS';
 /**
  * The customer's own reference for this sales order, as AutoCount's `ToPONo`.
  *
- * THREE ERP COLUMNS HAVE HELD IT AND ONLY THE LAST IS STILL WRITTEN. PR #140
+ * THREE ERP COLUMNS HELD IT AND ONLY `customer_so_no` SURVIVES. PR #140
  * ("customer PO 不需要") dropped the Customer PO card, so no Houzs surface fills
  * `po_doc_no` or `customer_po` any more — `frontend/src/pages/scm-v2/so-relationship-map.ts`
- * states it plainly — and the reference the operator types lands in
- * `customer_so_no`. The composer read `po_doc_no` alone, which no live order
- * carries, so `ToPONo` never reached the book.
+ * states it plainly — and both were 0%-filled and DROPPED from
+ * scm.mfg_sales_orders by migration 0310. The reference the operator types lands
+ * in `customer_so_no`, which is what goes out as `ToPONo`.
  *
- * Read newest-writer-LAST so a cutover-imported order keeps AutoCount's own
- * text. `ref` is deliberately absent: it goes out as the document's `Ref`, and
- * sending it twice would put the same string in two AutoCount fields.
+ * `ref` is deliberately absent: it goes out as the document's `Ref`, and sending
+ * it twice would put the same string in two AutoCount fields.
  */
 export function soCustomerRef(h: {
   /* `unknown` and optional, so the two callers can both pass what they have
      without a cast: the composer has a typed ErpSoHeader, `soEditHeader` has a
      bare `Record<string, unknown>` off PostgREST. `tidy` reads either. A cast
      at the call site would be the thing that stops the compiler helping. */
-  po_doc_no?: unknown; customer_po?: unknown; customer_so_no?: unknown;
+  customer_so_no?: unknown;
 }): string | null {
-  return tidy(h.po_doc_no) ?? tidy(h.customer_po) ?? tidy(h.customer_so_no);
+  return tidy(h.customer_so_no);
 }
 
 /**
@@ -887,7 +963,7 @@ export function composeDescription2(line: ErpLine): string | null {
  *      text still decodes to the compartments the ERP holds, composed and
  *      re-decoded when it does not, refused when neither survives the gate.
  *   2. RESOLVE (D10). Every remaining line gets exactly one AutoCount ItemCode
- *      out of the cutover map. There is no fallback to material_code.
+ *      out of the cutover map. There is no fallback to item_code.
  *
  * BOTH STEPS REFUSE THE WHOLE DOCUMENT rather than sending part of it. A
  * half-synced order is a divergence with no marker on either side; a refusal is
@@ -937,7 +1013,7 @@ export function composeDetails(
       Description: l.description ?? null,
       Desc2: desc2,
       Qty: Number(l.qty) || 0,
-      UnitPrice: price(l.unit_price_centi),
+      UnitPrice: price(l.unit_price_sen),
     };
     /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
      *
@@ -1116,11 +1192,11 @@ export function composeCreateSo(
    *
    * Pass an explicit `null` to state that the ERP has no answer; the key is
    * then omitted and the book keeps its own. The computation is
-   * `soOutstandingCenti` in `scm/shared/so-outstanding.ts` and the payments
+   * `soOutstandingSen` in `scm/shared/so-outstanding.ts` and the payments
    * read lives beside the other header reads in `scm/lib/autocount-outbox.ts`,
    * the same division `withLocations` and `readSalespersonName` draw.
    */
-  outstandingCenti: number | null,
+  outstandingSen: number | null,
   /**
    * The payment references this order carries, oldest first — REQUIRED, never
    * optional, for the same reason as the two above: it DECIDES what the account
@@ -1167,12 +1243,25 @@ export function composeCreateSo(
       BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
-      PDate: acUdfDate(header.processing_date),
-      BALANCE: acUdfMoney(outstandingCenti),
+      /* `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT.
+         The ERP calls this date `processing_date` everywhere it owns; this key
+         is the UDF spelling on AutoCount's sales-order document
+         (`SO.UDF_PDate`), and it is the one name in the set that a naming
+         sweep must leave alone (owner asked 2026-08-18 which of the names was
+         the AutoCount write — this one). Renaming it renames nothing in
+         AutoCount: the connector drops an unknown UDF, the document posts 200
+         without it, and every Processing Date silently stops reaching the
+         account book. See SO_PROCESSING_DATE_AC_UDF. */
+      [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
+      BALANCE: acUdfMoney(outstandingSen),
       /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
       PAYEMENT: composePaymentUdf(paymentRefs),
     }),
+    /* PRESENT-AND-NULL BLANKS IT, absent leaves AutoCount's default — the same
+       rule as the line delivery date, and for the same reason: an order the ERP
+       has no delivery date for must not inherit one. */
+    SalesExemptionExpiryDate: acUdfDate(header.customer_delivery_date),
     Details: details,
   };
 }
@@ -1184,6 +1273,12 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
+  /* Through the same map the LINE locations go through — the
+     `bookSpellingOrOwn(..., LOCATION_MAP)` in `composeDetails` below — so the
+     header and its lines cannot end up spelling one warehouse two ways. A line
+     number is deliberately not cited: it is the same file, and every edit to it
+     would move one. */
+  const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
     DocNo: header.po_number,
     DocDate: header.po_date,
@@ -1199,16 +1294,44 @@ export function composeCreatePo(
     Agent: tidy(header.agent) ?? AC_PURCHASE_AGENT,
     Ref: header.ref,
     Description: header.notes,
+    /* THE HEADER SHIP-TO WAREHOUSE, and the comment that used to stand where
+       `defaultLocation` is resolved below said the opposite: "a purchase order
+       has no location of its own". Both sides say otherwise.
+
+       AUTOCOUNT: the purchase documents carry `PurchaseLocation`, and it is
+       assigned in TWO places because /create-po does not share a header
+       function with the rest — `CreatePo` sets its own master
+       (AcSyncService.cs:934-935), and `PurchaseHeader` (:2456-2457) is what
+       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own
+       comment records that the ERP "has never been sent" one, so AutoCount has been
+       defaulting the purchase location on every ERP-written purchase order
+       since the cutover.
+
+       THE ERP: `scm.purchase_orders.purchase_location_id`, which /submit
+       REFUSES a purchase order without (mfg-purchase-orders.ts:1125,
+       `purchase_location_id_required`).
+
+       OMITTED WHEN THE ERP HAS NONE, never sent null: the service's guard is
+       ContainsKey AND non-empty, because a blank PurchaseLocation is a foreign
+       key error rather than an empty field — the same rule the line-level
+       `Location` key follows in composeDetails. */
+    ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
     UDF: {},
     /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
        from the header so no caller can forget it. */
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
-      /* A purchase order has no location of its own — the ship-to warehouse is
-         per LINE (purchase_order_items.warehouse_id). There is nothing to
-         inherit, so a line without one is refused rather than guessed at. */
-      defaultLocation: opts.defaultLocation ?? null,
+      /* A LINE WITHOUT A WAREHOUSE INHERITS THE HEADER'S, which is the ERP's own
+         precedence read the only direction it runs: `warehouse_id ?? po.purchase_location_id`
+         (outstanding-po-lines.ts:382, and `poWarehouseGap` at
+         mfg-purchase-orders.ts:4019 treats a header warehouse as covering every
+         line). Before this, a purchase order the ERP considers complete — header
+         warehouse set, no per-line override — was refused with
+         MissingLocationError, and a line that DID reach the book carried a
+         location the header disagreed with. A line with neither is still
+         refused, because then no one has said where the goods go. */
+      defaultLocation: opts.defaultLocation ?? purchaseLocation,
       requireLocation: true,
     }).details,
   };
@@ -1430,9 +1553,38 @@ export const AC_ROUTE = {
   cancel: '/cancel',
   edit: '/edit',
   ensure_masters: '/ensure-masters',
+  /* NOT a document operation, and the only route here that reads. It is in this
+     map so the drain can reach it through `callAcService` — same URL, same key,
+     same error classification — rather than growing a second HTTP client for
+     one call. The service answers it on GET or POST (the branch sits above the
+     POST-only check) and it is the ONLY thing that says which BUILD is running. */
+  health: '/health',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;
+
+/**
+ * A master the account book ALREADY HELD, under a DIFFERENT company name.
+ *
+ * `/ensure-masters` used to ask `CreditorExists(acc)` — `GetCreditor(acc) !=
+ * null` — and throw away the `CompanyName` it had just read, so a code that
+ * resolves to the WRONG company was indistinguishable from one that resolves to
+ * the right company at every layer. That is how HC-PO-2608-001 came to be
+ * booked against `400-H004`, which the book holds as HAO HUA FURNITURE, for a
+ * purchase order the ERP names HOOKKA INDUSTRIES SDN. BHD.
+ *
+ * IT REPORTS AND IT NEVER REFUSES. The ERP legitimately holds a shorter trading
+ * name than the book's registered one on many suppliers, so failing the document
+ * would block real purchasing in bulk. `ok` is untouched by a mismatch.
+ */
+export interface AcMasterMismatch {
+  /** `creditor:400-H004` — the kind and the account, as the service names it. */
+  master: string;
+  /** The name the ERP sent alongside the code. */
+  erp: string;
+  /** The name the account book holds against that code. */
+  book: string;
+}
 
 export interface AcCallResult {
   ok: boolean;
@@ -1448,6 +1600,21 @@ export interface AcCallResult {
    */
   lines: AcCreatedLine[];
   error: string | null;
+  /**
+   * Masters the book already held under a different name. ALWAYS EMPTY except
+   * on `/ensure-masters`, and empty is not the same as clean: a host still
+   * running a build older than this field simply does not send it, and
+   * `GET /health`'s `builtAt` / `mvid` is the only thing that says which build
+   * answered. Absent reads as "not reported", never as "compared and agreed".
+   */
+  mismatches: AcMasterMismatch[];
+  /**
+   * The parsed response object, for the one caller that needs a field this
+   * interface does not name: `/health` answers `builtAt` and `mvid`, and
+   * promoting those to first-class fields would put a diagnostic's shape into
+   * the type every document operation returns. Null when the body was not JSON.
+   */
+  body: Record<string, unknown> | null;
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
@@ -1477,6 +1644,29 @@ export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
   return out;
 }
 
+/**
+ * Read the `mismatched` array off an `/ensure-masters` response, keeping only
+ * entries that carry all three strings. A half-parsed entry is DROPPED rather
+ * than coerced — the same rule `parseCreatedLines` follows one function up, and
+ * for a sharper reason here: a mismatch line with a blank `book` would read as
+ * "the account book calls this supplier nothing", which is a claim about the
+ * book that nobody measured.
+ */
+export function parseAcMismatches(raw: unknown): AcMasterMismatch[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AcMasterMismatch[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = entry as Record<string, unknown>;
+    const master = typeof r.master === 'string' ? r.master.trim() : '';
+    const erp = typeof r.erp === 'string' ? r.erp.trim() : '';
+    const book = typeof r.book === 'string' ? r.book.trim() : '';
+    if (!master || !erp || !book) continue;
+    out.push({ master, erp, book });
+  }
+  return out;
+}
+
 /** Config, not a secret. Absent = the write-back cannot run, and says so. */
 export function acServiceConfig(env: Env): { url: string; key: string | null } | null {
   const url = (env as unknown as { AC_SYNC_URL?: string }).AC_SYNC_URL;
@@ -1503,7 +1693,10 @@ export async function callAcService(
 ): Promise<AcCallResult> {
   const cfg = acServiceConfig(env);
   if (!cfg) {
-    return { ok: false, status: 0, docNo: null, lines: [], error: 'AC_SYNC_URL is not configured', retryable: false };
+    return {
+      ok: false, status: 0, docNo: null, lines: [], mismatches: [], body: null,
+      error: 'AC_SYNC_URL is not configured', retryable: false,
+    };
   }
   let res: Response;
   try {
@@ -1522,13 +1715,15 @@ export async function callAcService(
       status: 0,
       docNo: null,
       lines: [],
+      mismatches: [],
+      body: null,
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
   }
 
   const text = await res.text().catch(() => '');
-  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown } = {};
+  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown; mismatched?: unknown } = {};
   try { body = text ? JSON.parse(text) : {}; } catch { /* keep the raw text below */ }
 
   if (res.ok && body.ok !== false) {
@@ -1537,16 +1732,47 @@ export async function callAcService(
       status: res.status,
       docNo: body.docNo ?? null,
       lines: parseCreatedLines(body.lines),
+      mismatches: parseAcMismatches(body.mismatched),
+      body: body as Record<string, unknown>,
       error: null,
       retryable: false,
     };
   }
-  const error = body.error ?? (text || `AutoCount service responded ${res.status}`);
+  /* THE HOST DID NOT ANSWER — say THAT, and do not dress it as a refusal.
+   *
+   * When the response is not JSON, `body.error` is undefined and the RAW BODY
+   * used to become the error string. Cloudflare's edge answers an unreachable
+   * origin with `text/plain` containing exactly `error code: 502`, so that
+   * string travelled all the way to the operator's screen inside the sentence
+   * "masters not opened, document not sent: error code: 502".
+   *
+   * That sentence is a claim we never checked. The ERP did not ask AutoCount to
+   * open anything — the request never reached the machine. Measured 2026-08-23:
+   * `curl https://autocount.houzscentury.com/health` returned HTTP 502 with a
+   * 16-byte `error code: 502` body in 0.06s, from `server: cloudflare`. It cost
+   * a day of looking at AutoCount logins for a fault that was a stopped service
+   * behind the tunnel.
+   *
+   * A GATEWAY status with a non-JSON body means exactly one thing and the
+   * message now says it. A gateway status WITH a JSON `error` is the service
+   * itself speaking and keeps its own words. */
+  const GATEWAY = new Set([502, 503, 504]);
+  const unreachable = body.error === undefined && GATEWAY.has(res.status);
+  const error = unreachable
+    ? `the AutoCount host did not answer (HTTP ${res.status}) — the request never reached it, `
+      + 'so nothing was refused and nothing was opened. Check that the sync service is running '
+      + 'on that machine; https://autocount.houzscentury.com/health answers 200 when it is.'
+    : (body.error ?? (text || `AutoCount service responded ${res.status}`));
   return {
     ok: false,
     status: res.status,
     docNo: null,
     lines: [],
+    /* Carried on the failure path too. A payload can name ten creditors, have
+       nine of them agree, one of them disagree, and fail on an unrelated ITEM —
+       dropping the finding because the call failed would lose it for good. */
+    mismatches: parseAcMismatches(body.mismatched),
+    body: (body ?? null) as Record<string, unknown> | null,
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:
@@ -1607,9 +1833,20 @@ export const SO_ADDRESS_FIELDS: readonly string[] = [
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
 ];
 
-/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF.
+ *
+ *  EXTERNAL NAME ON THE RIGHT-HAND SIDE. The key is OUR column and follows our
+ *  unification; the value is AUTOCOUNT'S UDF and must never be renamed to match
+ *  it. This map is exactly where the two vocabularies meet, which is why both
+ *  sides are pinned to constants — `SO_PROCESSING_DATE_COLUMN` moves with a
+ *  rename, `SO_PROCESSING_DATE_AC_UDF` deliberately does not. */
 export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
-  processing_date: 'PDate',
+  [SO_PROCESSING_DATE_COLUMN]: SO_PROCESSING_DATE_AC_UDF,
+};
+
+/** Header dates with no foreign key behind them, so a cleared one may travel. */
+export const CLEARABLE_SO_DATE_FIELDS: Readonly<Record<string, string>> = {
+  customer_delivery_date: 'SalesExemptionExpiryDate',
 };
 
 /**
@@ -1630,11 +1867,19 @@ export function clearedAcKeys(
   for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
     if (touched.has(col) && isBlank(col)) header.push(key);
   }
+  for (const [col, key] of Object.entries(CLEARABLE_SO_DATE_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) header.push(key);
+  }
   /* The address is a package: if any of its columns was written and the packer
      now produces fewer lines, the trailing ones have to be nulled or the book
      keeps a street that is no longer on the order. */
   if (SO_ADDRESS_FIELDS.some((f) => touched.has(f))) {
     header.push('InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4');
+    /* Both copies, because the ERP holds ONE address and the book holds two.
+       Clearing only the invoice half would leave the delivery half showing a
+       street the order no longer has — the same asymmetry that let an EDITED
+       address reach the book on one side only until 2026-08-16. */
+    header.push('DeliverAddr1', 'DeliverAddr2', 'DeliverAddr3', 'DeliverAddr4');
   }
   const udf: string[] = [];
   for (const [col, key] of Object.entries(CLEARABLE_SO_UDF_FIELDS)) {
@@ -1644,21 +1889,68 @@ export function clearedAcKeys(
 }
 
 /**
- * The `/so-to-po` payload: which sales lines this purchase order buys, and what
- * the ERP agreed to pay for them.
+ * The `/so-to-po` payload: THE SAME MASTER A CREATE WOULD SEND, plus which
+ * sales lines this purchase order buys and what the ERP agreed to pay for them.
  *
- * The per-line values are applied by the service AFTER the transfer, because
- * `AddSOToPOTransferDetail` brings the SALES line across — price included — and
- * a purchase order owes the supplier's cost, not the customer's price.
+ * IT TAKES THE CREATE PAYLOAD, and that is the whole design. This function used
+ * to build a master of its own — `{ DocNo, DtlKeys, Details }` — and every field
+ * `composeCreatePo` grew that this one did not was a field that silently
+ * vanished the moment `poTransferShape` answered `transfer`. It cost two live
+ * failures, each found on a real document and each patched one field at a time:
  *
- * `DtlKeys` and `Details` are index-aligned by construction: both come from the
- * same decision, which refused unless every line mapped 1:1.
+ *   CreditorCode  host 2026-08-17 09:15  `CreditorCode required for /so-to-po`,
+ *                 which AutoCount reported as `FK_PO_DisplayTerm` — the PAYMENT
+ *                 TERM's foreign key, because the term is defaulted from the
+ *                 supplier and there was no supplier.
+ *   DocNo         host 2026-08-17 10:15  the first transfer that ever succeeded
+ *                 landed as `PO-009968` while the ERP calls it `HC-PO-2608-001`.
+ *
+ * After both patches FIVE were still missing — DocDate, Agent, Ref, Description
+ * and UDF — and `Description` is `purchase_orders.notes`, which the owner
+ * reported wrong on 2026-08-19. `Agent` is the dangerous one: it carries
+ * `AC_PURCHASE_AGENT` behind `FK_PO_PurchaseAgent`, the same class of foreign
+ * key as the two above.
+ *
+ * So the master is SPREAD, not re-listed. A field added to `composeCreatePo`
+ * reaches a transfer without anyone remembering this function exists, which is
+ * the only property that makes a third one-field patch impossible.
+ *
+ * WHAT A TRANSFER GENUINELY OVERRIDES, and the only thing it may:
+ *
+ *   `Details`. A create's detail NAMES the item being bought — ItemCode,
+ *     Description, Desc2, Qty, UnitPrice — because AutoCount holds no line yet.
+ *     A transfer's detail addresses a line AutoCount already made: the SDK's
+ *     `AddSOToPOTransferDetail` brought the sales line across, price and all
+ *     (AcSyncService.cs:2358), and phase two reopens the saved document and
+ *     applies the ERP's COST over the customer's price by `DtlKey`
+ *     (:2391-2411). Those four keys — UnitPrice, Qty, Location, DeliveryDate —
+ *     are the only ones phase two reads, so they are the only ones sent; a
+ *     fifth would be composed, stored, POSTed and dropped by the host, which is
+ *     the exact failure this function's history is made of.
+ *
+ * NOTHING ELSE IS EXCLUDED. `Ref` is carried even though a transfer's is null
+ * by construction (`readPoEnqueueShape` puts the source SO numbers in a
+ * CREATE's Ref because AutoCount has no DocTransfer link to carry them, and
+ * leaves a transfer's alone because it does) — carrying the key costs nothing
+ * and excluding it would be a rule someone has to remember.
+ *
+ * `DtlKeys` and `Details` are index-aligned by construction, and that is
+ * ASSERTED rather than assumed: both come from the same purchase order, but
+ * `composeDetails` COLLAPSES a sofa build into one AutoCount line (D9) while
+ * `poTransferShape` counts ERP rows, so the two can disagree without anything
+ * in between noticing. Misaligned, the Nth key would be given the (N+1)th cost.
+ * See `AcSoToPoAlignmentError` for which sofa build actually reaches it.
  */
 export function composeSoToPo(
+  master: AcCreatePoPayload,
   dtlKeys: readonly number[],
   details: readonly AcDetail[],
-): { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+): Omit<AcCreatePoPayload, 'Details'> & { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+  if (dtlKeys.length !== details.length) {
+    throw new AcSoToPoAlignmentError(master.DocNo, dtlKeys.length, details.length);
+  }
   return {
+    ...master,
     DtlKeys: [...dtlKeys],
     Details: details.map((d, i) => ({
       DtlKey: dtlKeys[i],

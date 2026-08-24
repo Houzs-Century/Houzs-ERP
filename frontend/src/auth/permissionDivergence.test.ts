@@ -82,10 +82,17 @@ describe("SpecialAddonsTab — the editor is gated on the API's own write rule",
 describe("/assr/:id — the route guard matches requireServiceCaseAccess", () => {
   test("the backend case-detail read really does admit Sales", () => {
     // Verify the premise before trusting it. Two things must hold: the endpoint
-    // uses requireServiceCaseAccess, and that gate ors in isSalesUser.
+    // uses requireServiceCaseAccess, and that gate admits a rank-and-file rep.
+    //
+    // The MECHANISM of that second half changed and the assertion moved with it.
+    // It used to read `isSalesUser(user)` — Sales by job title. A batch of reps
+    // lost every case when a name-shaped signal missed, so the gate now ORs in
+    // the HOUZS COMPANY GRANT instead. The invariant is unchanged and is what is
+    // asserted here: a rep the API would serve is never Forbidden. Only the
+    // thing that makes them a rep is different, so match the grant, not a title.
     const assr = beSrc("routes/assr.ts");
     expect(assr).toMatch(/app\.get\(\s*["']\/:id\{\[0-9\]\+\}["']\s*,\s*requireServiceCaseAccess\(\)/);
-    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}isSalesUser\(user\)/);
+    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holdsHouzsCompanyGrant\(c\)/);
     expect(assr).toMatch(/function requireServiceCaseAccess[\s\S]{0,400}canAccessServiceCases/);
   });
 
@@ -128,6 +135,103 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
     expect(comp).toContain("isSalesNonDirector(user)");
     expect(comp).toContain("Navigate to={`/my-cases/${id}`}");
     expect(comp).toContain("allowSales");
+  });
+
+  /* THE OTHER HALF OF THE SAME RULE, and it was missing for 13 months.
+     The redirect asserted above is DESKTOP. Mobile gates its Service tab on
+     `allowed("/assr")` — whose own comment says Sales staff pass — and then
+     mounted the FULL editable MobileServiceCase detail: stage select, Advance,
+     Close, Archive, item quantities. `isSalesNonDirector` had exactly ONE mobile
+     call site in the whole tree (MobilePMS) and it has nothing to do with cases.
+
+     What that actually meant in production, read rather than assumed
+     (backend/scripts/census-service-case-visibility.mjs §5, run 32395787958):
+     32 active non-director Sales staff, ALL on the role "Sales Person",
+     `service_cases.write` held by ZERO of them. So every one of those controls
+     answered 403 — a screen of dead buttons, not an authorisation hole — while
+     the two things a rep IS entitled to do (sales-comment, sales-nudge, both
+     gated on requireServiceCaseAccess, not on write) had no mobile home at all.
+
+     The predicate is IMPORTED on both surfaces. A mobile copy of "who is a rep"
+     is the exact defect this whole file exists to pin. */
+  test("mobile routes a non-director Sales rep to the READ-ONLY case detail too", () => {
+    const mobile = feSrc("mobile/MobileServiceCase.tsx");
+    expect(
+      mobile,
+      "mobile does not import isSalesNonDirector — the desktop rule has no mobile half",
+    ).toContain("isSalesNonDirector");
+    expect(
+      mobile,
+      "mobile no longer mounts the read-only detail for a rep",
+    ).toContain("MobileMyCaseDetail");
+
+    // The branch itself: the rep gets MobileMyCaseDetail, everyone else the
+    // editable CaseDetail. Asserted on the component, not on a comment.
+    const code = stripComments(mobile);
+    const at = code.indexOf("export function MobileServiceCase");
+    expect(at, "MobileServiceCase definition missing").toBeGreaterThan(-1);
+    const comp = code.slice(at, at + 900);
+    expect(comp).toMatch(/isSalesNonDirector\(user\)\s*\?\s*MobileMyCaseDetail\s*:\s*CaseDetail/);
+  });
+
+  test("mobile re-derives the cohort NOWHERE — it reads the one predicate", () => {
+    /* The failure this forbids is a local re-derivation of "who is a sales
+       rep" — a `/^sales/i` on the position or a `"sales"` substring on the
+       department — which is how the desktop copy started and what
+       salesAccess.ts's own header records folding back to one place.
+
+       Scoped to the SALES words on purpose. A bare `department_name` ban was
+       the first draft and it was a false positive: this screen legitimately
+       reads `department_name` to filter the PIC picker to the Operation
+       department, which has nothing to do with this cohort. A guard that
+       matches a WORD rather than a rule reports about a system we do not run. */
+    const mobile = stripComments(feSrc("mobile/MobileServiceCase.tsx"));
+    expect(mobile).toMatch(
+      /import\s*\{[^}]*isSalesNonDirector[^}]*\}\s*from\s*["']\.\.\/auth\/salesAccess["']/,
+    );
+    for (const rederivation of [/\/\^sales\/i/, /includes\(\s*["']sales["']\s*\)/i]) {
+      expect(
+        rederivation.test(mobile),
+        `MobileServiceCase has re-derived the Sales cohort (${rederivation})`,
+      ).toBe(false);
+    }
+  });
+
+  test("the rep keeps the LIST and the create sheet — they may raise a case", () => {
+    /* Read-only means the DETAIL, exactly as on desktop, where the board list
+       stays reachable and only /assr/:id redirects. Gating the whole screen
+       would take away the rep's create path, which the owner never asked for
+       and which the standing "loosen, do not restrict" rule forbids. */
+    const comp = stripComments(feSrc("mobile/MobileServiceCase.tsx"));
+    const at = comp.indexOf("export function MobileServiceCase");
+    const body = comp.slice(at, at + 1400);
+    expect(body).toContain("<CaseList");
+    expect(body).toContain("NewCaseSheet");
+  });
+
+  test("the read-only screen carries the comment + nudge thread, and both render a refusal", () => {
+    /* Losing the ability to edit must not cost the rep the two things they were
+       always allowed to do. The nudge has a REAL expected failure — the server
+       rate-limits to one an hour and answers 429 — so a silent catch there is
+       the "button does nothing" bug with a guaranteed trigger. */
+    const screen = feSrc("mobile/MobileMyCaseDetail.tsx");
+    expect(screen).toContain("/sales-comment");
+    expect(screen).toContain("/sales-nudge");
+    expect((screen.match(/onError:/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(stripComments(screen)).not.toContain("catch {}");
+  });
+
+  test("the read-only screen mounts NO write control", () => {
+    /* The point of the screen. `transition` / `advance` / `archive` are the
+       three the mobile editable detail exposes, and PATCH is how every field
+       edit leaves. None of them may appear here. */
+    const screen = stripComments(feSrc("mobile/MobileMyCaseDetail.tsx"));
+    for (const forbidden of ["api.patch", "/transition", "/archive", "/items"]) {
+      expect(
+        screen.includes(forbidden),
+        `the read-only rep screen calls ${forbidden}`,
+      ).toBe(false);
+    }
   });
 
   test("PageGuard resolves both cohorts from the SERVER, not a local mirror", () => {

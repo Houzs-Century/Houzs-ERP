@@ -2,25 +2,26 @@
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
 import { Hono } from 'hono';
+import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
+import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { sourcePoIdsForGrn } from '../lib/convert-parent';
+import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
+import { buildGrnCancelReversals } from '../lib/grn-cancel-reversal';
+import { loadGrnAuditMeta } from '../lib/grn-audit-meta';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
-  await enqueueEdit(c.get('supabase'), {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docId: id,
-    retire,
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
-}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -32,7 +33,14 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
-import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
+import { computeGrnFlags } from '../lib/grn-consumption-flags';
+import {
+  parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
+} from '../lib/outstanding-po-lines';
+import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -44,27 +52,24 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    another company's PO would post the stock IN, and its cost, into the active
    company's inventory and books.
 
-   Returns the refusal payload for the first offending PO, or null when every
-   referenced PO belongs to the active company (unresolved degrades to allowed,
-   like the rest of the scoping helpers). The two declared converters
+   Called inline via crossCompanySourceRefusal — the file-local wrapper this note
+   used to sit on was one line of delegation and went 2026-08-18. Returns the
+   refusal for the first offending PO, or null when every referenced PO is the
+   active company's (unresolved degrades to allowed). The two declared converters
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
-async function firstCrossCompanyPo(
-  sb: any,
-  c: any,
-  poIds: Array<string | null | undefined>,
-): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
-}
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { escapeForOr } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
+import { eager } from '../lib/concurrency';
+import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -114,19 +119,6 @@ const GRN_AUDIT_SELECT =
    line in hand but not the parent. Best-effort by design: the writer is
    fail-open, so an unresolved doc number costs the row its human key and
    nothing else. */
-async function loadGrnAuditMeta(
-  sb: Variables['supabase'],
-  grnId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('grns')
-      .select('grn_number, company_id, status').eq('id', grnId).maybeSingle();
-    const row = (data ?? null) as { grn_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.grn_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
 
 /**
  * Record the CREATE of a GRN that has SURVIVED its handler.
@@ -134,7 +126,7 @@ async function loadGrnAuditMeta(
  * Reads the row back rather than taking the caller's payload, for two reasons.
  * The receipt's stored shape is what a reader is being told about — currency and
  * exchange_rate are resolved server-side, the warehouse may have been derived
- * from the PO lines, and total_centi only exists after recomputeGrnTotals. And a
+ * from the PO lines, and total_sen only exists after recomputeGrnTotals. And a
  * header that a compensating branch already deleted reads back as nothing, so a
  * CREATE row can never describe a rolled-back document even if a future edit
  * moves this call earlier by mistake.
@@ -151,7 +143,7 @@ async function recordGrnCreate(
   try {
     const { data } = await sb.from('grns')
       .select('id, grn_number, status, company_id, supplier_id, warehouse_id, purchase_order_id, ' +
-        'received_at, delivery_note_ref, currency, exchange_rate, allocation_method, total_centi')
+        'received_at, delivery_note_ref, currency, exchange_rate, allocation_method, total_sen')
       .eq('id', grnId).maybeSingle();
     row = (data ?? null) as Record<string, unknown> | null;
   } catch { /* best-effort — fall through with what we know */ }
@@ -176,21 +168,13 @@ async function recordGrnCreate(
       fieldChange('exchangeRate', null, row.exchange_rate ?? null),
       fieldChange('allocationMethod', null, row.allocation_method ?? null),
       /* INTEGER SEN, straight off the column — never a formatted amount. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
+      fieldChange('totalSen', null, row.total_sen ?? null),
       fieldChange('lineCount', null, lineCount),
     ]),
   });
 }
 
-/* A source PO can only be received against while it is still open for receipt —
-   SUBMITTED (nothing received yet) or PARTIALLY_RECEIVED (some received). A
-   DRAFT / CANCELLED / already-RECEIVED PO must NOT accept a GRN (it would write
-   stock IN against a PO that isn't live). This is the SINGLE predicate the GRN
-   create paths share; `POST /from-po-items` already gated on it inline and the
-   other PO-linked create paths (`POST /`, `POST /from-pos`) now reuse it. */
-const RECEIVABLE_PO_STATUSES = ['SUBMITTED', 'PARTIALLY_RECEIVED'] as const;
-const isReceivablePoStatus = (status: string | null | undefined): boolean =>
-  (RECEIVABLE_PO_STATUSES as readonly string[]).includes(status ?? '');
+/* THE RECEIVABLE-PO PREDICATE MOVED to lib/source-document-gates.ts (mig 0324), where it learned to read the hold MARKER. */
 
 /* Resolve the receive-into warehouse for a GRN WITHOUT ever silently falling
    back to the default (first, code-sorted = China/transit) warehouse. Returns
@@ -273,14 +257,14 @@ async function resolveGrnFx(
 
 /* ── Landed-cost allocation (migration 0082) — "平摊" ────────────────────────
    Compute each goods line's share of the SERVICE-line (freight) charge pool and
-   PERSIST it onto grn_items.allocated_charge_centi, so the FIFO lot cost and a
+   PERSIST it onto grn_items.allocated_charge_sen, so the FIFO lot cost and a
    later PI recost both fold it in deterministically. Returns the allocation
    result (with per-line landed unit cost) so the caller can stamp the IN
    movements. Pure-on-empty: chargePool === 0 ⇒ allocation 0 everywhere ⇒ no
    writes ⇒ byte-for-byte no-op for a GRN with no service lines. */
 type AllocItemRow = {
-  id: string; qty_accepted: number; material_code: string;
-  unit_price_centi: number | null; line_total_centi?: number | null;
+  id: string; qty_accepted: number; item_code: string;
+  unit_price_sen: number | null; line_total_sen?: number | null;
   item_group?: string | null;
 };
 async function computeAndStoreGrnAllocation(
@@ -288,13 +272,13 @@ async function computeAndStoreGrnAllocation(
   items: AllocItemRow[],
   grnRate: unknown,
   method: ReturnType<typeof normalizeAllocationMethod>,
-  companyId?: number | null,
+  companyId: number | null,
 ) {
   // CBM basis needs each goods line's product volume (unit_m3_milli). Resolve
-  // per material_code in one round trip; default 0 (the allocator falls back to
+  // per item_code in one round trip; default 0 (the allocator falls back to
   // QTY when the CBM Σ is 0, so a missing volume never divides by zero).
   const m3ByCode = new Map<string, number>();
-  const codes = [...new Set(items.map((it) => it.material_code).filter(Boolean))];
+  const codes = [...new Set(items.map((it) => it.item_code).filter(Boolean))];
   if (codes.length > 0) {
     // Company-scoped: `code` is shared, and the other company's volume would
     // shift every goods line's share of the landed charge.
@@ -309,24 +293,24 @@ async function computeAndStoreGrnAllocation(
     items.map((it) => ({
       id: it.id,
       itemGroup: it.item_group ?? null,
-      materialCode: it.material_code,
+      itemCode: it.item_code,
       qty: Number(it.qty_accepted ?? 0),
       // Pool by the SERVICE line's line total; allocate ONTO goods unit price.
-      amountCenti: Number(it.line_total_centi ?? 0),
-      unitPriceCenti: Number(it.unit_price_centi ?? 0),
-      unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
+      amountSen: Number(it.line_total_sen ?? 0),
+      unitPriceSen: Number(it.unit_price_sen ?? 0),
+      unitM3Milli: m3ByCode.get(it.item_code) ?? 0,
     })),
     method,
     grnRate,
   );
-  // Persist allocated_charge_centi per goods line. ALWAYS write the computed
+  // Persist allocated_charge_sen per goods line. ALWAYS write the computed
   // value (incl. resetting to 0) so a removed charge / re-split method change is
   // reflected — but only when there's something to reconcile (a non-zero pool
   // now, OR any line currently carries a non-zero allocation).
-  const anyToReset = items.some((it) => Number((it as { allocated_charge_centi?: number | null }).allocated_charge_centi ?? 0) !== 0);
+  const anyToReset = items.some((it) => Number((it as { allocated_charge_sen?: number | null }).allocated_charge_sen ?? 0) !== 0);
   if (alloc.chargePoolMyr > 0 || anyToReset) {
     await Promise.all(alloc.goods.map((g) =>
-      sb.from('grn_items').update({ allocated_charge_centi: g.allocatedChargeCenti }).eq('id', g.id),
+      sb.from('grn_items').update({ allocated_charge_sen: g.allocatedChargeSen }).eq('id', g.id),
     ));
   }
   return alloc;
@@ -335,13 +319,13 @@ async function computeAndStoreGrnAllocation(
 /* Recompute + persist a GRN's landed allocation from its CURRENT lines + header
    (used after the allocation_method / rate is changed on PATCH, before recost).
    Reads everything off the DB so it's self-contained. Best-effort. */
-async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number | null): Promise<void> {
+async function reallocateGrnCharges(sb: any, grnId: string, companyId: number | null): Promise<void> {
   const { data: head } = await sb.from('grns')
     .select('exchange_rate, allocation_method').eq('id', grnId).maybeSingle();
   const grnRate = (head as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
   const method = normalizeAllocationMethod((head as { allocation_method?: string | null } | null)?.allocation_method);
   const { data: items } = await sb.from('grn_items')
-    .select('id, qty_accepted, material_code, unit_price_centi, line_total_centi, item_group, allocated_charge_centi')
+    .select('id, qty_accepted, item_code, unit_price_sen, line_total_sen, item_group, allocated_charge_sen')
     .eq('grn_id', grnId);
   await computeAndStoreGrnAllocation(sb, (items ?? []) as AllocItemRow[], grnRate, method, companyId);
 }
@@ -350,7 +334,7 @@ async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number |
    Resolves each line to the MYR cost the movement would actually carry, then
    asks the guard whether any of them would open a zero-cost stock layer.
 
-   The cost fed in is the BASE landed figure — toMyrSen(unit_price_centi, rate)
+   The cost fed in is the BASE landed figure — toMyrSen(unit_price_sen, rate)
    — not the freight-allocated one, because the allocation is computed and
    PERSISTED further down inside postGrnAndRollup and running it before a
    possible refusal would leave a write behind a rejected receipt. That only
@@ -359,8 +343,8 @@ async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number |
    skipped rather than risk refusing a receipt that was in fact costed. */
 export type ZeroCostRefusal = NonNullable<Awaited<ReturnType<typeof checkReceiptCosts>>>;
 type GrnCostGateRow = {
-  id: string; qty_accepted: number; material_code: string;
-  unit_price_centi: number | null; line_total_centi?: number | null;
+  id: string; qty_accepted: number; item_code: string;
+  unit_price_sen: number | null; line_total_sen?: number | null;
   item_group?: string | null; zero_cost_ack?: boolean | null;
 };
 async function checkGrnZeroCost(
@@ -371,14 +355,14 @@ async function checkGrnZeroCost(
   if (items.length === 0) return null;
   const rate = grnHeader?.exchange_rate ?? 1;
   const chargePool = items
-    .filter((it) => isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
-    .reduce((sum, it) => sum + Math.abs(Number(it.line_total_centi ?? 0)), 0);
+    .filter((it) => isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
+    .reduce((sum, it) => sum + Math.abs(Number(it.line_total_sen ?? 0)), 0);
   if (chargePool > 0) return null;
   const lines: ReceiptCostLine[] = items.map((it) => ({
     id: it.id,
-    materialCode: it.material_code,
+    itemCode: it.item_code,
     qtyAccepted: Number(it.qty_accepted ?? 0),
-    unitCostSen: toMyrSen(Number(it.unit_price_centi ?? 0), rate),
+    unitCostSen: toMyrSen(Number(it.unit_price_sen ?? 0), rate),
     itemGroup: it.item_group ?? null,
     zeroCostAck: it.zero_cost_ack ?? false,
   }));
@@ -398,7 +382,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
     .eq('id', grnId), companyId).maybeSingle();
   const { data: items } = await sb.from('grn_items')
-    .select('id, purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_centi, line_total_centi, item_group, variants, zero_cost_ack')
+    .select('id, purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
     .eq('grn_id', grnId);
 
   /* ZERO-COST GATE — the last honest moment. Runs BEFORE the CAS flip so a
@@ -528,10 +512,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
       await sb.from('grns').update({ warehouse_id: warehouseId, updated_at: new Date().toISOString() }).eq('id', grnId);
     }
   }
-  /* Landed-cost core (migration 0082) — the GRN line unit_price_centi is in the
+  /* Landed-cost core (migration 0082) — the GRN line unit_price_sen is in the
      GRN's OWN currency (RMB / USD / SGD / MYR, copied from the source PO). The
      FIFO lot must carry MYR, so convert the IN cost at the GRN's rate:
-     unit_cost_sen = round(unit_price_centi × exchange_rate). For an MYR GRN the
+     unit_cost_sen = round(unit_price_sen × exchange_rate). For an MYR GRN the
      rate is 1 → toMyrSen is a byte-for-byte no-op (round(int×1) === int), so
      existing MYR lot costs / COGS / margins are unchanged. A later PI recost
      OVERWRITES this with the PI line price × the PI's own rate. */
@@ -541,10 +525,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      NO inventory movement. Its amount is POOLED and allocated across the goods
      lines (QTY/VALUE/CBM, header allocation_method) so each goods line's FIFO lot
      cost = base MYR cost + its per-unit share of the freight, persisted as
-     allocated_charge_centi. chargePool === 0 (no service lines) ⇒ allocation 0
+     allocated_charge_sen. chargePool === 0 (no service lines) ⇒ allocation 0
      everywhere ⇒ byte-for-byte identical to the plain-goods path. */
   const method = normalizeAllocationMethod((grnHeader as { allocation_method?: string | null } | null)?.allocation_method);
-  const itemRows = (items ?? []) as Array<{ id: string; purchase_order_item_id: string | null; qty_accepted: number; material_code: string; material_name: string | null; unit_price_centi: number | null; line_total_centi?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>;
+  const itemRows = (items ?? []) as Array<{ id: string; purchase_order_item_id: string | null; qty_accepted: number; item_code: string; material_name: string | null; unit_price_sen: number | null; line_total_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>;
   const alloc = await computeAndStoreGrnAllocation(sb, itemRows, grnRate, method, companyId);
   const allocByItemId = new Map(alloc.goods.map((g) => [g.id, g]));
   if (warehouseId && items) {
@@ -556,21 +540,20 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     const movements = itemRows
       // SERVICE lines (freight) never enter inventory — skip them here. Their
       // amount has already been allocated INTO the goods lines' lot cost above.
-      .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+      .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
       .filter((it) => it.qty_accepted > 0)
       .map((it) => ({
         movement_type: 'IN' as const,
         warehouse_id: warehouseId,
-        product_code: it.material_code,
-        // Bucket received stock by its attribute composition (migration 0095).
-        variant_key: computeVariantKey(it.item_group, it.variants ?? null),
+        item_code: it.item_code,
+        variant_key: keyedVariantWithWarning(grnNo, it, computeVariantKey), // mig 0095; warns when the group ignores them
         product_name: it.material_name,
         qty: it.qty_accepted,
         // Landed MYR lot cost = base (rate→MYR) + per-unit allocated freight.
         // No service lines ⇒ === toMyrSen(unit_price, rate), so existing GRNs
         // are byte-for-byte unchanged.
         unit_cost_sen: allocByItemId.get(it.id)?.landedUnitCostMyr
-          ?? toMyrSen(Number(it.unit_price_centi ?? 0), grnRate),
+          ?? toMyrSen(Number(it.unit_price_sen ?? 0), grnRate),
         source_doc_type: 'GRN' as const,
         source_doc_id: grnId,
         source_doc_no: grnNo,
@@ -616,7 +599,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         sb,
         movements.map((m) => ({
           warehouse_id: m.warehouse_id,
-          product_code: m.product_code,
+          item_code: m.item_code,
           variant_key: m.variant_key,
           batch_no: m.batch_no ?? null,
         })),
@@ -648,7 +631,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         sb,
         movements.map((m) => ({
           warehouse_id: m.warehouse_id,
-          product_code: m.product_code,
+          item_code: m.item_code,
           variant_key: m.variant_key,
         })),
         receiptCutoffTs,
@@ -689,21 +672,21 @@ const HEADER =
   'id, grn_number, purchase_order_id, supplier_id, warehouse_id, received_at, delivery_note_ref, status, notes, ' +
   /* Migration 0101 — GRN ↔ PO money parity; 0082 — exchange_rate (FX→MYR cost) +
      allocation_method (landed-cost "平摊" basis). */
-  'currency, exchange_rate, allocation_method, subtotal_centi, tax_centi, total_centi, ' +
-  'posted_at, created_at, created_by, updated_at';
+  'currency, exchange_rate, allocation_method, subtotal_sen, tax_sen, total_sen, ' +
+  'posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // mig 0324's marker, BESIDE the status pill
 const ITEM =
-  'id, grn_id, purchase_order_item_id, material_kind, material_code, material_name, supplier_sku, ' +
-  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_centi, notes, ' +
+  'id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
+  'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
-  'item_group, description, description2, uom, discount_centi, variants, ' +
+  'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, ' +
   /* Migration 0101 — line money + per-line date + cost snapshot */
-  'line_total_centi, delivery_date, unit_cost_centi, ' +
+  'line_total_sen, delivery_date, unit_cost_sen, ' +
   /* Migration 0106 — GRN line consumption (downstream PI/PR draw) */
   'invoiced_qty, returned_qty, created_at, ' +
   /* Migration 0082 — landed freight allocated to this goods line (MYR sen) */
-  'allocated_charge_centi, ' +
+  'allocated_charge_sen, ' +
   /* Migration 0151 — physical rack placement */
   'rack_id, ' +
   /* migration 0280 — the zero-cost acknowledgement, read back so the receipt
@@ -720,7 +703,7 @@ const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> exten
 
 /* ── Recompute GRN header money rollups (migration 0101) ──────────────────
    Mirrors recomputePoTotals (apps/api/src/routes/mfg-purchase-orders.ts):
-   sum line_total_centi across grn_items → write subtotal_centi + total_centi
+   sum line_total_sen across grn_items → write subtotal_sen + total_sen
    on the grns header. GRN carries no tax, so total = subtotal.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
@@ -728,10 +711,10 @@ const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> exten
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeGrnTotals(sb: any, grnId: string) {
   const { data: items, error: itemsErr } = await sb.from('grn_items')
-    .select('line_total_centi')
+    .select('line_total_sen')
     .eq('grn_id', grnId);
   /* A failed READ is not an empty GRN, and `?? []` cannot tell them apart — it
-     folded a transient blip into subtotal_centi / total_centi ZERO on a receipt
+     folded a transient blip into subtotal_sen / total_sen ZERO on a receipt
      whose lines were intact. The ERROR is the signal, never the emptiness: a
      genuinely empty GRN resolves error === null with data === [] and MUST still
      fall through to zero the header. */
@@ -740,10 +723,10 @@ async function recomputeGrnTotals(sb: any, grnId: string) {
     console.error('[grn-recompute] item read failed — header left unchanged:', grnId, itemsErr.message);
     return;
   }
-  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
+  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_sen ?? 0), 0);
   const { error: updErr } = await sb.from('grns').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     updated_at: new Date().toISOString(),
   }).eq('id', grnId);
   if (updErr) {
@@ -933,8 +916,11 @@ export async function recomputePoReceived(
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
       // Checked for the same reason as the received_qty writes above: unchecked,
       // the PO stays RECEIVED (or SUBMITTED) under a clean-looking recount.
+      /* NO `on_hold` TERM, DELIBERATELY — a WRITER re-deriving a status from a
+         fact can no longer erase a hold (mig 0324); the literal stays for a
+         legacy row. docs/modules/purchase-order.md. */
       const { error: poErr } = await sb.from('purchase_orders')
-        .update(patch).eq('id', poId).neq('status', 'CANCELLED');
+        .update(patch).eq('id', poId).not('status', 'in', '("CANCELLED","ON_HOLD")');
       if (poErr) {
         return { ok: false, reason: `PO status write failed for ${poId}: ${poErr.message ?? 'unknown'}` };
       }
@@ -985,11 +971,11 @@ export async function recomputePoReceived(
 async function grnReverseWouldGoNegative(
   sb: any,
   warehouseId: string | null,
-  lines: Array<{ qty_accepted: number; material_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
+  lines: Array<{ qty_accepted: number; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
 ): Promise<{ error: string; message: string } | null> {
   if (!warehouseId) return null;
-  // Sum the qty we'd reverse OUT per (product_code, variant_key) bucket.
-  const needByBucket = new Map<string, { product_code: string; variant_key: string; need: number }>();
+  // Sum the qty we'd reverse OUT per (item_code, variant_key) bucket.
+  const needByBucket = new Map<string, { item_code: string; variant_key: string; need: number }>();
   for (const l of lines) {
     /* SERVICE lines never entered inventory, so they cannot be reversed out of
        it. The POST path skips them and this guard did not, which made a
@@ -998,27 +984,27 @@ async function grnReverseWouldGoNegative(
        naming a cause that does not exist. It also blocked the warehouse relocate
        and the line's own deletion. Counting it as stock is a live hazard too:
        the movement build below would write an OUT for a non-stock SKU. */
-    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.material_code })) continue;
+    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code })) continue;
     const qty = Number(l.qty_accepted ?? 0);
     if (qty <= 0) continue;
     const variant_key = computeVariantKey(l.item_group, l.variants ?? null);
-    const k = `${l.material_code}::${variant_key}`;
-    const cur = needByBucket.get(k) ?? { product_code: l.material_code, variant_key, need: 0 };
+    const k = `${l.item_code}::${variant_key}`;
+    const cur = needByBucket.get(k) ?? { item_code: l.item_code, variant_key, need: 0 };
     cur.need += qty;
     needByBucket.set(k, cur);
   }
   if (needByBucket.size === 0) return null;
 
-  const productCodes = [...new Set([...needByBucket.values()].map((b) => b.product_code))];
+  const itemCodes = [...new Set([...needByBucket.values()].map((b) => b.item_code))];
   const { data: balRows, error } = await sb
     .from('inventory_balances')
-    .select('product_code, variant_key, qty')
+    .select('item_code, variant_key, qty')
     .eq('warehouse_id', warehouseId)
-    .in('product_code', productCodes);
+    .in('item_code', itemCodes);
   if (error) return null; // best-effort: don't block on a balance read failure
   const onHand = new Map<string, number>();
-  for (const r of (balRows ?? []) as Array<{ product_code: string; variant_key: string | null; qty: number }>) {
-    onHand.set(`${r.product_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
+  for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
+    onHand.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
   }
   for (const [k, b] of needByBucket) {
     const have = onHand.get(k) ?? 0;
@@ -1032,28 +1018,10 @@ async function grnReverseWouldGoNegative(
   return null;
 }
 
-/* ── Per-GRN consumption flags (migration 0106) ────────────────────────────
-   From a GRN's items compute: has_children (any line invoiced_qty>0 or
-   returned_qty>0), fully_invoiced (every accepted line has invoiced_qty >=
-   qty_accepted), fully_returned (likewise returned_qty). A line with
-   qty_accepted = 0 is treated as already satisfied (nothing to consume). */
-function computeGrnFlags(items: Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>) {
-  const accepted = items.filter((r) => (r.qty_accepted ?? 0) > 0);
-  const hasChildren = items.some((r) => (r.invoiced_qty ?? 0) > 0 || (r.returned_qty ?? 0) > 0);
-  const fullyInvoiced = accepted.length > 0 && accepted.every((r) => (r.invoiced_qty ?? 0) >= (r.qty_accepted ?? 0));
-  const fullyReturned = accepted.length > 0 && accepted.every((r) => (r.returned_qty ?? 0) >= (r.qty_accepted ?? 0));
-  return { has_children: hasChildren, fully_invoiced: fullyInvoiced, fully_returned: fullyReturned };
-}
-
-/* Filter-pill bucket → the raw grns.status values it covers. Single source of
-   truth for BOTH the status-count queries and the list `status` filter. All
-   three buckets are 1:1 today, but the FE sends the BUCKET NAME as `status`; a
-   raw DB status still works (backward-compatible fallback). */
-const GRN_STATUS_BUCKETS: Record<string, string[]> = {
-  draft: ['DRAFT'],
-  posted: ['POSTED'],
-  cancelled: ['CANCELLED'],
-};
+/* Filter-pill bucket → the raw grns.status values it covers. Single source of truth for BOTH the status-count queries and
+   the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM MEMBER AND
+   EVERY MEMBER IS IN A BUCKET — pinned by tests/statusBucketsEnumMembership.test.mjs. CLOSED joined `posted` on 2026-08-17
+   out of NO bucket (it counted in `all`, showed in no tab). SAY IT PLAINLY: unlike the SI and DO maps, nothing here was ever a NON-member, so no GRN tab 500d and no GRN count was wrong — this half is a COVERAGE JUDGMENT and it MOVES A NUMBER an operator reads as fact. The Posted pill rises by the number of CLOSED GRNs and ?status=posted returns rows it never returned before. `posted` rather than a fourth `closed` pill because a CLOSED GRN's stock IN stands where a CANCELLED one's receipt was reversed, and it is the bucket GoodsReceivedListV2's statusFor() already fell back to — so the tab and the row chip stop disagreeing. If the owner wants CLOSED separated, the change is a `closed` entry here plus a StatusTab arm; nothing else depends on the pairing. */
 
 grns.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -1075,6 +1043,7 @@ grns.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: { all: number; draft: number; posted: number; cancelled: number } | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -1091,7 +1060,7 @@ grns.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['received_at', 'grn_number', 'status', 'total_centi']);
+    const SORT_COLS = new Set(['received_at', 'grn_number', 'status', 'total_sen']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'received_at:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'received_at';
     const sortAsc = rawDir === 'asc';
@@ -1102,8 +1071,10 @@ grns.get('/', async (c) => {
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise treat it as a raw DB status. */
     const status = c.req.query('status');
+    /* The `on_hold` tab reads the MARKER (mig 0324), not the status. */
     if (status && status !== 'all') {
-      if (GRN_STATUS_BUCKETS[status]) q = q.in('status', GRN_STATUS_BUCKETS[status]);
+      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      else if (GRN_STATUS_BUCKETS[status]) q = q.in('status', GRN_STATUS_BUCKETS[status]);
       else q = q.eq('status', status);
     }
     const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
@@ -1119,10 +1090,6 @@ grns.get('/', async (c) => {
     const from = c.req.query('from'); if (from) q = q.gte('received_at', from);
     const to = c.req.query('to'); if (to) q = q.lte('received_at', to);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-    const res = await q;
-    data = res.data;
-    error = res.error;
-    total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (draft / posted /
        cancelled) over the SAME company + supplier filters but WITHOUT status /
@@ -1133,26 +1100,31 @@ grns.get('/', async (c) => {
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       return cq;
     };
-    const [allC, draftC, postedC, cancelledC] = await Promise.all([
+    /* PERF: issued here, awaited below; semantics and error order unchanged. */
+    const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
-    ]);
-    statusCounts = {
-      all: allC.count ?? 0,
-      draft: draftC.count ?? 0,
-      posted: postedC.count ?? 0,
-      cancelled: cancelledC.count ?? 0,
-    };
+      countBase().or(HELD_OR_TERM),
+    ]));
+    const res = await q;
+    data = res.data;
+    error = res.error;
+    total = res.count ?? (res.data?.length ?? 0);
+    const [allC, draftC, postedC, cancelledC, onHoldC] = (await countsProm)();
+    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+    const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC, on_hold: onHoldC });
+    if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   // Commander 2026-05-29 — the GRN list grid needs a money column (AutoCount's
-  // GRN list shows Sub-Total / Total). The Total is the STORED header total_centi
-  // (recomputeGrnTotals = Σ line_total_centi = Σ qty*unit − discount), already
+  // GRN list shows Sub-Total / Total). The Total is the STORED header total_sen
+  // (recomputeGrnTotals = Σ line_total_sen = Σ qty*unit − discount), already
   // selected by HEADER. The old per-line qty_accepted*unit_price sum here ignored
-  // discount_centi, so the list Total drifted from the detail Total — use the
+  // discount_sen, so the list Total drifted from the detail Total — use the
   // header value instead. We still fetch the lines (ONE round trip) to derive the
   // convert-eligibility / lock flags (has_children / fully_invoiced /
   // fully_returned).
@@ -1163,30 +1135,23 @@ grns.get('/', async (c) => {
   // Owner 2026-07-02 — "Transfer To" list column: map each grn_item → its GRN so
   // the per-line downstream (PI/PR) can be rolled up to a per-GRN doc-number set.
   const grnByItem = new Map<string, string>();
-  /* Each GRN's OWN line codes — the Assigned-SO / Delivered header cells below
-     roll up ONLY these SKUs (header ≡ ∪(drill lines), 2026-08-02): a partial-
-     receipt GRN must not inherit its parent PO's assignments for SKUs it never
-     received. */
-  const codesByGrn = new Map<string, Set<string>>();
+  /* The per-GRN line-code roll-up (Assigned-SO / Delivered) moved to the deferred
+     enrichment endpoint (grns-list-enrichment.ts), which rebuilds codesByGrn
+     itself — so this read no longer fetches item_code. It still feeds linesByGrn
+     (lock/convert flags) and grnByItem (downstream PI/PR roll-up). */
   if (ids.length > 0) {
-    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
+    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
       .from('grn_items')
-      .select('id, grn_id, material_code, qty_accepted, invoiced_qty, returned_qty')
+      .select('id, grn_id, qty_accepted, invoiced_qty, returned_qty')
       .in('grn_id', ids)
       .order('id')
       .range(from, to));
     if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
-    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
+    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
       const arr = linesByGrn.get(li.grn_id) ?? [];
       arr.push({ qty_accepted: li.qty_accepted, invoiced_qty: li.invoiced_qty, returned_qty: li.returned_qty });
       linesByGrn.set(li.grn_id, arr);
       if (li.id) grnByItem.set(li.id, li.grn_id);
-      const code = (li.material_code ?? '').trim();
-      if (code) {
-        const set = codesByGrn.get(li.grn_id) ?? new Set<string>();
-        set.add(code);
-        codesByGrn.set(li.grn_id, set);
-      }
     }
   }
   // Per-GRN downstream: aggregate the per-line PI/PR breakdown into one deduped
@@ -1207,66 +1172,38 @@ grns.get('/', async (c) => {
       downstreamByGrn.set(grnId, acc);
     }
   }
-  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolved from the SAME
-     per-SKU precedence engine the drill-down uses — computeMrp runs once —
-     then rolled up over THIS GRN'S OWN line codes only (header ≡ ∪(drill
-     lines), 2026-08-02): the drill matches assignments into the GRN's lines by
-     material_code, so a partial-receipt GRN's header must not show parent-PO
-     assignments its lines cannot explain. */
-  const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
-  /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
-     per CODE, filtered the same way. One wave, same poIds. */
-  const [originsByPo, deliveredByPoCode] = await Promise.all([
-    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
-    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
-  ]);
-  const grns = rows.map((g) => {
-    const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
-    const grnCodes = codesByGrn.get(g.id) ?? new Set<string>();
-    const origins = (poId ? originsByPo.get(poId) ?? [] : [])
-      .filter((o) => grnCodes.has(o.itemCode));
-    const summary = summarizeOrigins(origins);
-    // Delivered: distinct DOs across the GRN's own codes (qty summed per DO).
-    const doAgg = new Map<string, DeliveredDo>();
-    if (poId) {
-      const byCode = deliveredByPoCode.get(poId);
-      if (byCode) {
-        for (const code of grnCodes) {
-          for (const d of byCode.get(code) ?? []) {
-            const prev = doAgg.get(d.doNo);
-            if (prev) prev.qty += d.qty;
-            else doAgg.set(d.doNo, { ...d });
-          }
-        }
-      }
-    }
-    return {
-      ...g,
-      // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
-      total_centi: (g.total_centi as number | null | undefined) ?? 0,
-      downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
-      ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
-      assigned_sos: summary.assignedSos,
-      assigned_so_linked: summary.sourceLinked,
-      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
-         holds for the provenance slot too. */
-      assigned_so_provenance: summary.provenanceSos,
-      delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
-    };
-  });
+  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
+     OMITTED here — not blanked (C16). Resolving them ran a company-wide
+     computeMrp on this critical path (resolvePoSoCoveragePerSkuForPos), the
+     list's dominant cost (~4s). The client heals them a beat after render via
+     GET /grns/list-mrp-enrichment (routes/grns-list-enrichment.ts +
+     lib/listMrpEnrichment.ts), rolling up over each GRN's own line codes exactly
+     as this handler did. downstream + the lock/convert flags stay inline (cheap,
+     non-MRP). */
+  const grns = rows.map((g) => ({
+    ...g,
+    // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
+    total_sen: (g.total_sen as number | null | undefined) ?? 0,
+    downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
+    ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
+  }));
   if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
   return c.json({ grns });
 });
 
 /* ── GET /outstanding-po-items ──────────────────────────────────────────
    Returns a flat list of PO line items with remaining qty > 0. Used by
-   the multi-select "GRN from POs (line-level)" picker at /grns/from-po.
+   the multi-select "GRN from POs (line-level)" picker at /grns/from-po,
+   and by the mobile convert wizard.
    Filters:
-     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED
-     - line item must have qty - received_qty > 0
-     - limit 500 so the picker doesn't choke
+     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED — IN SQL
+     - `?poId=a,b,c` scopes to those POs — IN SQL
+     - line item must have qty - received_qty > 0 — in JS, because PostgREST
+       cannot compare two columns
    Shape mirrors the GET /outstanding-so-items pattern on mfgPurchaseOrders.
+   Also returns `scope`, the facts an EMPTY answer needs in order to say
+   something true. See lib/outstanding-po-lines.ts for the three mechanisms
+   that used to make an unreceived PO read as fully received.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -1274,132 +1211,48 @@ grns.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 grns.get('/outstanding-po-items', async (c) => {
   const sb = c.get('supabase');
-  /* Commander 2026-05-29 — the GRN-from-PO picker now locks to ONE warehouse per
-     GRN (mirrors the supplier-lock pattern) + shows a Warehouse column. Select the
-     parent PO's purchase_location_id so the picker can group/lock by warehouse,
-     and resolve the warehouse code/name in a second round trip (Supabase nested
-     selects can't reach warehouses through the items→po hop cleanly). */
-  /* Cross-company leak fix (owner 2026-08-10 "为什么 houzs 的数据进到去 2990"):
-     this picker returned EVERY company's outstanding PO lines — the AutoCount
-     import raised Houzs POs from a handful to 135 and made the leak visible in
-     2990's GRN picker. The consignment mirror already wrapped with
-     scopeToCompany; do the same here (items carry company_id since mig 0083,
-     fail-closed when the company context can't resolve). */
-  const { data: items, error } = await scopeToCompany(
-    sb
-      .from('purchase_order_items')
-      .select(`
-      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
-        supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-        purchase_location_id, supplier:suppliers ( code, name ) )
-    `),
-    c,
-  )
-    .order('purchase_order_id', { ascending: false })
-    .limit(500);
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-
-  type Row = {
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
-    material_name: string; supplier_sku: string | null; item_group: string | null; description: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
-    warehouse_id: string | null; variants: unknown; delivery_date: string | null;
-    // Migration 0180 — per-line supplier-revised delivery dates.
-    supplier_delivery_date_2: string | null;
-    supplier_delivery_date_3: string | null;
-    supplier_delivery_date_4: string | null;
-    po: {
-      id: string; po_number: string; supplier_id: string; status: string;
-      po_date: string; expected_at: string | null; purchase_location_id: string | null;
-      // Migration 0180 — header supplier-revised delivery dates.
-      supplier_delivery_date_2: string | null;
-      supplier_delivery_date_3: string | null;
-      supplier_delivery_date_4: string | null;
-      supplier: { code: string; name: string } | null;
-    };
-  };
-
-  const rows = ((items ?? []) as unknown as Row[])
-    .filter((r) => r.po.status === 'SUBMITTED' || r.po.status === 'PARTIALLY_RECEIVED')
-    .filter((r) => r.qty - (r.received_qty ?? 0) > 0);
-
-  /* Warehouse-lock fix (Agent C 2026-05-31, bug #1 "No outstanding PO lines") —
-     the warehouse a PO line ships into is the LINE's own warehouse_id when set,
-     falling back to the PO header's purchase_location_id (the per-line warehouse
-     OVERRIDES the header — see schema comment on purchase_order_items.warehouse_id).
-     The GRN's warehouse_id is set from this same effective value at create time, so
-     the append-picker's lock (GrnFromPo: r.warehouseLocationId === grn.warehouse_id)
-     only matched when both happened to use the header. When a PO carried only a
-     per-line warehouse (header purchase_location_id NULL), every outstanding line
-     was filtered out → "No outstanding PO lines". Key the lock off the effective
-     warehouse so genuinely-outstanding lines surface. */
-  const effWh = (r: Row): string | null => r.warehouse_id ?? r.po.purchase_location_id ?? null;
-
-  // Resolve each line's effective warehouse code/name in one round trip.
-  const whIds = [...new Set(rows.map((r) => effWh(r)).filter((x): x is string => Boolean(x)))];
-  const whById = new Map<string, { code: string; name: string }>();
-  if (whIds.length > 0) {
-    const { data: whs } = await sb.from('warehouses').select('id, code, name').in('id', whIds);
-    for (const w of (whs ?? []) as Array<{ id: string; code: string; name: string }>) {
-      whById.set(w.id, { code: w.code, name: w.name });
-    }
-  }
-
-  const outstanding = rows.map((r) => {
-    const effWhId = effWh(r);
-    const wh = effWhId ? whById.get(effWhId) ?? null : null;
-    return {
-      poItemId:        r.id,
-      poId:            r.po.id,
-      poDocNo:         r.po.po_number,
-      itemCode:        r.material_code,
-      /* Owner 2026-07-27 — the SUPPLIER's own code, snapshotted on the PO line
-         at raise time (#1189). Carried so the New-GRN line (and the grn_items
-         snapshot it saves) shows the code the supplier's delivery note uses. */
-      supplierSku:     r.supplier_sku ?? null,
-      description:     r.description ?? r.material_name,
-      itemGroup:       r.item_group ?? '',
-      qty:             r.qty,
-      receivedQty:     r.received_qty ?? 0,
-      remainingQty:    r.qty - (r.received_qty ?? 0),
-      unitPriceCenti:  r.unit_price_centi,
-      warehouseId:     r.warehouse_id,
-      variants:        r.variants,
-      /* Delivery-carry — surface the PO line's EFFECTIVE (latest revised)
-         delivery date so it can ride into the converted GRN line (Deliverable
-         5). Migration 0180: MAX over non-null of [delivery_date, _2, _3, _4].
-         supabase-js returns snake_case, and Row types them, so read directly. */
-      deliveryDate:    effectiveDelivery(
-        r.delivery_date,
-        r.supplier_delivery_date_2,
-        r.supplier_delivery_date_3,
-        r.supplier_delivery_date_4,
-      ),
-      supplierId:      r.po.supplier_id,
-      supplierCode:    r.po.supplier?.code ?? '',
-      supplierName:    r.po.supplier?.name ?? '',
-      poDate:          r.po.po_date,
-      /* Migration 0180 — header EFFECTIVE (latest revised) delivery date for the
-         "Expected" column. MAX over non-null of [expected_at, _2, _3, _4]. */
-      expectedAt:      effectiveDelivery(
-        r.po.expected_at,
-        r.po.supplier_delivery_date_2,
-        r.po.supplier_delivery_date_3,
-        r.po.supplier_delivery_date_4,
-      ),
-      /* Warehouse-lock (Deliverable 4) — the line's EFFECTIVE ship-into warehouse
-         (per-line warehouse_id, else PO header purchase_location_id). This is the
-         GRN's receive-into warehouse. One warehouse per GRN. */
-      warehouseLocationId:   effWhId,
-      warehouseLocationCode: wh?.code ?? null,
-      warehouseLocationName: wh?.name ?? null,
-    };
+  /* ONE AUTHORITY FOR THIS READ. #2367 landed the same truncation fix on main as
+     `lib/outstanding-po-items.ts` while this branch landed it as
+     `lib/outstanding-po-lines.ts`. Keeping both would have left the module whose
+     header says "three properties this must keep" with ZERO callers — its tests
+     would go on passing about code the endpoint no longer runs, which is the
+     disarmed-tripwire failure this repo already pays for. The `-lines` module is
+     the superset (it also pushes `?poId=` into SQL and reports WHY an empty
+     answer is empty), so `-items` was deleted in the merge and every assertion
+     its suite made was carried into `outstanding-po-lines.test.ts` as a
+     BEHAVIOURAL test of `loadOutstandingPoLines`, not a source-text one. */
+  /* The scope the operator arrived with. Applied in SQL, not in the browser:
+     the old code filtered `?poId=` client-side over an already-truncated list,
+     so scoping could only narrow the window and never recover a PO that fell
+     outside it. That is the owner's 2026-08-17 zero-row screen. */
+  const requestedPoIds = parsePoIdScope(c.req.query('poId'));
+  /* The read lives in lib/outstanding-po-lines.ts: paged rather than capped,
+     scoped in SQL, and it reports WHY an empty answer is empty. Both predicates
+     are handed IN — `scopeToCompany` because items carry company_id since mig
+     0083 and it must fail closed when the company context cannot resolve (owner
+     2026-08-10 "为什么 houzs 的数据进到去 2990": this picker used to return every
+     company's lines), and `isReceivablePo` because it is the same predicate
+     the create paths gate on, so the picker cannot offer what they refuse. */
+  const loaded = await loadOutstandingPoLines({
+    sb,
+    scopeQuery: (q) => scopeToCompany(q, c),
+    requestedPoIds,
+    isReceivable: isReceivablePo,
   });
+  // `!== null`, not truthiness: an empty-string message is falsy, so TS cannot
+  // discriminate the union on `if (loaded.error)` and neither can a reader.
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
+  const { rows, scope } = loaded;
 
-  return c.json({ items: outstanding });
+  /* The wire shape, including the second round trip that resolves each line's
+     effective warehouse. Lives beside the read, in the same module, so the
+     picker's contract is one file. */
+  const outstanding = await toOutstandingPoItems(sb, rows, effectiveDelivery);
+
+  /* `scope` is the WHY behind an empty `items`. Returned as data, not as a
+     sentence: the desktop picker and the mobile convert wizard read this same
+     endpoint, so the wording belongs to each surface and the facts belong here. */
+  return c.json({ items: outstanding, scope });
 });
 
 /* Per-GRN-line downstream breakdown — for each GRN item id, the documents it was
@@ -1483,14 +1336,14 @@ grns.get('/:id', async (c) => {
      a per-line column without a separate column on grn_items. */
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; GRN lines expose `material_code`, so sort a shimmed view
+     on `item_code`; GRN lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type GrnLineRow = Record<string, unknown> & { id: string; purchase_order_item_id: string | null; material_code: string; item_code: string };
+  type GrnLineRow = Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string };
   const lineItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; material_code: string }>)
-        .map((it): GrnLineRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string }>)
+        .map((it): GrnLineRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -1601,25 +1454,26 @@ grns.get('/:id/linked', async (c) => {
 
 grns.post('/', async (c) => {
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   /* Draft/Confirmed two-state (mirrors SO) — DRAFT is opt-in per request via
      asDraft. A DRAFT GRN commits NOTHING (no stock IN, no PO received-rollup);
      the entire commit moves to the confirm transition (PATCH /:id/post). A
      manual `status:'DRAFT'` body field is still rejected — DRAFT is reached only
      through the asDraft flag below, never as a free-form status. */
   const asDraft = (body as { asDraft?: unknown }).asDraft === true;
-  if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Use asDraft:true to save a GRN as a draft.' }, 400);
+  if (body.status === 'DRAFT') return refuseWithoutWriting(c, { error: 'draft_status_not_supported', message: 'Use asDraft:true to save a GRN as a draft.' }, 400);
   /* Commander 2026-05-29 — a GRN may now be created WITHOUT a parent PO
      (blank/manual receipt + From-PO-multi picks that feed the New GRN form).
      Only the supplier is required; purchaseOrderId is optional. Each grn_item
      still carries its own purchase_order_item_id (or null) so the received-qty
      rollup in postGrnAndRollup runs per-line for PO-linked rows and is skipped
      for manual rows (which still write the inventory-IN movement). */
-  if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
+  if (!body.supplierId) return refuseWithoutWriting(c, { error: 'supplier_required' }, 400);
   const items = body.items as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
+  if (!Array.isArray(items) || !items.length) return refuseWithoutWriting(c, { error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+  const grnGroupOf = await skuCategoryResolver(sb, items.map((it) => ({ materialKind: 'mfg_product', itemCode: it.itemCode })), activeCompanyId(c) ?? null);
 
   /* Over-receipt guard — PO-linked lines can't accept more than the PO line's
      remaining (qty - received_qty). Mirrors the same 409 the From-PO flows
@@ -1635,18 +1489,21 @@ grns.post('/', async (c) => {
       acceptedByPoItem.set(poItemId, (acceptedByPoItem.get(poItemId) ?? 0) + accepted);
     }
     if (acceptedByPoItem.size > 0) {
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
+      if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
-        .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
+        .select('id, qty, received_qty, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
          received while its source PO is receivable. Only `/from-po-items`
          enforced this; the manual New-GRN form (this path) could slip PO-linked
          lines onto a DRAFT / CANCELLED / already-RECEIVED PO and write stock IN.
          Manual (no-PO) lines never reach here — they carry no
          purchase_order_item_id, so the intentional manual-GRN flow is unaffected. */
-      for (const r of (poItems ?? []) as Array<{ id: string; po: { status: string } | Array<{ status: string }> | null }>) {
-        const st = Array.isArray(r.po) ? r.po[0]?.status : r.po?.status;
-        if (!isReceivablePoStatus(st)) {
-          return c.json({ error: 'po_not_receivable', poItemId: r.id, status: st ?? null }, 409);
+      type EPo = { status: string; on_hold: boolean | null };
+      for (const r of (poItems ?? []) as Array<{ id: string; po: EPo | EPo[] | null }>) {
+        const po = Array.isArray(r.po) ? (r.po[0] ?? null) : r.po;
+        if (!isReceivablePo(po)) {
+          return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: r.id, status: po?.status ?? null, onHold: isDocumentHeld(po) }, 409);
         }
       }
       const remByPoItem = new Map<string, number>(
@@ -1656,7 +1513,7 @@ grns.post('/', async (c) => {
       for (const [poItemId, accepted] of acceptedByPoItem) {
         const remaining = remByPoItem.get(poItemId) ?? 0;
         if (accepted > remaining) {
-          return c.json({ error: 'qty_exceeds_remaining', poItemId, requested: accepted, remaining }, 409);
+          return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', poItemId, requested: accepted, remaining }, 409);
         }
       }
     }
@@ -1682,9 +1539,9 @@ grns.post('/', async (c) => {
      carry an explicit warehouse — the intentional manual-receipt flow still
      works, it just can't land stock nowhere-in-particular. */
   {
-    const x = await firstCrossCompanyPo(sb, c, [(body.purchaseOrderId as string | undefined) ?? null]);
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x) return c.json(x.blocked, 409);
+    const x = await crossCompanySourceRefusal(sb, c, 'purchase_orders', [(body.purchaseOrderId as string | undefined) ?? null], 'po_number');
+    if (x && 'loadError' in x) return refuseWithoutWriting(c, { error: 'load_failed', reason: x.loadError }, 500);
+    if (x) return refuseWithoutWriting(c, x.blocked, 409);
   }
 
   /* The other half of "lines with no purchase_order_item_id are uncapped"
@@ -1700,12 +1557,13 @@ grns.post('/', async (c) => {
       null,
       items.map((it, idx) => ({
         lineRef: String(idx),
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+    const bad = unlinkedScanRefusal(unlinked, unlinkedPoLinesResponse);
+    if (bad) return refuseWithoutWriting(c, bad, 409);
   }
 
   const headerWarehouseId = await resolveReceiveWarehouse(
@@ -1714,17 +1572,17 @@ grns.post('/', async (c) => {
     items.map((it) => (it.purchaseOrderItemId as string | undefined) ?? null),
   );
   if (!headerWarehouseId) {
-    return c.json({ error: 'warehouse_required', message: 'Select a warehouse to receive the goods into.' }, 400);
+    return refuseWithoutWriting(c, { error: 'warehouse_required', message: 'Select a warehouse to receive the goods into.' }, 400);
   }
 
   /* AUDIT PRE-FLIGHT — the ordering rationale for all nine in this file.
-     recordEntityAudit runs AFTER the business write has committed, so it cannot
-     honestly fail there; refusing up front is the only point at which "nothing
-     has changed, please try again" is true. Each one therefore sits after every
-     auth / validation / read guard (a refusal costs the operator nothing) and
-     strictly before the handler's FIRST mutating call. */
+     recordEntityAudit runs AFTER the business write commits, so it cannot honestly
+     fail there; refusing up front is the only point at which "nothing has changed"
+     is true. Each sits after every auth/validation/read guard and strictly before
+     the handler's FIRST mutating call — which is also what lets every refusal at or
+     above it answer through refuseWithoutWriting and release the idempotency key. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   /* Migration 0082 — GRN currency + rate inherit from the source PO (MYR default);
      allocation_method for landed-freight "平摊" (default QTY). MYR ⇒ rate 1, no-op. */
@@ -1736,7 +1594,7 @@ grns.post('/', async (c) => {
      deliberate 1 once written, so the create boundary is the only safe gate. */
   {
     const rateGuard = await assertForeignRatePostable(sb, { currency: grnFx.currency, operatorRate: body.exchangeRate, docLabel: 'GRN' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
   /* Doc-no collision retry (2026-07-14): two warehouse staff posting a GRN in
      the same company + YYMM both mint the same grn_number; without a retry the
@@ -1755,7 +1613,7 @@ grns.post('/', async (c) => {
     purchase_order_id: (body.purchaseOrderId as string | undefined) ?? null,
     supplier_id: body.supplierId,
     warehouse_id: headerWarehouseId,
-    received_at: (body.receivedAt as string) ?? todayMyt(),
+    received_at: dateOrNull(body.receivedAt) ?? todayMyt(),
     delivery_note_ref: (body.deliveryNoteRef as string) ?? null,
     currency: grnFx.currency,
     exchange_rate: grnFx.exchange_rate,
@@ -1776,35 +1634,34 @@ grns.post('/', async (c) => {
 
   const rows = items.map((it) => {
     const qtyReceived = Number(it.qtyReceived ?? 0);
-    const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-    const discountCenti = Number(it.discountCenti ?? 0);
+    const unitPriceSen = Number(it.unitPriceSen ?? 0);
+    const discountSen = Number(it.discountSen ?? 0);
     return {
       grn_id: h.id,
       purchase_order_item_id: (it.purchaseOrderItemId as string | undefined) ?? null,
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty_received: qtyReceived,
       qty_accepted: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
       qty_rejected: Number(it.qtyRejected ?? 0),
       rejection_reason: (it.rejectionReason as string | undefined) ?? null,
-      unit_price_centi: unitPriceCenti,
-      discount_centi: discountCenti,
+      unit_price_sen: unitPriceSen,
+      discount_sen: discountSen,
       /* Migration 0101 — GRN line money: qty_received * unit - discount. */
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-      line_total_centi: Math.max(0, (qtyReceived * unitPriceCenti) - discountCenti),
-      delivery_date: (it.deliveryDate as string | undefined) ?? null,
-      unit_cost_centi: Number(it.unitCostCenti ?? 0),
+      line_total_sen: Math.max(0, (qtyReceived * unitPriceSen) - discountSen),
+      delivery_date: dateOrNull(it.deliveryDate),
+      unit_cost_sen: Number(it.unitCostSen ?? 0),
       notes: (it.notes as string | undefined) ?? null,
       /* Commander 2026-05-29 — persist the line category + variant selections so
          MANUAL bedframe/sofa lines (which now have the per-category variant editor
          on the New GRN form, like the PO) keep their picks. The inventory-IN
          movement's variant_key in postGrnAndRollup reads item_group + variants. */
-      item_group: (it.itemGroup as string | undefined) ?? null,
       variants: it.variants ?? null,
       description: (it.description as string | undefined) ?? null,
-      description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+      ...lineIdentityFields(grnGroupOf, it, buildVariantSummary), // SKU wins — docs/bugs/0514
       /* Migration 0151 — physical rack this received line is placed onto. */
       rack_id: (it.rackId as string | undefined) || null,
       /* migration 0280 — the zero-cost gate's escape hatch. It is in the
@@ -1845,7 +1702,7 @@ grns.post('/', async (c) => {
   if (postRes && !postRes.ok && postRes.zeroCost) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    return c.json(postRes.zeroCost, 409);
+    return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
   // (Money only — no stock — so it's safe to run for a draft too.)
@@ -1854,30 +1711,22 @@ grns.post('/', async (c) => {
   /* The receipt has survived every compensating branch above (items-insert
      rollback, over-receipt rollback) — from here the only exits are success, so
      this is the earliest point at which a CREATE row is true. Written AFTER
-     recomputeGrnTotals so totalCenti is the rolled-up figure. */
+     recomputeGrnTotals so totalSen is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
-     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
-     need not have a parent PO. AutoCount has no create for a GRN at all; it
-     builds one only by transferring a PO's lines. Even when a purchaseOrderId
-     IS supplied here, sending a conversion would be WRONG rather than merely
-     approximate: AcSyncService resolves the source lines from AutoCount's own
-     outstanding predicate (DtlKeys()), so the account book would receive the
-     PO's outstanding lines, not the quantities the receiver actually typed and
-     accepted on this form. That is a wrong value, and a wrong value is worse
-     than a blank — so the divergence is recorded instead of guessed.
-     The two real conversion routes are POST /from-pos and /from-po-items. */
-  await recordParentlessCreate(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docNo: h.grn_number,
-    docId: h.id,
-    missing: (body.purchaseOrderId as string | undefined)
-      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
-      : 'no source Purchase Order',
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
+  /* ERP -> AutoCount. A receipt whose LINES name a purchase order is sent as a
+     real po_to_gr; one that names none is still parentless. This used to record
+     every receipt raised here as parentless — see lib/convert-parent.ts and
+     docs/bugs/0524 for why that was wrong and what it cost. */
+  const srcPoIds = await sourcePoIdsForGrn(sb, h.id);
+  const acBase = { companyId: activeCompanyId(c), docType: 'GR' as const, docNo: h.grn_number, docId: h.id, createdBy: c.get('houzsUser')?.id ?? null };
+  if (srcPoIds.length) {
+    await enqueueConvert(sb, { ...acBase, op: 'po_to_gr',
+      from: srcPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id' as const, key: id })),
+      to: { table: 'grns', keyCol: 'id', key: h.id } });
+  } else {
+    await recordParentlessCreate(sb, { ...acBase, missing: 'no source Purchase Order' });
+  }
 
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
@@ -1894,9 +1743,9 @@ grns.post('/', async (c) => {
 export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseOrderIds?: string[]; deliveryNoteRef?: string; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const poIds = body.purchaseOrderIds ?? [];
-  if (poIds.length === 0) return c.json({ error: 'po_ids_required' }, 400);
+  if (poIds.length === 0) return refuseWithoutWriting(c, { error: 'po_ids_required' }, 400);
 
   /* SOURCE LOAD, SCOPED — purchaseOrderIds arrive in the request body, so this
      read is what the conversion can see. Another company's PO id resolves to NO
@@ -1906,24 +1755,24 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      switch company" — naming the other company needs an UNSCOPED read this
      handler otherwise never makes. Same trade as /:id/convert-from-so. */
   const { data: pos, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
-    .select('id, po_number, supplier_id, status, currency')
+    .select('id, po_number, supplier_id, status, on_hold, currency')
     .in('id', poIds), c);
-  if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
-  const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; currency?: string | null }>;
-  if (poList.length === 0) return c.json({ error: 'pos_not_found' }, 404);
+  if (poErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: poErr.message }, 500);
+  const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; on_hold: boolean | null; currency?: string | null }>;
+  if (poList.length === 0) return refuseWithoutWriting(c, { error: 'pos_not_found' }, 404);
 
   /* Receivable-PO guard (audit gap #5) — a batch-convert may only receive POs
      that are still open for receipt. Without this a DRAFT / CANCELLED /
      already-RECEIVED PO could be converted to a GRN and write stock IN. Mirrors
      the 409 `/from-po-items` already enforces per pick. */
-  const notReceivable = poList.find((p) => !isReceivablePoStatus(p.status));
+  const notReceivable = poList.find((p) => !isReceivablePo(p));
   if (notReceivable) {
-    return c.json({ error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status }, 409);
+    return refuseWithoutWriting(c, { error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status, onHold: isDocumentHeld(notReceivable) }, 409);
   }
 
   const supplierIds = new Set(poList.map((p) => p.supplier_id));
   if (supplierIds.size > 1) {
-    return c.json({ error: 'mixed_suppliers', message: 'All selected POs must be from the same supplier' }, 400);
+    return refuseWithoutWriting(c, { error: 'mixed_suppliers', message: 'All selected POs must be from the same supplier' }, 400);
   }
   const supplierId = [...supplierIds][0]!;
 
@@ -1931,28 +1780,28 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   // the LINE-level half of the same source document. Redundant after the scoped
   // header read, and kept: an id-keyed read is its own entry point.
   const { data: items, error: itemsErr } = await scopeToCompany(sb.from('purchase_order_items')
-    .select('id, purchase_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
+    .select('id, purchase_order_id, material_kind, item_code, material_name, qty, received_qty, unit_price_sen, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
-      'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date, ' +
+      'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen, unit_cost_sen, delivery_date, ' +
       // Migration 0180 — revised dates so the GRN line carries the EFFECTIVE date.
       'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
     .in('purchase_order_id', poIds), c);
-  if (itemsErr) return c.json({ error: 'lookup_failed', reason: itemsErr.message }, 500);
+  if (itemsErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: itemsErr.message }, 500);
   const itemList = ((items ?? []) as unknown as Array<{
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
-    material_name: string; qty: number; received_qty: number; unit_price_centi: number;
+    id: string; purchase_order_id: string; material_kind: string; item_code: string;
+    material_name: string; qty: number; received_qty: number; unit_price_sen: number;
     item_group?: string | null; description?: string | null; description2?: string | null;
     uom?: string; variants?: unknown; gap_inches?: number | null;
     divan_height_inches?: number | null; divan_price_sen?: number;
     leg_height_inches?: number | null; leg_price_sen?: number;
     custom_specials?: unknown; line_suffix?: string | null; special_order_price_sen?: number;
-    discount_centi?: number; unit_cost_centi?: number; delivery_date?: string | null;
+    discount_sen?: number; unit_cost_sen?: number; delivery_date?: string | null;
     supplier_delivery_date_2?: string | null;
     supplier_delivery_date_3?: string | null;
     supplier_delivery_date_4?: string | null;
   }>).filter((it) => it.qty - (it.received_qty ?? 0) > 0);
 
-  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'All PO items are already fully received' }, 400);
+  if (itemList.length === 0) return refuseWithoutWriting(c, { error: 'nothing_outstanding', message: 'No outstanding lines came back for this PO. Open it and check its received balance before treating it as received in full.' }, 400); // Refusing is right; the VERDICT was not. This read is company-scoped and scopeToCompany fails closed, so [] arrives with error: null whether the order is settled or the company could not be resolved. Five siblings in purchase-returns / purchase-consignment-* were reworded with it; audit:empty-state-claims keeps them honest.
 
   /* Warehouse-required guard (audit gap #6) — this batch-convert never set a
      header warehouse and relied on postGrnAndRollup's defaultWarehouseId
@@ -1962,11 +1811,11 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      flow — fix the PO line binding or receive per-warehouse instead). */
   const batchWarehouseId = await resolveReceiveWarehouse(sb, null, itemList.map((it) => it.id));
   if (!batchWarehouseId) {
-    return c.json({ error: 'warehouse_required', message: 'These purchase orders have no single receive-into warehouse. Set the warehouse on the PO lines, or receive them per warehouse.' }, 400);
+    return refuseWithoutWriting(c, { error: 'warehouse_required', message: 'These purchase orders have no single receive-into warehouse. Set the warehouse on the PO lines, or receive them per warehouse.' }, 400);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   // Generate GRN number using same pattern as the single-POST endpoint.
   const d = new Date();
@@ -1984,7 +1833,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
      capitalise the raw foreign figure at 1:1). Checked before the single insert. */
   {
     const rateGuard = await assertForeignRatePostable(sb, { currency: batchFx.currency, operatorRate: undefined, docLabel: 'GRN' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
   /* Doc-no collision retry (2026-07-14): a concurrent GRN create in the same
      company + YYMM can mint the same grn_number; without a retry the loser hits
@@ -2020,21 +1869,21 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
 
   const rows = itemList.map((it) => {
     const qtyReceived = it.qty - (it.received_qty ?? 0);
-    const discountCenti = it.discount_centi ?? 0;
+    const discountSen = it.discount_sen ?? 0;
     return {
       grn_id: h.id,
       purchase_order_item_id: it.id,
       material_kind: it.material_kind,
-      material_code: it.material_code,
+      item_code: it.item_code,
       material_name: it.material_name,
       qty_received: qtyReceived,
       qty_accepted: qtyReceived,
       qty_rejected: 0,
-      unit_price_centi: it.unit_price_centi,
+      unit_price_sen: it.unit_price_sen,
       /* Migration 0101 — GRN line money: qty_received * unit - discount. */
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-      line_total_centi: Math.max(0, (qtyReceived * it.unit_price_centi) - discountCenti),
-      unit_cost_centi: it.unit_cost_centi ?? 0,
+      line_total_sen: Math.max(0, (qtyReceived * it.unit_price_sen) - discountSen),
+      unit_cost_sen: it.unit_cost_sen ?? 0,
       /* PR #44 — preserve variants from PO line */
       item_group: it.item_group ?? null,
       description: it.description ?? null,
@@ -2049,7 +1898,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
       custom_specials: it.custom_specials ?? null,
       line_suffix: it.line_suffix ?? null,
       special_order_price_sen: it.special_order_price_sen ?? 0,
-      discount_centi: discountCenti,
+      discount_sen: discountSen,
       /* Deliverable 5 — carry the PO line's delivery date into the GRN line so a
          converted GRN line shows the PO's delivery date instead of blank.
          Migration 0180 — use the EFFECTIVE (latest revised) line date. */
@@ -2083,7 +1932,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   if (!postRes.ok && postRes.zeroCost) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    return c.json(postRes.zeroCost, 409);
+    return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
   await recomputeGrnTotals(sb, h.id);
@@ -2095,35 +1944,27 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     `Batch-converted from ${poList.length} PO${poList.length === 1 ? '' : 's'}: ${poNumbersJoined}`,
   );
 
-  /* ERP -> AutoCount PO->GR. A GRN batched across several POs has no AutoCount
-     shape (one transfer, one source document), so it is recorded as skipped
-     rather than invented or dropped. */
-  if (poList.length === 1) {
-    await enqueueConvert(sb, {
+  /* ERP -> AutoCount PO->GR, BATCHED OR NOT. A GRN receiving several purchase
+     orders names every one of them: AcSyncService takes FromDocNos and either
+     FullTransfers the array or groups the named line keys per source document.
+     The "one transfer, one source document" limit this used to skip on belongs
+     to the primitive's key array, never to the target. */
+  /* The receipt IS in the accounts; these are fields on it that are NOT — the
+     other verdict, on #2499's key and shape. */
+  const ac = poList.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'po_to_gr',
-      from: { table: 'purchase_orders', keyCol: 'id', key: poList[0].id },
+      from: poList.map((po) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: po.id })),
       to: { table: 'grns', keyCol: 'id', key: h.id },
       docType: 'GR',
       docNo: h.grn_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else {
-    await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
-      op: 'po_to_gr',
-      docType: 'GR',
-      docNo: h.grn_number,
-      docId: h.id,
-      reason: `batched from ${poList.length} POs (${poNumbersJoined}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
-  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
+  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 grns.post('/from-pos', createGrnFromPosHandler);
 
@@ -2144,13 +1985,13 @@ export const postGrnHandler = async (c: any) => {
      load returned. Unscoped, a confirm from one company committed inventory
      against another company's GRN. */
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(sb.from('grns')
-    .select('id, status, posted_at, grn_number, warehouse_id, total_centi').eq('id', id), co.companyId).maybeSingle();
-  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    .select('id, status, posted_at, grn_number, warehouse_id, total_sen').eq('id', id), co.companyId).maybeSingle();
+  if (!cur) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const row = cur as {
     id: string; status: string; posted_at: string | null;
-    grn_number: string; warehouse_id: string | null; total_centi: number | null;
+    grn_number: string; warehouse_id: string | null; total_sen: number | null;
   };
   /* An already-POSTED GRN is an idempotent no-op that commits nothing, so it
      records nothing — a history full of "confirmed an already-confirmed GRN"
@@ -2159,7 +2000,7 @@ export const postGrnHandler = async (c: any) => {
     return c.json({ grn: row });
   }
   if (row.status === 'CANCELLED' || row.status === 'CLOSED') {
-    return c.json({ error: 'cannot_confirm', message: `GRN is ${row.status} — cannot confirm.` }, 409);
+    return refuseWithoutWriting(c, { error: 'cannot_confirm', message: `GRN is ${row.status} — cannot confirm.` }, 409);
   }
 
   /* Over-receipt verification at confirm — the draft-create path SKIPS this
@@ -2172,11 +2013,11 @@ export const postGrnHandler = async (c: any) => {
     .map((l) => l.purchase_order_item_id);
   const over = await verifyGrnOverReceipt(sb, id, poItemIds);
   if (over) {
-    return c.json({ error: 'qty_exceeds_remaining', poItemId: over.poItemId, requested: over.requested, remaining: over.remaining }, 409);
+    return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', poItemId: over.poItemId, requested: over.requested, remaining: over.remaining }, 409);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'POST', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   const res = await postGrnAndRollup(sb, id, user.id, co.companyId);
   /* Honour the chokepoint's own status. A lost confirm race (409
@@ -2188,22 +2029,22 @@ export const postGrnHandler = async (c: any) => {
        the operator has to know which ones need a price off the supplier's
        goods-received document. Nothing was written, so the GRN is still DRAFT
        and re-confirmable once the prices are in. */
-    if (res.zeroCost) return c.json(res.zeroCost, 409);
+    if (res.zeroCost) return refuseZeroCostReceipt(c, res.zeroCost, { nothingWritten: true });
     if (res.status === 409) {
       const { data: now } = await scopeToCompanyId(sb.from('grns')
-        .select('id, status, posted_at, total_centi').eq('id', id), co.companyId).maybeSingle();
+        .select('id, status, posted_at, total_sen').eq('id', id), co.companyId).maybeSingle();
       return c.json({ error: 'cannot_confirm', reason: res.reason, grn: now ?? undefined }, 409);
     }
     return c.json({ error: 'post_failed', reason: res.reason }, res.status === 404 ? 404 : 500);
   }
   // Header money rollup (no stock) — keep it in sync on confirm.
   await recomputeGrnTotals(sb, id);
-  const { data } = await scopeToCompanyId(sb.from('grns').select('id, status, posted_at, total_centi').eq('id', id), co.companyId).single();
+  const { data } = await scopeToCompanyId(sb.from('grns').select('id, status, posted_at, total_sen').eq('id', id), co.companyId).single();
 
   /* The moment received goods become on-hand stock and PO received_qty moves.
-     Recorded AFTER recomputeGrnTotals so totalCenti is the rolled-up figure, in
+     Recorded AFTER recomputeGrnTotals so totalSen is the rolled-up figure, in
      INTEGER SEN. */
-  const postedGrn = data as unknown as { total_centi: number | null } | null;
+  const postedGrn = data as unknown as { total_sen: number | null } | null;
   await recordEntityAudit(sb, {
     entityType: 'GRN',
     entityId: id,
@@ -2218,7 +2059,7 @@ export const postGrnHandler = async (c: any) => {
     fieldChanges: compactChanges([
       ...statusChange(row.status, 'POSTED'),
       fieldChange('warehouseId', null, row.warehouse_id),
-      fieldChange('totalCenti', row.total_centi, postedGrn?.total_centi ?? null),
+      fieldChange('totalSen', row.total_sen, postedGrn?.total_sen ?? null),
       fieldChange('lineCount', null, poItemIds.length),
     ]),
   });
@@ -2244,9 +2085,9 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
      not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ poItemId: string; qty: number }>; notes?: string; receivedDate?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const picks = body.picks ?? [];
-  if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
+  if (picks.length === 0) return refuseWithoutWriting(c, { error: 'picks_required' }, 400);
 
   /* SOURCE LOAD, SCOPED — the picked PO LINES are where the caller's ids enter,
      so this read is what the conversion can see. Another company's poItemId
@@ -2260,26 +2101,26 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('purchase_order_items')
     .select(`
-      id, purchase_order_id, material_kind, material_code, material_name,
+      id, purchase_order_id, material_kind, item_code, material_name,
       item_group, description, description2, uom, qty, received_qty,
-      unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen,
+      unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
-      special_order_price_sen, discount_centi, delivery_date,
+      special_order_price_sen, discount_sen, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, purchase_location_id, currency )
+      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, purchase_location_id, currency )
     `)
     .in('id', ids), c);
-  if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
+  if (itemsErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
+    id: string; purchase_order_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
+    qty: number; received_qty: number; unit_price_sen: number;
     variants: unknown; gap_inches: number | null; divan_height_inches: number | null;
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
-    discount_centi: number; delivery_date: string | null;
+    discount_sen: number; delivery_date: string | null;
     // Migration 0180 — per-line revised dates for the effective GRN line date.
     supplier_delivery_date_2: string | null;
     supplier_delivery_date_3: string | null;
@@ -2294,14 +2135,14 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // Validate every pick — qty > 0 and qty ≤ remaining.
   for (const p of picks) {
     const row = byId.get(p.poItemId);
-    if (!row) return c.json({ error: 'item_not_found', poItemId: p.poItemId }, 400);
-    if (p.qty <= 0) return c.json({ error: 'qty_must_be_positive', poItemId: p.poItemId }, 400);
+    if (!row) return refuseWithoutWriting(c, { error: 'item_not_found', poItemId: p.poItemId }, 400);
+    if (p.qty <= 0) return refuseWithoutWriting(c, { error: 'qty_must_be_positive', poItemId: p.poItemId }, 400);
     const remaining = row.qty - (row.received_qty ?? 0);
     if (p.qty > remaining) {
-      return c.json({ error: 'qty_exceeds_remaining', poItemId: p.poItemId, requested: p.qty, remaining }, 409);
+      return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', poItemId: p.poItemId, requested: p.qty, remaining }, 409);
     }
-    if (!isReceivablePoStatus(row.po.status)) {
-      return c.json({ error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status }, 409);
+    if (!isReceivablePo(row.po)) {
+      return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status, onHold: isDocumentHeld(row.po) }, 409);
     }
   }
 
@@ -2309,22 +2150,27 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
      to the same sink, and a refusal here leaves the entire multi-GRN receive
      untouched rather than half-created. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   // Group picks by SUPPLIER → one GRN per supplier (Commander 2026-05-29:
   // "不同 supplier 不能 under 同一张 GRN" + "multi-select → 一张 GRN"). A
   // supplier's lines may span several POs; the GRN header references the first
   // PO (grns.purchase_order_id is single-FK) while each grn_item keeps its own
   // purchase_order_item_id, so received_qty still rolls up to EVERY source PO.
-  type Bucket = { supplierId: string; primaryPoId: string; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
+  /* `poIds` alongside `poNumbers` because the AutoCount transfer names its
+     sources by ERP ROW, not by printed number: enqueueConvert resolves each
+     ref through linked_ac_docno, and `primaryPoId` alone would name one of
+     the several purchase orders this bucket actually received. */
+  type Bucket = { supplierId: string; primaryPoId: string; poIds: Set<string>; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
   const buckets = new Map<string, Bucket>();
   for (const p of picks) {
     const row = byId.get(p.poItemId)!;
     const key = row.po.supplier_id;
     const cur = buckets.get(key) ?? {
-      supplierId: row.po.supplier_id, primaryPoId: row.po.id, poNumbers: new Set<string>(),
+      supplierId: row.po.supplier_id, primaryPoId: row.po.id, poIds: new Set<string>(), poNumbers: new Set<string>(),
       warehouseId: row.po.purchase_location_id, currency: row.po.currency ?? null, lines: [],
     };
+    cur.poIds.add(row.po.id);
     cur.poNumbers.add(row.po.po_number);
     cur.lines.push({ row, qty: p.qty });
     buckets.set(key, cur);
@@ -2340,7 +2186,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   const firstNext = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}GRN-${yymm}-`.length), 10) - 1;
 
-  const receivedAt = body.receivedDate ?? todayMyt();
+  const receivedAt = dateOrNull(body.receivedDate) ?? todayMyt(); // "" is not undefined: nullish left it for Postgres, and a failed bucket here is dropped silently
   const created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number; posted?: boolean; postError?: string; movementErrors?: string[]; recountError?: string }> = [];
   // Track any bucket rolled back by the post-insert over-receipt verification so
   // we can surface a 409 with the same error shape the add-line path uses.
@@ -2352,7 +2198,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
      batch. Each bucket inherits its primary PO currency with no operator rate. */
   for (const bucket of buckets.values()) {
     const rateGuard = await assertForeignRatePostable(sb, { currency: bucket.currency ?? undefined, operatorRate: undefined, docLabel: 'GRN' });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
   }
 
   for (const bucket of buckets.values()) {
@@ -2394,20 +2240,20 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
     if (!h) continue;
 
     const rows = bucket.lines.map(({ row, qty }) => {
-      const discountCenti = row.discount_centi ?? 0;
+      const discountSen = row.discount_sen ?? 0;
       return {
         grn_id: h.id,
         purchase_order_item_id: row.id,
         material_kind: row.material_kind,
-        material_code: row.material_code,
+        item_code: row.item_code,
         material_name: row.material_name,
         qty_received: qty,
         qty_accepted: qty,
         qty_rejected: 0,
-        unit_price_centi: row.unit_price_centi,
+        unit_price_sen: row.unit_price_sen,
         /* Migration 0101 — GRN line money: qty_received * unit - discount. */
         // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-        line_total_centi: Math.max(0, (qty * row.unit_price_centi) - discountCenti),
+        line_total_sen: Math.max(0, (qty * row.unit_price_sen) - discountSen),
         // PR #44 — preserve variants from PO line
         item_group: row.item_group,
         description: row.description,
@@ -2422,7 +2268,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
         custom_specials: row.custom_specials,
         line_suffix: row.line_suffix,
         special_order_price_sen: row.special_order_price_sen ?? 0,
-        discount_centi: discountCenti,
+        discount_sen: discountSen,
         /* Deliverable 5 — carry the PO line's delivery date into the GRN line.
            Migration 0180 — use the EFFECTIVE (latest revised) line date. */
         delivery_date: effectiveDelivery(
@@ -2481,29 +2327,20 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       `Received from ${[...bucket.poNumbers].join(', ')}`,
     );
 
-    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document. */
-    if (bucket.poNumbers.size === 1 && bucket.primaryPoId) {
-      await enqueueConvert(sb, {
+    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document, and
+       it names every purchase order it received against. The bucket is grouped
+       by supplier, so all its sources share one creditor. */
+    const bucketPoIds = bucket.poIds.size ? [...bucket.poIds] : (bucket.primaryPoId ? [bucket.primaryPoId] : []);
+    const bucketAc = bucketPoIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'po_to_gr',
-        from: { table: 'purchase_orders', keyCol: 'id', key: bucket.primaryPoId },
+        from: bucketPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: id })),
         to: { table: 'grns', keyCol: 'id', key: h.id },
         docType: 'GR',
         docNo: h.grn_number,
         docId: h.id,
         createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    } else {
-      await recordConvertSkipped(sb, {
-        companyId: activeCompanyId(c),
-        op: 'po_to_gr',
-        docType: 'GR',
-        docNo: h.grn_number,
-        docId: h.id,
-        reason: `received against ${bucket.poNumbers.size} POs (${[...bucket.poNumbers].join(', ')}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
+    }) : null;
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
@@ -2515,6 +2352,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       ...(postFailReason ? { postError: postFailReason } : {}),
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),
       ...(bucketRecountError ? { recountError: bucketRecountError } : {}),
+      // PER BUCKET: each bucket IS its own receipt, with its own gaps.
+      ...(bucketAc?.problems.length ? { acNotSent: bucketAc.problems } : {}),
     });
   }
 
@@ -2522,7 +2361,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // single-doc paths return. Reported before the over-receipt 409 only because
   // a missing cost is the one the operator can fix from the paperwork in hand.
   if (zeroCostRefusal) {
-    return c.json({ ...zeroCostRefusal, created }, 409);
+    return refuseZeroCostReceipt(c, { ...zeroCostRefusal, created }, { nothingWritten: created.length === 0 });
   }
 
   // If any bucket over-received (race), surface a 409 with the add-line error
@@ -2541,6 +2380,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
 };
 grns.post('/from-po-items', createGrnsFromPoItemsHandler);
 
+mountHoldRoute(grns, 'grn'); // the mig-0324 MARKER, never `status` — routes/document-hold-routes.ts
+
 /* ── PATCH /:id/cancel — cancel a GRN + reverse its receipt ─────────────────
    Commander 2026-05-29 — the GRN module is a Confirmed-clone of the PO module,
    including a Cancel action. Cancelling a GRN:
@@ -2553,27 +2394,36 @@ grns.post('/from-po-items', createGrnsFromPoItemsHandler);
    Steps 2+3 are best-effort (mirrors postGrnAndRollup's best-effort write) — a
    movement/rollback failure does not un-cancel the GRN.
    NOTE: grns has no cancelled_at column, so we set status + updated_at only. */
-grns.patch('/:id/cancel', async (c) => {
+/* Second GRN route in the PG command txn: the CANCELLED flip, the reversing
+   stock OUT, the rack reversal, the audit rows, the AutoCount cancel and the
+   allocation request commit together or not at all. 503s without DATABASE_URL
+   by design. `sb` is the TRANSACTIONAL client - the body must not reach for
+   c.get('supabase'). The body stays INSIDE the route on purpose: several checks
+   scan grns.ts by route block, and hoisting it to a named handler moved it out
+   of their sight. docs/modules/grn.md 7c. */
+grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as the line DELETE below.
+  sb: any,
+) => {
   /* Surfaced in the response, like the POST path's movementErrors/recountError.
      The GRN stays CANCELLED either way; what changes is that a failed reversal
      or recount no longer reports a clean 200. */
   const cancelErrors: string[] = [];
   const id = c.req.param('id');
-  const sb = c.get('supabase');
   const user = c.get('user');
 
   /* Cancelling reverses stock and re-opens a PO, so it must never reach another
      company's receipt. Same strict pattern as POST /:id/post above: refuse an
      unresolved company outright, then pin every read AND every status flip. */
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
   // Read → guard → update → reverse (mirrors PO cancel's split-to-avoid-PGRST116).
   const { data: cur, error: readErr } = await scopeToCompanyId(sb.from('grns')
     .select('id, status, grn_number, warehouse_id')
     .eq('id', id), co.companyId).maybeSingle();
-  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
-  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+  if (readErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: readErr.message }, 500);
+  if (!cur) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const head = cur as { id: string; status: string; grn_number: string; warehouse_id: string | null };
   // Idempotent — already cancelled, echo back without re-reversing.
   if (head.status === 'CANCELLED') {
@@ -2586,7 +2436,7 @@ grns.patch('/:id/cancel', async (c) => {
      a draft be voided with no record. Both exits record a CANCEL, so both are
      covered by this one probe. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'CANCEL', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   /* LEAK GUARD (CRITICAL): a DRAFT GRN committed NOTHING (no inventory IN, no
      PO received-rollup), so cancelling one must NOT reverse anything — the
@@ -2615,23 +2465,23 @@ grns.patch('/:id/cancel', async (c) => {
   // GRN child-lock: can't cancel a GRN that has a downstream PI/PR — the child
   // must be deleted first (unified model, migration 0106).
   const childLock = await grnHasDownstream(sb, id);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
 
   // Load the GRN lines once — needed by the downstream-consumption guard BELOW
   // and by both reversals further down.
   const { data: lines } = await sb.from('grn_items')
-    .select('purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_centi, item_group, variants')
+    .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
     .eq('grn_id', id);
   const lineList = (lines ?? []) as Array<{
     purchase_order_item_id: string | null; qty_accepted: number;
-    material_code: string; material_name: string | null; unit_price_centi: number | null;
+    item_code: string; material_name: string | null; unit_price_sen: number | null;
     item_group?: string | null; variants?: VariantAttrs | null;
   }>;
 
   // Bug #2 — block the cancel if the received stock was already consumed
   // downstream (reversing it out would drive on-hand negative + corrupt COGS).
   const consumedLock = await grnReverseWouldGoNegative(sb, head.warehouse_id, lineList);
-  if (consumedLock) return c.json(consumedLock, 409);
+  if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);
 
   /* Bug #3/#11 — ATOMIC single ACTIVE→CANCELLED transition. The conditional
      UPDATE excludes CANCELLED so two concurrent cancels race on the row and
@@ -2669,42 +2519,17 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
+  /* Set only where the reversal was actually attempted, so the DURABLE enqueue
+     below can sit OUTSIDE this best-effort catch and still fire on exactly the
+     condition the old inline recompute did. */
+  let stockReversed = false;
   try {
     const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
-      /* Migration 0120 — the original IN stamped batch_no = source PO number so a
-         sofa set's components share a dye lot. The reversing OUT must consume that
-         EXACT batch. Resolve EACH line's OWN batch from its source PO
-         (purchase_order_item_id → PO number) — deterministic per line, so two lines
-         of the same product/variant from different POs each reverse their own dye
-         lot, instead of a per-bucket collapse that kept only the last batch.
-         Manual lines (no PO link) stay un-batched → plain FIFO, as before. */
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
-      const movements = lineList
-        /* Mirrors the POST filter. Without it the cancel writes an OUT for a
-           freight line that never had an IN — a permanent negative on-hand for a
-           non-stock SKU. */
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
-        .filter((it) => (it.qty_accepted ?? 0) > 0)
-        .map((it) => {
-          const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
-          const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
-          return {
-            movement_type: 'OUT' as const,
-            warehouse_id: warehouseId,
-            product_code: it.material_code,
-            variant_key,
-            product_name: it.material_name,
-            qty: it.qty_accepted,
-            source_doc_type: 'GRN' as const,
-            source_doc_id: id,
-            source_doc_no: head.grn_number,
-            performed_by: user.id,
-            // Only carry batch_no when the IN had one (omit → non-batched lines stay plain FIFO).
-            ...(batch_no != null ? { batch_no } : {}),
-            notes: 'GRN cancelled — reversing receipt',
-          };
-        });
+      const movements = buildGrnCancelReversals(lineList, batchByItem, {
+        warehouseId, grnId: id, grnNumber: head.grn_number, performedBy: user.id,
+      });
       if (movements.length > 0) {
         /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
            — so the enclosing best-effort catch caught nothing, and discarding the
@@ -2717,15 +2542,16 @@ grns.patch('/:id/cancel', async (c) => {
             'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
           );
         }
-        /* GRN cancel pulled stock back out → other READY SOs that relied on
-           this stock may need to regress. Re-walk allocation. Best-effort. */
-        try {
-          const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-          await recomputeSoStockAllocation(sb);
-        } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-cancel failed:', e); }
+        stockReversed = true;
       }
     }
   } catch { /* best-effort: never un-cancel on a movement failure */ }
+  /* DURABLE: GRN cancel pulled stock back out, so other READY SOs that relied
+     on it may need to regress. The request commits with the OUT above, and it
+     is NOT inside that best-effort catch — a failed enqueue must fail the
+     cancel, because "stock pulled back, allocation never re-walked" is the
+     exact state this transaction exists to make unreachable. grn.md 7c. */
+  if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
@@ -2767,13 +2593,13 @@ grns.patch('/:id/cancel', async (c) => {
   });
 
   return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
-});
+}));
 
 /* ════════════════════════════════════════════════════════════════════════
    GRN PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
    PO detail page's draft-mode editing (apps/api/src/routes/mfg-purchase-orders.ts).
-   The editable line quantity is qty_received; line_total_centi =
-   qty_received * unit_price_centi - discount_centi; recomputeGrnTotals rolls the
+   The editable line quantity is qty_received; line_total_sen =
+   qty_received * unit_price_sen - discount_sen; recomputeGrnTotals rolls the
    header subtotal/total. GRN lines hold no SO quota → delete needs no release.
    ════════════════════════════════════════════════════════════════════════ */
 
@@ -2787,32 +2613,35 @@ grns.patch('/:id', async (c) => {
     const { data: own, error: ownErr } = await scopeToCompany(
       c.get('supabase').from('grns').select('id').eq('id', id), c,
     ).maybeSingle();
-    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-    if (!own) return c.json({ error: 'not_found' }, 404);
+    if (ownErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   }
   let body: Record<string, unknown>;
-  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
   const user = c.get('user');
 
-  /* Multi-company: the service-role client bypasses RLS, so an app-level
-     predicate is the ONLY isolation. The GET at :1382 was scoped by the
-     2026-08-10 audit; this PATCH — the write — was not, on either its read or
-     its UPDATE, so a GRN id from the other company could be loaded here and
-     edited. Reads were hardened then and writes were left, which is the
-     systemic half of that audit. */
+  /* Multi-company: the service-role client bypasses RLS, so the app-level
+     predicate is the ONLY isolation. This PATCH's read + UPDATE were unscoped
+     until the 2026-08-10 audit hardened them (the GET was done first). */
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
-  /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
-     also the BEFORE half of every from->to pair recorded at the end of the
-     handler. An audit entry carrying only the new value does not answer "what
-     changed". One read serves both — the relocation block below reads its
-     warehouse / status / rate out of the same row it always did. */
+  /* GRN_AUDIT_SELECT (not just the relocation's columns): this row is also the
+     BEFORE half of every audit from->to pair, and the relocation reads its
+     warehouse / status / rate out of the same row. One read serves all three. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
     .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
-  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
+  if (!beforeRow) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+
+  /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1; grn-inherited-lock.ts):
+     supplier + costing basis freeze once a live PI/PR exists. Runs before the
+     relocation block so a locked edit writes nothing. */
+  const grnHeaderLocked = grnHeaderInheritedChanges(body, before, GRN_AUDIT_FIELDS);
+  if (grnHeaderLocked.length > 0 && (await grnHasDownstream(sb, id))) {
+    return refuseWithoutWriting(c, grnHeaderInheritedRefusal(grnHeaderLocked), 409);
+  }
 
   /* Before the relocation block below, which writes inventory movements — those
      are a real stock change, so the last honest refusal point is above them, not
@@ -2821,36 +2650,33 @@ grns.patch('/:id', async (c) => {
     entityType: 'GRN', entityId: id, action: 'UPDATE',
     companyId: (before.company_id as number | null) ?? activeCompanyId(c),
   });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  /* Warehouse relocation — a posted GRN already pushed its IN stock into the OLD
-     warehouse. If the operator changes the warehouse, just rewriting the header
-     field would strand the stock in the old warehouse while the header claims the
-     new one. So physically move it: OUT of the old warehouse + IN to the new one,
-     carrying the same cost + source-PO batch. Same downstream-consumption guard as
-     cancel — if the old-warehouse stock was already shipped/used, block (can't
-     relocate phantom qty). Best-effort allocation re-walk after, since per-
-     warehouse buckets changed. */
+  /* Warehouse relocation — a posted GRN pushed its IN stock into the OLD
+     warehouse, so a warehouse change must physically move it: OUT of old + IN to
+     new, same cost + source-PO batch. Same downstream-consumption guard as cancel
+     (block if the old-warehouse stock was already shipped); best-effort alloc
+     re-walk after. */
   if (body.warehouseId !== undefined) {
     const c0 = (beforeRow ?? null) as unknown as { grn_number: string; status: string | null; warehouse_id: string | null; exchange_rate?: string | number | null } | null;
     const oldWh = c0?.warehouse_id ?? null;
     const newWh = (body.warehouseId as string | null) ?? null;
     if (c0 && (c0.status ?? '').toUpperCase() === 'POSTED' && newWh && oldWh && newWh !== oldWh) {
       const { data: lines } = await sb.from('grn_items')
-        .select('purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_centi, item_group, variants')
+        .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
         .eq('grn_id', id);
       const lineList = (lines ?? []) as Array<{
         purchase_order_item_id: string | null; qty_accepted: number;
-        material_code: string; material_name: string | null; unit_price_centi: number | null;
+        item_code: string; material_name: string | null; unit_price_sen: number | null;
         item_group?: string | null; variants?: VariantAttrs | null;
       }>;
       // Guard: can't relocate stock that's already gone from the old warehouse.
       const consumedLock = await grnReverseWouldGoNegative(sb, oldWh, lineList);
-      if (consumedLock) return c.json(consumedLock, 409);
+      if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
 
       /* THE ORIGINAL LANDED COST, read back from this GRN's own IN movements.
-         Pricing the IN below at `toMyrSen(unit_price_centi, rate)` — the BASE
+         Pricing the IN below at `toMyrSen(unit_price_sen, rate)` — the BASE
          cost — while the receipt opened its lots at the LANDED cost (base +
          allocated freight) consumes at landed and re-opens at base, so the
          capitalised freight leaves inventory value permanently; on a container
@@ -2858,25 +2684,25 @@ grns.patch('/:id', async (c) => {
          recomputing the allocation: it is the basis those units actually entered
          at, and it survives a change to the allocation rule. */
       const { data: priorIns, error: priorInsErr } = await sb.from('inventory_movements')
-        .select('product_code, variant_key, unit_cost_sen')
+        .select('item_code, variant_key, unit_cost_sen')
         .eq('source_doc_type', 'GRN')
         .eq('source_doc_id', id)
         .eq('movement_type', 'IN');
-      if (priorInsErr) return c.json({ error: 'lookup_failed', reason: priorInsErr.message }, 500);
+      if (priorInsErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: priorInsErr.message }, 500);
       const landedByBucket = new Map<string, number>();
-      for (const m of ((priorIns ?? []) as Array<{ product_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
+      for (const m of ((priorIns ?? []) as Array<{ item_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
         const cost = Number(m.unit_cost_sen ?? 0);
-        if (cost > 0) landedByBucket.set(`${m.product_code}::${m.variant_key ?? ''}`, cost);
+        if (cost > 0) landedByBucket.set(`${m.item_code}::${m.variant_key ?? ''}`, cost);
       }
 
       const movements = lineList
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
           const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
           const base = {
-            product_code: it.material_code, variant_key, product_name: it.material_name,
+            item_code: it.item_code, variant_key, product_name: it.material_name,
             qty: it.qty_accepted, source_doc_type: 'GRN' as const, source_doc_id: id,
             source_doc_no: c0.grn_number, batch_no, performed_by: user?.id,
           };
@@ -2888,8 +2714,8 @@ grns.patch('/:id', async (c) => {
               warehouse_id: newWh,
               // Landed cost from the original IN; base only when there is no
               // prior movement to read (a pre-0154 GRN, or a zero-cost line).
-              unit_cost_sen: landedByBucket.get(`${it.material_code}::${variant_key}`)
-                ?? toMyrSen(Number(it.unit_price_centi ?? 0), c0?.exchange_rate ?? 1),
+              unit_cost_sen: landedByBucket.get(`${it.item_code}::${variant_key}`)
+                ?? toMyrSen(Number(it.unit_price_sen ?? 0), c0?.exchange_rate ?? 1),
               notes: 'GRN warehouse changed — into new warehouse',
             },
           ];
@@ -2916,9 +2742,8 @@ grns.patch('/:id', async (c) => {
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of [
-    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'],
-    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'],
-    ['notes', 'notes'], ['currency', 'currency'],
+    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'], ['notes', 'notes'],
+    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'], ['currency', 'currency'],
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
@@ -2966,7 +2791,7 @@ grns.patch('/:id', async (c) => {
     }
   }
   const { data, error } = await scopeToCompanyId(sb.from('grns')
-    .update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
+    .update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   /* maybeSingle, not single: the company predicate can legitimately match zero
      rows, and `single()` would turn that into a 500 rather than the 404 that
@@ -2995,16 +2820,16 @@ grns.patch('/:id', async (c) => {
   }
 
   /* When the rate or the landed-cost basis moved, the lot was booked at the OLD
-     figures. Re-allocate the freight (allocated_charge_centi) then recost the
+     figures. Re-allocate the freight (allocated_charge_sen) then recost the
      lots → consumptions → DO/SI so the landed MYR cost reflects the new rate /
      method. Best-effort; a no-op for an MYR GRN with no service lines. */
   if (rateChanged || methodChanged) {
     try {
-      await reallocateGrnCharges(sb, id, activeCompanyId(c));
+      await reallocateGrnCharges(sb, id, activeCompanyId(c) ?? null);
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
-  await queueAcGrnEdit(c, id);
+  await queueAcGrnEdit(c, sb, id);
   return c.json({ grn: data });
 });
 
@@ -3012,11 +2837,12 @@ grns.patch('/:id', async (c) => {
 grns.post('/:id/items', async (c) => {
   const grnId = c.req.param('id');
   let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
-  if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
+  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
+  if (!it.itemCode) return refuseWithoutWriting(c, { error: 'item_code_required' }, 400);
+  if (!it.materialName) return refuseWithoutWriting(c, { error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
+  const addLineGroupOf = await skuCategoryResolver(sb, [{ materialKind: 'mfg_product', itemCode: it.itemCode }], activeCompanyId(c) ?? null);
   const user = c.get('user');
   /* company-scope: PROVE THE PARENT GRN FIRST — the gate PATCH /:id opens with.
      A STAMP IS NOT A PREDICATE: the insert below stamps activeCompanyId(c),
@@ -3027,26 +2853,23 @@ grns.post('/:id/items', async (c) => {
      Refused BEFORE the child-lock and status probes, so an out-of-company id
      cannot be used to ask whether that GRN exists. */
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
   const { data: grnOwn, error: grnOwnErr } = await scopeToCompanyId(
     sb.from('grns').select('id').eq('id', grnId), co.companyId,
   ).maybeSingle();
-  if (grnOwnErr) return c.json({ error: 'lookup_failed', reason: grnOwnErr.message }, 500);
-  if (!grnOwn) return c.json(NOT_THIS_COMPANY, 404);
+  if (grnOwnErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: grnOwnErr.message }, 500);
+  if (!grnOwn) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
 
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
-    return c.json({
-      error: 'grn_locked',
-      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.`,
-    }, 409);
+    return refuseWithoutWriting(c, { error: 'grn_locked',
+      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
   }
 
   /* Non-finite guard — the clamp below cannot catch NaN (Math.max(0, NaN) is
@@ -3064,25 +2887,26 @@ grns.post('/:id/items', async (c) => {
       null,
       [{
         lineRef: 'add',
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qtyAccepted ?? it.qtyReceived ?? it.qty ?? 0),
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       }],
     );
-    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+    const bad = unlinkedScanRefusal(unlinked, unlinkedPoLinesResponse);
+    if (bad) return refuseWithoutWriting(c, bad, 409);
   }
 
   const parsedAdd = parseLineNumbers({
     qty: { value: it.qty, fallback: 1 },
-    unitPriceCenti: { value: it.unitPriceCenti },
-    discountCenti: { value: it.discountCenti },
+    unitPriceSen: { value: it.unitPriceSen },
+    discountSen: { value: it.discountSen },
   });
-  if (!parsedAdd.ok) return c.json(invalidLineNumberBody(parsedAdd.invalid), 400);
-  const { qty: qtyReceived, unitPriceCenti, discountCenti } = parsedAdd.nums as {
-    qty: number; unitPriceCenti: number; discountCenti: number;
+  if (!parsedAdd.ok) return refuseWithoutWriting(c, invalidLineNumberBody(parsedAdd.invalid), 400);
+  const { qty: qtyReceived, unitPriceSen, discountSen } = parsedAdd.nums as {
+    qty: number; unitPriceSen: number; discountSen: number;
   };
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-  const lineTotal = Math.max(0, (qtyReceived * unitPriceCenti) - discountCenti);
+  const lineTotal = Math.max(0, (qtyReceived * unitPriceSen) - discountSen);
 
   /* Over-receipt guard — a PO-linked added line can't accept more than the PO
      line's remaining (qty - received_qty). received_qty already counts every
@@ -3090,32 +2914,34 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId]);
+    if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],
       requested: qtyReceived, what: 'PO line',
     });
-    if (capLock) return c.json({ ...capLock, poItemId: addLinePoItemId }, 409);
+    if (capLock) return refuseWithoutWriting(c, { ...capLock, poItemId: addLinePoItemId }, 409);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   const row: Record<string, unknown> = {
     grn_id: grnId,
     purchase_order_item_id: (it.purchaseOrderItemId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     // GRN line money meaning: qty = qty_received; accepted mirrors received.
     qty_received: qtyReceived,
     qty_accepted: qtyReceived,
     qty_rejected: 0,
-    unit_price_centi: unitPriceCenti,
-    discount_centi: discountCenti,
-    line_total_centi: lineTotal,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    unit_price_sen: unitPriceSen,
+    discount_sen: discountSen,
+    line_total_sen: lineTotal,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     notes: (it.notes as string) ?? null,
     /* variant fields (mirror PO line) */
     gap_inches: (it.gapInches as number) ?? null,
@@ -3127,11 +2953,10 @@ grns.post('/:id/items', async (c) => {
     line_suffix: (it.lineSuffix as string) ?? null,
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     variants: (it.variants as unknown) ?? null,
-    item_group: (it.itemGroup as string) ?? null,
     description: (it.description as string) ?? null,
-    description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
+    ...lineIdentityFields(addLineGroupOf, it, buildVariantSummary), // SKU wins — docs/bugs/0514
     uom: (it.uom as string) ?? 'UNIT',
-    delivery_date: (it.deliveryDate as string) ?? null,
+    delivery_date: dateOrNull(it.deliveryDate),
     /* migration 0280 — see the create path: this insert is a whitelist too. */
     ...zeroCostAckColumns(it, user.id),
   };
@@ -3191,7 +3016,7 @@ grns.post('/:id/items', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line added: ${String(it.materialCode ?? '')}`,
+      note: `Line added: ${String(it.itemCode ?? '')}`,
       fieldChanges: compactChanges(
         GRN_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, null, added[snake] ?? null)),
       ),
@@ -3226,11 +3051,11 @@ grns.post('/:id/items', async (c) => {
         await writeMovements(sb, [{
           movement_type: 'IN' as const,
           warehouse_id: warehouseId,
-          product_code: String(it.materialCode),
+          item_code: String(it.itemCode),
           variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
           product_name: String(it.materialName),
           qty: qtyReceived,
-          unit_cost_sen: toMyrSen(unitPriceCenti, addLineRate),
+          unit_cost_sen: toMyrSen(unitPriceSen, addLineRate),
           source_doc_type: 'GRN' as const,
           source_doc_id: grnId,
           source_doc_no: (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId,
@@ -3244,7 +3069,7 @@ grns.post('/:id/items', async (c) => {
         await reconcileUncostedAfterIn(sb, [{
           movement_type: 'IN',
           warehouse_id: warehouseId,
-          product_code: String(it.materialCode),
+          item_code: String(it.itemCode),
           variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
           qty: qtyReceived,
         }], user.id);
@@ -3257,7 +3082,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3271,11 +3096,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const { data: own, error: ownErr } = await scopeToCompany(
       c.get('supabase').from('grns').select('id').eq('id', grnId), c,
     ).maybeSingle();
-    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-    if (!own) return c.json({ error: 'not_found' }, 404);
+    if (ownErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   }
   let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
   const user = c.get('user');
 
@@ -3283,37 +3108,32 @@ grns.patch('/:id/items/:itemId', async (c) => {
      as the header writes: refuse an unresolved company, and pin the GRN gate
      read AND the line UPDATE to it. */
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
-  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
+  if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
-    return c.json({
-      error: 'grn_locked',
-      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.`,
-    }, 409);
+    return refuseWithoutWriting(c, { error: 'grn_locked',
+      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
   }
 
-  /* The audited columns as well as the ones the stock/money logic below reads:
-     this row is also the BEFORE half of every from->to pair recorded after the
-     update lands. `variants` and `purchase_order_item_id` are business-logic
-     only and are deliberately not in GRN_LINE_AUDIT_FIELDS — variants render
-     into description2, which IS audited. */
+  /* Audited columns + the ones the stock/money logic reads; also the BEFORE half
+     of every from->to audit pair. `variants` / `purchase_order_item_id` are
+     business-logic only (not in GRN_LINE_AUDIT_FIELDS — variants render into the
+     audited description2). */
   const { data: prevRow } = await sb.from('grn_items')
     .select(GRN_LINE_AUDIT_SELECT + ', variants, purchase_order_item_id')
     .eq('id', itemId).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
-  /* Cast through `unknown`: a .select() built from a concatenated string infers
-     as GenericStringError on the SupabaseClient<any> the scm client is, so the
-     row shape only exists after this. Project-wide pattern (see ITEM / HEADER
-     elsewhere in this file). */
+  if (!prevRow) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
+  /* Cast through `unknown`: a concatenated-string .select() infers as
+     GenericStringError on the scm client, so the row shape only exists after
+     this (project-wide pattern). */
   const prev = prevRow as unknown as Record<string, unknown>;
 
   // The editable quantity is qty_received (also keep qty_accepted in lockstep).
@@ -3328,13 +3148,12 @@ grns.patch('/:id/items/:itemId', async (c) => {
        the stored qty. Preserved exactly; this guard is about NaN, not semantics. */
     qty: { value: it.qty !== undefined ? it.qty : (prev as { qty_received: number }).qty_received },
   });
-  if (!parsedQty.ok) return c.json(invalidLineNumberBody(parsedQty.invalid), 400);
+  if (!parsedQty.ok) return refuseWithoutWriting(c, invalidLineNumberBody(parsedQty.invalid), 400);
   const qtyReceived = parsedQty.nums.qty as number;
 
   /* Over-receipt guard on edit — a PO-linked line can't be raised past the PO
-     line's headroom = qty - (received_qty - this line's current receipt). The
-     stored received_qty already includes this line, so we add its old qty back
-     before comparing. Manual (no PO link) lines are uncapped. */
+     line's headroom; stored received_qty already includes this line, so add its
+     old qty back before comparing. Manual (no PO link) lines are uncapped. */
   {
     const poItemId = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
@@ -3344,27 +3163,39 @@ grns.patch('/:id/items/:itemId', async (c) => {
         capColumn: 'qty', drawnColumns: ['received_qty'],
         requested: qtyReceived, ownPriorDraw: prevQty, what: 'PO line',
       });
-      if (capLock) return c.json({ ...capLock, poItemId }, 409);
+      if (capLock) return refuseWithoutWriting(c, { ...capLock, poItemId }, 409);
     }
   }
 
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : ((prev as { discount_centi: number }).discount_centi ?? 0);
+  // EDIT half of the back door — cap + recount are both gated on poItemId.
+  const repoint = await unlinkedEditRefusal(sb, 'grn', {
+    parentId: (grnGate as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+    storedLink: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id,
+    storedCode: (prev as { item_code: string | null }).item_code,
+    patchCode: it.itemCode,
+  });
+  if (repoint) return refuseWithoutWriting(c, repoint, 409);
+  // Inherited-field lock — a PO-linked GRN line's item/variant is read-only
+  // (owner 2026-08-20; grn-inherited-lock.ts). Cancel the GRN, edit the PO.
+  const grnLockChanges = grnInheritedFieldChanges(prev as GrnLinePrev, it as GrnLinePatch, buildVariantSummary);
+  if (grnLockChanges.length > 0) return refuseWithoutWriting(c, grnInheritedLockedRefusal(grnLockChanges), 409);
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : ((prev as { discount_sen: number }).discount_sen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qtyReceived * unit) - discount);
 
   const updates: Record<string, unknown> = {
     qty_received: qtyReceived,
     qty_accepted: qtyReceived,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['uom', 'uom'],
-    ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],
@@ -3408,7 +3239,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const effVariants = (updates.variants !== undefined ? (updates.variants as VariantAttrs | null) : oldVariants);
   const oldKey = computeVariantKey(oldGroup, oldVariants);
   const newKey = computeVariantKey(effGroup, effVariants);
-  const matCode = (updates.material_code as string | undefined) ?? (prev as { material_code: string }).material_code;
+  const matCode = (updates.item_code as string | undefined) ?? (prev as { item_code: string }).item_code;
   const matName = (updates.material_name as string | undefined) ?? (prev as { material_name: string | null }).material_name;
   const bucketChanged = oldKey !== newKey;
   const qtyChanged = newAccepted !== prevAccepted;
@@ -3433,27 +3264,27 @@ grns.patch('/:id/items/:itemId', async (c) => {
 
     // GUARD (bug #2) — pre-check any OUT against current on-hand BEFORE writing.
     if (editWarehouseId) {
-      const guardLines: Array<{ qty_accepted: number; material_code: string; item_group?: string | null; variants?: VariantAttrs | null }> = [];
+      const guardLines: Array<{ qty_accepted: number; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }> = [];
       if (bucketChanged) {
-        if (prevAccepted > 0) guardLines.push({ qty_accepted: prevAccepted, material_code: matCode, item_group: oldGroup, variants: oldVariants });
+        if (prevAccepted > 0) guardLines.push({ qty_accepted: prevAccepted, item_code: matCode, item_group: oldGroup, variants: oldVariants });
       } else if (newAccepted < prevAccepted) {
-        guardLines.push({ qty_accepted: prevAccepted - newAccepted, material_code: matCode, item_group: effGroup, variants: effVariants });
+        guardLines.push({ qty_accepted: prevAccepted - newAccepted, item_code: matCode, item_group: effGroup, variants: effVariants });
       }
       const consumedLock = await grnReverseWouldGoNegative(sb, editWarehouseId, guardLines);
-      if (consumedLock) return c.json(consumedLock, 409); // row untouched — safe
+      if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409); // row untouched — safe
     }
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  const { error } = await scopeToCompanyId(sb.from('grn_items').update(updates).eq('id', itemId), co.companyId);
+  const { error } = await scopeToCompanyId(sb.from('grn_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row.
      qty / price / discount / line total are recomputed above from the body OR
      the prior row, so the body alone would not say what changed. The camel names
-     are the ones AUDIT_FINANCE_FIELDS gates (unitCostCenti), so a non-finance
+     are the ones AUDIT_FINANCE_FIELDS gates (unitCostSen), so a non-finance
      reader of the history is stripped exactly as on the detail. */
   {
     const auditPatch: Record<string, unknown> = {};
@@ -3471,7 +3302,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
         actor: c.get('houzsUser'),
         companyId: meta.companyId ?? activeCompanyId(c),
         statusSnapshot: meta.status,
-        note: `Line edited: ${String((prev as unknown as { material_code?: string | null }).material_code ?? itemId)}`,
+        note: `Line edited: ${String((prev as unknown as { item_code?: string | null }).item_code ?? itemId)}`,
         fieldChanges: lineChanges,
       });
     }
@@ -3491,13 +3322,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const movements: Array<Parameters<typeof writeMovements>[1][number]> = [];
     if (bucketChanged) {
       if (prevAccepted > 0) movements.push({
-        movement_type: 'OUT', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
         variant_key: oldKey, product_name: matName, qty: prevAccepted,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, reversing old bucket', ...batchTag,
       });
       if (newAccepted > 0) movements.push({
-        movement_type: 'IN', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: newAccepted, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, re-adding new bucket', ...batchTag,
@@ -3505,13 +3336,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
     } else {
       const delta = newAccepted - prevAccepted;
       if (delta > 0) movements.push({
-        movement_type: 'IN', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: delta, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — receiving delta', ...batchTag,
       });
       else if (delta < 0) movements.push({
-        movement_type: 'OUT', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: -delta,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — reversing delta', ...batchTag,
@@ -3544,11 +3375,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
     // Costing B — when the GR price (or its variant bucket) was corrected and no PI
     // has superseded it yet, re-cost this GRN's lots → consumptions → movements →
     // DO → SI so a shipped order's margin reflects the fix in real time.
-    const prevUnit = (prev as { unit_price_centi: number | null }).unit_price_centi ?? 0;
+    const prevUnit = (prev as { unit_price_sen: number | null }).unit_price_sen ?? 0;
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ ok: true });
 });
 
@@ -3558,36 +3389,42 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-grns.delete('/:id/items/:itemId', async (c) => {
+/* First GRN route in the PG command txn: line delete, stock OUT, audit, outbox
+   and allocation request commit together or not at all. 503s without
+   DATABASE_URL by design. `sb` is the TRANSACTIONAL client - the body must not
+   reach for c.get('supabase'). The body stays INSIDE the route on purpose:
+   several checks scan grns.ts by route block, and hoisting it to a named
+   handler moved it out of their sight. docs/modules/grn.md 7c. */
+grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as mfg-sales-orders' command handlers.
+  sb: any,
+) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
-  const sb = c.get('supabase'); const user = c.get('user');
+  const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
     const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('grns').select('id').eq('id', grnId), c,
     ).maybeSingle();
-    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-    if (!own) return c.json({ error: 'not_found' }, 404);
+    if (ownErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   }
 
   // Same strict company gate as the line PATCH — a delete reverses stock too.
   const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
 
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
-     stock door: an added line writes its IN immediately, but a cancelled GRN's
-     reversal never runs again → ghost stock forever. Mirror prLineLock. */
+     stock door (an added line's IN never reverses again). Mirror prLineLock. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
-  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
+  if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
-    return c.json({
-      error: 'grn_locked',
-      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.`,
-    }, 409);
+    return refuseWithoutWriting(c, { error: 'grn_locked',
+      message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
   }
 
   // Read the line's PO link + accepted qty + variant/cost fields BEFORE deleting
@@ -3613,7 +3450,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   // warehouse the same way the reversal below does.
   if (line && !isDraftGrn) {
     const lg = line as {
-      qty_accepted: number; material_code: string;
+      qty_accepted: number; item_code: string;
       item_group?: string | null; variants?: VariantAttrs | null;
     };
     if ((lg.qty_accepted ?? 0) > 0) {
@@ -3621,14 +3458,14 @@ grns.delete('/:id/items/:itemId', async (c) => {
       const warehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
         ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       const consumedLock = await grnReverseWouldGoNegative(sb, warehouseId, [lg]);
-      if (consumedLock) return c.json(consumedLock, 409);
+      if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);
     }
   }
 
   /* The audit row is the ONLY remaining evidence of this line once the delete
      lands, so refusing here matters more than anywhere else in this file. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
      afterwards the row is gone and its DtlKey with it, and an edit that does not
@@ -3652,7 +3489,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line removed: ${String(doomed.material_code ?? itemId)}`,
+      note: `Line removed: ${String(doomed.item_code ?? itemId)}`,
       fieldChanges: compactChanges(
         GRN_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, doomed[snake] ?? null, null)),
       ),
@@ -3665,7 +3502,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   if (line && !isDraftGrn) {
     const l = line as {
       qty_accepted: number; purchase_order_item_id: string | null;
-      material_code: string; material_name: string | null; unit_price_centi: number | null;
+      item_code: string; material_name: string | null; unit_price_sen: number | null;
       item_group?: string | null; variants?: VariantAttrs | null;
     };
     // (a) Recount the PO receipt for the removed line's source (best-effort).
@@ -3678,6 +3515,10 @@ grns.delete('/:id/items/:itemId', async (c) => {
     //     this lands; the FIFO trigger consumes the line's lot + computes COGS.
     //     Best-effort — a movement failure never blocks the delete.
     if ((l.qty_accepted ?? 0) > 0) {
+      /* Same reason as the cancel route's flag: the enqueue below must not sit
+         inside this best-effort catch. It did until 2026-08-20, and the comment
+         beside it claimed the opposite. BUG-HISTORY 2026-08-20. */
+      let stockReversed = false;
       try {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
@@ -3697,7 +3538,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
           await writeMovements(sb, [{
             movement_type: 'OUT' as const,
             warehouse_id: warehouseId,
-            product_code: l.material_code,
+            item_code: l.item_code,
             variant_key: variantKey,
             product_name: l.material_name,
             qty: l.qty_accepted,
@@ -3708,17 +3549,16 @@ grns.delete('/:id/items/:itemId', async (c) => {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* GRN line delete pulled stock back out → re-walk SO allocation. */
-          try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-delete failed:', e); }
+          stockReversed = true;
         }
       } catch { /* best-effort */ }
+      /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+         enqueue must fail the delete. docs/modules/grn.md 7c. */
+      if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
     }
   }
 
   await recomputeGrnTotals(sb, grnId);
-  await queueAcGrnEdit(c, grnId, retire);
+  await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
-});
+}));

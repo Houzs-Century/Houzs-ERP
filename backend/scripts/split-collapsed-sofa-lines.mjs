@@ -61,8 +61,8 @@ const PLAN = [
   { doc: "HC-SO-012636", pieces: ["8030-1A(LHF)", "8030-1NA", "8030-1A(RHF)"], seat: '24"', why: "same sketch as PO-009582" },
 ];
 
-const MONEY_SO = ["unit_price_centi", "discount_centi", "total_centi", "tax_centi", "total_inc_centi",
-  "balance_centi", "unit_cost_centi", "line_cost_centi", "line_margin_centi",
+const MONEY_SO = ["unit_price_sen", "discount_sen", "total_sen", "tax_sen", "total_inc_sen",
+  "balance_sen", "unit_cost_sen", "line_cost_sen", "line_margin_sen",
   "divan_price_sen", "leg_price_sen", "special_order_price_sen"];
 
 async function main() {
@@ -75,10 +75,10 @@ async function main() {
     const isPo = p.doc.startsWith("HC-PO-");
     let grnLines = [];
     const rows = isPo
-      ? await sql`SELECT i.id, i.material_code code, i.qty, i.unit_price_centi price, i.received_qty, i.purchase_order_id pid
+      ? await sql`SELECT i.id, i.item_code code, i.qty, i.unit_price_sen price, i.received_qty, i.purchase_order_id pid
                     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
                    WHERE h.po_number = ${p.doc} AND i.item_group = 'sofa'`
-      : await sql`SELECT i.id, i.item_code code, i.qty, i.unit_price_centi price, i.doc_no, i.line_no
+      : await sql`SELECT i.id, i.item_code code, i.qty, i.unit_price_sen price, i.doc_no, i.line_no
                     FROM scm.mfg_sales_order_items i
                    WHERE i.doc_no = ${p.doc} AND i.item_group = 'sofa'`;
     const target = rows.filter((r) => /-1S$/i.test(String(r.code)));
@@ -117,24 +117,24 @@ async function main() {
 
   let recoded = 0, inserted = 0, grnInserted = 0;
   await sql.begin(async (tx) => {
-    const totBefore = await tx`SELECT COALESCE(SUM(total_centi),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
+    const totBefore = await tx`SELECT COALESCE(SUM(total_sen),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
     for (const p of plan) {
       const [first, ...rest] = p.pieces;
       if (p.isPo) {
         const r = await tx`UPDATE scm.purchase_order_items
-             SET material_code = ${first},
+             SET item_code = ${first},
                  variants = COALESCE(variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })}
            WHERE id = ${p.row.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'
            RETURNING id`;
         recoded += r.length;
         for (const g of p.grnLines) {
-          await tx`UPDATE scm.grn_items SET material_code = ${first},
+          await tx`UPDATE scm.grn_items SET item_code = ${first},
                      variants = COALESCE(variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })}
                    WHERE id = ${g.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'`;
           for (const code of rest) {
             const gi = await tx`INSERT INTO scm.grn_items
-              (grn_id, purchase_order_item_id, material_kind, material_code, material_name, item_group,
-               qty_received, qty_accepted, qty_rejected, uom, unit_price_centi, line_total_centi,
+              (grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group,
+               qty_received, qty_accepted, qty_rejected, uom, unit_price_sen, line_total_sen,
                description, description2, variants, company_id, linked_ac_dtlkey)
               SELECT x.grn_id, x.purchase_order_item_id, x.material_kind, ${code}, x.material_name, x.item_group,
                      x.qty_received, x.qty_accepted, 0, x.uom, 0, 0,
@@ -148,8 +148,8 @@ async function main() {
         }
         for (const code of rest) {
           const c2 = await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, item_group, qty, uom,
-             unit_price_centi, line_total_centi, description, description2, variants, company_id,
+            (purchase_order_id, material_kind, item_code, material_name, item_group, qty, uom,
+             unit_price_sen, line_total_sen, description, description2, variants, company_id,
              so_item_id, warehouse_id, linked_ac_dtlkey)
             SELECT i.purchase_order_id, i.material_kind, ${code}, i.material_name, i.item_group, 1, i.uom,
                    0, 0, i.description, i.description2,
@@ -195,7 +195,7 @@ async function main() {
       if (mv[0].n !== 0) throw new Error(`REFUSED: those goods receipts carry ${mv[0].n} inventory movements. Rolled back.`);
       log(`stock check: the goods receipts touched carry 0 inventory movements, as measured`);
     }
-    const totAfter = await tx`SELECT COALESCE(SUM(total_centi),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
+    const totAfter = await tx`SELECT COALESCE(SUM(total_sen),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
     if (String(totBefore[0].t) !== String(totAfter[0].t)) {
       throw new Error(`REFUSED: the sales-order total moved ${totBefore[0].t} -> ${totAfter[0].t}. Rolled back.`);
     }

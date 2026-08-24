@@ -178,7 +178,7 @@ export type PaymentDraft = {
   merchantProvider:         string;             // L2 bank pick (Merchant + Installment)
   installmentMonthsLabel:   string;             // L2 plan pick (Merchant + Installment)
   onlineType:               string;             // L2 sub-type (Online only)
-  amountCenti:              number;
+  amountSen:              number;
   accountSheet:             string;
   approvalCode:             string;
   collectedBy:              string;             // staff.id (uuid) | ''
@@ -220,7 +220,7 @@ export const newPaymentDraft = (defaultStaffId = ''): PaymentDraft => ({
   merchantProvider:       '',
   installmentMonthsLabel: '',
   onlineType:             '',
-  amountCenti: 0,
+  amountSen: 0,
   accountSheet: '',
   approvalCode: '',
   collectedBy: defaultStaffId,
@@ -305,7 +305,7 @@ export const draftMethodFields = (
 type SavedModeProps = {
   docNo: string;
   /** Grand total used to compute the Balance summary at the bottom. */
-  grandTotalCenti: number;
+  grandTotalSen: number;
   currency?: string;
   /** When true, hides Add Payment + per-row trash/save controls. */
   locked?: boolean;
@@ -353,7 +353,7 @@ type DraftModeProps = {
   docNo: null;
   payments: PaymentDraft[];
   onChange: (next: PaymentDraft[]) => void;
-  grandTotalCenti: number;
+  grandTotalSen: number;
   currency?: string;
   locked?: boolean;
   /** Unused in DRAFT mode (no persisted rows to same-day-lock); declared so the
@@ -433,7 +433,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   const notify = useNotify();
   const askConfirm = useConfirm();
   const currency = props.currency ?? 'MYR';
-  const grandTotal = props.grandTotalCenti ?? 0;
+  const grandTotal = props.grandTotalSen ?? 0;
   const locked = props.locked ?? false;
   /* Owner 2026-07-13 — DRAFT SO: lift the per-row same-day EDIT lock so every
      persisted payment on an unconfirmed order can still be corrected. */
@@ -562,10 +562,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
        full total; a split second row defaults to the remainder. Mirrors the POS
        Record-payment drawer + handover default. */
     const paidNow =
-      persistedPayments.reduce((s, p) => s + (p.amount_centi || 0), 0) +
-      drafts.reduce((s, dr) => s + (dr.amountCenti || 0), 0);
+      persistedPayments.reduce((s, p) => s + (p.amount_sen || 0), 0) +
+      drafts.reduce((s, dr) => s + (dr.amountSen || 0), 0);
+    /* This floor STAYS, unlike the displayed balance below (owner 2026-08-16).
+       It seeds an INPUT, and the amount a cashier is about to collect is never
+       negative — an already-over-collected order defaults the next row to 0,
+       not to minus the credit. `amountSen` is `.nonnegative()` server-side. */
     const outstanding = Math.max(0, grandTotal - paidNow);
-    const d = { ...newPaymentDraft(defaultStaffId), amountCenti: outstanding };
+    const d = { ...newPaymentDraft(defaultStaffId), amountSen: outstanding };
     if (isSaved) {
       setSavedDrafts((prev) => [...prev, d]);
     } else {
@@ -650,8 +654,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (rec.approvalCode && !row.approvalCode) {
       patch.approvalCode = rec.approvalCode;
     }
-    if (rec.amountRm != null && rec.amountRm > 0 && row.amountCenti <= 0) {
-      patch.amountCenti = Math.round(rec.amountRm * 100);
+    if (rec.amountRm != null && rec.amountRm > 0 && row.amountSen <= 0) {
+      patch.amountSen = Math.round(rec.amountRm * 100);
     }
     /* paid_at ← the receipt's swipe date (spec 2). THIS MAY BE A PAST DATE —
        the salesperson can open the SO days after collecting the money — so we
@@ -713,7 +717,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
         (p.method === 'merchant' || p.method === 'installment')
           ? installmentLabelForMonths(p.installment_months) : '',
       onlineType: p.online_type ?? '',
-      amountCenti: p.amount_centi,
+      amountSen: p.amount_sen,
       accountSheet: p.account_sheet ?? '',
       approvalCode: p.approval_code ?? '',
       collectedBy: p.collected_by ?? '',
@@ -737,7 +741,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       version:      persisted.version,
       paidAt:       d.paidAt,
       method,
-      amountCenti:  d.amountCenti,
+      amountSen:  d.amountSen,
       accountSheet: d.accountSheet || null,
       approvalCode: d.approvalCode || null,
       collectedBy:  d.collectedBy  || null,
@@ -760,7 +764,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
        hand). Gate only on an amount > 0; the SO route accepts a slip-less
        payment. The slip uploader stays available for when one IS attached. */
-    if (d.amountCenti <= 0) return;
+    if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
     if (d.editingPersistedId) { commitEdit(d); return; }
@@ -784,7 +788,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       docNo:           (props as SavedModeProps).docNo,
       paidAt:          d.paidAt,
       method,
-      amountCenti:     d.amountCenti,
+      amountSen:     d.amountSen,
       accountSheet:    d.accountSheet || null,
       approvalCode:    d.approvalCode || null,
       collectedBy:     d.collectedBy  || null,
@@ -812,10 +816,20 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* Summary maths — identical across modes. In DRAFT mode there are no
      persisted rows yet, so paid is just Σ drafts. In SAVED mode paid is
      Σ persisted (drafts only enter the total once committed via API). */
-  const paidCenti = isSaved
-    ? persistedPayments.reduce((sum, p) => sum + (p.amount_centi || 0), 0)
-    : drafts.reduce((sum, d) => sum + (d.amountCenti || 0), 0);
-  const balanceCenti = Math.max(0, grandTotal - paidCenti);
+  const paidSen = isSaved
+    ? persistedPayments.reduce((sum, p) => sum + (p.amount_sen || 0), 0)
+    : drafts.reduce((sum, d) => sum + (d.amountSen || 0), 0);
+  /* SIGNED (owner 2026-08-16) — over-collection is allowed, and a negative
+     balance is the whole point: it is what tells the operator he is holding
+     RM 250 of the customer's money. The old Math.max(0, …) floor is what made
+     an over-payment look like a settled order, so the only way to make the
+     screen agree with the cash was to go back and re-price a LINE.
+
+     Floored still when there is no total to measure against — a zero grand
+     total is an unsaved / not-yet-recomputed order, not a fully-credited one.
+     Same rule as soBalanceSen on the server. */
+  const balanceSen = grandTotal > 0 ? grandTotal - paidSen : 0;
+  const overCollected = balanceSen < 0;
 
   const staffNameById = (id: string | null): string | null => {
     if (!id) return null;
@@ -1082,7 +1096,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                 </span>
                 <span className={paymentsStyles.cellRight} data-label="Amount"
                       style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {fmtAmt(p.amount_centi)}
+                  {fmtAmt(p.amount_sen)}
                 </span>
                 <span className={paymentsStyles.cell} data-label="Account Sheet">
                   {p.account_sheet ?? <span className={detailStyles.muted}>—</span>}
@@ -1162,7 +1176,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           disabled={deletePayment.isPending}
                           onClick={async () => {
                             if (await askConfirm({
-                              title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_centi, currency)}?`,
+                              title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,
                               body: 'This removes the payment from the order, so the balance owing goes back up. It cannot be undone.',
                               confirmLabel: 'Delete',
                               danger: true,
@@ -1203,6 +1217,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     <span className={paymentsStyles.unsavedPill}>Unsaved</span>
                   )}
                   <DateField
+                    fullWidth
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
                     disabled={locked}
@@ -1350,11 +1365,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                 <span className={`${paymentsStyles.cellRight} ${unsavedCls}`} data-label="Amount">
                   <MoneyInput
                     bare allowBlank
-                    valueSen={d.amountCenti === 0 ? null : d.amountCenti}
+                    valueSen={d.amountSen === 0 ? null : d.amountSen}
                     inputClassName={paymentsStyles.inlineInputRight}
                     placeholder="0"
                     disabled={locked}
-                    onCommit={(sen) => patchDraft(d.uid, { amountCenti: sen ?? 0 })}
+                    onCommit={(sen) => patchDraft(d.uid, { amountSen: sen ?? 0 })}
                   />
                 </span>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Account Sheet">
@@ -1461,7 +1476,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       /* Owner 2026-07-13 — commit needs an amount > 0 (slip is
                          optional now). Spec 1 — a chosen method also needs its
                          required sub-field(s). */
-                      const noAmount = d.amountCenti <= 0;
+                      const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
                       const blocked  = noAmount || missing !== null;
                       const title = noAmount
@@ -1507,14 +1522,27 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
               Deposit Paid <DollarSign size={12} strokeWidth={1.75} />
             </span>
             <span className={paymentsStyles.summaryValueAccent}>
-              {fmtRm(paidCenti, currency)}
+              {fmtRm(paidSen, currency)}
             </span>
             <span className={paymentsStyles.summaryLabel}>
               Balance <DollarSign size={12} strokeWidth={1.75} />
             </span>
-            <span className={balanceCenti > 0 ? paymentsStyles.balanceOutstanding : paymentsStyles.balanceClear}>
-              {fmtRm(balanceCenti, currency)}
-              {grandTotal > 0 && paidCenti >= grandTotal && (
+            {/* Three states, not two. `paidSen >= grandTotal` used to print
+                "· PAID" — which, once the balance can go negative, would have
+                labelled an over-collection as settled and hidden the very
+                thing the owner asked to see. */}
+            <span
+              className={
+                balanceSen > 0 ? paymentsStyles.balanceOutstanding
+                  : overCollected ? paymentsStyles.balanceCredit
+                    : paymentsStyles.balanceClear
+              }
+            >
+              {fmtRm(balanceSen, currency)}
+              {overCollected && (
+                <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· OVER-COLLECTED</span>
+              )}
+              {!overCollected && grandTotal > 0 && paidSen >= grandTotal && (
                 <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· PAID</span>
               )}
             </span>

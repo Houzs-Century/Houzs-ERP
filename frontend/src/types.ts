@@ -655,6 +655,14 @@ export interface Role {
   name: string;
   description: string | null;
   permissions: string[];
+  /** Keys stored on this role that the BACKEND CATALOGUE does not declare, so
+   *  they are dropped at session hydration and decide nothing. Served by
+   *  GET /api/roles so a dead grant is visible instead of silent — a key
+   *  missing from the catalogue used to produce no signal at all, which is how
+   *  service_cases.approve stayed accidentally Owner-only for weeks.
+   *  Optional because an older backend does not send it; absent means "the
+   *  server did not say", never "there are none". */
+  unknown_permissions?: string[];
   is_system: boolean;
   /** When true, users with this role can only see projects where they
    *  or their manager is the PIC. Drives the sales-team ACL. */

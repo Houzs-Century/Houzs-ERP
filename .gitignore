@@ -53,3 +53,18 @@ backend/scale-*.json
 # Internal specs (kept local, not published)
 PROJECT_BRIEF.md
 FRONTEND_PROMPT.md
+
+# The two views GENERATED from the bug ledger in docs/bugs/.
+#
+# NOT tracked, and that is load-bearing rather than tidy. Every code PR is
+# required to add an entry, so a committed copy of either view is rewritten by
+# every PR and therefore conflicts on every PAIR of concurrent PRs — by
+# construction, not by carelessness. That is the same failure the single-file
+# BUG-HISTORY.md had, and re-tracking these would import it straight back.
+#
+# `audit:bug-index` and `audit:bug-history` regenerate them in memory and gate
+# on the GENERATOR working (parse failure, unresolvable area tag, zero entries),
+# which never needed a copy in git. Read them locally with
+# `npm --prefix backend run gen:bug-index` / `gen:bug-history`.
+docs/generated/bug-index.md
+docs/generated/bug-history.md

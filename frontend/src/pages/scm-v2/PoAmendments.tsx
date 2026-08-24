@@ -17,7 +17,7 @@
 
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtDateTime } from '@2990s/shared';
+import { fmtDateTime } from '../../vendor/shared/format';
 import { usePoAmendments, type PoAmendmentRow } from '../../vendor/scm/lib/po-amendment-queries';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';

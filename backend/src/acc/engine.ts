@@ -30,6 +30,7 @@
 
 import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
+import { dateOrNull } from '../scm/lib/date-coerce';
 import { REVERSAL_SOURCE, CONTROL_ROLES, resolveRoles } from './rules';
 import type { RuleLine } from './rules';
 
@@ -67,6 +68,7 @@ export type PostJournalErr = {
     | 'idempotency_read_failed'
     | 'je_insert_failed'
     | 'lines_insert_failed'
+    | 'je_prefix_failed'
     | 'post_failed';
   reason?: string;
 };
@@ -117,7 +119,14 @@ async function checkAccounts(
 }
 
 export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
-  const { companyId, entryDate, sourceType, sourceDocNo, narration } = input;
+  const { companyId, sourceType, sourceDocNo, narration } = input;
+  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
+     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
+     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
+     so the month prefix comes out NaN). Today is the only sane document date
+     for a journal being written today, and it is what every caller that omits
+     the key already gets. */
+  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
   const postNow = input.postNow !== false;
   const lines = input.lines ?? [];
 
@@ -181,7 +190,21 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   // 5 — mint + insert, re-minting on a number collision (§2.12). Two
   // concurrent posts both read the same max; the loser's insert hits the
   // je_no unique index and the next attempt reads past the winner.
-  const prefix = jePrefixForCompany(companyId);
+  /* CONTAINED, not swallowed. jePrefixForCompany FAILS CLOSED by throwing —
+     correctly, because minting under the wrong company's prefix would collide
+     two ledgers' running numbers, and that is worse than not posting.
+     But an escaping throw is not the same as failing closed: it left the
+     document already POSTED, the ledger empty, and the operator staring at the
+     generic "Something went wrong" with nothing naming the cause. Turn it into
+     the structured refusal every other failure in this function returns, so the
+     caller logs a reason and the audit trail records that the AP/GL post did
+     not happen. See docs/bugs/0522. */
+  let prefix: string;
+  try {
+    prefix = await jePrefixForCompany(sb, companyId);
+  } catch (e) {
+    return { ok: false, status: 'je_prefix_failed', reason: e instanceof Error ? e.message : String(e) };
+  }
   const companyCol = companyId != null ? { company_id: companyId } : {};
   let je: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
@@ -356,18 +379,24 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
 
   const companyId = orig.company_id ?? null;
   const companyCol = companyId != null ? { company_id: companyId } : {};
-  const prefix = jePrefixForCompany(companyId);
+  const prefix = await jePrefixForCompany(sb, companyId);
+
+  // The contra is dated when the void HAPPENS (today by default), so it must be
+  // NUMBERED in that same month's series — mirror postJournal, which mints from
+  // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
+  // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
+  const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt();
 
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
   for (let attempt = 0; attempt < 8 && !revJe; attempt += 1) {
-    const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), prefix);
+    const revJeNo = await nextJeNo(sb, new Date(contraEntryDate), prefix);
     const { data: inserted, error: revErr } = await sb
       .from('journal_entries')
       .insert({
         ...companyCol,
         je_no: revJeNo,
-        entry_date: input.entryDate ?? todayMyt(),
+        entry_date: contraEntryDate,
         source_type: revType,
         source_doc_no: input.sourceDocNo ?? orig.source_doc_no ?? null,
         narration: input.narration(orig),

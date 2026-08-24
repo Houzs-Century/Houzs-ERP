@@ -34,11 +34,12 @@
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig } from '../lib/mfg-products-queries';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
-import type { FabricTrackingRow } from '../lib/fabric-queries';
+import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
 import { MoneyInput } from './MoneyInput';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -56,12 +57,12 @@ export type PcLineDraft = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   /* Supplier-revised per-line delivery dates (migration 0181). All optional;
      the supplier pushes the date back. Display-only on consignment (no MRP /
@@ -71,7 +72,7 @@ export type PcLineDraft = {
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* Set when materialCode matches an mfg_product — drives which variant editor
+  /* Set when itemCode matches an mfg_product — drives which variant editor
      renders (sofa / bedframe). Lowercase to match itemGroup. */
   category?: string;
   /** Variant payload (fabric / gap / divan / leg / seat / total height /
@@ -86,10 +87,10 @@ export type PcLineDraft = {
 export const emptyPcLine = (): PcLineDraft => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -126,7 +127,7 @@ export const PcLineCard = ({
   /** Maintenance config (variant option pools). null until loaded. */
   maint: MaintenanceConfig | null;
   /** Fabric trackings (variant fabric dropdown). */
-  fabrics: FabricTrackingRow[];
+  fabrics: FabricLite[];
   /** Patch arbitrary line fields. */
   onChange: (patch: Partial<PcLineDraft>) => void;
   /** Adopt a supplier binding (fills code + name + SKU + price + category). */
@@ -146,7 +147,7 @@ export const PcLineCard = ({
   identityReadOnly?: boolean;
 }) => {
   const l = line;
-  const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+  const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
   // The whole card's `disabled` (locked doc) wins over everything; identityLocked
@@ -193,7 +194,7 @@ export const PcLineCard = ({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+          <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
           {!disabled && (
             <button
               type="button"
@@ -221,17 +222,17 @@ export const PcLineCard = ({
           <input
             type="text"
             list={`pc-bindings-${l.rid}`}
-            value={l.materialCode}
+            value={l.itemCode}
             disabled={identityLocked}
             onChange={(e) => {
               const code = e.target.value;
               const match = supplierId
-                ? bindings.find((b) => b.material_code === code)
+                ? bindings.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
               const sku = allSkus.find((p) => p.code === code);
               onChange({
-                materialCode: code,
+                itemCode: code,
                 materialName: sku?.name ?? l.materialName,
                 bindingId: undefined,
                 category: sku?.category.toLowerCase() ?? l.category,
@@ -245,8 +246,8 @@ export const PcLineCard = ({
           <datalist id={`pc-bindings-${l.rid}`}>
             {supplierId && bindings.length > 0
               ? bindings.map((b) => (
-                  <option key={b.id} value={b.material_code}>
-                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                  <option key={b.id} value={b.item_code}>
+                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
                 ))
               : allSkus.map((p) => (
@@ -286,7 +287,7 @@ export const PcLineCard = ({
           <datalist id={`pc-supplier-skus-${l.rid}`}>
             {supplierId && bindings.map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
-                {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>
             ))}
           </datalist>
@@ -358,9 +359,9 @@ export const PcLineCard = ({
           <span className={styles.fieldLabel}>Unit Price ({currency})</span>
           <MoneyInput
             bare
-            valueSen={l.unitPriceCenti}
+            valueSen={l.unitPriceSen}
             disabled={disabled}
-            onCommit={(sen) => onChange({ unitPriceCenti: sen ?? 0, priceTouched: true })}
+            onCommit={(sen) => onChange({ unitPriceSen: sen ?? 0, priceTouched: true })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />
@@ -369,20 +370,20 @@ export const PcLineCard = ({
           <span className={styles.fieldLabel}>Discount ({currency})</span>
           <MoneyInput
             bare
-            valueSen={l.discountCenti ?? 0}
+            valueSen={l.discountSen ?? 0}
             disabled={disabled}
-            onCommit={(sen) => onChange({ discountCenti: sen ?? 0 })}
+            onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Delivery Date</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.deliveryDate ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ deliveryDate: e.target.value })}
+            onChange={(iso) => onChange({ deliveryDate: iso })}
             className={styles.fieldInput}
           />
         </label>
@@ -410,31 +411,31 @@ export const PcLineCard = ({
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 2</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate2 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate2: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate2: iso })}
             className={styles.fieldInput}
           />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 3</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate3 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate3: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate3: iso })}
             className={styles.fieldInput}
           />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 4</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate4 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate4: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate4: iso })}
             className={styles.fieldInput}
           />
         </label>

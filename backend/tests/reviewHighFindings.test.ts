@@ -71,7 +71,7 @@ describe("F4 — a P&L bucket and its drill-down must apply the SAME predicate",
     const drill = b.calls.map((x) => predicateOf(x.sql)).find((p) => p.includes("project_finance_lines"));
     expect(drill).toBe(total);
     expect(total).toContain("p.archived_at IS NULL");
-    expect(total).toContain("l.company_id = ?");
+    expect(total).toContain("p.company_id = ?");
   });
 
   test("service cost: drill-down predicate matches the total's, join aside", async () => {
@@ -100,6 +100,33 @@ describe("F4 — a P&L bucket and its drill-down must apply the SAME predicate",
       expect(call.sql).toMatch(/company_id = \?/);
       expect(call.binds).toEqual(["2026-01-01", "2026-02-01", COMPANY]);
     }
+  });
+
+  /* 2026-08-21 report-money audit. The cost arm scoped on
+     `project_finance_lines.company_id` — a DENORMALISED copy of the value the
+     PROJECT owns. Two writers never fill it: `recomputeAutoCostLines`' UPDATE
+     path (it stamps company_id only on INSERT) and the historical FAIR PNL
+     seeds. Measured on production that day: 85 live cost lines carrying NULL,
+     worth RM 1,453,336.94, every one of them on a company-1 project — dropped
+     from this report while `/projects/finance/by-project` and
+     `/projects/analytics/profitability`, which scope on `p.company_id`, counted
+     them. Same money, two reports, RM 1.45M apart.
+     ZERO lines disagreed with their project's company (0 rows), so reading the
+     project is not a widening — it is the same set plus the NULLs it was
+     losing. The join to `projects` is already there for `archived_at`. */
+  test("project cost scopes on the PROJECT's company, not the line's copy of it", async () => {
+    const a = recordingDB();
+    await rawProjectCost({ DB: a.DB } as any, "2026-01-01", "2026-02-01", COMPANY);
+    const total = predicateOf(a.calls[0]!.sql);
+    expect(total).toContain("p.company_id = ?");
+    // A NULL copy on the line must not be able to hide a cost row again.
+    expect(total).not.toContain("l.company_id");
+
+    const b = recordingDB();
+    await bucketDrilldown({ DB: b.DB } as any, "2026-01-01", "2026-02-01", COMPANY);
+    const drill = b.calls.map((x) => predicateOf(x.sql)).find((p) => p.includes("project_finance_lines"));
+    expect(drill).toContain("p.company_id = ?");
+    expect(drill).not.toContain("l.company_id");
   });
 
   test("an unresolved company still omits the filter (single-company degrade)", async () => {
@@ -149,12 +176,33 @@ describe("F16 — ON_HOLD is not a route back to DRAFT", () => {
     expect(soStatusTransitionError("DELIVERED", "DRAFT")).not.toBeNull();
   });
 
-  test("ordinary pause and resume are untouched", () => {
-    for (const to of ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED", "CLOSED"]) {
+  /* CLOSED left this list on 2026-08-21 with the owner's ruling that retired it
+     from SO_STATUSES — resuming an order INTO a status the system no longer
+     offers is not "untouched", it is a move to an unknown target, and
+     `invalid_status` is the correct answer. The assertion below is the same
+     one, over the statuses that still exist. */
+  /* CLOSED left this list on 2026-08-21; ON_HOLD left the TARGET half of it on
+     2026-08-22, when the hold stopped being a status at all (mig 0324, owner:
+     the hold is a MARKER telling people an order is paused). The assertion is
+     SPLIT rather than deleted, because the two halves now mean opposite things
+     and collapsing them would hide which one changed:
+
+       · resuming OUT of a legacy ON_HOLD row is still allowed, and must be —
+         Postgres cannot drop the enum label, so such a row needs a way out;
+       · moving INTO ON_HOLD is now refused, because writing it is what
+         destroyed the order's progress. */
+  test("a legacy held row can still be resumed to any live status", () => {
+    for (const to of ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED"]) {
       expect(soStatusTransitionError("ON_HOLD", to)).toBeNull();
     }
+  });
+
+  test("ON_HOLD can no longer be WRITTEN as a status, from anywhere", () => {
     for (const from of ["DRAFT", "CONFIRMED", "IN_PRODUCTION", "DELIVERED", "INVOICED"]) {
-      expect(soStatusTransitionError(from, "ON_HOLD")).toBeNull();
+      const err = soStatusTransitionError(from, "ON_HOLD");
+      expect(err).not.toBeNull();
+      expect(err!.error).toBe("hold_is_not_a_status");
+      expect(err!.code).toBe(409);
     }
   });
 });

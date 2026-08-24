@@ -31,7 +31,7 @@
 -- ── Plain FIFO consumer (variant-keyed) — port of 0095 ─────────────────────
 CREATE OR REPLACE FUNCTION fn_consume_fifo(
   p_warehouse_id    UUID,
-  p_product_code    TEXT,
+  p_item_code    TEXT,
   p_variant_key     TEXT,
   p_qty_needed      INTEGER,
   p_source_doc_type TEXT,
@@ -56,7 +56,7 @@ BEGIN
     SELECT id, qty_remaining, unit_cost_sen, company_id
       FROM inventory_lots
      WHERE warehouse_id = p_warehouse_id
-       AND product_code = p_product_code
+       AND item_code = p_item_code
        AND variant_key  = p_variant_key
        AND qty_remaining > 0
      ORDER BY received_at ASC, id ASC
@@ -72,12 +72,12 @@ BEGIN
      WHERE id = v_lot.id;
 
     INSERT INTO inventory_lot_consumptions (
-      lot_id, warehouse_id, product_code, variant_key,
+      lot_id, warehouse_id, item_code, variant_key,
       qty_consumed, unit_cost_sen, total_cost_sen,
       source_doc_type, source_doc_id, source_doc_no, movement_id, created_by,
       company_id
     ) VALUES (
-      v_lot.id, p_warehouse_id, p_product_code, p_variant_key,
+      v_lot.id, p_warehouse_id, p_item_code, p_variant_key,
       v_take, v_lot.unit_cost_sen, v_take * v_lot.unit_cost_sen,
       p_source_doc_type, p_source_doc_id, p_source_doc_no, p_movement_id, p_created_by,
       v_lot.company_id
@@ -91,7 +91,7 @@ $$ LANGUAGE plpgsql;
 -- ── Batch-scoped FIFO consumer (sofa dye-lot) — port of 0121 ───────────────
 CREATE OR REPLACE FUNCTION fn_consume_fifo_batch(
   p_warehouse_id    UUID,
-  p_product_code    TEXT,
+  p_item_code    TEXT,
   p_variant_key     TEXT,
   p_qty_needed      INTEGER,
   p_batch_no        TEXT,
@@ -113,7 +113,7 @@ BEGIN
     SELECT id, qty_remaining, unit_cost_sen, company_id
       FROM inventory_lots
      WHERE warehouse_id = p_warehouse_id
-       AND product_code = p_product_code
+       AND item_code = p_item_code
        AND variant_key  = p_variant_key
        AND batch_no     = p_batch_no
        AND qty_remaining > 0
@@ -130,12 +130,12 @@ BEGIN
      WHERE id = v_lot.id;
 
     INSERT INTO inventory_lot_consumptions (
-      lot_id, warehouse_id, product_code, variant_key,
+      lot_id, warehouse_id, item_code, variant_key,
       qty_consumed, unit_cost_sen, total_cost_sen,
       source_doc_type, source_doc_id, source_doc_no, movement_id, created_by,
       company_id
     ) VALUES (
-      v_lot.id, p_warehouse_id, p_product_code, p_variant_key,
+      v_lot.id, p_warehouse_id, p_item_code, p_variant_key,
       v_take, v_lot.unit_cost_sen, v_take * v_lot.unit_cost_sen,
       p_source_doc_type, p_source_doc_id, p_source_doc_no, p_movement_id, p_created_by,
       v_lot.company_id
@@ -169,12 +169,12 @@ DECLARE
 BEGIN
   IF NEW.movement_type = 'IN' THEN
     INSERT INTO inventory_lots (
-      warehouse_id, product_code, variant_key, product_name,
+      warehouse_id, item_code, variant_key, product_name,
       qty_received, qty_remaining, unit_cost_sen,
       received_at, source_doc_type, source_doc_id, source_doc_no,
       movement_id, created_by, batch_no, company_id
     ) VALUES (
-      NEW.warehouse_id, NEW.product_code, NEW.variant_key, NEW.product_name,
+      NEW.warehouse_id, NEW.item_code, NEW.variant_key, NEW.product_name,
       NEW.qty, NEW.qty, COALESCE(NEW.unit_cost_sen, 0),
       NEW.created_at,
       NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
@@ -190,7 +190,7 @@ BEGIN
       -- Exact dye-lot batch consume first (sofa set stays colour-matched).
       SELECT * INTO v_result
         FROM fn_consume_fifo_batch(
-          NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_abs_qty, NEW.batch_no,
+          NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_abs_qty, NEW.batch_no,
           NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
           NEW.id, NEW.performed_by
         );
@@ -204,7 +204,7 @@ BEGIN
       IF v_short > 0 THEN
         SELECT * INTO v_fallback
           FROM fn_consume_fifo(
-            NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_short,
+            NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_short,
             NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
             NEW.id, NEW.performed_by
           );
@@ -214,7 +214,7 @@ BEGIN
     ELSE
       SELECT * INTO v_result
         FROM fn_consume_fifo(
-          NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_abs_qty,
+          NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_abs_qty,
           NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
           NEW.id, NEW.performed_by
         );
@@ -236,7 +236,7 @@ BEGIN
         INTO v_avg_cost
         FROM inventory_lots
        WHERE warehouse_id = NEW.warehouse_id
-         AND product_code = NEW.product_code
+         AND item_code = NEW.item_code
          AND variant_key  = NEW.variant_key
          AND qty_remaining > 0;
 
@@ -246,12 +246,12 @@ BEGIN
       -- since 0083 — without it every positive ADJUSTMENT (DO-cancel add-backs)
       -- would violate the constraint and roll the movement back.
       INSERT INTO inventory_lots (
-        warehouse_id, product_code, variant_key, product_name,
+        warehouse_id, item_code, variant_key, product_name,
         qty_received, qty_remaining, unit_cost_sen,
         received_at, source_doc_type, source_doc_id, source_doc_no,
         movement_id, created_by, batch_no, company_id
       ) VALUES (
-        NEW.warehouse_id, NEW.product_code, NEW.variant_key, NEW.product_name,
+        NEW.warehouse_id, NEW.item_code, NEW.variant_key, NEW.product_name,
         NEW.qty, NEW.qty, v_unit_cost,
         NEW.created_at,
         NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
@@ -267,7 +267,7 @@ BEGIN
       IF NEW.batch_no IS NOT NULL THEN
         SELECT * INTO v_result
           FROM fn_consume_fifo_batch(
-            NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_abs_qty, NEW.batch_no,
+            NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_abs_qty, NEW.batch_no,
             NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
             NEW.id, NEW.performed_by
           );
@@ -279,7 +279,7 @@ BEGIN
         IF v_short > 0 THEN
           SELECT * INTO v_fallback
             FROM fn_consume_fifo(
-              NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_short,
+              NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_short,
               NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
               NEW.id, NEW.performed_by
             );
@@ -289,7 +289,7 @@ BEGIN
       ELSE
         SELECT * INTO v_result
           FROM fn_consume_fifo(
-            NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_abs_qty,
+            NEW.warehouse_id, NEW.item_code, NEW.variant_key, v_abs_qty,
             NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
             NEW.id, NEW.performed_by
           );

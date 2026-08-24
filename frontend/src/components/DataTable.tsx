@@ -43,6 +43,7 @@ import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
+import { useFixedWidthPanel } from "../lib/anchoredPanel";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
@@ -60,7 +61,7 @@ import {
   type StoredLayout,
 } from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
-import { downloadCSV, toCSV, type CSVColumn } from "../lib/csv";
+import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
@@ -75,9 +76,9 @@ export interface Column<T> {
   /** Optional custom header content (e.g. a select-all checkbox). When set,
    *  it replaces the label + sort affordance for this column. */
   renderHeader?: () => ReactNode;
-  /** Provide a raw value for CSV export and client-side sorting. Columns
-   *  without this are skipped during export and can't be sorted. */
+  /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
+  sortValue?: (row: T) => string | number | boolean | null | undefined;
   /** For cells that hold SEVERAL values (a service case can be both Bedframe
    *  and Mattress). The funnel then lists each value on its own line, counts
    *  it against every row that carries it, and a row matches when ANY of its
@@ -440,14 +441,12 @@ function sanitizeColFilters(value: unknown): Record<string, string[]> {
   return out;
 }
 
-// Keep a fixed-position popover fully inside the viewport. The menus are
-// anchored at the pointer / funnel button, so one opened near the bottom or
-// right edge used to hang off-screen — and since any page scroll dismisses
-// them, the clipped tail was simply unreachable. Measure after render and
-// pull top/left back inside; re-clamp when the menu resizes (the filter
-// checklist grows and shrinks with its search box). Before the first
-// measurement the raw anchor is used, and the layout effect corrects it in
-// the same frame, so nothing visibly jumps.
+// Keep a pointer-anchored context menu inside the viewport: one opened near the
+// bottom or right edge hung off-screen, and any page scroll dismisses these
+// menus, so the clipped tail was unreachable. Measured after render, re-clamped
+// on resize; the raw anchor shows for the frame before that, so nothing jumps.
+// NOT the funnel popover — that goes through lib/anchoredPanel, which also
+// decides which SIDE to open on.
 function useViewportClampedPos(
   anchor: { x: number; y: number } | null,
   ref: React.RefObject<HTMLDivElement | null>,
@@ -582,8 +581,8 @@ function DebouncedSearchInput({
 
 /**
  * Hydration writes the account's saved layout into the same localStorage keys
- * the table reads ONCE, at mount (useLocalStorage is lazy by design — that is
- * what makes the first paint correct). Remounting on the store's epoch is how a
+ * the table reads ONCE per key (useLocalStorage re-reads only when the key
+ * itself moves, never on a same-key write). Remounting on the epoch is how a
  * table already on screen when the boot fetch lands picks the layout up. The
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
@@ -793,18 +792,19 @@ function DataTableInner<T>({
     legacyStorageKey("filters"),
     sanitizeColFilters,
   );
-  const [filterMenu, setFilterMenu] = useState<{
-    x: number;
-    y: number;
-    colKey: string;
-  } | null>(null);
+  // The filter BUTTON's rect, not a click point: the positioner needs both edges.
+  const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   // Menu DOM nodes, for viewport clamping and (filter popover only) telling
   // an inside-the-menu scroll apart from a page scroll in the close handler.
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  const filterMenuPos = useViewportClampedPos(filterMenu, filterMenuRef);
+  /* Opens on whichever side of the button has more room, never taller than that
+     room (lib/anchoredPanel). It used to hang DOWNWARD always, so on a table
+     whose header sits low the value checklist and the Select all / Invert /
+     Clear bar fell off the bottom. 236 is the popover's own `w-[236px]`. */
+  const filterMenuPos = useFixedWidthPanel(filterMenu, 236, window.innerHeight - 16);
   const headerMenuPos = useViewportClampedPos(headerMenu, headerMenuRef);
 
   function toggleFilterValue(colKey: string, value: string) {
@@ -1733,7 +1733,7 @@ function DataTableInner<T>({
       .map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        getValue: c.getValue!,
+        getValue: (r: T) => isoForExport(c.getValue!(r) as string | number | null),
       }));
     if (csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);
@@ -1929,7 +1929,7 @@ function DataTableInner<T>({
     // across the full dataset — leave it alone. A `disableSort` column is
     // NOT server-sortable, so sort the loaded page in memory instead.
     if (serverSort && !col.disableSort) return filteredRows;
-    const getter = col.getValue;
+    const getter = col.sortValue ?? col.getValue;  // display order != priority order
     const mul = sort.dir === "asc" ? 1 : -1;
     // Stable-ish copy — Array.prototype.sort is stable in modern engines.
     const copy = filteredRows.slice();
@@ -2659,7 +2659,7 @@ function DataTableInner<T>({
                                   setFilterMenu((cur) =>
                                     cur?.colKey === c.key
                                       ? null
-                                      : { x: rect.left, y: rect.bottom + 4, colKey: c.key }
+                                      : { left: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key }
                                   );
                                 }}
                                 className={cn(
@@ -3203,12 +3203,12 @@ function DataTableInner<T>({
 
           const sortBtn =
             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-surface-dim disabled:cursor-not-allowed disabled:text-ink-muted disabled:hover:bg-transparent";
-          const pos = filterMenuPos ?? { top: filterMenu.y, left: filterMenu.x };
+          if (!filterMenuPos) return null;
           return createPortal(
             <div
               ref={filterMenuRef}
-              className="fixed z-[120] flex max-h-[calc(100dvh-16px)] w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
-              style={{ top: pos.top, left: pos.left }}
+              className="fixed z-[120] flex w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
+              style={{ top: filterMenuPos.top, bottom: filterMenuPos.bottom, left: filterMenuPos.left, maxHeight: filterMenuPos.maxHeight }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >

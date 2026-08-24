@@ -45,6 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
+import { readMfgProductBindings } from './supplier-bindings';
 import {
   rederiveDeliveryFee,
   deriveCountryFromState,
@@ -53,6 +54,7 @@ import {
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { todayMyt } from './my-time';
+import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
@@ -164,6 +166,10 @@ type AmendmentLineRow = {
      real request to clear it. The `!= null` test at the write is the ONE gate,
      so approving an old amendment can never blank a remark typed since. */
   new_remark: string | null;
+  /* Mig 0317 — the requested DISCOUNT in sen, same NULL semantics as new_remark.
+     The sanctioned lever for reducing a derived price (the delivery fee), and
+     the one money field the amendment road did not carry. */
+  new_discount_sen: number | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -258,6 +264,32 @@ export async function snapshotSo(
   return currentRevision + 1;
 }
 
+/* ── SoAmendmentApproval — the signature a requested PRICE rides in on ───────
+   `so_amendment_lines.new_unit_price_sen` is written straight from the browser
+   at submit time and is validated nowhere (mig 0080 gives it a bare nullable
+   `integer`; amendment-lines.ts copies `l.newUnitPriceSen` verbatim, unlike
+   itemGroup and remark which it re-reads from the record). It is a REQUEST, not
+   a fact, and the submit gate is deliberately wide — `scm.amendment.create` OR
+   any Sales-org user OR a lane approver (mfg-sales-orders.ts).
+
+   So the thing that makes a requested price payable is not the payload. It is
+   the APPROVE gate: `PATCH /so-amendments/:id/approve-so` checks
+   `scm.amendment.approve_lines` / `approve_delivery` / `approve_so` and a legal
+   status transition before it calls this engine. This value is that gate's
+   receipt, constructed only there, and it is a REQUIRED argument with no
+   default — a future caller cannot inherit price authority by forgetting to
+   think about it, it has to write `null` and take the catalogue behaviour.
+
+   `null` = no approval is being claimed: the requested price is not read at
+   all, and the line re-prices from the catalogue exactly as it did before. */
+export type SoAmendmentApproval = {
+  /** The user the approve gate authenticated. */
+  approvedByUserId: string;
+  /** The permission key that gate demanded, so the audit records which
+   *  signature the price rode in on. */
+  approvalPermission: string;
+};
+
 /* ── applySoAmendment ───────────────────────────────────────────────────────
    The Approve-SO engine. Load the amendment + its line diffs + the SO; snapshot
    the current SO; apply each diff to mfg_sales_order_items carrying ALL variant
@@ -267,13 +299,20 @@ export async function snapshotSo(
 
    Returns the applied revision + the affected SO doc_no. Throws on a hard
    failure (load / write) — the caller (approve-so route) leaves the amendment
-   status unchanged so the operator can retry. */
+   status unchanged so the operator can retry.
+
+   `c`, `concurrency` and `approval` are all REQUIRED-with-an-explicit-empty
+   value rather than optional: each of them DECIDES something (company scope,
+   the optimistic lock, whether a requested price is payable), and CLAUDE.md's
+   rule is that such a parameter must fail to compile when it is forgotten
+   instead of silently taking the old behaviour. */
 export async function applySoAmendment(
   sb: Sb,
   amendmentId: string,
   userId: string | null,
-  c?: Context<any>,
-  concurrency?: { soVersion: number; leaseToken: string },
+  c: Context<any> | undefined,
+  concurrency: { soVersion: number; leaseToken: string } | null,
+  approval: SoAmendmentApproval | null,
 ): Promise<{ soDocNo: string; revision: number }> {
   // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
@@ -290,7 +329,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, new_remark, old_snapshot')
+      'new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -331,7 +370,86 @@ export async function applySoAmendment(
      its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
      sibling a catalogue price anyway, which bills the set several times over. */
   const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
-  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : false;
+
+  /* THE AMENDMENT HAS TO BE ABLE TO CARRY THE MONEY (owner, 2026-08-16): "Any
+     amount can be edited, unless it is locked. If it has proceeded and a day has
+     passed so it locked, then it goes through Sales Amendment."
+
+     Until this line, it could not. The trust above was `false` for every NATIVE
+     order, so the recompute's operator-price overwrite never ran and
+     `unitToPersistSen` kept the CATALOGUE figure assigned a few lines earlier in
+     mfg-pricing-recompute. An operator typed RM 50, an approver holding
+     scm.amendment.approve_* signed RM 50, and mfg_products.sell_price_sen landed
+     on the order — for every SKU that has a catalogue price. The sanctioned road
+     for changing money on a locked SO was the one road that could not.
+
+     WHY THIS IS NOT "widen the trust flag". trustOperatorSelling exists so a
+     CLIENT cannot author a price, and that concern is real here: the submit
+     route writes new_unit_price_sen straight from the browser, validates nothing,
+     and admits any Sales-org user. What has changed is not the payload's
+     standing — it is that this apply now knows whether a human with approval
+     authority signed it. The trust is read from `approval`, which only the
+     approve-so gate constructs and only after checking the lane permission and
+     the status transition; with `approval === null` the requested price is not
+     even read (see `clientUnit` below) and the catalogue behaviour is unchanged.
+
+     The ceiling is deliberate: an approved amendment now grants exactly the
+     authority the operator would have had on the SAME order before it locked —
+     the direct SO write path already passes `trustOperatorSelling =
+     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more.
+     Never 'including-zero' on a native order: that flag ALSO suppresses the
+     selling surcharges and is a statement about a price AutoCount already
+     recorded, which is not what an operator authoring now is doing.
+
+     2026-08-19 — 'operator-zero', not plain `true`, and the reason is that the
+     unlocked road MOVED. This line read `(approval !== null)` from 2026-08-16,
+     and the sentence above it — "exactly the authority the operator would have
+     had on the SAME order before it locked" — was true when written, because on
+     that date NOBODY could author RM 0 anywhere: plain `true` reads a 0 as "not
+     provided" and hands back the catalogue figure. #2425 (2026-08-18) then gave
+     the UNLOCKED road exactly that power via 'operator-zero'. From that moment
+     the two roads disagreed on one value, so the stated invariant was broken by
+     the newer change, not by this code — an approver holding
+     scm.amendment.approve_* could sign RM 0 and the catalogue price landed,
+     silently, the same shape as the RM 50 defect this whole path was written to
+     close.
+
+     'operator-zero' is the SANCTIONED mode for an authored zero (see the
+     docblock in mfg-pricing-recompute). On the unlocked road the ERP line editor
+     states the operator typed it (`zeroPriceIntended`); here the statement is
+     stronger — a human holding the approve permission signed the diff, and
+     `clientUnit` below already refuses to read the requested price at all
+     without one. So the ceiling is unchanged in kind: still exactly the unlocked
+     road's authority, now including the one value it gained.
+
+     It also closes a second hole of the same shape. The editor sends
+     `newUnitPriceSen` on EVERY changed line, not only when the price moved (see
+     the QTY-only test), so approving a pure QUANTITY change on a line that sits
+     at 0 — a free gift, a PWP reward — used to hand it the catalogue price and
+     bill the customer for something given away. That is the RM 80 → RM 100
+     defect the QTY-only test pins, at the one value the test did not cover. */
+  const amendTrust: TrustSelling = soIsMigrated
+    ? 'including-zero'
+    : (approval !== null ? 'operator-zero' : false);
+
+  /* An ADD line is authored NOW, so 'including-zero' must never reach it even on
+     a migrated order — that flag is a statement about a price AutoCount already
+     recorded, and a line typed today has no such history (mfg-pricing-recompute's
+     own note on the flag says so). Same approval gate.
+
+     DELIBERATELY NOT 'operator-zero', unlike amendTrust above (2026-08-19). An
+     ADD line still reads 0 as "not provided" and takes the catalogue figure.
+     so-revision.amendmentPrice.test.ts pins that for a migrated order in as many
+     words, and it is a real protection rather than an accident of the old flag:
+     an ADD line names a SKU and nothing else about it is established yet, so a 0
+     there is far likelier to be an unfilled field than an intended giveaway.
+     Editing an EXISTING line is the opposite case — the line already carries a
+     price, and moving it to 0 is a deliberate act on a known amount.
+
+     So Add and Edit differ on 0, on purpose. A gift that genuinely belongs on a
+     locked order goes through the free-item path, not a hand-typed 0. Revisit
+     only with the owner, and update that test in the same breath. */
+  const addLineTrust: TrustSelling = approval !== null;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
@@ -419,14 +537,18 @@ export async function applySoAmendment(
       ).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
 
-      // Recompute the new line authoritatively (same path as POST /).
+      /* Recompute the new line (same path as POST /). `addLineTrust` is what
+         stops an APPROVED added line being re-priced to the catalogue: this call
+         used to pass no trust at all, so the fourteenth positional argument
+         defaulted to false and the price the approver signed for a brand-new
+         line was discarded on every order, migrated or not. */
       const rec = await recomputeOneLine(sb, {
         itemCode,
         itemGroup,
         qty,
-        unitPriceCenti: Number(diff.new_unit_price_sen ?? 0),
+        unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId);
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -465,15 +587,15 @@ export async function applySoAmendment(
         description2:           buildVariantSummary(itemGroup, variants) || null,
         uom:                    'UNIT',
         qty,
-        unit_price_centi:       unit,
-        discount_centi:         0,
-        total_centi:            lineTotal,
-        total_inc_centi:        lineTotal,
-        balance_centi:          lineTotal,
+        unit_price_sen:       unit,
+        discount_sen:         0,
+        total_sen:            lineTotal,
+        total_inc_sen:        lineTotal,
+        balance_sen:          lineTotal,
         variants,
-        unit_cost_centi:        unitCost,
-        line_cost_centi:        lineCost,
-        line_margin_centi:      lineTotal - lineCost,
+        unit_cost_sen:        unitCost,
+        line_cost_sen:        lineCost,
+        line_margin_sen:      lineTotal - lineCost,
         divan_price_sen:        rec.divan_price_sen,
         leg_price_sen:          rec.leg_price_sen,
         special_order_price_sen: rec.special_order_sen,
@@ -520,29 +642,43 @@ export async function applySoAmendment(
     const variants = change === 'SPEC' && diff.new_variants != null
       ? (diff.new_variants as Record<string, unknown>)
       : (row.variants as Record<string, unknown> | null) ?? null;
-    // The operator-authored selling price (if the diff supplies one) is fed as
-    // the client unitPriceCenti; the recompute returns the authoritative figure
-    // (catalog / sofa module price) for a priced line, else carries it through.
-    const clientUnit = diff.new_unit_price_sen != null
+    /* WHOSE number reaches the pricing engine. `new_unit_price_sen` is a REQUEST
+       written from the browser and validated nowhere, so it is read ONLY when an
+       approval is being claimed. Without one the line simply keeps its stored
+       price as the client figure — which on a native order the recompute then
+       replaces with the catalogue figure, exactly as before, and on a migrated
+       order the 'including-zero' protection preserves. That is the property that
+       makes this fix incapable of authoring a price without an approval: with
+       `approval === null` an unvalidated payload number is never even read. */
+    const clientUnit = (approval !== null && diff.new_unit_price_sen != null)
       ? Number(diff.new_unit_price_sen)
-      : Number(row.unit_price_centi ?? 0);
+      : Number(row.unit_price_sen ?? 0);
 
-    /* amendTrust is 'including-zero' only for a MIGRATED order — see where it is
-       derived. On such an order clientUnit is the AutoCount price (or the
-       operator's explicit new_unit_price_sen when the amendment supplies one),
-       and either way it is the figure the customer agreed to. A SPEC change does
-       not re-price it: if the new spec should cost differently, the amendment
-       carries new_unit_price_sen and that is what persists. */
+    /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the
+       price AutoCount recorded (or the explicit new_unit_price_sen when the
+       amendment supplies one) survives, zeros included. NATIVE: `true` when an
+       approver signed this amendment, so the approved price persists instead of
+       being normalised to the catalogue; `false` with no approval, which is the
+       behaviour this path had for every native order until 2026-08-16. Either
+       way a SPEC change does not silently re-price: if the new spec should cost
+       differently, the amendment carries new_unit_price_sen. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
       qty,
-      unitPriceCenti: clientUnit,
+      unitPriceSen: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
     }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
-    const discount = Number(row.discount_centi ?? 0);
+    /* Mig 0317 — the request may carry a new discount; otherwise the line keeps
+       the one it has. Clamped HERE, where the final qty and unit are known (both
+       can change in this same amendment): an approved discount can never exceed
+       the line's gross or push its total negative — the same bound the fee
+       editor enforces client-side (feeDiscountForAmount). */
+    const discount = diff.new_discount_sen != null
+      ? Math.min(Math.max(Math.round(Number(diff.new_discount_sen)), 0), qty * unit)
+      : Number(row.discount_sen ?? 0);
     const lineTotal = (qty * unit) - discount;
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
@@ -551,13 +687,13 @@ export async function applySoAmendment(
       item_code:               itemCode,
       qty,
       variants,
-      unit_price_centi:        unit,
-      total_centi:             lineTotal,
-      total_inc_centi:         lineTotal,
-      balance_centi:           lineTotal,
-      unit_cost_centi:         unitCost,
-      line_cost_centi:         lineCost,
-      line_margin_centi:       lineTotal - lineCost,
+      unit_price_sen:        unit,
+      total_sen:             lineTotal,
+      total_inc_sen:         lineTotal,
+      balance_sen:           lineTotal,
+      unit_cost_sen:         unitCost,
+      line_cost_sen:         lineCost,
+      line_margin_sen:       lineTotal - lineCost,
       divan_price_sen:         rec.divan_price_sen,
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
@@ -568,6 +704,10 @@ export async function applySoAmendment(
          column is NULL by definition) from blanking a remark somebody typed on
          the line in the meantime. '' IS a request — clear it. */
       ...(diff.new_remark != null ? { remark: diff.new_remark } : {}),
+      /* Mig 0317 — same conditional-write rule as the remark: NULL is "not
+         requested", so a pre-0317 amendment approving today cannot clear a
+         discount booked on the line since it was raised. */
+      ...(diff.new_discount_sen != null ? { discount_sen: discount } : {}),
     }).eq('id', diff.sales_order_item_id);
     if (updErr) throw new Error(`applySoAmendment: ${change} update failed for line ${diff.sales_order_item_id}: ${updErr.message}`);
     /* Keyed by the line's ORIGINAL item code so the drawer reads as one line's
@@ -580,7 +720,7 @@ export async function applySoAmendment(
       const key = wasCode || String(diff.sales_order_item_id);
       noteChange(`line_${key}_item_code`, wasCode, itemCode);
       noteChange(`line_${key}_qty`, row.qty, qty);
-      noteChange(`line_${key}_unit_price_sen`, row.unit_price_centi, unit);
+      noteChange(`line_${key}_unit_price_sen`, row.unit_price_sen, unit);
       noteChange(
         `line_${key}_spec`,
         buildVariantSummary(itemGroup, (row.variants as Record<string, unknown> | null) ?? null),
@@ -588,6 +728,8 @@ export async function applySoAmendment(
       );
       // Mig 0280 — only when the request touched it (noteChange drops a no-op).
       if (diff.new_remark != null) noteChange(`line_${key}_remark`, row.remark, diff.new_remark);
+      // Mig 0317 — audit the CLAMPED value actually written, not the raw request.
+      if (diff.new_discount_sen != null) noteChange(`line_${key}_discount_sen`, row.discount_sen, discount);
     }
     touched.push({ change, itemCode, qty });
   }
@@ -658,7 +800,13 @@ export async function applySoAmendment(
     if ('customerDeliveryDate' in headerChanges) {
       const { error: cascErr } = await sb.from('mfg_sales_order_items')
         .update({
-          line_delivery_date: headerChanges['customerDeliveryDate'] ?? null,
+          /* Coerced, not `?? null`: the header loop twenty lines up already
+             assumes a stored change can be blank (`value === '' ? null : value`),
+             and the follower must not be stricter than the master it copies —
+             the same asymmetry fixed at consignment-orders.ts:1299. This cascade
+             is non-fatal outside atomic mode, so a 500 here would commit the
+             header amendment and silently leave every line on its OLD date. */
+          line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
           line_delivery_date_overridden: false,
         })
         .eq('doc_no', docNo);
@@ -747,6 +895,11 @@ export async function applySoAmendment(
       { field: 'revision', from: nextRevision - 1, to: nextRevision },
       { field: 'lines_applied', to: touched.length },
       ...(headerApplied.length > 0 ? [{ field: 'header_applied', to: headerApplied.join(', ') }] : []),
+      /* Which signature made the requested prices payable. Recorded because from
+         2026-08-16 an approved amendment can move MONEY on a locked SO, and the
+         drawer has to be able to say under whose authority — the per-line
+         `..._unit_price_sen` rows below say what moved, this says why it could. */
+      ...(approval ? [{ field: 'price_authority', to: approval.approvalPermission }] : []),
       /* Accountability: the type/department routing this single approval covers.
          The apply stays single-signature — this records WHICH routed fields the
          approver signed for, it does not split the gate. */
@@ -835,7 +988,7 @@ export async function snapshotPo(
      • RE-DERIVE a surviving line — each PO line is 1:1 with a SO line via
        `purchase_order_items.so_item_id`; carry the SO line's qty / variants /
        item_group / description2 / per-line warehouse + delivery date and
-       re-derive the supplier COST (`unit_price_centi`) from the revised spec
+       re-derive the supplier COST (`unit_price_sen`) from the revised spec
        (deriveMfgPoUnitCost — a fabric/spec swap re-prices; never carry the old
        figure). Scope note: the create path additionally re-spreads a SOFA-COMBO
        total across a matched module set; that group step is NOT reproduced here.
@@ -1016,12 +1169,12 @@ export async function reviseBoundPo(
      two gates (a re-run, or a manual delete) simply drops out here — idempotent. */
   let orphanRows: Array<{
     id: string; purchase_order_id: string | null; received_qty: number | null;
-    material_code: string | null; material_name: string | null;
+    item_code: string | null; material_name: string | null;
   }> = [];
   if (orphanPoItemIds.length > 0) {
     const { data: oRows, error: oErr } = await sb
       .from('purchase_order_items')
-      .select('id, purchase_order_id, received_qty, material_code, material_name')
+      .select('id, purchase_order_id, received_qty, item_code, material_name')
       .in('id', orphanPoItemIds);
     if (oErr) throw new Error(`reviseBoundPo: orphan PO lines load failed: ${oErr.message}`);
     orphanRows = (oRows ?? []) as typeof orphanRows;
@@ -1121,18 +1274,23 @@ export async function reviseBoundPo(
     )];
     const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
     if (codes.length > 0) {
-      let q = sb.from('supplier_material_bindings')
-        .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-        .in('material_code', codes)
-        .eq('material_kind', 'mfg_product')
-        .order('is_main_supplier', { ascending: false });
-      if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
-      const { data: bRows, error: bErr } = await q;
+      /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
+         TOTALLY ordered. The order matters more than the size does here — the
+         loop below takes "the first row seen per code" as that code's main
+         supplier, and `is_main_supplier DESC` alone leaves every tie in
+         planner order, so which alternate wins was never decided by this file. */
+      const { data: bRows, error: bErr } = await readMfgProductBindings<{
+        item_code: string; supplier_id: string; supplier_sku: string | null;
+      }>(sb, {
+        codes,
+        companyId: soCompanyId,
+        select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+      });
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
-      for (const b of (bRows ?? []) as Array<{ material_code: string; supplier_id: string; supplier_sku: string | null }>) {
-        if (!mainBindingByCode.has(b.material_code)) {
-          mainBindingByCode.set(b.material_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
+      for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
+        if (!mainBindingByCode.has(b.item_code)) {
+          mainBindingByCode.set(b.item_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
         }
       }
     }
@@ -1192,35 +1350,35 @@ export async function reviseBoundPo(
     // (12a) RE-DERIVE each surviving line in place from its revised SO line.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
-      // Read the existing PO line's discount + material_code (the SKU the
+      // Read the existing PO line's discount + item_code (the SKU the
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('material_code, discount_centi')
+        .select('item_code, discount_sen')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
-      const discountCenti = Number((existing as { discount_centi?: number } | null)?.discount_centi ?? 0);
+      const discountSen = Number((existing as { discount_sen?: number } | null)?.discount_sen ?? 0);
       const qty = revised.qty != null ? Math.max(1, revised.qty) : Number(pi.qty ?? 1);
       const itemGroup = revised.item_group;
       const variants = revised.variants;
       // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
       // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
       // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-      // falling back to the PO line's existing material_code.
-      const materialCode = revised.item_code
-        ?? String((existing as { material_code?: string } | null)?.material_code ?? '');
-      const unitPriceCenti = await deriveMfgPoUnitCost(sb, {
+      // falling back to the PO line's existing item_code.
+      const itemCode = revised.item_code
+        ?? String((existing as { item_code?: string } | null)?.item_code ?? '');
+      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
-        itemCode:   materialCode,
+        itemCode:   itemCode,
         itemGroup,
         variants:   variants ?? null,
       });
 
       const { error: updErr } = await sb.from('purchase_order_items').update({
         qty,
-        unit_price_centi: unitPriceCenti,
-        line_total_centi: qty * unitPriceCenti - discountCenti,
+        unit_price_sen: unitPriceSen,
+        line_total_sen: qty * unitPriceSen - discountSen,
         item_group:       itemGroup,
         variants,
         description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
@@ -1237,7 +1395,7 @@ export async function reviseBoundPo(
        re-run finds the line already gone (it dropped out of orphanRows above). */
     for (const orow of orphansByPo.get(po.id) ?? []) {
       const receivedQty = Number(orow.received_qty ?? 0);
-      const label = (orow.material_name || orow.material_code || 'a removed item').trim();
+      const label = (orow.material_name || orow.item_code || 'a removed item').trim();
       if (receivedQty > 0) {
         warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);
         continue;
@@ -1257,7 +1415,7 @@ export async function reviseBoundPo(
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
       const itemGroup = line.item_group;
       const variants = line.variants;
-      const unitPriceCenti = await deriveMfgPoUnitCost(sb, {
+      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
         itemCode:   line.item_code ?? '',
         itemGroup,
@@ -1267,12 +1425,12 @@ export async function reviseBoundPo(
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
         purchase_order_id: po.id,
         material_kind:     'mfg_product',
-        material_code:     line.item_code ?? '',
+        item_code:     line.item_code ?? '',
         material_name:     line.description ?? line.item_code ?? '',
         supplier_sku:      add.supplierSku ?? '',
         qty,
-        unit_price_centi:  unitPriceCenti,
-        line_total_centi:  qty * unitPriceCenti,
+        unit_price_sen:  unitPriceSen,
+        line_total_sen:  qty * unitPriceSen,
         delivery_date:     line.line_delivery_date,
         warehouse_id:      line.warehouse_id,
         item_group:        itemGroup,
@@ -1301,11 +1459,11 @@ export async function reviseBoundPo(
        operator retries and snapshotPo is idempotent on (po_id, revision). */
     const { data: liveLines, error: liveErr } = await sb
       .from('purchase_order_items')
-      .select('line_total_centi, delivery_date')
+      .select('line_total_sen, delivery_date')
       .eq('purchase_order_id', po.id);
     if (liveErr) throw new Error(`reviseBoundPo: PO lines re-read failed for ${po.id}: ${liveErr.message}`);
-    const rows = (liveLines ?? []) as Array<{ line_total_centi: number | null; delivery_date: string | null }>;
-    const subtotal = rows.reduce((s, r) => s + Number(r.line_total_centi ?? 0), 0);
+    const rows = (liveLines ?? []) as Array<{ line_total_sen: number | null; delivery_date: string | null }>;
+    const subtotal = rows.reduce((s, r) => s + Number(r.line_total_sen ?? 0), 0);
     const dates = rows.map((r) => r.delivery_date).filter((d): d is string => Boolean(d)).sort();
 
     if (rows.length === 0 && linesRemoved > 0) {
@@ -1313,8 +1471,8 @@ export async function reviseBoundPo(
     }
 
     const { error: bumpErr } = await sb.from('purchase_orders').update({
-      subtotal_centi: subtotal,
-      total_centi:    subtotal,
+      subtotal_sen: subtotal,
+      total_sen:    subtotal,
       expected_at:    dates[0] ?? null,
       revision:       nextRevision,
       updated_at:     new Date().toISOString(),

@@ -23,23 +23,44 @@
       "note": "The only operation ever to reach the book through the QUEUE."
     },
     "so_to_do": {
-      "documents": ["DO-011260"],
-      "date": "2026-08-12",
-      "evidence": "qa-convert.ps1 driven directly on the AutoCount host, NOT through the outbox; the DO was cancelled afterwards",
-      "note": "A real DO running number was consumed. Because it did not go through the queue, scm.autocount_outbox has no record of it -- which is exactly how a reader looking only at the queue concludes this never happened."
+      "documents": ["DO-011260", "HC-DO-2608-001", "HC-DO-2608-002"],
+      "date": "2026-08-17",
+      "evidence": "SELECT DocNo, DebtorCode, Cancelled FROM DO WHERE DocNo IN ('HC-DO-2608-001','HC-DO-2608-002') returns both against 300-C002, Cancelled='F'; the service log for 00:55:30 carries 'FullTransfer OK' for each",
+      "note": "DO-011260 (2026-08-12) came from qa-convert.ps1 driven directly on the host, NOT through the outbox, and was cancelled afterwards -- a real DO running number was consumed and scm.autocount_outbox has no record of it. The two HC- documents are the ERP's own numbers and landed on 2026-08-17 once the target was given a DebtorCode before the transfer; note that they were driven from a hand-patched host build, so the outbox is not the record for these either."
+    },
+    "do_to_iv": {
+      "documents": ["HC-SI-2608-001"],
+      "date": "2026-08-17",
+      "evidence": "SELECT DocNo, DebtorCode, Cancelled FROM IV WHERE DocNo = 'HC-SI-2608-001' returns 300-C002, Cancelled='F'",
+      "note": "First invoice this service has ever put in the book. It had been blocked behind the two delivery orders above; the same DebtorCode fix released all three."
+    },
+    "so_to_po": {
+      "documents": ["PO-009968", "HC-PO-2608-001"],
+      "date": "2026-08-17",
+      "evidence": "host log 10:15 'so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two'; HC-PO-2608-001 is attested by the transfer that consumed it -- /po-to-gr logged 'trying purchase FullTransfer from=HC-PO-2608-001 tf=PurchaseOrder' followed by 'purchase FullTransfer OK', and FullTransfer cannot name a document the book does not hold",
+      "note": "PO-009968 was AutoCount's own number, the D5 defect; it was cancelled with the owner's approval and re-raised as HC-PO-2608-001 by the #2369 one-document requeue. The op is so_to_po and NOT create_po -- this purchase order came from a sales order, so it took the transfer arm. create_po is still undemonstrated."
+    },
+    "po_to_gr": {
+      "documents": ["HC-GR-2608-001"],
+      "date": "2026-08-17",
+      "evidence": "POST /po-to-gr answered {\"ok\":true,\"docNo\":\"HC-GR-2608-001\",\"lines\":[{\"DtlKey\":908162,\"ItemCode\":\"9028-1A(LHF)\"},{\"DtlKey\":908164,\"ItemCode\":\"9028-2A(RHF)\"}]}; the host log at 23:09:04 carries 'target creditor before transfer = [400-H004]', 'trying purchase FullTransfer from=HC-PO-2608-001 tf=PurchaseOrder' and 'purchase FullTransfer OK'",
+      "note": "The first purchase-side conversion this service has ever put in the book, after failing since 2026-08-12 on 'IndexOutOfRangeException: There is no row at position -1'. Driven from a HAND-PATCHED host build (builtAt 2026-08-17T15:05:51Z, mvid ad2cad05-e817-4318-b4a0-1a4b6b2d8d03) with a CreditorCode supplied by hand, NOT through the outbox -- so scm.autocount_outbox is not the record for it, and the payload half only became automatic when this PR landed. NOT re-runnable from a checkout: the log and the book are both on the office host."
+    },
+    "gr_to_pi": {
+      "documents": ["HC-PI-2608-001"],
+      "date": "2026-08-17",
+      "evidence": "POST /gr-to-pi answered {\"ok\":true,\"docNo\":\"HC-PI-2608-001\",\"lines\":[{\"DtlKey\":908167},{\"DtlKey\":908169}]}",
+      "note": "Same host session and same hand-patched build as po_to_gr above, and blocked behind it for the same reason a GRN is blocked behind a PO. With it, all six ERP document types exist in AED_HOUZS under the ERP's own numbers."
     },
     "cancel": {
-      "documents": ["DO-011260"],
-      "date": "2026-08-12",
-      "evidence": "the same host session cancelled the SO and the DO it had just created",
-      "note": null
+      "documents": ["DO-011260", "PO-009968"],
+      "date": "2026-08-17",
+      "evidence": "POST /cancel {\"DocType\":\"PO\",\"DocNo\":\"PO-009968\"} -> {\"ok\":true}, then SELECT DocNo, Cancelled FROM PO WHERE DocNo='PO-009968' -> Cancelled = T",
+      "note": "DO-011260 was cancelled in the same 2026-08-12 host session that created it. PO-009968 is the second, and the first cancel driven for a real reason rather than a trial -- it carried AutoCount's own number instead of the ERP's."
     }
   },
   "notDemonstrated": {
-    "create_po": "FK_PO_PurchaseAgent blocked it on 2026-08-12. The cause is fixed in source (readPoHeader sends the constant AC_PURCHASE_AGENT, autocount-outbox.ts) but no purchase order has been sent since.",
-    "po_to_gr": "Waits on create_po: a conversion transfers a document the book must already hold.",
-    "do_to_iv": "Never attempted. AcSyncService.cs carries a comment claiming DO and IV are both proven and cites two DO numbers for it -- the IV half of that sentence has no evidence behind it.",
-    "gr_to_pi": "Never attempted.",
+    "create_po": "FK_PO_PurchaseAgent blocked it on 2026-08-12. The cause is fixed in source (readPoHeader sends the constant AC_PURCHASE_AGENT, autocount-outbox.ts) but no purchase order has reached the book through the CREATE arm since. HC-PO-2608-001 does not count for this row: it came from a sales order and therefore took so_to_po.",
     "edit": "Exercised against the live book as the four refusal guards (a passing guard writes nothing, which is what makes it safe there). No edit has been demonstrated to CHANGE a document in the book."
   }
 }

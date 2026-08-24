@@ -33,6 +33,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sameIgnoringEol } from './lib/eol.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BACKEND = path.resolve(HERE, '..');
@@ -69,6 +70,13 @@ const cs = read('backend/scripts/autocount-service/AcSyncService.cs');
 const implemented = new Set(
   must([...cs.matchAll(/case\s+"(\/[a-z-]+)":/g)].map((m) => m[1]), 'AcSyncService case labels', 8),
 );
+/* THE ROUTES THAT RETURN BEFORE THE SWITCH. `Handle` answers /health from an
+   `if (path == "/health")` above the POST-only check and above the switch, so
+   the case-label scan cannot see it, and the table said the service does NOT
+   implement a route it has always served. A generated artifact that is
+   confidently wrong is worse than a hand-written one, so the scan reads the
+   early branches too rather than being told the answer. */
+for (const m of cs.matchAll(/path\s*==\s*"(\/[a-z-]+)"/g)) implemented.add(m[1]);
 
 // ── 3. which ERP routes enqueue which operation ─────────────────────────────
 /* Read from the route tree rather than from a list, so a new call site appears
@@ -176,7 +184,8 @@ const next = lines.join('\n');
 const prev = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : null;
 
 if (process.argv.includes('--check')) {
-  if (prev === next) {
+  // Content, not line endings — see scripts/lib/eol.mjs.
+  if (sameIgnoringEol(prev, next)) {
     console.log(`AutoCount coverage is current (${ops.length} operations).`);
     process.exit(0);
   }

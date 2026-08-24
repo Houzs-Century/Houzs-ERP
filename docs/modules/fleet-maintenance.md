@@ -37,7 +37,7 @@ never typed.
 |---|---|
 | `scm.lorries` (mig 0053, +0121) | THE vehicle master — plate, type, warehouse_id, active, model, and the flat `road_tax_expiry` / `insurance_expiry` / `puspakom_expiry` columns kept as the denormalized "current" value. Referenced by `scm.trips.lorry_id` + `scm.delivery_order_crew.lorry_id`, so Compliance-Blocked actually means dispatch can't use it. |
 | `scm.lorry_maintenance` (mig 0053) | Out-of-service **windows** (`unavailable_from/to`). A lorry inside a current window derives `OUT_OF_SERVICE`. |
-| `scm.lorry_service_records` (mig 0121) | Latest row → current mileage (`odometer_km`) + next service (`next_service_km`/`date`), and `cost_centi` → the this-month repair-spend + costliest-vehicle KPIs. |
+| `scm.lorry_service_records` (mig 0121) | Latest row → current mileage (`odometer_km`) + next service (`next_service_km`/`date`), and `cost_sen` → the this-month repair-spend + costliest-vehicle KPIs. |
 | `scm.drivers` | People — `drivers.vehicle` holds the plate, joined to show the assigned driver. |
 | `scm.warehouses` | Region/dispatch origin (warehouse `code`, e.g. KL/PG). |
 
@@ -199,6 +199,17 @@ dashboard at the same URL — one product, two presentations. See §9.5.
 **The drawer is a quick look, not the record** — see section 12. Everything a
 lorry has ever had lives on `/fleet-health/:lorryId`.
 
+**Every write on this page says so when it is refused (2026-08-21).** Six of
+them did not: the breakdown status dropdown, the work-order stepper, add part,
+remove part, remove component and log component event all caught their rejection
+with `catch { /* surfaced on reload */ }`. Nothing reloads — `onChanged()` is the
+last statement inside the `try`, so a refusal skips it, and the breakdown
+dropdown is a controlled `<select>` that keeps displaying the option the operator
+picked because no render ever happens. They now set an error the card renders,
+through this file's own `apiErrText`, matching the eight handlers that always
+did. Pinned by `frontend/src/pages/fleetHealthWriteFailures.test.tsx`; the trace
+is in `docs/bugs/0489-fleet-health-refused-six-writes-in-silence-under-a-comment-c.md`.
+
 ## 9. Phase 2 — preventive plans + mileage capture
 
 ### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
@@ -251,7 +262,7 @@ Columns: `component` (CHECK against the twelve components — engine oil, oil +
 filter, gearbox oil, brake inspection, brake pads, tyres, battery, alignment,
 air-con, suspension, cooling system, PUSPAKOM prep), `interval_km`,
 `interval_months` (at least one required — CHECK), `last_done_date`,
-`last_done_km`, `workshop`, `est_cost_centi`, `notes`, `active`. A UNIQUE index
+`last_done_km`, `workshop`, `est_cost_sen`, `notes`, `active`. A UNIQUE index
 on `(lorry_id, component)` enforces the one-per-component rule; the write route
 UPSERTs on that pair. **`next_due_km` / `next_due_date` are DERIVED, never
 stored** (`last_done_km + interval_km` ; `last_done_date + interval_months`), so
@@ -328,12 +339,12 @@ derived due) + `mileage[]` (recent readings).
 > under this number. **Do NOT renumber it** — see the note under §2. All five
 > tables are children of
 > `scm.lorries` ON DELETE CASCADE, company-stamped-not-scoped like the Phase-1/2
-> siblings. Money is BIGINT `*_centi`.
+> siblings. Money is BIGINT `*_sen`.
 
 **`scm.lorry_breakdown_cases`** — a breakdown / roadside-incident log. Columns:
 `occurred_at`, `gps_lat`/`gps_lng`, `fault_type`, `severity`
 (`MINOR`|`MAJOR`|`CRITICAL`), `still_drivable`, `media_refs` (JSONB R2 keys),
-`driver_description`, `towing_company`, `towing_cost_centi`, `workshop`,
+`driver_description`, `towing_company`, `towing_cost_sen`, `workshop`,
 `breakdown_start`, `recovery_time`, `affected_trip_id` (nullable FK
 `scm.trips` ON DELETE SET NULL), `status` (`OPEN`|`TOWING`|`IN_WORKSHOP`|
 `RESOLVED`). **A CRITICAL, non-RESOLVED case grounds the lorry** — it feeds
@@ -350,28 +361,28 @@ WAITING_PARTS → COMPLETED → VERIFIED` — `QUOTED` arrived with mig 0247 (se
 `IN_REPAIR ⇄ WAITING_PARTS` loop and
 `WAITING_PARTS → COMPLETED`. An OPEN WO in `IN_REPAIR` feeds
 `PLANNED_MAINTENANCE`; in `WAITING_PARTS` feeds `WAITING_PARTS` (COMPLETED /
-VERIFIED are closed and feed nothing). Money legs `labour_centi`,
-`outside_service_centi`, `towing_centi`, `tax_centi`; **`total` is DERIVED**
+VERIFIED are closed and feed nothing). Money legs `labour_sen`,
+`outside_service_sen`, `towing_sen`, `tax_sen`; **`total` is DERIVED**
 (legs + parts, `workOrderTotalCenti()`), never stored. Other fields: `problem`,
 `diagnosis`, `workshop`, `warranty_until`, `invoice_refs`/`quote_refs`/
 `photo_refs` (JSONB), `reported_at`/`est_complete`/`actual_complete`,
 `approved_by`/`verified_by`, `breakdown_case_id` (nullable FK — a WO may be
 spawned from a breakdown), `component_id` (nullable FK — a WO may install/replace
 a component). **`scm.lorry_work_order_parts`**: `name`, `part_no`, `qty`,
-`unit_price_centi`, `serial`.
+`unit_price_sen`, `serial`.
 
 **`scm.lorry_components`** — tyre/battery/brake/etc. SERIAL lifecycle.
 `component_type` (`TYRE`|`BATTERY`|`BRAKE_PADS`|`ALTERNATOR`|`STARTER`|`GEARBOX`|
 `AIR_COMPRESSOR`|`OTHER`), `position` (`FRONT_L`|`FRONT_R`|`REAR_L`|`REAR_R`|
 `NA`), `brand`/`model`/`size`/`serial`, `fitted_date`/`fitted_km`,
-`purchase_price_centi`, `tread_depth` (nullable), `removed_date`/`removed_km`,
+`purchase_price_sen`, `tread_depth` (nullable), `removed_date`/`removed_km`,
 `warranty_until`, `status` (`ACTIVE`|`REMOVED`). A partial UNIQUE index on
 `(lorry_id, position) WHERE status='ACTIVE' AND position<>'NA'` stops two active
 tyres in one slot. **`km_used` and `cost_per_km` are DERIVED**
 (`deriveComponentLife()`): `km_used = (removed_km | current odometer) −
-fitted_km`; `cost_per_km = purchase_price_centi / km_used` (never divide by 0).
+fitted_km`; `cost_per_km = purchase_price_sen / km_used` (never divide by 0).
 **`scm.lorry_component_events`**: `event_type` (`ROTATION`|`PUNCTURE`|`REPAIR`|
-`INSPECTION`|`OTHER`), `event_date`, `odometer_km`, `to_position`, `cost_centi`,
+`INSPECTION`|`OTHER`), `event_date`, `odometer_km`, `to_position`, `cost_sen`,
 `note` — answers "why repeated brakes in three months".
 
 ### 10.2 Pure logic (`services/fleet-status.ts`, unit-tested)
@@ -470,22 +481,22 @@ columns on ONE record, not two records. Plus `advisor` (the workshop's, not
 ours) and `document_date` (what the paper prints, which is not `reported_at`).
 
 **Lines now have the four columns a real invoice prints**: `section`
-(PART / LABOUR), `uom`, `discount_pct`, `amount_centi`.
+(PART / LABOUR), `uom`, `discount_pct`, `amount_sen`.
 
 - The discount is a **percentage, per line** — WJO00403 carries 15% on 14 of
   its 19 lines and none on the other 5.
-- `amount_centi` is the **printed** amount and it WINS over the computation.
+- `amount_sen` is the **printed** amount and it WINS over the computation.
   The vendor's rounding is theirs; a record that quietly disagrees with the
   paper is worse than one that repeats it. NULL means "not printed, compute
   it", and `workOrderLineCenti` takes
   `amount ?? round(qty x unit x (1 - disc/100))`.
 
 **LABOUR HAS TWO SHAPES AND THEY MUST NOT BOTH BE FILLED.** Pre-0241 rows put
-labour in the header scalar `labour_centi`; new records put it in
+labour in the header scalar `labour_sen`; new records put it in
 LABOUR-section lines. `workOrderTotalCenti` sums both, so filling both counts
 labour twice. A CHECK cannot express "not both" without pinning existing rows,
 so **the parts route is the single writer that enforces it** — adding a LABOUR
-line to a record whose `labour_centi > 0` is a 409 `labour_already_on_header`.
+line to a record whose `labour_sen > 0` is a 409 `labour_already_on_header`.
 
 ### OCR — `POST /api/scm/scan-lorry-invoice/extract`
 
@@ -714,7 +725,7 @@ So the record page links to Coverage & Fleet instead of duplicating the form.
 The form says so.
 
 **Header money vs line money.** The four money legs on a work order are added ON
-TOP of the lines. The route refuses a non-zero header `labour_centi` on a work
+TOP of the lines. The route refuses a non-zero header `labour_sen` on a work
 order whose lines already carry LABOUR — the invariant that stops the workshop's
 labour being counted twice — and the form states it rather than letting you find
 out by 409.

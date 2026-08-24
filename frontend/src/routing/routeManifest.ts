@@ -78,7 +78,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/purchase-returns/new",
   "/scm/purchase-returns/:id",
   "/scm/inventory",
-  "/scm/inventory/stock-card/:productCode",
+  "/scm/inventory/stock-card/:itemCode",
   "/scm/suppliers/:id",
   "/scm/delivery-planning",
   "/scm/dp-orders",
@@ -120,6 +120,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/delivery-orders/new",
   "/scm/delivery-orders/from-so",
   "/scm/delivery-orders/:id",
+  // The DO print's "SCAN . MARK LOADED" QR lands here (warehouse loading confirmation).
+  "/scm/do-load",
   "/scm/sales-invoices",
   "/scm/sales-invoices/new",
   "/scm/sales-invoices/from-do",

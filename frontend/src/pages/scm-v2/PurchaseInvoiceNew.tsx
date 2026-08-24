@@ -27,6 +27,7 @@
 // repointed to /scm/purchase-invoices (and /scm/grns for the GRN backlink).
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -52,8 +53,12 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import styles from './SalesOrderDetail.module.css';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -61,14 +66,6 @@ const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
-/* Commander 2026-05-29 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg +
-   Gap (mirrors GrnNew / SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* Commander 2026-05-29 — manual PI lines whose product is a bedframe/sofa get
@@ -102,7 +99,7 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  materialCode:   string;
+  itemCode:   string;
   materialName:   string;
   /* Commander 2026-05-29 — PI lines must show the same content as PO/GRN
      ("PO 有什么内容，Purchase Invoice 也应该随之对应"). GRN-sourced lines carry
@@ -110,12 +107,13 @@ type DraftLine = {
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qty:            number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   notes:          string;
 };
 
 export const PurchaseInvoiceNew = () => {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [params] = useSearchParams();
   const grnId    = params.get('grnId');
   // fromPicks = arrived from the GRN→PI review picker: build ONLY the ticked
@@ -228,14 +226,14 @@ export const PurchaseInvoiceNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        materialCode:   it.material_code,
+        itemCode:   it.item_code,
         materialName:   it.material_name,
         // Carried from the GRN line (grns.ts ITEM select returns these) so the
         // PI shows the same variant summary as the GRN it descends from.
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
-        unitPriceCenti: it.unit_price_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
         notes:          '',
       }));
     setLines(next);
@@ -249,12 +247,12 @@ export const PurchaseInvoiceNew = () => {
       rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       grnItemId:      null,
       materialKind:   'mfg_product',
-      materialCode:   '',
+      itemCode:   '',
       materialName:   '',
       itemGroup:      null,
       variants:       null,
       qty:            1,
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       notes:          '',
     }]);
   }, [isManual]);
@@ -263,8 +261,8 @@ export const PurchaseInvoiceNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + l.qty * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + l.qty * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -274,13 +272,13 @@ export const PurchaseInvoiceNew = () => {
      basis (QTY / VALUE / CBM) with last-line-remainder. The server's
      reallocatePiCharges is authoritative; this is just the live preview. */
   const allocPreview = useMemo(() => {
-    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-    const goods = lines.filter((l) => l.materialCode.trim() && !isSvc(l));
+    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
+    const goods = lines.filter((l) => l.itemCode.trim() && !isSvc(l));
     const chargePool = lines
-      .filter((l) => l.materialCode.trim() && isSvc(l))
-      .reduce((s, l) => s + l.qty * l.unitPriceCenti, 0);
+      .filter((l) => l.itemCode.trim() && isSvc(l))
+      .reduce((s, l) => s + l.qty * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
-      if (allocationMethod === 'VALUE') return l.qty * l.unitPriceCenti;
+      if (allocationMethod === 'VALUE') return l.qty * l.unitPriceSen;
       if (allocationMethod === 'CBM') return l.qty; // volume unknown client-side → qty proxy
       return l.qty;
     };
@@ -401,10 +399,10 @@ export const PurchaseInvoiceNew = () => {
      picker, mirrors GrnNew.pickItemForLine). */
   const pickItemForLine = (rid: string, code: string) => {
     const p = (productsQ.data ?? []).find((x) => x.code === code);
-    if (!p) { setLine(rid, { materialCode: code }); return; }
+    if (!p) { setLine(rid, { itemCode: code }); return; }
     setLine(rid, {
       materialKind: 'mfg_product',
-      materialCode: p.code,
+      itemCode: p.code,
       materialName: p.name,
       itemGroup:    p.category ? p.category.toLowerCase() : null,
     });
@@ -418,10 +416,10 @@ export const PurchaseInvoiceNew = () => {
   const pickBindingForLine = (rid: string, b: typeof bindings[number]) => {
     setLine(rid, {
       materialKind:   'mfg_product',
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
-      unitPriceCenti: b.unit_price_centi,
-      itemGroup:      categoryForCode(b.material_code),
+      unitPriceSen: b.unit_price_sen,
+      itemGroup:      categoryForCode(b.item_code),
     });
   };
   /* Append a blank manual line — PO-style "Add another item". */
@@ -430,12 +428,12 @@ export const PurchaseInvoiceNew = () => {
       rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       grnItemId:      null,
       materialKind:   'mfg_product',
-      materialCode:   '',
+      itemCode:   '',
       materialName:   '',
       itemGroup:      null,
       variants:       null,
       qty:            1,
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       notes:          '',
     }]);
 
@@ -453,7 +451,7 @@ export const PurchaseInvoiceNew = () => {
       return;
     }
     // Drop the blank starter line(s) — only real items (with a code) are saved.
-    const realLines = lines.filter((l) => l.materialCode.trim());
+    const realLines = lines.filter((l) => l.itemCode.trim());
     if (realLines.length === 0) {
       setDialog({ title: 'Add at least one item', body: 'Pick at least one SKU to invoice.' });
       return;
@@ -484,10 +482,10 @@ export const PurchaseInvoiceNew = () => {
         items: realLines.map((l) => ({
           grnItemId:      l.grnItemId,
           materialKind:   l.materialKind,
-          materialCode:   l.materialCode,
+          itemCode:   l.itemCode,
           materialName:   l.materialName,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
           notes:          l.notes || undefined,
           // Commander 2026-05-29 — persist the line's category + variant
           // selections (columns exist on purchase_invoice_items, migration 0057)
@@ -500,6 +498,11 @@ export const PurchaseInvoiceNew = () => {
         // Auto-post (Confirm) so PI lands in POSTED state (matches PO + GRN).
         await post.mutateAsync(createRes.id);
       }
+      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — and on a purchase
+         invoice the field most likely to be missing is the SUPPLIER'S OWN
+         invoice number, which is the one accounts will ask about. Same shared
+         frame as every other surface. Never blocks; the liability is booked. */
+      await notifyAcNotSent(notify, createRes, 'Purchase invoice');
       setDialog({
         title: `PI ${createRes.invoiceNumber} created`,
         body: asDraft
@@ -523,7 +526,7 @@ export const PurchaseInvoiceNew = () => {
             {/* Keep the GRN→Invoice path: jump to the multi-GRN-line picker. */}
             {isManual && (
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-invoices/from-grn')}>
-                <ArrowRightLeft {...ICON} /> From Goods Receipt
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('grn')}
               </Button>
             )}
             <Button variant="ghost" size="md" onClick={() => navigate(isManual ? '/scm/purchase-invoices' : (grn ? `/scm/grns/${grn.id}` : '/scm/grns'))}>
@@ -625,14 +628,14 @@ export const PurchaseInvoiceNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Invoice Date</span>
-              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={invoiceDate} onChange={(iso) => setInvoiceDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Due Date</span>
               {/* Commander 2026-05-29 — auto = Invoice Date + supplier term days
                   (default 30) until the operator edits it (dueTouched). */}
-              <input type="date" value={dueDate} onChange={(e) => { setDueTouched(true); setDueDate(e.target.value); }} className={styles.fieldInput} />
+              <DateField fullWidth value={dueDate} onChange={(iso) => { setDueTouched(true); setDueDate(iso); }} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>
@@ -668,7 +671,7 @@ export const PurchaseInvoiceNew = () => {
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateTouched(true); setExchangeRate(v); }}
-              rateHint={<>≈ {fmtRm(Math.round(subtotalCenti * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
+              rateHint={<>≈ {fmtRm(Math.round(subtotalSen * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
             />
           </div>
@@ -705,7 +708,7 @@ export const PurchaseInvoiceNew = () => {
               ? 'Loading GRN items…'
               : lines.length === 0
                 ? (isManual ? 'Manual invoice — pick a supplier above, then add items below' : 'No accepted items on this GRN')
-                : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}
+                : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`}
             {/* Commander 2026-05-29 — same supplier-binding hint New PO / New GRN
                 show: once a supplier is chosen the manual picker filters to that
                 supplier's bound SKUs (or the full catalogue when it has none). */}
@@ -729,16 +732,16 @@ export const PurchaseInvoiceNew = () => {
             </p>
           )}
           {lines.map((l, idx) => {
-            const lineTotal = l.qty * l.unitPriceCenti;
+            const lineTotal = l.qty * l.unitPriceSen;
             // Commander 2026-05-29 — same muted variant sub-line GrnNew shows,
             // so the PI mirrors what the GRN (and PO upstream) describe.
             const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
             /* PI-level freight allocation (Phase 1-A) — this goods line's share of
                the freight pool + landed unit cost, shown only when there's a
                charge to spread. Service (freight) lines get 0. */
-            const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-            const lineAllocCenti = allocPreview.allocByRid.get(l.rid) ?? 0;
-            const landedUnitCenti = l.unitPriceCenti + (l.qty > 0 ? Math.round(lineAllocCenti / l.qty) : 0);
+            const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
+            const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
+            const landedUnitSen = l.unitPriceSen + (l.qty > 0 ? Math.round(lineAllocSen / l.qty) : 0);
             // Editable variant section only for MANUAL lines (grnItemId === null)
             // that are bedframe/sofa, once the maintenance pools are loaded.
             // GRN-sourced lines keep their read-only summary.
@@ -750,11 +753,8 @@ export const PurchaseInvoiceNew = () => {
               setLine(l.rid, { variants: (() => {
                 const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
                 // Auto-compute bedframe Total Height = Divan + Leg + Gap.
-                if (l.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-                  const d = parseInches(variants.divanHeight);
-                  const lg = parseInches(variants.legHeight);
-                  const g = parseInches(variants.gap);
-                  variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+                if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
+                  variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                 }
                 return variants;
               })() });
@@ -778,7 +778,7 @@ export const PurchaseInvoiceNew = () => {
                           on goods lines only when there's a charge pool. */}
                       {allocPreview.chargePool > 0 && !lineIsSvc && (
                         <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-accent, #8a6d3b)', marginTop: 2 }}>
-                          +{fmtRm(lineAllocCenti, currency)} freight · landed {fmtRm(landedUnitCenti, currency)}/unit
+                          +{fmtRm(lineAllocSen, currency)} freight · landed {fmtRm(landedUnitSen, currency)}/unit
                         </span>
                       )}
                     </span>
@@ -795,7 +795,7 @@ export const PurchaseInvoiceNew = () => {
                     <span className={styles.fieldLabel}>Item Code (Internal)</span>
                     {isManualLine ? (
                       <>
-                        <input type="text" list={`pi-products-${l.rid}`} value={l.materialCode}
+                        <input type="text" list={`pi-products-${l.rid}`} value={l.itemCode}
                           onChange={(e) => {
                             const code = e.target.value;
                             setProductQuery(code);
@@ -804,12 +804,12 @@ export const PurchaseInvoiceNew = () => {
                             // the code matches one of its bindings, fill name +
                             // unit price + itemGroup from the binding.
                             const bound = supplierId
-                              ? bindings.find((b) => b.material_code === code)
+                              ? bindings.find((b) => b.item_code === code)
                               : undefined;
                             if (bound) { pickBindingForLine(l.rid, bound); return; }
                             const match = (productsQ.data ?? []).find((p) => p.code === code);
                             if (match) { pickItemForLine(l.rid, code); return; }
-                            setLine(l.rid, { materialCode: code });
+                            setLine(l.rid, { itemCode: code });
                           }}
                           placeholder={supplierId && bindings.length > 0
                             ? 'Pick one of this supplier’s bound SKUs…'
@@ -821,15 +821,15 @@ export const PurchaseInvoiceNew = () => {
                               gated full-catalogue search. */}
                           {supplierId && bindings.length > 0
                             ? sortByText(bindings).map((b) => (
-                                <option key={b.id} value={b.material_code}>
-                                  {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                                <option key={b.id} value={b.item_code}>
+                                  {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                 </option>
                               ))
                             : sortByText(productsQ.data ?? []).map((p) => (<option key={p.id} value={p.code}>{p.name} · {p.category}</option>))}
                         </datalist>
                       </>
                     ) : (
-                      <input type="text" readOnly value={l.materialCode} className={styles.fieldInput}
+                      <input type="text" readOnly value={l.itemCode} className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
                     )}
                   </label>
@@ -900,8 +900,8 @@ export const PurchaseInvoiceNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-                    <MoneyInput bare valueSen={l.unitPriceCenti}
-                      onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                    <MoneyInput bare valueSen={l.unitPriceSen}
+                      onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput} selectOnFocus />
                   </label>
                   <label className={styles.field}>
@@ -933,11 +933,11 @@ export const PurchaseInvoiceNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

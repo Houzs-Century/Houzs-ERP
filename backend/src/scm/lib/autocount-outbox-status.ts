@@ -129,11 +129,49 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy:
       'a line carries no stock location — set the warehouse on the line, or the sales location on the document',
   },
+  /* THREE REFUSAL CLASSES THIS TABLE DID NOT KNOW, ADDED 2026-08-16.
+     noteReadFailure has written all three since the write-back went live, and
+     none of them had a needle here — so every one of them reached the page as
+     `unrecognised` with a NULL remedy, on rows whose remedy is one field on one
+     form. MissingAgentError is not hypothetical: it is what AED_HOUZS answered
+     to HC-SO-2608-001 and -002 on 2026-08-13 (FK_SO_SalesAgent), the first day
+     documents were pushed. The classifier that could not name it is the one
+     that produced this table's own cautionary tale (#2094). */
+  {
+    kind: 'missing-agent',
+    needle: 'refused, nothing sent (MissingAgentError)',
+    remedy:
+      'the sales order names no salesperson AutoCount knows — assign a salesperson on the order, then send it again',
+  },
+  {
+    kind: 'missing-sales-location',
+    needle: 'refused, nothing sent (MissingSalesLocationError)',
+    remedy:
+      'the sales order itself carries no stock location and has no live line to take one from — set the sales location, or add a line with a warehouse',
+  },
+  {
+    kind: 'missing-creditor',
+    needle: 'refused, nothing sent (MissingCreditorError)',
+    remedy:
+      "the purchase order's supplier has no AutoCount creditor code — fill in scm.suppliers.code for that supplier, then send it again",
+  },
   {
     kind: 'compose-failed',
     needle: 'compose failed, nothing sent',
     remedy:
       'the ERP could not read its own document while composing — a read fault, not a refusal',
+  },
+  /* BEFORE `masters-not-opened`, ON PURPOSE. The masters step is where the
+     unreachable-host failure surfaces — the ERP calls ensure_masters first, so
+     a dead host is recorded as "masters not opened, document not sent: <the
+     transport's words>". Matching the transport's words FIRST is what stops a
+     stopped Windows service reading as an AutoCount data problem, which is
+     exactly the wrong place to send whoever investigates (2026-08-23: a day
+     spent on AutoCount logins for a service that was not running). */
+  {
+    kind: 'host-unreachable',
+    needle: 'the AutoCount host did not answer',
+    remedy: 'the request never reached the machine — the sync service on that host is not answering',
   },
   {
     kind: 'masters-not-opened',
@@ -146,14 +184,129 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy: 'raised with no parent — cannot exist in AutoCount at all',
   },
   {
+    /* THE NEEDLE WAS WRONG AND MATCHED NOTHING, corrected 2026-08-16. It read
+       'AutoCount has no shape', which is a phrase from recordConvertSkipped's
+       own DOC COMMENT — no code path has ever written it into last_error. The
+       places that record a merged conversion (delivery-orders-mfg.ts,
+       grns.ts twice, sales-invoices.ts, purchase-invoices.ts, and
+       lib/si-autocount-source.ts since 2026-08-17) all write
+       "AutoCount transfers from ONE source document", so every merged
+       conversion in the queue has been classified `unrecognised` since the
+       feature shipped. A needle taken from the comment beside the writer
+       instead of from the writer is the same mistake in a different key as
+       matching a shared prefix. */
+    /* THE NEEDLE STAYS, THE REMEDY CHANGED, 2026-08-18. No writer produces this
+       sentence any more: the service took `FromDocNos` from 2026-08-16 and the
+       five ERP writers were rewired to name every source instead of refusing
+       (enqueueConvert takes an array). The needle has to stay because
+       scm.autocount_outbox is APPEND-ONLY and `last_error` is never rewritten —
+       every merged conversion recorded before that day still carries these
+       words, and a needle removed is a row reclassified `unrecognised` with no
+       remedy at all. What changed is what an operator should DO about one. */
     kind: 'no-autocount-shape',
-    needle: 'AutoCount has no shape',
-    remedy: 'merged conversion (N sources -> 1 document) — must be worked by hand',
+    needle: 'AutoCount transfers from ONE source document',
+    remedy:
+      'recorded before merged conversions could be sent (2026-08-18) — nothing was composed, so Send again has nothing to send; raise it in AutoCount by hand. Documents raised since then sync merged',
+  },
+  {
+    /* ADDED 2026-08-17 with the fix to POST /sales-invoices. The ERP lets an
+       invoice carry a standalone line beside its delivered ones; AutoCount
+       builds the invoice by transferring the delivery order's lines, so the
+       standalone half would simply not be there — an invoice in the book worth
+       less than the one the customer holds. Its own class because its remedy is
+       its own: split the document, which is nothing like backfilling a key. */
+    kind: 'mixed-source-lines',
+    needle: 'came from no source document',
+    remedy:
+      'part of this document was not delivered on the source — raise the delivered lines from the Delivery Order and the rest as a separate invoice',
+  },
+  {
+    kind: 'dtlkey-subset',
+    needle: 'carry no AutoCount DtlKey',
+    remedy:
+      'a PART of the parent was transferred and the ERP cannot name which lines — backfill linked_ac_dtlkey on the SOURCE document, then raise this document again',
+  },
+  {
+    kind: 'cancelled-before-send',
+    needle: 'cancelled in the ERP before it was written to AutoCount',
+    remedy:
+      'nothing to do — the document was cancelled while its create was still queued, so neither ever reached the account book',
+  },
+  {
+    kind: 'edit-before-counterpart',
+    needle: 'edited before its AutoCount counterpart existed',
+    remedy:
+      'the conversion that creates this document is still queued and will transfer the source lines, not this edit — save the document again once it has drained',
+  },
+  {
+    kind: 'grn-mislinked',
+    needle: 'not of this goods receipt',
+    remedy:
+      "the goods receipt's AutoCount number is its purchase order's, a cutover convention — the real receipt numbers are on the PO (linked_ac_grn_docnos), and nothing can be sent for this GRN until one is chosen",
   },
 ] as const;
 
 /** The key given to a skip whose wording this module does not recognise. */
 export const AC_SKIP_UNRECOGNISED = 'unrecognised';
+
+/**
+ * The reason written for a document AutoCount has no way to hold: a Delivery
+ * Order, Goods Received, Invoice or Purchase Invoice raised with no parent.
+ * Called by recordParentlessCreate (autocount-outbox.ts).
+ *
+ * HERE, beside the needle that classifies it, for a reason bought on
+ * 2026-08-16. This sentence used to end "(AddPartialTransferDetail is the SDK's
+ * only primitive)" and the owner read that identifier off the live AutoCount
+ * Sync page — the same string he had had removed from the page's own copy a few
+ * hours earlier. It came back through the SERVER, because the reason lived in
+ * the writer and nothing checked what the reason said. Sitting next to
+ * `no-source-document`'s needle, the pair is checkable and it is checked:
+ * backend/tests/autocountSyncReasonsCatalogue.test.ts asserts both that the
+ * sentence still contains the needle and that it names no SDK method, class or
+ * column.
+ *
+ * A REASON IS READ BY THE OWNER. The SDK explanation is not lost — it is in
+ * recordParentlessCreate's doc comment and in docs/autocount-sync-reasons.md §4,
+ * where engineers read it. Not mirrored into scripts/lib/autocount-skip-kinds.mjs
+ * on purpose: the health check READS reasons and never writes one, so a copy
+ * there would be a second home with no second reader (same argument as
+ * acRowIsRequeueable below).
+ *
+ * @param missing what the ERP document is missing, in the operator's words.
+ */
+export function acParentlessCreateReason(missing: string): string {
+  return `created with ${missing}, so there is no source document to transfer from. `
+    + 'AutoCount builds a delivery order, a goods received or an invoice only by carrying '
+    + 'an earlier document into it, so this document cannot be created in the account book '
+    + 'at all and will stay ERP-only.';
+}
+
+/**
+ * What a document is going to the accounts WITHOUT — the note left on its own
+ * outbox row, at save time.
+ *
+ * THIS IS A NOTE ON A ROW THAT IS BEING SENT, not a refusal. `acNeedsAttention`
+ * reads the STATUS, so a `pending` row carrying one of these is not counted as
+ * needing anybody — the document is going, it is simply going incomplete. The
+ * page returns `reason` for every state (routes/autocount-outbox.ts:238), so
+ * this is visible on the row the moment the operator saves, which is the whole
+ * point: a delivery order that will reach the book with no reference and no date
+ * of its own is worth knowing about BEFORE the five-minute cron, not after.
+ *
+ * THE SENTENCES COME FROM `downstreamNotCarried`, which knows the difference
+ * between "the ERP has none of this" and "this route has no field for it". This
+ * function only frames them, the way `acParentlessCreateReason` frames its own —
+ * one home for wording that an owner reads.
+ *
+ * Returns null for a document that is carrying everything, so the row keeps a
+ * null `last_error` and nothing has to learn that an empty string means fine.
+ */
+export function acNotCarriedReason(notCarried: readonly string[]): string | null {
+  if (!notCarried.length) return null;
+  return 'sent, but not everything on it reached the accounts — '
+    + notCarried.join('; ')
+    + '. The document itself transferred; these are fields on it that did not.';
+}
 
 /**
  * Is this skip's reason the annotation the re-queue tool leaves behind?
@@ -224,4 +377,138 @@ export function acNeedsAttention(
 ): boolean {
   const state = acOutboxState(status, lastError);
   return state === 'failed' || state === 'skipped';
+}
+
+/**
+ * The two operations that HAVE an AutoCount create, and are therefore the only
+ * ones a re-send can express. Named here because both the button-visibility
+ * hint below and the re-queue ladder itself are statements about this set.
+ */
+export const AC_REQUEUEABLE_OPS = ['create_so', 'create_po'] as const;
+
+/**
+ * The operations that have NO create of their own — AutoCount builds their
+ * document by TRANSFERRING a source document's lines, and the payload the ERP
+ * composed is the whole instruction.
+ *
+ * They are re-sendable under a strictly narrower condition than the two creates,
+ * and the condition is the subject of `acRowIsRequeueable` below: only a FAILED
+ * one, never a skipped one. See requeueOneRow for the full argument — the short
+ * version is that a `skipped` transfer row was refused by the DOCUMENT's shape
+ * and a `failed` one was refused by the SERVICE, and only the second of those
+ * stops being true when the shop-floor host is rebuilt.
+ *
+ * `so_to_po` is in this list for the same structural reason the four conversions
+ * are: it is AddSOToPOTransferDetail, it carries a `fromDoc`, and its payload is
+ * a composed transfer. It is written by enqueuePoCreate, which records its own
+ * refusals under `create_po`, so no `skipped` row can ever carry this op.
+ */
+export const AC_TRANSFER_OPS = [
+  'so_to_do', 'po_to_gr', 'do_to_iv', 'gr_to_pi', 'so_to_po',
+] as const;
+
+/**
+ * Is a per-row "Send again" button worth OFFERING on this row?
+ *
+ * A HINT, NOT THE GATE. The gate is requeueOutboxRow (lib/autocount-requeue.ts),
+ * which re-reads the row and the document and can refuse for six more reasons
+ * this pure function cannot see — the document already carries a
+ * linked_ac_docno, the write-back switch is off, the composer refuses it again.
+ * Nothing here is trusted by the write path; this exists only so the page does
+ * not put a button on a row whose answer is knowably "no" before it is pressed.
+ *
+ * The structural noes, and each is permanent for that row:
+ *
+ *   status pending / sent   there is nothing to re-ask. A pending row is
+ *                           already going out and a sent row is in the book.
+ *   already re-queued       the marker means somebody asked again; its document
+ *                           is queued or sent under a NEWER row.
+ *   an edit                 re-queued by saving the document, never from here.
+ *   a SKIPPED transfer      the three shapes that produce one — a parentless
+ *                           DO/GR/IV/PI, a merged conversion, a DtlKey-subset
+ *                           refusal — are properties of the DOCUMENT and no
+ *                           amount of re-sending touches them.
+ *
+ * Deliberately NOT mirrored into scripts/lib/autocount-skip-kinds.mjs: the
+ * health check reports the queue and never re-queues, so a copy there would be
+ * a second home for a rule with no second reader.
+ */
+/**
+ * Is a per-row "Send now" button worth OFFERING on this row?
+ *
+ * THE SIBLING OF `acRowIsRequeueable`, AND NOT A WIDENING OF IT. The two answer
+ * different questions and their answers are disjoint by construction: Send again
+ * asks "may this refusal be tried afresh", which is only ever true of a row that
+ * has STOPPED (failed or skipped); Send now asks "may this row, which is already
+ * going out, go out this instant instead of in five minutes", which is only ever
+ * true of a row that is still WAITING. No row can offer both, and that is the
+ * property that keeps the two buttons from meaning the same thing on screen.
+ *
+ * The owner asked for this by name — 「自动的 可是我要可以manual push」: keep the
+ * automatic sync and let a person push. Until now a waiting row had no control
+ * at all, because `acRowIsRequeueable` refuses `pending` structurally (a
+ * re-queue would INSERT a duplicate create) and so the operator could only wait
+ * for the cron.
+ *
+ * A HINT, NOT THE GATE — the same standing as its sibling. `sendOutboxRowNow`
+ * re-reads the row, re-checks the switch and takes an exclusive claim, and can
+ * still answer no for reasons this pure function cannot see. Nothing on the
+ * write path trusts this; it exists so the page does not offer a button whose
+ * answer is knowably no before it is pressed.
+ *
+ * The two structural noes:
+ *
+ *   not pending      a sent row is in the book, a failed row has given up and
+ *                    wants Send again, a skipped one never left the building.
+ *   attempts spent   the drain selects `attempts < MAX_ATTEMPTS`, so a pending
+ *                    row at the cap is stranded and a push would spend a call
+ *                    on the account book that cannot help it.
+ *
+ * NO OP RESTRICTION, deliberately, and this is where it differs most from its
+ * sibling. `acRowIsRequeueable` has to care which operation it is, because a
+ * re-queue must COMPOSE something and only some ops can be composed again. A
+ * send-now composes nothing — it dispatches the payload already sitting in the
+ * row, which is the same payload the sweep would have sent — so every operation
+ * the drain can dispatch, this can dispatch, including `edit` and `cancel`.
+ */
+export function acRowCanSendNow(
+  status: string,
+  lastError: string | null | undefined,
+  attempts: number,
+): boolean {
+  if (acOutboxState(status, lastError) !== 'pending') return false;
+  return attempts < AC_MAX_ATTEMPTS;
+}
+
+export function acRowIsRequeueable(
+  op: string,
+  status: string,
+  lastError: string | null | undefined,
+): boolean {
+  const state = acOutboxState(status, lastError);
+  if ((AC_REQUEUEABLE_OPS as readonly string[]).includes(op)) {
+    return state === 'failed' || state === 'skipped';
+  }
+  /* EVERY DOCUMENT GETS THE BUTTON. Owner 2026-08-24: 「我的 GR PO 所有文件都要
+     有 Send Now 的 button」.
+
+     This used to be FAILED ONLY, on the reasoning that "a skipped transfer never
+     left the building, so the service has never seen it and its refusal cannot
+     be a service refusal". That reasoning is about the OLD row and it is true
+     about the old row. It is the wrong question. The right one is whether the
+     DOCUMENT can go now — and for the skip that matters most, "there is no
+     earlier document to carry across", the answer changed underneath the row:
+     the receipt or invoice always had a parent on its lines, the create path
+     just failed to name it (docs/bugs/0524). Eight documents on production sat
+     with no button for exactly that reason.
+
+     So a skipped transfer is offered too, and the SEND re-resolves the parent
+     from the document instead of replaying the stored refusal — requeueOutboxRow
+     is where that happens. A row whose document genuinely has no parent gets the
+     same refusal back, now with a sentence, which is a better answer than a
+     greyed-out button that explains nothing. */
+  if ((AC_TRANSFER_OPS as readonly string[]).includes(op)) {
+    return state === 'failed' || state === 'skipped';
+  }
+  return false;
 }

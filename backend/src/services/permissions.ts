@@ -1,11 +1,21 @@
 /**
- * Flat catalog of every permission the app understands.
- * Keep this in sync with the resource boundaries on the worker
- * (one entry per { resource × verb }) and with the frontend
- * permission registry.
+ * Flat catalog of every permission the app understands. One entry per
+ * { resource × verb }.
  *
- * Special key "*" → grants every permission. Reserved for the
- * Owner role.
+ * **This array is the ONLY thing that makes a permission real.**
+ * `isValidPermission` answers from it, `parsePermissions` filters every stored
+ * role key through that, and `routes/roles.ts` renders the admin checkbox grid
+ * straight off it. A key that is granted in the database but missing here is
+ * DROPPED at session hydration and cannot be granted through the UI either —
+ * see `UNDECLARED_ROLE_KEYS` below for what that has already cost.
+ *
+ * Special key "*" → grants every permission. Reserved for the Owner role.
+ *
+ * There is NO frontend permission registry to keep this in sync with, and there
+ * must not be one. `frontend/src/auth/capabilities.ts` states the rule in full:
+ * the client holds booleans the server already decided, never a second copy of
+ * a backend rule. (This header said "and with the frontend permission registry"
+ * until 2026-08-20 — a pointer at something that has never existed.)
  */
 export interface PermissionDef {
   key: string;
@@ -186,9 +196,19 @@ export const PERMISSIONS: PermissionDef[] = [
   // settings.manage, which is the other key the route accepts (whoever may edit
   // the sync connection may obviously read the queue it feeds, and that grant
   // already exists — a key nobody holds is an endpoint nobody can call).
-  // Read-only: re-sending stays in requeue-autocount-skipped.yml, behind its
-  // includeFailed opt-in. Owner + IT Admin cover it via "*".
+  // Owner + IT Admin cover it via "*".
   { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+  /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
+     The read key above used to end "Read-only: re-sending stays in
+     requeue-autocount-skipped.yml"; it does not any more, and the two are
+     deliberately SEPARATE keys rather than one. Reading the queue is watching;
+     re-sending WRITES A DOCUMENT INTO A LIVE LICENSED ACCOUNT BOOK, where an
+     accepted sales order cannot simply be deleted. Whoever is handed the page
+     to watch must not thereby be able to push into the book — the same split
+     scm.hr.close / scm.hr.reopen is drawn on one section up. The route also
+     accepts settings.manage, which already exists and already owns the AutoCount
+     connection, so the button works for its real audience on day one. */
+  { key: "scm.autocount.requeue", resource: "Supply Chain", verb: "manage", label: "Re-send a refused AutoCount document", description: "Put one failed or skipped document back in the AutoCount queue once its cause is fixed — writes into the live account book, and is refused outright for a document AutoCount has already accepted" },
 
   // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
   // nav/page gate (grant broadly); mail_center.manage gates the alias / access /
@@ -278,3 +298,130 @@ export function parsePermissions(json: string | null | undefined): string[] {
     return [];
   }
 }
+
+/**
+ * The keys `parsePermissions` THREW AWAY — the other half of the same answer.
+ *
+ * A stored key that is not in `PERMISSIONS` is silently discarded at session
+ * hydration: no log, no error, nothing in the UI. That silence is the whole
+ * defect class. `service_cases.approve` gated `assr.ts` for weeks while missing
+ * from the catalogue, so cost approval was accidentally Owner/IT-only and no
+ * amount of clicking in Team > Positions could change it — the drop was the
+ * only symptom, and it made no sound.
+ *
+ * `GET /api/roles` returns this beside `permissions`, so a role row carrying
+ * keys this build does not understand SAYS SO instead of looking clean.
+ * `backend/tests/permissionCatalogueDrift.test.ts` is the build-time half.
+ */
+export function droppedPermissions(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const arr = JSON.parse(json);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((x): x is string => typeof x === "string" && !isValidPermission(x));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every key granted by a role row in this repository that is NOT in
+ * `PERMISSIONS`, with the reason it is absent. Twenty-two of them, audited
+ * one by one on 2026-08-20.
+ *
+ * **This is a LEDGER, not an allow-list.** Nothing reads it to decide access —
+ * a key listed here is still dropped, exactly as before. It exists so the drop
+ * is a WRITTEN DECISION instead of silence, and so
+ * `backend/tests/permissionCatalogueDrift.test.ts` can fail the build when a
+ * key appears that nobody has classified.
+ *
+ * **Adding a key here is not the fix for a key that has a live gate.** If a
+ * `requirePermission("x")` exists anywhere, `x` belongs in `PERMISSIONS` above
+ * — that is what happened to `service_cases.approve` on 2026-08-13. This ledger
+ * is only for keys that gate NOTHING.
+ *
+ * How each verdict was reached, and how to redo it for a new key:
+ *
+ *   grep -rF '"<key>"' backend/src frontend/src --include=*.ts --include=*.tsx
+ *
+ * All 17 `retired` keys below carry ZERO GATES — no `requirePermission`, no
+ * `requireAnyPermission`, no `can()`, no `.includes()` check, and no frontend
+ * use of any kind.
+ *
+ * **They are not entirely unread, and that matters.** Two scripts under
+ * `backend/scripts/` parse a role's stored `permissions` array with their OWN
+ * parser instead of `parsePermissions`, so they SEE what the running system
+ * drops:
+ *   - `backfill-role-page-access.mjs` (`parsePerms`, no isValidPermission
+ *     filter) derived mig 073's `role_page_access` rows FROM these keys —
+ *     `trips.manage` / `planner.run` gave a role FULL logistics,
+ *     `sales_orders.write` FULL orders, `delivery_orders.write` FULL delivery
+ *     orders. It is one-shot and has already run, so that grant is now a stored
+ *     `role_page_access` row standing on a key nothing else honours.
+ *   - `census-service-case-visibility.mjs` deliberately keeps every stored
+ *     string, so its model of a user's permissions is WIDER than the running
+ *     system's.
+ * Neither is a runtime gate. Both are reasons not to assume "dropped" means
+ * "never had an effect". The modules they were
+ * written for are gone: there is no `/api/trips`, no `/api/planner` and no
+ * top-level `/api/reports` mount in `src/index.ts`, and the customer/supplier
+ * portals that DO exist are gated by CAPABILITY TOKENS
+ * (`middleware/supplierTrack.ts`), never by a session permission.
+ */
+export type UndeclaredRoleKey = {
+  /**
+   * `legacy-closed` — a REAL gate exists, and the key is left ungrantable ON
+   * PURPOSE. Declaring one of these would OPEN access that is currently shut.
+   * `retired` — the key gates nothing anywhere; the module it belonged to is
+   * gone. Declaring one would add a checkbox that grants nothing.
+   */
+  status: "legacy-closed" | "retired";
+  why: string;
+};
+
+export const UNDECLARED_ROLE_KEYS: Readonly<Record<string, UndeclaredRoleKey>> = {
+  // ── The five AutoCount legacy read keys. DO NOT DECLARE. ────────────────
+  // Each one IS a live gate in `routes/udf.ts:26-32`, and that file's header
+  // says the closure is deliberate: "their legacy read keys survive only in
+  // the mig 001/009/014 role JSON, so they stay closed to anyone the matrix
+  // can grant." Declaring any of them makes it a tickable checkbox and opens
+  // a UDF table nobody has decided to reopen.
+  "sales_orders.read":    { status: "legacy-closed", why: "gates GET /api/udf/sales_orders (udf.ts:26); closed on purpose since strip-to-core" },
+  "delivery_orders.read": { status: "legacy-closed", why: "gates GET /api/udf/delivery_orders (udf.ts:27); closed on purpose" },
+  "purchase_orders.read": { status: "legacy-closed", why: "gates GET /api/udf/purchase_orders (udf.ts:28); closed on purpose" },
+  "balance.read":         { status: "legacy-closed", why: "gates GET /api/udf/balance (udf.ts:30); closed on purpose" },
+  "overdue.read":         { status: "legacy-closed", why: "gates GET /api/udf/overdue (udf.ts:31); closed on purpose" },
+
+  // ── Retired Fleet / Trips module (mig 009, schema.sql Dispatcher+Driver+
+  // Helper). `public.trips` was DROPped by mig 0055; nothing mounts /api/trips
+  // or /api/planner. The Fleet keys that ARE live are `fleet.read` /
+  // `fleet.write`, which gate `scm/routes/fleet-maintenance.ts` — a different,
+  // later module. `routes/fleet.ts` has one gate and it is `users.read`.
+  "trips.read.own":  { status: "retired", why: "retired Trips module; no /api/trips mount, public.trips dropped by mig 0055" },
+  "trips.read.all":  { status: "retired", why: "retired Trips module; the only mention left is a comment at routes/inbox.ts:253" },
+  "trips.write":     { status: "retired", why: "retired Trips module; mig 009 Dispatcher + Driver, mig 014 Logistic Admin" },
+  "trips.manage":    { status: "retired", why: "retired Trips module; mig 009 Dispatcher only" },
+  "planner.run":     { status: "retired", why: "retired route planner; no /api/planner mount" },
+  "fleet.manage":    { status: "retired", why: "old Fleet module; the live fleet gates are fleet.read / fleet.write on fleet-maintenance.ts" },
+  "fleet.salary":    { status: "retired", why: "old Driver/Helper salary view; no reader anywhere" },
+  "sync.run":        { status: "retired", why: "old manual AutoCount sync trigger; the sync runs from cron + scm.autocount_* toggles" },
+  "reports.read":    { status: "retired", why: "mig 014 Manager role; no /api/reports mount and no reader" },
+
+  // ── The `.write` twins of two legacy-closed READ keys. Distinct case, and
+  // the more dangerous one: their `.read` siblings are ungrantable ON PURPOSE
+  // (above), so declaring a `.write` would create a grantable write key whose
+  // read counterpart is deliberately shut.
+  "sales_orders.write":    { status: "retired", why: "mig 009 Dispatcher; no writer — and its .read twin is legacy-closed, so declaring this would open write above read" },
+  "delivery_orders.write": { status: "retired", why: "mig 009 Dispatcher; no writer — same read/write inversion as above" },
+
+  // ── Mig 014's Customer / Supplier portal roles. Superseded by CAPABILITY
+  // TOKENS: /api/portal and /api/supplier-portal resolve a bearer token to
+  // exactly one case (middleware/supplierTrack.ts), and no handler there
+  // consults a session permission at all.
+  "portal.customer":               { status: "retired", why: "mig 014 Customer role; /api/portal is capability-token gated, not permission gated" },
+  "portal.supplier":               { status: "retired", why: "mig 014 Supplier role; /api/supplier-portal is capability-token gated" },
+  "service_cases.read.own":        { status: "retired", why: "mig 014 Customer role; superseded by the portal token" },
+  "service_cases.read.assigned":   { status: "retired", why: "mig 014 Supplier role; superseded by the portal token" },
+  "service_cases.comment":         { status: "retired", why: "mig 014 Customer role; portal comments authorise by token" },
+  "service_cases.supplier_update": { status: "retired", why: "mig 014 Supplier role; portal updates authorise by token" },
+};

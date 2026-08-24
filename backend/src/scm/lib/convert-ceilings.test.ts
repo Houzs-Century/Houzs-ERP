@@ -325,8 +325,27 @@ describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () 
     ...over,
   });
 
+  /* The ceiling cores return a RESULT now (`{ ok }`), not a bare Map — a failed
+     read can no longer arrive here disguised as an empty ledger. These tests
+     assert the happy path, so unwrapping loudly is the point: an `ok: false`
+     that slipped through would fail on this line instead of silently reading as
+     `undefined` and passing a `toBe(...)` nobody re-checked. */
   async function pending(tables: Record<string, Row[]>) {
-    return (await doRemainingByItemId(fakeSb(tables) as any, ['dl-1'])).get('dl-1');
+    const r = await doRemainingByItemId(fakeSb(tables) as any, ['dl-1'], 'invoiceable');
+    if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
+    return r.remaining.get('dl-1');
+  }
+
+  async function pendingOf(tables: Record<string, Row[]>, id: string) {
+    const r = await doRemainingByItemId(fakeSb(tables) as any, [id], 'invoiceable');
+    if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
+    return r.remaining.get(id);
+  }
+
+  async function ledger(tables: Record<string, Row[]>, doIds: string[]) {
+    const r = await doLineRemaining(fakeSb(tables) as any, doIds, 'invoiceable');
+    if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
+    return r.lines;
   }
 
   test('a SECOND invoice may take the still-pending balance', async () => {
@@ -360,21 +379,21 @@ describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () 
   });
 
   test('a DRAFT DO delivered nothing, so nothing is invoiceable from it', async () => {
-    const map = await doLineRemaining(fakeSb(base({
+    const map = await ledger(base({
       delivery_orders: [{ id: 'do-1', do_number: 'DO-1', status: 'DRAFT', debtor_code: 'C1', debtor_name: 'Cust' }],
-    })) as any, ['do-1']);
+    }), ['do-1']);
     expect(map.get('dl-1')).toBeUndefined();
   });
 
   test('a CANCELLED DO delivered nothing either', async () => {
-    const map = await doLineRemaining(fakeSb(base({
+    const map = await ledger(base({
       delivery_orders: [{ id: 'do-1', do_number: 'DO-1', status: 'CANCELLED', debtor_code: 'C1', debtor_name: 'Cust' }],
-    })) as any, ['do-1']);
+    }), ['do-1']);
     expect(map.get('dl-1')).toBeUndefined();
   });
 
   test('a DO line that no longer exists resolves to 0, never to unlimited', async () => {
-    expect((await doRemainingByItemId(fakeSb(base()) as any, ['ghost'])).get('ghost')).toBe(0);
+    expect(await pendingOf(base(), 'ghost')).toBe(0);
   });
 });
 

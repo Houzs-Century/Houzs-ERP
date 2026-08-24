@@ -3,16 +3,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { useUpdateMfgDeliveryOrderStatus } from "../vendor/scm/lib/delivery-order-queries";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import {
-  HC_SUBSTATUS_VALUES,
   useDeliveryPlanningLines,
   type PlanningLineItem,
 } from "../vendor/scm/lib/delivery-planning-queries";
-import { fmtCenti } from "../lib/scm";
+import { useCreateAmendment } from "../vendor/scm/lib/so-amendment-queries";
+/* The "Delivery details" card, plus the three presentational primitives that
+   moved with it. They live there because BOTH modules need them and this one
+   already imports that file — the other direction would be a cycle. */
+import {
+  DeliveryFieldsCard,
+  EM,
+  hhmm,
+  pdRow,
+} from "./MobileDeliveryFieldsCard";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../auth/salesAccess";
@@ -53,14 +63,19 @@ type BoardRow = {
   branding: string | null;
   status: string | null;
   delivery_state: Bucket;
-  balance_centi: number | null;
-  balance_centi_live: number | null;
-  local_total_centi: number | null;
+  balance_sen: number | null;
+  balance_sen_live: number | null;
+  local_total_sen: number | null;
   so_date: string | null;
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
+  /* Server-computed: a live (non-cancelled) PO already claims one of this SO's
+     lines (2990 only). NOT derivable here — the feed carries no PO linkage —
+     and it is the second road into the same soft lock, so procLockActive needs
+     it alongside processing_date. Absent reads as false. */
+  po_locked?: boolean | null;
   days_left: number | null;
   address: string | null;
   postcode: string | null;
@@ -116,7 +131,6 @@ const DAY_TABS: { key: Day; label: string }[] = [
 ];
 
 // ── Formatters — never render null / undefined / NaN. ──
-const EM = "—";
 // TZ-aware numeric DD/MM/YYYY via the shared helper (returns "—" for blank /
 // unparseable), so date-only strings render in Asia/Kuala_Lumpur without an
 // off-by-one on an off-zone device.
@@ -130,15 +144,6 @@ const dayKey = (d: string | null | undefined): string => {
   const m = String(dt.getMonth() + 1).padStart(2, "0");
   const day = String(dt.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-};
-// Time-of-day HH:MM from an ISO timestamp (for the tracking timeline).
-const hhmm = (ts: string | null | undefined): string => {
-  if (!ts) return "";
-  const dt = new Date(ts);
-  if (isNaN(+dt)) return "";
-  return `${String(dt.getHours()).padStart(2, "0")}:${String(
-    dt.getMinutes(),
-  ).padStart(2, "0")}`;
 };
 
 /* The effective delivery date the run-sheet buckets on.
@@ -250,9 +255,12 @@ const seqBgFor = (st: TrackState): string =>
 export function MobileDeliveryPlanning({
   onBack,
   onOpen,
+  onPod,
 }: {
   onBack: () => void;
   onOpen?: (docNo: string) => void;
+  /* Open the Proof-of-Delivery screen for a DO NUMBER — see onComplete. */
+  onPod?: (doNumber: string) => void;
 }) {
   const [day, setDay] = useState<Day>("today");
   // The stop currently open in the detail view (its SO doc_no).
@@ -369,6 +377,7 @@ export function MobileDeliveryPlanning({
         isToday={isToday}
         onBack={() => setOpenStop(null)}
         onOpen={onOpen}
+        onPod={onPod}
       />
     );
   }
@@ -735,7 +744,7 @@ function StopCard({
   const st = trackState(o, isToday);
   const [chipBg, chipFg] = STATE_COLORS[st];
   const seqBg = seqBgFor(st);
-  const bal = o.balance_centi_live ?? o.balance_centi ?? 0;
+  const bal = o.balance_sen_live ?? o.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const cust = o.debtor_name || o.so_doc_no || EM;
   const subId = latestDo(o)?.do_number || o.so_doc_no || EM;
@@ -912,7 +921,7 @@ function StopCard({
             className="tnum"
             style={{ fontSize: 16, fontWeight: 800, color: "#8a4b12" }}
           >
-            {fmtCenti(bal)}
+            {fmtSen(bal)}
           </span>
         </div>
       )}
@@ -940,20 +949,6 @@ function StopCard({
    rows, the balance-to-collect block, and the Delivery-tracking timeline
    (Start → Arrive → Done) wired to the DO status endpoint.
    ─────────────────────────────────────────────────────────────────────── */
-
-// pdRow — a canonical label:value row (.row / .row-l / .row-v). `last` drops
-// the divider (matches .row:last-child).
-function pdRow(label: string, val: ReactNode, strong?: boolean, last?: boolean) {
-  return (
-    <div
-      className="row"
-      style={last ? { borderBottom: "none" } : undefined}
-    >
-      <span className="row-l">{label}</span>
-      <span className={strong ? "row-v strong" : "row-v"}>{val}</span>
-    </div>
-  );
-}
 
 // pdItem — one goods line (name + optional spec + qty). Mirrors pdItem().
 function PdItem({
@@ -1151,12 +1146,14 @@ function StopDetail({
   isToday,
   onBack,
   onOpen,
+  onPod,
 }: {
   order: BoardRow;
   seq: number;
   isToday: boolean;
   onBack: () => void;
   onOpen?: (docNo: string) => void;
+  onPod?: (doNumber: string) => void;
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
@@ -1193,7 +1190,7 @@ function StopDetail({
   const [chipBg, chipFg] = STATE_COLORS[st];
   const doRef = latestDo(order);
   const doId = doRef?.id || null;
-  const bal = order.balance_centi_live ?? order.balance_centi ?? 0;
+  const bal = order.balance_sen_live ?? order.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const eff = dm(effDateOf(order));
   const timeWindow = (order.time_range && order.time_range.trim()) || "";
@@ -1256,10 +1253,9 @@ function StopDetail({
     },
   });
 
-  // ── Save the HC delivery-execution fields on the latest DO (identical endpoint
-  // to the desktop DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields).
-  // Only the DO-execution subset a driver touches on the road — time window,
-  // arrival/departure clock, delivered date, and the HC "Remark 4" sub-status.
+  // ── Save the HC delivery fields (identical endpoint to the desktop
+  // DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields) — the
+  // SO-context group plus, once a DO exists, the DO-execution group.
   const saveFields = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       authedFetch<{ ok: true; no_do_hint: string | null }>(
@@ -1271,19 +1267,23 @@ function StopDetail({
     },
   });
 
+  /* The disposal lane. `replacement_disposal` is a CONTROLLED SO field: on a
+     processing- or PO-locked order the backend answers 409
+     `so_locked_processing` to a direct write and the change has to arrive as an
+     SO Amendment for Logistics to approve (owner 2026-07-27). The card decides
+     WHICH lane a save takes; this is the second lane's writer. */
+  const createAmendment = useCreateAmendment();
+
   // "On the way" / "Mark arrived" → IN_TRANSIT. Inventory-idempotent (DO OUT).
-  const start = useMutation({
-    mutationFn: () => {
-      if (!doId) throw new Error("no_do");
-      return authedFetch<{ deliveryOrder: unknown }>(
-        `/delivery-orders-mfg/${encodeURIComponent(doId)}/status`,
-        { method: "PATCH", body: JSON.stringify({ status: "IN_TRANSIT" }) },
-      );
-    },
-    onSuccess: async () => {
-      await invalidate();
-    },
-  });
+  /* THE SHARED HOOK, not a hand-rolled PATCH. The board used to build this
+     request itself, which is how the DO status endpoint came to have four
+     private implementations and only one of them carrying proof of delivery.
+     IN_TRANSIT is a departure marker and takes no evidence, but it belongs on
+     the same writer so there is exactly one.
+
+     A failed "On the way" said NOTHING before — the hook's own onError now
+     surfaces it, and the per-call onError below keeps the board's wording. */
+  const start = useUpdateMfgDeliveryOrderStatus();
 
   /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
      
@@ -1318,19 +1318,20 @@ function StopDetail({
     },
   });
 
-  // "POD complete" → DELIVERED (stamps delivered_at).
-  const complete = useMutation({
-    mutationFn: () => {
-      if (!doId) throw new Error("no_do");
-      return authedFetch<{ deliveryOrder: unknown }>(
-        `/delivery-orders-mfg/${encodeURIComponent(doId)}/status`,
-        { method: "PATCH", body: JSON.stringify({ status: "DELIVERED" }) },
-      );
-    },
-    onSuccess: async () => {
-      await invalidate();
-    },
-  });
+  /* "POD complete" was a raw PATCH `{ status: "DELIVERED" }` from here. It is
+     now a NAVIGATION to the POD screen — what the button has always been
+     labelled ("Take POD photo — complete") and never did. That deletion closes
+     two defects a warning here could not have fixed:
+
+     1. NO EVIDENCE. Signature pad, photo and GPS live on MobilePOD, so the same
+        stop had a signature or had nothing depending on the screen used.
+     2. THE REMEDY IT NAMED DID NOT EXIST. Its confirm said "Open the order
+        afterwards to attach the POD photo and signature" — but MobilePOD
+        withholds its whole capture path once delivered (MobilePOD.tsx, the
+        `!delivered && !cancelled && canOperate` gate). There was no afterwards.
+
+     Nothing is taken from the driver: MobilePOD still closes a delivery the
+     customer will not sign for; it now says so instead of staying quiet. */
 
   // Offer to CUT the DO on the spot (same endpoint the desktop board uses) when
   // a stop has none yet, instead of dead-ending at "ask the office".
@@ -1375,7 +1376,16 @@ function StopDetail({
     // button is already withheld for a view-only user; guard the handler too.
     if (!canOperateDo) return;
     if (!(await requireDo())) return;
-    start.mutate();
+    if (!doId) return; // requireDo guarantees this; narrows the type.
+    start.mutate({ id: doId, status: "IN_TRANSIT" }, {
+      onSuccess: async () => { await invalidate(); },
+      onError: async (e) => {
+        await notify({
+          title: "Couldn't start the delivery",
+          body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+        });
+      },
+    });
   };
 
   /* Step 2's own handler. It used to call onStart — so "Mark arrived" re-posted
@@ -1390,16 +1400,20 @@ function StopDetail({
   const onComplete = async () => {
     if (!canOperateDo) return;
     if (!(await requireDo())) return;
-    const go = await confirm({
-      title: "Mark delivered?",
-      body: "This records the stop as delivered and sends the completion time to the office. Open the order afterwards to attach the POD photo and signature.",
-      confirmLabel: "Mark delivered",
-    });
-    if (!go) return;
-    complete.mutate();
+    /* The DO NUMBER, not the id — MobilePOD resolves a document number through
+       the list route. `requireDo()` above guarantees a DO exists by now. */
+    const doNumber = doRef?.do_number;
+    if (!doNumber || !onPod) {
+      await notify({
+        title: "Can't open Proof of Delivery",
+        body: "This stop's delivery order number isn't available yet. Pull to refresh, then try again.",
+      });
+      return;
+    }
+    onPod(String(doNumber));
   };
 
-  const busy = start.isPending || arrive.isPending || complete.isPending;
+  const busy = start.isPending || arrive.isPending;
   const goToDo = () => onOpen?.(order.so_doc_no);
   const [editingFields, setEditingFields] = useState(false);
 
@@ -1675,30 +1689,60 @@ function StopDetail({
           </button>
         )}
 
-        {/* Delivery details (HC delivery-execution fields) — same endpoint as the
-            desktop DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields.
-            Editable only once a DO exists (the fields live on the DO), mirroring
-            the desktop drawer's DO-execution group gating. */}
-        {doId && (
-          <DeliveryFieldsCard
-            order={order}
-            editing={editingFields}
-            saving={saveFields.isPending}
-            onEdit={() => setEditingFields(true)}
-            onCancel={() => setEditingFields(false)}
-            onSave={async (body) => {
+        {/* Delivery details (HC delivery fields) — same endpoint as the desktop
+            DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields.
+            RENDERED ALWAYS, not only when a DO exists: the four SO-context
+            fields (move-in date, house type, referral, replacement / disposal)
+            are saved on the SO header and the desktop drawer keeps them
+            editable with no DO. Only the DO-execution group is gated on
+            `hasDo`, which the card does internally. */}
+        <DeliveryFieldsCard
+          order={order}
+          hasDo={!!doId}
+          editing={editingFields}
+          saving={saveFields.isPending || createAmendment.isPending}
+          onEdit={() => setEditingFields(true)}
+          onCancel={() => setEditingFields(false)}
+          onSave={async (body, amendment) => {
+            if (Object.keys(body).length > 0) {
               try {
                 await saveFields.mutateAsync(body);
-                setEditingFields(false);
               } catch (e) {
                 await notify({
                   title: "Couldn't save",
                   body: e instanceof Error ? e.message : "Something went wrong.",
                 });
+                return;
               }
-            }}
-          />
-        )}
+            }
+            if (amendment) {
+              try {
+                await createAmendment.mutateAsync({
+                  docNo: order.so_doc_no,
+                  reason: "Replacement / disposal update (mobile run sheet)",
+                  lines: [],
+                  headerChanges: { replacementDisposal: amendment.disposal },
+                });
+              } catch (e) {
+                /* The direct fields DID save — say so, and leave the editor
+                   open so the disposal can be retried without retyping. */
+                await notify({
+                  title: "Disposal change NOT submitted",
+                  body: `${
+                    e instanceof Error ? e.message : "Something went wrong."
+                  } The other fields were saved.`,
+                  tone: "error",
+                });
+                return;
+              }
+              await notify({
+                title: "Saved — disposal change sent for approval",
+                body: "The Replacement / Disposal change was raised as an SO Amendment. Logistics reviews and approves it.",
+              });
+            }
+            setEditingFields(false);
+          }}
+        />
 
         {/* Goods to deliver — per-line item + variant, fetched from the SHARED
             /delivery-planning/:docNo/lines endpoint (the SAME hook the desktop
@@ -1867,7 +1911,7 @@ function StopDetail({
               className="tnum"
               style={{ fontSize: 19, fontWeight: 800, color: "#8a4b12" }}
             >
-              {fmtCenti(bal)}
+              {fmtSen(bal)}
             </span>
           </div>
         )}
@@ -1879,12 +1923,12 @@ function StopDetail({
             <span className="card-sub">On the way → Arrived → POD</span>
           </div>
           <div className="card-b">
-            {(start.error || complete.error) && (
+            {start.error && (
               <div
                 style={{ fontSize: 12, color: "var(--red)", marginBottom: 9 }}
               >
                 {(() => {
-                  const e = start.error || complete.error;
+                  const e = start.error;
                   return e instanceof Error && e.message !== "no_do"
                     ? e.message
                     : "Couldn't update this stop. Please try again.";
@@ -1939,9 +1983,7 @@ function StopDetail({
               <TrackButton
                 onClick={onComplete}
                 busy={busy}
-                label={
-                  complete.isPending ? "Saving…" : "Take POD photo — complete"
-                }
+                label="Take POD photo — complete"
                 icon="camera"
                 primary
               />
@@ -2002,257 +2044,6 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
           n={(order.branding && order.branding.trim()) || "Delivery order lines"}
           spec={doNo ? `Delivery order ${doNo}` : `Sales order ${order.so_doc_no}`}
         />
-      )}
-    </div>
-  );
-}
-
-/* ── DeliveryFieldsCard — the HC delivery-execution fields, read + Edit→Save.
-   Mirrors the desktop DeliveryFieldsDrawer's DO-execution group: time window +
-   confirmed, arrival/departure clock, SHIPOUT DATE + ARRIVING PORT (EM/SG
-   cross-border), customer-delivered date, and the HC "Remark 4" delivery
-   sub-status. Save posts ONLY the changed fields to PATCH
-   /delivery-planning/so/:id/fields via the same camelCase keys the drawer sends
-   (shipoutDate / etaArrivingPort are accepted by that endpoint). Blank clears
-   (the endpoint stores '' → null). NOTE: arrives_em_warehouse_date is NOT edited
-   here — the desktop drawer does not write it either (it is a read-only grid
-   field; the FE HcFieldsPatch omits it), so adding it would create a new
-   divergence rather than close one.
-   ─────────────────────────────────────────────────────────────────────────── */
-// A TIMESTAMPTZ ISO → the value <input type="datetime-local"> wants.
-const toDtLocal = (iso: string | null | undefined): string =>
-  iso ? String(iso).slice(0, 16) : "";
-// A YYYY-MM-DD date-ish string → the value <input type="date"> wants.
-const toDateInput = (d: string | null | undefined): string =>
-  d ? String(d).slice(0, 10) : "";
-
-function DeliveryFieldsCard({
-  order,
-  editing,
-  saving,
-  onEdit,
-  onCancel,
-  onSave,
-}: {
-  order: BoardRow;
-  editing: boolean;
-  saving: boolean;
-  onEdit: () => void;
-  onCancel: () => void;
-  onSave: (body: Record<string, unknown>) => void;
-}) {
-  const initial = useMemo(
-    () => ({
-      timeRange: order.time_range ?? "",
-      timeConfirmed: !!order.time_confirmed,
-      arrivalAt: toDtLocal(order.arrival_at),
-      departureAt: toDtLocal(order.departure_at),
-      shipoutDate: toDateInput(order.shipout_date),
-      customerDeliveredDate: toDateInput(order.customer_delivered_date),
-      etaArrivingPort: order.eta_arriving_port ?? "",
-      deliverySubstatus: order.delivery_substatus ?? "",
-    }),
-    [order],
-  );
-  const [form, setForm] = useState(initial);
-  // Re-seed the draft each time the editor is (re)opened so a fresh board fetch
-  // isn't shadowed by a stale draft.
-  const startEdit = () => {
-    setForm(initial);
-    onEdit();
-  };
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
-    setForm((s) => ({ ...s, [k]: v }));
-
-  const save = () => {
-    const body: Record<string, unknown> = {};
-    if (form.timeRange !== initial.timeRange) body.timeRange = form.timeRange || null;
-    if (form.timeConfirmed !== initial.timeConfirmed) body.timeConfirmed = form.timeConfirmed;
-    if (form.arrivalAt !== initial.arrivalAt) body.arrivalAt = form.arrivalAt || null;
-    if (form.departureAt !== initial.departureAt) body.departureAt = form.departureAt || null;
-    if (form.shipoutDate !== initial.shipoutDate) body.shipoutDate = form.shipoutDate || null;
-    if (form.customerDeliveredDate !== initial.customerDeliveredDate)
-      body.customerDeliveredDate = form.customerDeliveredDate || null;
-    if (form.etaArrivingPort !== initial.etaArrivingPort)
-      body.etaArrivingPort = form.etaArrivingPort || null;
-    if (form.deliverySubstatus !== initial.deliverySubstatus)
-      body.deliverySubstatus = form.deliverySubstatus || null;
-    if (Object.keys(body).length === 0) {
-      onCancel();
-      return;
-    }
-    onSave(body);
-  };
-
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    fontFamily: "inherit",
-    fontSize: 13,
-    color: "var(--ink)",
-    background: "var(--bg)",
-    border: "1px solid var(--line)",
-    borderRadius: 9,
-    padding: "9px 10px",
-    marginTop: 3,
-  };
-
-  return (
-    <div className="card" style={{ marginBottom: 12 }}>
-      <div className="card-h">
-        <span className="card-t">Delivery details</span>
-        {!editing && (
-          <span
-            onClick={startEdit}
-            className="card-sub"
-            style={{ color: "var(--brand)", fontWeight: 700, cursor: "pointer" }}
-          >
-            Edit
-          </span>
-        )}
-      </div>
-      {editing ? (
-        <div className="card-b">
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">Time window</span>
-            <input
-              value={form.timeRange}
-              placeholder="e.g. 10am-12pm"
-              onChange={(e) => set("timeRange", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <input
-              type="checkbox"
-              checked={form.timeConfirmed}
-              onChange={(e) => set("timeConfirmed", e.target.checked)}
-              style={{ width: 18, height: 18, accentColor: "#16695f" }}
-            />
-            <span style={{ fontSize: 12.5, color: "var(--ink2)" }}>Time confirmed with customer</span>
-          </label>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">Departure</span>
-            <input
-              type="datetime-local"
-              value={form.departureAt}
-              onChange={(e) => set("departureAt", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">Arrival</span>
-            <input
-              type="datetime-local"
-              value={form.arrivalAt}
-              onChange={(e) => set("arrivalAt", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">Shipout date (EM/SG)</span>
-            <input
-              type="date"
-              value={form.shipoutDate}
-              onChange={(e) => set("shipoutDate", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">Customer delivered date</span>
-            <input
-              type="date"
-              value={form.customerDeliveredDate}
-              onChange={(e) => set("customerDeliveredDate", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <span className="fld-l">ETA / arriving port (EM/SG)</span>
-            <input
-              value={form.etaArrivingPort}
-              placeholder="Port / shipment ref e.g. KUC3012008"
-              onChange={(e) => set("etaArrivingPort", e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ display: "block", marginBottom: 12 }}>
-            <span className="fld-l">Delivery status</span>
-            <select
-              value={form.deliverySubstatus}
-              onChange={(e) => set("deliverySubstatus", e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">—</option>
-              {HC_SUBSTATUS_VALUES.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={onCancel}
-              disabled={saving}
-              style={{
-                flex: 1,
-                height: 42,
-                border: "1px solid #d6d9d2",
-                borderRadius: 11,
-                background: "#fff",
-                color: "var(--ink2)",
-                fontFamily: "inherit",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: saving ? "default" : "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={save}
-              disabled={saving}
-              style={{
-                flex: 1,
-                height: 42,
-                border: "none",
-                borderRadius: 11,
-                background: saving ? "#7fb4ad" : "#16695f",
-                color: "#fff",
-                fontFamily: "inherit",
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: saving ? "default" : "pointer",
-              }}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <>
-          {pdRow("Time window", (order.time_range && order.time_range.trim()) || EM, true)}
-          {pdRow(
-            "Time confirmed",
-            order.time_confirmed == null ? EM : order.time_confirmed ? "Yes" : "No",
-            true,
-          )}
-          {pdRow("Departure", order.departure_at ? hhmm(order.departure_at) : EM, false)}
-          {pdRow("Arrival", order.arrival_at ? hhmm(order.arrival_at) : EM, true)}
-          {pdRow("Shipout date", dm(order.shipout_date), false)}
-          {pdRow("Delivered date", dm(order.customer_delivered_date), true)}
-          {pdRow(
-            "Arriving port",
-            (order.eta_arriving_port && order.eta_arriving_port.trim()) || EM,
-            false,
-          )}
-          {pdRow(
-            "Delivery status",
-            (order.delivery_substatus && order.delivery_substatus.trim()) || EM,
-            true,
-            true,
-          )}
-        </>
       )}
     </div>
   );

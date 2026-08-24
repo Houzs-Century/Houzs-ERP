@@ -12,12 +12,12 @@
 // what they MEAN lives on the server.
 
 import type { CSSProperties } from 'react';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import type { SettlementBucket } from './settlement-queries';
 
 export const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-export const fmt = (sen: number | null | undefined): string => fmtCenti(sen ?? 0);
+export const fmt = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 export const btn = (primary?: boolean, disabled?: boolean): CSSProperties => ({
   display: 'inline-flex', alignItems: 'center', gap: 6,

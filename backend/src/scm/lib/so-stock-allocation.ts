@@ -20,9 +20,22 @@
 //   1. Pull every non-cancelled, non-completed SO line (PENDING + READY)
 //      with deliverable_remaining > 0. ORDER BY sales-order created_at ASC
 //      so older orders claim stock first (FIFO allocation).
-//   2. Pull live inventory_balances summed across ALL warehouses per
-//      (product_code, variant_key) bucket. B2C: operator chooses warehouse
-//      at DO time; we just need to know "is it somewhere".
+//   2. Pull live inventory_balances PER WAREHOUSE, keyed
+//      (warehouse_id, item_code, variant_key) — the same bucket the lines are
+//      built with at :471. A KL line draws only KL stock, a PJ line only PJ. A
+//      line with NO warehouse bound gets its own 'NOWH' bucket and therefore
+//      sees no stock at all, so it stays PENDING until one is assigned.
+//
+//      THIS PARAGRAPH USED TO SAY THE OPPOSITE — "summed across ALL warehouses
+//      per (item_code, variant_key) … we just need to know 'is it somewhere'".
+//      That was the ORIGINAL design; migration 0118 (Commander 2026-05-31)
+//      replaced it with the per-warehouse bucket the code below has used ever
+//      since, and this header was never updated. It is auto-loaded context for
+//      anyone reading this file, so it did not merely go stale — it actively
+//      told readers the wrong rule, and on 2026-08-22 it did exactly that: a
+//      written explanation of the allocator went to the owner saying stock is
+//      pooled across warehouses, sourced from these three lines rather than
+//      from :471 and :564 forty lines below.
 //   3. Walk lines in FIFO order. For each line, deduct its deliverable
 //      remaining from the bucket's remaining qty:
 //        if bucket has enough → mark line READY, decrement bucket
@@ -37,13 +50,16 @@
 // rolling back a GRN/SO post (audit-DLQ pattern matching writeMovements).
 // ----------------------------------------------------------------------------
 
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { doCountsAsDelivered } from '../shared/do-shipped-states';
+import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { summariseReadiness } from './so-readiness';
 import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-set-coverage';
 import { paginateAll, chunkIn } from './paginate-all';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
+import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 
 export type AllocationResult = {
   ok: boolean;
@@ -51,6 +67,19 @@ export type AllocationResult = {
   ordersAdvanced: number;
   ordersRegressed: number;
   reason?: string;
+  /* TRUE when this call did NOT finish the projection and left a durable retry
+     row behind for the five-minute cron. FALSE when it did not finish and could
+     not even record that — the one state a human has to hear about, which is
+     why it is logged at error level rather than only returned. `undefined` on
+     the happy path.
+
+     This field exists because `ok` answers a DIFFERENT question (CLAUDE.md,
+     "the check that answers a different question"): a lock-skip returned
+     `{ ok: true, reason: 'another_recompute_in_progress' }` and thirty-odd
+     best-effort callers wrote `await recomputeSoStockAllocation(sb)` and
+     discarded it, so "true" meant "nothing happened and nobody will retry".
+     See the SKIP LEAVES A TRACE note at the enqueue below. */
+  queuedForRetry?: boolean;
   /* Doc numbers whose HEADER status could not be advanced/regressed this pass
      because a human editor holds the SO's edit lease (or the header moved under
      us). See the skip-and-continue note at the header-transition block: these
@@ -72,7 +101,64 @@ export type AllocationResult = {
 const ALLOCATION_LOCK_ROW = 'GLOBAL';
 const ALLOCATION_LOCK_MS = 15 * 60_000;
 
+/* SKIP LEAVES A TRACE (owner-visible defect, 2026-08-17).
+   ─────────────────────────────────────────────────────────────────────────────
+   The sweep below has three ways to come back having done nothing, and until
+   this wrapper existed all three were INVISIBLE to the ~34 best-effort triggers
+   that call it (GRN post, DO ship, returns, stock takes, transfers,
+   adjustments, consignment, and eight paths in mfg-sales-orders):
+
+     · it lost the single-flight race     -> { ok: TRUE, reason:
+                                               'another_recompute_in_progress' }
+     · it threw                           -> { ok: false, reason: <message> }
+     · a human held an SO's edit lease    -> { ok: true, deferredDocNos: [...] }
+
+   Every one of those call sites is written `await recomputeSoStockAllocation(sb)`
+   with the result discarded, so the request returned success and the projection
+   stayed stale until some UNRELATED later mutation happened to sweep it. The
+   first case is the one that bites hardest and it is not a crash-window race:
+   two GRNs posted close together deterministically leave the second one's lines
+   stale, and goods arriving is exactly the moment the operator is looking.
+
+   The five-minute cron could not help, because a best-effort trigger writes NO
+   queue row — the cron finds nothing pending and returns `completed: true`. It
+   was a backstop for the four durable call sites, never a repair loop.
+
+   So: whenever the sweep did not finish, write the durable retry row HERE, once,
+   for every present and future caller. That turns the existing cron into the
+   repair loop the system was documented as having. What it does NOT fix is a
+   Worker that dies BEFORE reaching this function — that still needs each route
+   moved onto `runScmPgCommand` so the enqueue can join the source write's
+   transaction (see the SCOPE header in stock-allocation-job.ts). Nothing here
+   should be read as making allocation durable in general. */
 export async function recomputeSoStockAllocation(
+  sb: any,
+  scopeToDocNo?: string,
+): Promise<AllocationResult> {
+  const result = await runSoStockAllocation(sb, scopeToDocNo);
+  const finished = result.ok
+    && result.reason !== 'another_recompute_in_progress'
+    && !(result.deferredDocNos && result.deferredDocNos.length > 0);
+  if (finished) return result;
+  try {
+    await enqueueStockAllocationRecompute(
+      sb,
+      `retry:${result.reason ?? (result.deferredDocNos ? 'headers_leased' : 'incomplete')}`,
+    );
+    return { ...result, queuedForRetry: true };
+  } catch (error) {
+    /* The projection is stale AND nothing will retry it. That is the state this
+       whole wrapper exists to prevent, so it can never be silent — and it is
+       still not thrown, because rolling back a posted GRN over a diagnostic row
+       would be worse than the stale line. */
+    // eslint-disable-next-line no-console
+    console.error('[so-allocation] recompute did not finish and the retry row could not be written:', error);
+    return { ...result, queuedForRetry: false };
+  }
+}
+
+async function runSoStockAllocation(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST client type, unchanged from the exported wrapper this body was split out of; schema.pg.ts covers none of these SCM tables (see ci.yml's lint job comment)
   sb: any,
   scopeToDocNo?: string,
 ): Promise<AllocationResult> {
@@ -110,13 +196,29 @@ export async function recomputeSoStockAllocation(
   }
   try {
     /* 1. All non-cancelled, non-completed SOs. Allocation priority:
-            a) customer_delivery_date ASC NULLS LAST  — earlier delivery wins
-            b) created_at ASC  — tiebreaker so order is deterministic */
+            a) EFFECTIVE delivery date ASC NULLS LAST — earlier delivery wins
+            b) created_at ASC  — tiebreaker so order is deterministic
+
+       EFFECTIVE, not original. This ranked on `customer_delivery_date` alone
+       until 2026-08-18, so a customer who rescheduled moved on the delivery
+       board (which has always read `amended_delivery_date ?? customer_delivery_
+       date`) and did NOT move here, in the queue that decides who gets the
+       scarce stock. Owner: there is no production in this business, only the
+       delivery date, and everything plans on the amended one. ONE reader now —
+       shared/effective-delivery.ts — shared with mrp.ts so the two engines
+       cannot drift apart again.
+
+       The SQL ORDER BY below is deliberately UNCHANGED and is not the priority.
+       It exists so paginateAll's `.range()` windows are coherent (they are only
+       coherent under a stable order); the priority order is the JS sort in
+       section 5, over the fully-materialised set. PostgREST cannot ORDER BY a
+       COALESCE of two columns, and inventing a sort expression here would buy
+       nothing the JS sort does not already decide. */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; proceeded_at: string | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, created_at, customer_delivery_date, company_id, proceeded_at')
+      .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
       /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
          eight audit scripts and mrp.ts used to re-type this same six-status
          set under four different names, each promising in a comment to track
@@ -129,23 +231,75 @@ export async function recomputeSoStockAllocation(
     if (orderError) throw new Error(`allocation order load failed: ${orderError.message}`);
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
-      customer_delivery_date: string | null; company_id: number | null;
-      proceeded_at: string | null;
+      customer_delivery_date: string | null; amended_delivery_date: string | null;
+      company_id: number | null;
+      processing_date: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
     const orderByDoc = new Map(orders.map((o) => [o.doc_no, o]));
     /* Processing-date allocation gate (owner 2026-08-10, go-live): nothing is
-       prepared before the order is proceeded, so an SO with NO Processing Date
-       must not claim stock nor show READY TO SHIP ("它明明都没有 Processing
-       Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing date 才来
-       分配"). Shipped company-1-only first; flipped GLOBAL after measuring the
-       blast radius (check-cutover-metrics 2026-08-10: company 1: 15, company 2:
-       5 READY_TO_SHIP-without-processing-date — both regress to CONFIRMED on
-       the next recompute, which is the owner's intent). Gated lines still walk
-       (so an already-READY line regresses on this same run) but are forced
-       PENDING and never consume a bucket or a sofa batch. */
+       prepared before the order is released for ordering, so an SO with NO
+       Processing Date must not claim stock nor show READY TO SHIP ("它明明都没有
+       Processing Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing
+       date 才来分配"). Gated lines still walk (so an already-READY line regresses
+       on this same run) but are forced PENDING and never consume a bucket or a
+       sofa batch.
+
+       THE RULE WAS RIGHT; THE COLUMN WAS NOT. This filtered on `proceeded_at`
+       until 2026-08-18, and NO shipped client writes that column when an
+       operator sets a Processing Date: CREATE persists the date to
+       `processing_date` (mfg-sales-orders.ts, `processing_date:
+       dateOrNull(body.processingDate)`) and stamps `proceeded_at` ONLY when the
+       order additionally clears the proceed gate (`autoProceed`); the header
+       PATCH writes the date and never stamps a proceed at all; and no frontend
+       sends `proceededAt` anywhere (zero occurrences in frontend/src). So an
+       order given a Processing Date on the detail screen locked, appeared on the
+       delivery board and pushed to AutoCount as PDate while EVERY line was
+       forced PENDING — never consuming a bucket, never claiming a sofa batch,
+       never reaching READY_TO_SHIP — with the goods physically in the warehouse,
+       and with no error, no log and nothing on screen.
+
+       ONE COLUMN, deliberately. Reading both "to be safe" would give the rule a
+       second home, which is how it acquired a wrong one. `proceeded_at` is the
+       same fact in the wrong shape (see SO_PROCESSING_DATE_COLUMN's docstring);
+       this is its stop-reading step, and its last reachable decision — the
+       remaining mentions are `soProcessingLocked`'s status-absent fallback,
+       which only runs after `processing_date` has already decided. The data was
+       consolidated into this column on 2026-08-13 (mig 0286 header: 519
+       company-1 orders moved out of `proceeded_at`, both companies verified at
+       zero split).
+
+       THE BLAST RADIUS, WHICH #2396 SHIPPED WITHOUT — measured the same day on
+       prod, read-only (backend/scripts/probe-proceed-split.mjs, run
+       32093080121). #2396's own message says it: *"Blast radius on production is
+       UNKNOWN and not invented — the probe that measures it is on a branch that
+       is not yet dispatchable."* It is now measured, and it is not nil:
+
+         company 1 — 2724 live orders: 519 both columns set, 2205 neither, ZERO
+           in either disagreement class. This flip is a genuine no-op here.
+         company 2 — 77 live orders: 5 (all CONFIRMED) gain allocation, which is
+           the bug #2396 describes. But 16 LOSE it — 12 CONFIRMED and 4
+           READY_TO_SHIP, each carrying a Proceed stamp and NO Processing Date.
+           Their lines are forced PENDING on the next 5-minute recompute and the
+           4 READY_TO_SHIP orders visibly drop back to CONFIRMED.
+
+       Those 16 are not a regression to undo: by the owner's rule (*"没有
+       processing date 就代表没有 proceed"*) an order with no date is not
+       proceeded, so gating it is the rule applied correctly, and the repair is a
+       human supplying the date — never a script inventing one (PROCEED_NEEDS_DATE
+       in shared/order-rules.ts). They are named here so the 4 that move are read
+       as this change working rather than as a new fault.
+
+       AND A LIVE PATH COULD STILL REOPEN THE SPLIT — this said it could not.
+       `autoProceed` requiring a date and IN_PRODUCTION refusing without one
+       cover the two paths that STAMP. They are not the only ways a row becomes
+       stamp-without-date: Remove-Processing-Date cleared the date and left the
+       stamp (closed 2026-08-18 in the header PATCH), and routes/so-mirror.ts
+       replicates whatever 2990 sends, including a stamp, through applyMap. Both
+       end for good with the column; see "RETIRING THE SECOND STORAGE" in
+       shared/so-processing-date.ts. */
     const allocGated = new Set(
-      orders.filter((o) => !o.proceeded_at).map((o) => o.doc_no),
+      orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
@@ -154,17 +308,31 @@ export async function recomputeSoStockAllocation(
     // chunkIn — docNos can exceed 1000 (un-truncated SO set) and lines across
     // them can exceed the 1000-row cap; batch the .in() and page each batch so
     // no SO line is dropped from the allocation walk.
-    const { data: lineRows, error: lineError } = await chunkIn(docNos, (batch, from, to) => sb
+    /* allocated_batch_no rides along in THIS read. It used to be a SECOND,
+       separately chunked pass over the sofa line ids (6 more serial round trips
+       on production, measured 2026-08-16) for a column every one of these rows
+       already carries. Forward-compat (migration 0121) is preserved, not
+       dropped: if the column is not in the schema the read is retried without
+       it and every line's batch reads as unset — which is exactly what the
+       separate pass did on the same error. */
+    const readLines = (cols: string) => chunkIn(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
-      .select('id, doc_no, item_code, item_group, variants, qty, warehouse_id, stock_status, stock_qty_ready, cancelled')
+      .select(cols)
       .in('doc_no', batch)
       .eq('cancelled', false)
       .range(from, to));
+    const LINE_COLS = 'id, doc_no, item_code, item_group, variants, qty, warehouse_id, stock_status, stock_qty_ready, cancelled';
+    const missingBatchCol = (m: string | undefined) => /allocated_batch_no|column .* does not exist/i.test(m ?? '');
+    let { data: lineRows, error: lineError } = await readLines(`${LINE_COLS}, allocated_batch_no`);
+    if (lineError && missingBatchCol(lineError.message)) {
+      ({ data: lineRows, error: lineError } = await readLines(LINE_COLS));
+    }
     if (lineError) throw new Error(`allocation line load failed: ${lineError.message}`);
     const lines = (lineRows ?? []) as Array<{
       id: string; doc_no: string; item_code: string; item_group: string | null;
       variants: VariantAttrs | null; qty: number; warehouse_id: string | null;
       stock_status: string; stock_qty_ready: number | null;
+      allocated_batch_no?: string | null;
     }>;
     if (lines.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
 
@@ -215,43 +383,48 @@ export async function recomputeSoStockAllocation(
     const isBatchedLine = (item_code: string, item_group: string | null) =>
       batchedCodes.has(item_code) || (item_group ?? '').toUpperCase().includes('SOFA');
 
-    /* Read each sofa line's currently-locked batch so we can tell what changed.
-       Forward-compat (migration 0121): allocated_batch_no may not exist yet —
-       read it best-effort; on any error treat every line's batch as unset. */
+    /* Each sofa line's currently-locked batch, so we can tell what changed. It
+       came in on the step-2 read above; only sofa lines are ever looked up. */
     const curBatchByLine = new Map<string, string | null>();
-    const sofaLineIds = lines.filter((l) => isBatchedLine(l.item_code, l.item_group)).map((l) => l.id);
-    if (sofaLineIds.length > 0) {
-      try {
-        const { data: bRows, error: bErr } = await chunkIn<{ id: string; allocated_batch_no: string | null }>(sofaLineIds, (batch, from, to) => sb
-          .from('mfg_sales_order_items')
-          .select('id, allocated_batch_no')
-          .in('id', batch)
-          .range(from, to));
-        if (!bErr) {
-          for (const r of (bRows ?? []) as Array<{ id: string; allocated_batch_no: string | null }>) {
-            curBatchByLine.set(r.id, r.allocated_batch_no ?? null);
-          }
-        } else if (!/allocated_batch_no|column .* does not exist/i.test(bErr.message ?? '')) {
-          throw new Error(`allocation sofa-batch binding load failed: ${bErr.message}`);
-        }
-      } catch (error) {
-        if (!/allocated_batch_no|column .* does not exist/i.test(error instanceof Error ? error.message : String(error))) throw error;
-      }
-    }
+    for (const l of lines) curBatchByLine.set(l.id, l.allocated_batch_no ?? null);
 
     // 3. Compute deliverable_remaining per line — = qty − Σ delivered (via
     //    non-cancelled DOs) + Σ returned (via non-cancelled DRs). Same formula
     //    as soDeliverableRemaining but inlined since we already have line ids.
-    const lineIds = lines.map((l) => l.id);
-    // chunkIn — lineIds can exceed 1000 (un-truncated SO set); batch + page so
-    // delivered qty isn't understated by a dropped DO line.
-    const { data: doLines, error: doLineError } = await chunkIn<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>(lineIds, (batch, from, to) => sb
-      .from('delivery_order_items')
-      .select('id, so_item_id, qty, delivery_order_id')
-      .in('so_item_id', batch)
+    /* INVERTED READ (2026-08-16). This used to chunk EVERY live SO-line id 200
+       at a time into `.in('so_item_id', ...)`: on production that was 71 serial
+       requests to retrieve 83 rows, because the cost is set by the ID COUNT
+       (14,169 live lines) and not by the rows that exist. Asked the other way
+       round — FROM the SO lines, pulling their DO lines through an `!inner`
+       embed — PostgREST returns only the lines that HAVE a DO line, so the same
+       83 rows arrive in one page.
+       Nothing new is invented here: the live-SO lens is the same one-level
+       embedded filter routes/mrp.ts already runs in production, and `!inner` is
+       what narrows the PARENT rows (reports.ts relies on that mechanism for its
+       listings). The FK PostgREST resolves the embed through —
+       delivery_order_items_so_item_id_mfg_sales_order_items_id_fk — was
+       confirmed present, exactly once, by probe-so-sweep-inversion.
+       The predicate is the same one that built `lines` above, so the row set is
+       identical by construction; the probe also proves it against prod. */
+    const { data: doJoinRows, error: doLineError } = await paginateAll<{
+      id: string;
+      do_items: Array<{ id: string; qty: number; delivery_order_id: string }> | null;
+    }>((from, to) => sb
+      .from('mfg_sales_order_items')
+      .select('id, so:mfg_sales_orders!inner(status), do_items:delivery_order_items!inner(id, qty, delivery_order_id)')
+      .eq('cancelled', false)
+      .not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
+      /* Deterministic paging — paginateAll walks .range() windows, and an
+         unordered read can repeat or skip a row between pages. */
+      .order('id')
       .range(from, to));
     if (doLineError) throw new Error(`allocation DO-line load failed: ${doLineError.message}`);
-    const doLineRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>;
+    const doLineRows: Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }> = [];
+    for (const r of doJoinRows ?? []) {
+      for (const d of r.do_items ?? []) {
+        doLineRows.push({ id: d.id, so_item_id: r.id, qty: d.qty, delivery_order_id: d.delivery_order_id });
+      }
+    }
     const doIds = [...new Set(doLineRows.map((l) => l.delivery_order_id).filter(Boolean))];
     const activeDoIds = new Set<string>();
     const doLineToSoItem = new Map<string, string>();
@@ -260,16 +433,17 @@ export async function recomputeSoStockAllocation(
         sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
       if (doError) throw new Error(`allocation DO load failed: ${doError.message}`);
       for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-        /* LEAK GUARD (DRAFT) — audit D5, 2026-08-01: a DRAFT DO has NOT
-           shipped, so it must not count as delivered here. This inline sum
-           used to exclude only CANCELLED while its source of truth
+        /* LEAK GUARD (PRE-SHIP) — audit D5, 2026-08-01: a DO that has not
+           shipped must not count as delivered here. This inline sum used to
+           exclude only CANCELLED while its source of truth
            (soDeliverableRemaining, delivery-orders-mfg.ts) and the DO->SO
-           delivery sync both exclude CANCELLED + DRAFT — so a draft DO
+           delivery sync both excluded CANCELLED + DRAFT — so a draft DO
            quietly shrank a line's remaining, starved it of allocation, and
            MRP (which uses soDeliverableRemaining) disagreed with this job
-           about the same line. One rule everywhere now. */
-        const st = (d.status ?? '').toUpperCase();
-        if (st !== 'CANCELLED' && st !== 'DRAFT') activeDoIds.add(d.id);
+           about the same line. "One rule everywhere" was true from that day
+           and the rule ITSELF was wrong: LOADED is pre-ship too. It is one
+           PREDICATE everywhere now (2026-08-20), not one hand-typed pair. */
+        if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
       }
     }
     const deliveredBySoItem = new Map<string, number>();
@@ -367,22 +541,33 @@ export async function recomputeSoStockAllocation(
           before SO-2605-002) so same-day allocation is deterministic, matching
           the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
-    /* The row types say these are strings, and under PostgREST they are. A
+    /* The ONE reader, shared with mrp.ts (shared/effective-delivery.ts):
+       amended_delivery_date wins over the customer's original, and it
+       normalises to 'YYYY-MM-DD'.
+
+       Normalising is not cosmetic and the reason is written down there too. The
+       row types say these are strings, and under PostgREST they are — but a
        repair script driving this same function through the postgres shim gets
        Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
-       throws — which killed a production allocation recompute on 2026-08-10
-       with "ad.localeCompare is not a function", after the allocator had
-       already done all its work. Compare on a normalised string so the priority
-       order is identical whichever transport delivered the row. */
-    const dateKey = (v: unknown): string =>
-      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+       throws, which killed a production allocation recompute on 2026-08-10 with
+       "ad.localeCompare is not a function" AFTER the allocator had done all its
+       work. effectiveSoDelivery carries that Date branch verbatim; this call
+       site is the reason it exists.
+
+       These orders carry no LINE fields — the allocator ranks whole orders, as
+       it always has, so it hands the reader header dates only. A per-line
+       override date still outranks the header inside mrp.ts, which does read
+       lines; that pre-existing difference between the two engines is untouched
+       here and unmeasured. */
+    const effDate = (o?: { customer_delivery_date: string | null; amended_delivery_date: string | null }): string =>
+      (o ? effectiveSoDelivery(o) : null) ?? '';
     const stampKey = (v: unknown): string =>
       v instanceof Date ? v.toISOString() : String(v ?? '');
     needs.sort((a, b) => {
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-      const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-      const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
-      if (ad !== bd) return ad.localeCompare(bd);                         // a) delivery date
+      const ad = effDate(A) || FAR_FUTURE;
+      const bd = effDate(B) || FAR_FUTURE;
+      if (ad !== bd) return ad.localeCompare(bd);                         // a) EFFECTIVE delivery date
       if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
       const ac = stampKey(A?.created_at);
       const bc = stampKey(B?.created_at);
@@ -392,23 +577,23 @@ export async function recomputeSoStockAllocation(
     /* 6. Pull live on-hand, keyed strictly per-warehouse to match the per-line
           buckets above. No cross-warehouse aggregate — a line draws only its
           own warehouse's stock. */
-    const productCodes = [...new Set(needs.map((n) => {
+    const itemCodes = [...new Set(needs.map((n) => {
       const parts = n.bucket.split('::');
       return parts[1] ?? '';
     }).filter(Boolean))];
-    // chunkIn — productCodes can exceed 1000 and balances can exceed the 1000-row
+    // chunkIn — itemCodes can exceed 1000 and balances can exceed the 1000-row
     // cap; batch + page so on-hand isn't understated → lines wrongly PENDING.
-    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>(productCodes, (batch, from, to) => sb
+    const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>(itemCodes, (batch, from, to) => sb
       .from('inventory_balances')
-      .select('warehouse_id, product_code, variant_key, qty')
-      .in('product_code', batch)
+      .select('warehouse_id, item_code, variant_key, qty')
+      .in('item_code', batch)
       .range(from, to));
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();
-    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>) {
+    for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const v = r.variant_key ?? '';
       const qty = Number(r.qty ?? 0);
-      const whKey = `${r.warehouse_id}::${r.product_code}::${v}`;
+      const whKey = `${r.warehouse_id}::${r.item_code}::${v}`;
       onHandByBucket.set(whKey, (onHandByBucket.get(whKey) ?? 0) + qty);
     }
 
@@ -439,18 +624,34 @@ export async function recomputeSoStockAllocation(
     const dedicatedReady = new Map<string, number>();
     const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
     if (boundNeeds.length > 0) {
-      const lineIds = boundNeeds.map((n) => n.id);
-      const { data: poLinkRows } = await chunkIn<{ so_item_id: string; qty: number; received_qty: number | null }>(
-        lineIds,
-        (batch, from, to) => sb
-          .from('purchase_order_items')
-          .select('so_item_id, qty, received_qty')
-          .in('so_item_id', batch)
-          .range(from, to),
-      );
-      for (const r of (poLinkRows ?? []) as Array<{ so_item_id: string; received_qty: number | null }>) {
-        const got = Number(r.received_qty ?? 0);
-        if (got > 0) dedicatedReady.set(r.so_item_id, (dedicatedReady.get(r.so_item_id) ?? 0) + got);
+      /* INVERTED, for the same reason and by the same shape as the DO-line read
+         above: chunking the 3,520 bedframe/sofa line ids cost 18 serial
+         requests on production. `!inner` on the PO link means only lines that
+         HAVE one come back.
+         `received_qty > 0` is pushed into SQL because the loop below discards
+         everything else anyway (a null received_qty reads as 0 and is skipped),
+         and it is applied to the EMBED so it narrows the parents too.
+         The bound-group narrowing deliberately stays in JS: `group` is compared
+         case-insensitively there, and a SQL predicate that had to reproduce
+         that could answer differently. Reading a superset and intersecting is
+         exact — `dedicatedReady` is only ever consulted for bound line ids. */
+      const boundIds = new Set(boundNeeds.map((n) => n.id));
+      const { data: poLinkRows } = await paginateAll<{
+        id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
+      }>((from, to) => sb
+        .from('mfg_sales_order_items')
+        .select('id, so:mfg_sales_orders!inner(status), po_items:purchase_order_items!inner(qty, received_qty)')
+        .eq('cancelled', false)
+        .not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
+        .gt('po_items.received_qty', 0)
+        .order('id')
+        .range(from, to));
+      for (const r of poLinkRows ?? []) {
+        if (!boundIds.has(r.id)) continue;
+        for (const p of r.po_items ?? []) {
+          const got = Number(p.received_qty ?? 0);
+          if (got > 0) dedicatedReady.set(r.id, (dedicatedReady.get(r.id) ?? 0) + got);
+        }
       }
     }
 
@@ -528,8 +729,8 @@ export async function recomputeSoStockAllocation(
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-        const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-        const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
+        const ad = effDate(A) || FAR_FUTURE;
+        const bd = effDate(B) || FAR_FUTURE;
         if (ad !== bd) return ad.localeCompare(bd);
         return a.doc_no.localeCompare(b.doc_no);
       });
@@ -665,11 +866,13 @@ export async function recomputeSoStockAllocation(
         // Batch-resolve each SO's company so an auto-allocation audit row inherits
         // the company of the SO it describes. Best-effort (the insert is swallowed).
         try {
+          /* chunkIn — the unscoped sweep flips lines across the WHOLE tenant, so
+             `docNos` is one entry per SO that changed and grows with the order
+             book; every other `.in()` in this file is already chunked. */
           const docNos = [...new Set(auditRows.map((r) => r.so_doc_no as string))];
-          const { data: coRows } = await sb.from('mfg_sales_orders')
-            .select('doc_no, company_id').in('doc_no', docNos);
-          const coByDoc = new Map(((coRows ?? []) as Array<{ doc_no: string; company_id: number | null }>)
-            .map((r) => [r.doc_no, r.company_id]));
+          const { data: coRows } = await chunkIn<{ doc_no: string; company_id: number | null }>(docNos, (batch, from, to) =>
+            sb.from('mfg_sales_orders').select('doc_no, company_id').in('doc_no', batch).order('doc_no').range(from, to));
+          const coByDoc = new Map(coRows.map((r) => [r.doc_no, r.company_id]));
           for (const r of auditRows) {
             const cid = coByDoc.get(r.so_doc_no as string);
             if (cid != null) r.company_id = cid;
@@ -699,11 +902,21 @@ export async function recomputeSoStockAllocation(
       /* Re-evaluate readiness using the live target status (lines that weren't
          in needs are already shipped → treat as READY). B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
-         READY — accessories pending don't block ship ("READY (PARTIAL)").
+         READY — accessories pending don't block ship. (This used to say the
+         label for that state was "READY (PARTIAL)". It is not, since
+         2026-08-16: the label is the bare word "PARTIAL", and it is printed
+         only when the SO HAS a main line — an accessory-only order has nothing
+         ready and stays blank rather than claim a readiness it does not have.
+         The GATE is unchanged.)
          Auto-regress only when a MAIN line goes back to PENDING. */
+      /* `category` from the SAME catalog pull the needs walk uses (serviceCodes)
+         — isServiceLine's strongest signal, and the pair to the skip at the top
+         of that walk: a SERVICE line skipped there but classified as a short
+         accessory here would wedge the header exactly as before. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
+        category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
         stock_status: targetStatusById.get(l.id) ?? l.stock_status,
       }));
       const r = summariseReadiness(readinessLines);

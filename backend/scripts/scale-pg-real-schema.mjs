@@ -7,25 +7,35 @@ export const REAL_SCHEMA_CONTRACT_VERSION = "2026-07-21.1";
 
 export const SO_LIST_COLUMNS = [
   "doc_no", "transfer_to", "so_date", "branding", "debtor_code", "debtor_name",
-  "agent", "sales_location", "ref", "po_doc_no", "venue", "venue_id",
+  "agent", "sales_location", "ref", "venue", "venue_id",
   "address1", "address2", "address3", "address4", "phone",
-  "mattress_sofa_centi", "bedframe_centi", "accessories_centi", "others_centi",
-  "service_centi", "local_total_centi", "balance_centi",
-  "mattress_sofa_cost_centi", "bedframe_cost_centi", "accessories_cost_centi",
-  "others_cost_centi", "service_cost_centi", "total_cost_centi",
-  "total_revenue_centi", "total_margin_centi", "margin_pct_basis", "line_count",
+  "mattress_sofa_sen", "bedframe_sen", "accessories_sen", "others_sen",
+  "service_sen", "local_total_sen", "balance_sen",
+  "mattress_sofa_cost_sen", "bedframe_cost_sen", "accessories_cost_sen",
+  "others_cost_sen", "service_cost_sen", "total_cost_sen",
+  "total_revenue_sen", "total_margin_sen", "margin_pct_basis", "line_count",
   "currency", "status", "remark2", "remark3", "remark4", "note",
-  "sales_exemption_expiry", "customer_id", "customer_po",
-  "customer_po_id", "customer_po_date", "customer_so_no", "hub_id", "hub_name",
+  "sales_exemption_expiry", "customer_id", "customer_so_no", "hub_id", "hub_name",
   "customer_state", "customer_country", "customer_delivery_date",
   "processing_date", "linked_do_doc_no", "ship_to_address", "bill_to_address",
   "install_to_address", "subtotal_sen", "overdue", "email", "customer_type",
   "salesperson_id", "city", "postcode", "building_type", "emergency_contact_name",
   "emergency_contact_phone", "emergency_contact_relationship", "target_date",
   "payment_method", "installment_months", "merchant_provider", "approval_code",
-  "payment_date", "deposit_centi", "paid_centi", "delivery_fee_centi",
-  "created_at", "created_by", "updated_at", "proceeded_at", "paid_total_centi",
-  "balance_centi_live", "company_id",
+  "payment_date", "deposit_sen", "paid_sen", "delivery_fee_sen",
+  /* `proceeded_at` left this list on 2026-08-18 with the route's LIST_COLS —
+     the SO list projection no longer carries the second Processing-Date
+     storage. The COLUMN is still declared on the synthetic table below, because
+     the real table still has it until the follow-up drop; what moved is the
+     list CONTRACT this benchmark is asserting against. */
+  "created_at", "created_by", "updated_at",
+  /* Migration 0324 — the HOLD MARKER. It rides in the route's HEADER via the
+     shared HOLD_COLUMNS constant, so it is part of the list projection the
+     benchmark has to issue; scaleRouteDrift.test.mjs resolves that constant out
+     of scm/lib/document-hold.ts and fails this list if the two drift. */
+  "on_hold", "hold_reason", "held_at", "held_by",
+  "paid_total_sen",
+  "balance_sen_live", "company_id",
 ].join(", ");
 
 export const PG_REAL_SCHEMA_DDL = `
@@ -126,7 +136,7 @@ export const PG_REAL_SCHEMA_DDL = `
     base_model text,
     size_code text,
     size_label text,
-    fabric_usage_centi integer NOT NULL DEFAULT 0,
+    fabric_usage_sen integer NOT NULL DEFAULT 0,
     unit_m3_milli integer NOT NULL DEFAULT 0,
     status scm.mfg_product_status NOT NULL DEFAULT 'ACTIVE',
     cost_price_sen integer NOT NULL DEFAULT 0,
@@ -169,25 +179,25 @@ export const PG_REAL_SCHEMA_DDL = `
     venue text,
     venue_id uuid,
     address1 text, address2 text, address3 text, address4 text, phone text,
-    mattress_sofa_centi integer NOT NULL DEFAULT 0,
-    bedframe_centi integer NOT NULL DEFAULT 0,
-    accessories_centi integer NOT NULL DEFAULT 0,
-    others_centi integer NOT NULL DEFAULT 0,
-    mattress_sofa_cost_centi integer NOT NULL DEFAULT 0,
-    bedframe_cost_centi integer NOT NULL DEFAULT 0,
-    accessories_cost_centi integer NOT NULL DEFAULT 0,
-    others_cost_centi integer NOT NULL DEFAULT 0,
-    service_centi integer NOT NULL DEFAULT 0,
-    service_cost_centi integer NOT NULL DEFAULT 0,
-    local_total_centi integer NOT NULL DEFAULT 0,
-    balance_centi integer NOT NULL DEFAULT 0,
-    total_cost_centi integer NOT NULL DEFAULT 0,
-    total_revenue_centi integer NOT NULL DEFAULT 0,
-    total_margin_centi integer NOT NULL DEFAULT 0,
+    mattress_sofa_sen integer NOT NULL DEFAULT 0,
+    bedframe_sen integer NOT NULL DEFAULT 0,
+    accessories_sen integer NOT NULL DEFAULT 0,
+    others_sen integer NOT NULL DEFAULT 0,
+    mattress_sofa_cost_sen integer NOT NULL DEFAULT 0,
+    bedframe_cost_sen integer NOT NULL DEFAULT 0,
+    accessories_cost_sen integer NOT NULL DEFAULT 0,
+    others_cost_sen integer NOT NULL DEFAULT 0,
+    service_sen integer NOT NULL DEFAULT 0,
+    service_cost_sen integer NOT NULL DEFAULT 0,
+    local_total_sen integer NOT NULL DEFAULT 0,
+    balance_sen integer NOT NULL DEFAULT 0,
+    total_cost_sen integer NOT NULL DEFAULT 0,
+    total_revenue_sen integer NOT NULL DEFAULT 0,
+    total_margin_sen integer NOT NULL DEFAULT 0,
     margin_pct_basis integer NOT NULL DEFAULT 0,
     line_count integer NOT NULL DEFAULT 0,
-    fabric_tier_addon_centi integer NOT NULL DEFAULT 0,
-    delivery_fee_centi integer NOT NULL DEFAULT 0,
+    fabric_tier_addon_sen integer NOT NULL DEFAULT 0,
+    delivery_fee_sen integer NOT NULL DEFAULT 0,
     cross_category_source_doc_no text,
     currency scm.currency_code NOT NULL DEFAULT 'MYR',
     status scm.mfg_so_status NOT NULL DEFAULT 'CONFIRMED',
@@ -227,8 +237,8 @@ export const PG_REAL_SCHEMA_DDL = `
     merchant_provider text,
     approval_code text,
     payment_date date,
-    deposit_centi integer NOT NULL DEFAULT 0,
-    paid_centi integer NOT NULL DEFAULT 0,
+    deposit_sen integer NOT NULL DEFAULT 0,
+    paid_sen integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     created_by uuid,
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -250,21 +260,21 @@ export const PG_REAL_SCHEMA_DDL = `
     location text,
     warehouse_id uuid,
     qty integer NOT NULL DEFAULT 1,
-    unit_price_centi integer NOT NULL DEFAULT 0,
-    discount_centi integer NOT NULL DEFAULT 0,
-    total_centi integer NOT NULL DEFAULT 0,
-    tax_centi integer NOT NULL DEFAULT 0,
-    total_inc_centi integer NOT NULL DEFAULT 0,
-    balance_centi integer NOT NULL DEFAULT 0,
+    unit_price_sen integer NOT NULL DEFAULT 0,
+    discount_sen integer NOT NULL DEFAULT 0,
+    total_sen integer NOT NULL DEFAULT 0,
+    tax_sen integer NOT NULL DEFAULT 0,
+    total_inc_sen integer NOT NULL DEFAULT 0,
+    balance_sen integer NOT NULL DEFAULT 0,
     payment_status text NOT NULL DEFAULT 'Unchecked',
     venue text,
     branding text,
     remark text,
     cancelled boolean NOT NULL DEFAULT false,
     variants jsonb,
-    unit_cost_centi integer NOT NULL DEFAULT 0,
-    line_cost_centi integer NOT NULL DEFAULT 0,
-    line_margin_centi integer NOT NULL DEFAULT 0,
+    unit_cost_sen integer NOT NULL DEFAULT 0,
+    line_cost_sen integer NOT NULL DEFAULT 0,
+    line_margin_sen integer NOT NULL DEFAULT 0,
     line_no integer,
     created_at timestamptz NOT NULL DEFAULT now(),
     company_id bigint NOT NULL
@@ -275,7 +285,7 @@ export const PG_REAL_SCHEMA_DDL = `
     so_doc_no text NOT NULL,
     paid_at date NOT NULL DEFAULT now(),
     method text NOT NULL,
-    amount_centi integer NOT NULL,
+    amount_sen integer NOT NULL,
     is_deposit boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     company_id bigint NOT NULL
@@ -301,11 +311,11 @@ export const PG_REAL_SCHEMA_DDL = `
 
   CREATE VIEW scm.mfg_sales_orders_with_payment_totals AS
   SELECT so.*,
-         coalesce(p.paid_total, 0) AS paid_total_centi,
-         GREATEST(so.local_total_centi - coalesce(p.paid_total, 0), 0) AS balance_centi_live
+         coalesce(p.paid_total, 0) AS paid_total_sen,
+         GREATEST(so.local_total_sen - coalesce(p.paid_total, 0), 0) AS balance_sen_live
     FROM scm.mfg_sales_orders so
     LEFT JOIN (
-      SELECT so_doc_no, sum(amount_centi)::bigint AS paid_total
+      SELECT so_doc_no, sum(amount_sen)::bigint AS paid_total
         FROM scm.mfg_sales_order_payments
        GROUP BY so_doc_no
     ) p ON p.so_doc_no = so.doc_no;
@@ -377,8 +387,8 @@ export function pgSeedSql(config) {
 
     INSERT INTO scm.mfg_sales_orders
       (doc_no, so_date, branding, debtor_code, debtor_name, agent, sales_location,
-       ref, po_doc_no, phone, local_total_centi, balance_centi, total_revenue_centi,
-       total_cost_centi, total_margin_centi, margin_pct_basis, line_count, currency,
+       ref, po_doc_no, phone, local_total_sen, balance_sen, total_revenue_sen,
+       total_cost_sen, total_margin_sen, margin_pct_basis, line_count, currency,
        status, customer_state, customer_country, email, salesperson_id,
        created_at, updated_at, proceeded_at, company_id)
     SELECT 'C' || company_id || '-SO-2607-' || lpad(g::text, 6, '0'),
@@ -403,9 +413,9 @@ export function pgSeedSql(config) {
 
     INSERT INTO scm.mfg_sales_order_items
       (id, doc_no, line_date, debtor_code, debtor_name, agent, item_group,
-       item_code, description, uom, qty, unit_price_centi, total_centi,
-       total_inc_centi, balance_centi, payment_status, branding, cancelled,
-       variants, unit_cost_centi, line_cost_centi, line_margin_centi, line_no,
+       item_code, description, uom, qty, unit_price_sen, total_sen,
+       total_inc_sen, balance_sen, payment_status, branding, cancelled,
+       variants, unit_cost_sen, line_cost_sen, line_margin_sen, line_no,
        created_at, company_id)
     SELECT md5('line-' || company_id || '-' || g)::uuid,
            'C' || company_id || '-SO-2607-' || lpad((1 + ((g - 1) % ${orders}))::text, 6, '0'),
@@ -421,7 +431,7 @@ export function pgSeedSql(config) {
       CROSS JOIN generate_series(1, ${lines}) g;
 
     INSERT INTO scm.mfg_sales_order_payments
-      (id, so_doc_no, paid_at, method, amount_centi, is_deposit, created_at, company_id)
+      (id, so_doc_no, paid_at, method, amount_sen, is_deposit, created_at, company_id)
     SELECT md5('payment-' || company_id || '-' || g)::uuid,
            'C' || company_id || '-SO-2607-' || lpad(g::text, 6, '0'),
            date '2024-01-01' + (g % 730), 'cash', 1000, true,
@@ -443,7 +453,7 @@ export function pgSeedSql(config) {
 
 export const PG_QUERY_SHAPES = {
   so_summary: `
-    SELECT doc_no, status, proceeded_at, local_total_centi, created_at, so_date, company_id
+    SELECT doc_no, status, local_total_sen, created_at, so_date, company_id
       FROM scm.mfg_sales_orders
      WHERE company_id = $1 AND status <> 'DRAFT'
      ORDER BY so_date DESC
@@ -464,7 +474,7 @@ export const PG_QUERY_SHAPES = {
      ORDER BY so_date DESC, doc_no DESC
      LIMIT $3`,
   so_money_page: `
-    SELECT local_total_centi, balance_centi, balance_centi_live, paid_total_centi, company_id
+    SELECT local_total_sen, balance_sen, balance_sen_live, paid_total_sen, company_id
       FROM scm.mfg_sales_orders_with_payment_totals
      WHERE company_id = $1
      ORDER BY doc_no
@@ -476,10 +486,10 @@ export const PG_QUERY_SHAPES = {
   so_detail_lines: `
     SELECT id, doc_no, line_date, debtor_code, debtor_name, agent, item_group,
            item_code, description, description2, uom, location, qty,
-           unit_price_centi, discount_centi, total_centi, tax_centi,
-           total_inc_centi, balance_centi, payment_status, venue, branding,
-           remark, cancelled, variants, unit_cost_centi, line_cost_centi,
-           line_margin_centi, line_no, created_at, company_id
+           unit_price_sen, discount_sen, total_sen, tax_sen,
+           total_inc_sen, balance_sen, payment_status, venue, branding,
+           remark, cancelled, variants, unit_cost_sen, line_cost_sen,
+           line_margin_sen, line_no, created_at, company_id
       FROM scm.mfg_sales_order_items
      WHERE company_id = $1 AND doc_no = $2
      ORDER BY line_no, id`,

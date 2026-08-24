@@ -1,0 +1,72 @@
+# Read-only. Counts the rows every computeMrp read would return, so the cost of
+# paging them is a measured number rather than an estimate. Writes nothing.
+#
+# IT NO LONGER CLAIMS TO MEASURE THE REST CEILING. It used to carry a second job
+# reaching for SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, which are WORKER secrets
+# and are deliberately not GitHub ones (public repo; the service-role key bypasses
+# RLS on a database two tenants share). So that half could never run: runs
+# 31941352447 and 31942066593 both printed "SKIPPED" and were reported as
+# successes. A permanently-skipped step reads as coverage that does not exist,
+# so it is GONE rather than commented.
+#
+# The ceiling is now measured from the Worker, which already holds those
+# credentials and already issues the request in question:
+#   GET /api/admin/health/rest-page-ceiling   (gated on `*`, counts only)
+# See backend/src/routes/systemHealth.ts.
+name: probe-mrp-read-ceiling
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "Company id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-mrp-read-ceiling
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-read-ceiling.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    # `environment: Production` is for DATABASE_URL only. It was added on the
+    # theory that SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY were Production-
+    # environment secrets rather than repo-level ones. They are NEITHER —
+    # `gh secret list --env Production` holds only CLOUDFLARE_ACCOUNT_ID,
+    # CLOUDFLARE_API_TOKEN and VITE_API_URL — so the environment change fixed
+    # nothing and run 31942066593 skipped exactly as 31941352447 had.
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-read-ceiling.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

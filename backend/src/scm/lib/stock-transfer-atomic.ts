@@ -15,7 +15,7 @@
 
 /** One line as accepted by scm.fn_stock_transfer_apply's p_lines JSONB. */
 export type TransferLinePayload = {
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   /** '' = unclassified/legacy bucket (never null on the wire). */
   variant_key: string;
@@ -26,7 +26,7 @@ export type TransferLinePayload = {
 };
 
 type RawLine = {
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   variant_key: string | null;
   qty: number;
@@ -52,9 +52,9 @@ export function buildTransferPayload(
     const qty = Math.floor(Number(ln.qty ?? 0));
     if (qty <= 0) continue;
     const variantKey = ln.variant_key ?? '';
-    const batchNo = batchByBucket.get(`${ln.product_code}::${variantKey}`) ?? null;
+    const batchNo = batchByBucket.get(`${ln.item_code}::${variantKey}`) ?? null;
     out.push({
-      product_code: ln.product_code,
+      item_code: ln.item_code,
       product_name: ln.product_name ?? null,
       variant_key: variantKey,
       qty,

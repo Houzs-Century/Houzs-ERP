@@ -20,7 +20,9 @@ import { AssistantPanel } from "./components/AssistantPanel";
 import { AssistantPanelProvider } from "./components/AssistantPanelContext";
 import { BreadcrumbsProvider } from "./hooks/useBreadcrumbs";
 import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
-import { NewVersionBanner } from "./components/NewVersionBanner";
+// NewVersionBanner is deliberately NOT mounted here — see main.tsx's RootApp.
+// App() is the DESKTOP shell; AuthGate renders MobileApp instead of it, so a
+// mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
 
@@ -162,6 +164,7 @@ const ScmDeliveryOrdersV2 = lazy(() => import("./pages/scm-v2/MfgDeliveryOrdersL
 const ScmDeliveryOrderNewV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderNewV2").then((m) => ({ default: m.DeliveryOrderNewV2 })));
 const ScmDeliveryOrderFromSoV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
 const ScmDeliveryOrderDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
+const ScmDoLoadScan = lazy(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
 const ScmSalesInvoicesV2 = lazy(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
 const ScmSalesInvoiceNewV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
 const ScmSalesInvoiceFromDoV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
@@ -405,7 +408,6 @@ export default function App() {
         <AssistantLauncher />
         <AssistantPanel />
       </AssistantPanelProvider>
-      <NewVersionBanner />
       <IosInstallGuide />
       <AndroidInstallGuide />
       <Layout>
@@ -698,7 +700,7 @@ export default function App() {
         <Route path="/scm/purchase-returns/new" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/:id" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnDetailV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/inventory" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmInventoryV2 /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/inventory/stock-card/:productCode" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmStockCardV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/inventory/stock-card/:itemCode" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmStockCardV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/suppliers/:id" element={<ScmGuard area="scm.procurement.suppliers"><Scm2990Shell><ScmSupplierDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* /scm/drivers is RETIRED (owner 2026-07-17: "fleet 里面也是有 driver，
             所以我都不需要多一个 driver"). Its page is now the Drivers section of
@@ -775,6 +777,8 @@ export default function App() {
         <Route path="/scm/delivery-orders/new" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/from-so" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/:id" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDeliveryOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* The DO print's "SCAN · MARK LOADED" QR lands here (warehouse loading confirmation). */}
+        <Route path="/scm/do-load" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDoLoadScan /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices" element={<ScmGuard area="scm.sales.invoices" allowSales><Scm2990Shell><ScmSalesInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/new" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/from-do" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceFromDoV2 /></Scm2990Shell></ScmGuard>} />

@@ -35,7 +35,14 @@
 // contains while recording that it does not.
 // ----------------------------------------------------------------------------
 
-import { findUnlinkedSoItemLines, type UnlinkedCandidate } from './do-unlinked-so-lines';
+import {
+  findUnlinkedSoItemLines,
+  itemCodeKey,
+  readParentCodes,
+  type ParentCodes,
+  type UnlinkedCandidate,
+  type UnlinkedScan,
+} from './do-unlinked-so-lines';
 
 export type UnlinkedReturnOffender = {
   lineRef: string;
@@ -45,43 +52,102 @@ export type UnlinkedReturnOffender = {
 };
 
 /** Every item_code on the source Delivery Order's lines. */
-export async function doItemCodesOf(
+export function doItemCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   deliveryOrderId: string | null | undefined,
-): Promise<Set<string>> {
-  const id = String(deliveryOrderId ?? '').trim();
-  if (!id) return new Set();
-  const { data } = await sb
-    .from('delivery_order_items')
-    .select('item_code')
-    .eq('delivery_order_id', id);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ item_code: string | null }>) {
-    const k = String(r.item_code ?? '').trim().toUpperCase();
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'delivery_order_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'delivery_order_id',
+    parentId: deliveryOrderId,
+  });
 }
 
-/** Every material_code on the source GRN's lines. */
-export async function grnMaterialCodesOf(
+/**
+ * Every item_code on a SET of receipts, WITH THE ERROR BOUND, and each code
+ * mapped to the receipt number that carries it.
+ *
+ * Two things this shape buys, both of which the single-GRN version could not:
+ *
+ *  1. **A set, not one id.** A purchase invoice is line-level multi-receipt by
+ *     design (owner 2026-08-06, migration 0267): one supplier invoice may bill
+ *     several goods-received notes, and `purchase_invoices.grn_id` is only the
+ *     PRIMARY ref — `/from-grn-items` stamps `bucket.grnIds[0]` under a comment
+ *     saying so. A guard that reads only the header ref is blind to every other
+ *     note the invoice covers, which is the same double-bill it was written to
+ *     stop, one note over.
+ *  2. **The error, bound.** `const { data } = await …` cannot tell "the query
+ *     failed" from "this receipt has no lines", and an empty code set is an
+ *     unconditional PASS (`do-unlinked-so-lines.ts:85`). So a statement timeout
+ *     silently opened the door. That is the same fail-open `piLocked` in
+ *     purchase-invoices.ts was fixed for, in its words: *"A failed read must
+ *     never read as an absence when the absence is what authorises the write."*
+ */
+export async function readGrnMaterialCodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  grnIds: Array<string | null | undefined>,
+): Promise<{ codeToReceipt: Map<string, string>; error: string | null }> {
+  const ids = [...new Set(grnIds.map((x) => String(x ?? '').trim()).filter(Boolean))];
+  const codeToReceipt = new Map<string, string>();
+  if (ids.length === 0) return { codeToReceipt, error: null };
+  /* The receipt NUMBER rides the same read. Without it the refusal named the
+     receipt by raw uuid — the operator was told which invoice was wrong but not
+     which document to go and look at, and no client sends `grnNumber` on create.
+     The `grn:grns!inner (…)` embed is the form this router already uses at the
+     over-invoice guard, so it is not a new shape. */
+  const { data, error } = await sb
+    .from('grn_items')
+    .select('item_code, grn_id, grn:grns!inner ( grn_number )')
+    .in('grn_id', ids);
+  if (error) return { codeToReceipt, error: String(error.message ?? error) };
+  type Row = {
+    item_code: string | null; grn_id: string | null;
+    grn?: { grn_number?: string | null } | Array<{ grn_number?: string | null }> | null;
+  };
+  /* Sorted by receipt number so a code carried by two of the covered notes always
+     names the SAME one — a refusal that alternated between two receipts run to run
+     would read as a flaky guard. */
+  const rows = ((data ?? []) as Row[]).slice().sort((a, b) => {
+    const na = (Array.isArray(a.grn) ? a.grn[0] : a.grn)?.grn_number ?? '';
+    const nb = (Array.isArray(b.grn) ? b.grn[0] : b.grn)?.grn_number ?? '';
+    return String(na).localeCompare(String(nb));
+  });
+  for (const r of rows) {
+    const k = itemCodeKey(r.item_code);
+    if (!k || codeToReceipt.has(k)) continue;
+    const parent = Array.isArray(r.grn) ? r.grn[0] : r.grn;
+    codeToReceipt.set(k, String(parent?.grn_number ?? r.grn_id ?? '').trim() || String(r.grn_id ?? ''));
+  }
+  return { codeToReceipt, error: null };
+}
+
+/** Every item_code on the source GRN's lines — the single-receipt view.
+ *
+ *  It used to be the error-DROPPING one, and the note here said so: the stock
+ *  chains "behave exactly this way today and changing them is a separate
+ *  decision". That decision was taken on 2026-08-17 — the same fail-open was
+ *  live in all FOUR parent-set readers, not just the money chain's, so all four
+ *  now go through readParentCodes and return ParentCodes. `ok: false` is refused
+ *  by every caller, never read as "nothing on the parent".
+ *
+ *  Still single-receipt, which is the one thing readGrnMaterialCodes above adds:
+ *  a purchase invoice is line-level multi-receipt, a return is not. */
+export function grnMaterialCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   grnId: string | null | undefined,
-): Promise<Set<string>> {
-  const id = String(grnId ?? '').trim();
-  if (!id) return new Set();
-  const { data } = await sb
-    .from('grn_items')
-    .select('material_code')
-    .eq('grn_id', id);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ material_code: string | null }>) {
-    const k = String(r.material_code ?? '').trim().toUpperCase();
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'grn_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'grn_id',
+    parentId: grnId,
+  });
 }
 
 /**
@@ -96,14 +162,20 @@ async function findUnlinked(
   parentId: string | null | undefined,
   parentLabel: string | null | undefined,
   lines: UnlinkedCandidate[],
-  codesOf: () => Promise<Set<string>>,
-): Promise<UnlinkedReturnOffender[]> {
-  if (!String(parentId ?? '').trim()) return [];
-  if (!lines.some((l) => !l.soItemId)) return [];   // nothing unlinked — skip the read
+  codesOf: () => Promise<ParentCodes>,
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
+  if (!String(parentId ?? '').trim()) return { ok: true, offenders: [] };
+  // nothing unlinked — skip the read
+  if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
   const label = String(parentLabel ?? '').trim() || String(parentId);
-  return findUnlinkedSoItemLines(label, lines, await codesOf()).map((o) => ({
-    lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: label,
-  }));
+  const codes = await codesOf();
+  if (!codes.ok) return codes;
+  return {
+    ok: true,
+    offenders: findUnlinkedSoItemLines(label, lines, codes.codes).map((o) => ({
+      lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: label,
+    })),
+  };
 }
 
 export function findUnlinkedDrLines(
@@ -112,7 +184,7 @@ export function findUnlinkedDrLines(
   deliveryOrderId: string | null | undefined,
   doNumber: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedReturnOffender[]> {
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
   return findUnlinked(deliveryOrderId, doNumber, lines, () => doItemCodesOf(sb, deliveryOrderId));
 }
 
@@ -122,8 +194,106 @@ export function findUnlinkedPrLines(
   grnId: string | null | undefined,
   grnNumber: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedReturnOffender[]> {
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
   return findUnlinked(grnId, grnNumber, lines, () => grnMaterialCodesOf(sb, grnId));
+}
+
+/**
+ * The SIXTH chain, and the last one on this door — GRN -> Purchase INVOICE.
+ *
+ * *Added 2026-08-17.* Five chains closed this back door; the invoicing side of
+ * the receiving chain never did. The owner's 2026-08-04 instruction was
+ * "包括 GR 那边也是" — including the GR side — and the receipt half
+ * (`grn-unlinked-po-lines.ts`) was built then while the BILLING half was not.
+ * `sales-invoices.ts` describes the identical vector on its own chain and blocks
+ * it; `purchase-invoices.ts` contained the word "unlinked" zero times.
+ *
+ * THE VECTOR, and why the money version is worse than the stock version.
+ * `scm.purchase_invoices.grn_id` names a GRN; `purchase_invoice_items.grn_item_id`
+ * is nullable — legitimately, because that is how a PI-native line (freight, a
+ * service charge, a discount) is represented. Every cap and every recount in
+ * `purchase-invoices.ts` filters NULL links out FIRST, which is correct for a
+ * service line and catastrophic for a hand-added GOODS line: it bills the
+ * material, `grn_items.invoiced_qty` never moves, the GRN line still reads fully
+ * outstanding, and a second Purchase Invoice bills the same receipt. Both post to
+ * AP and both enqueue to AutoCount, so the supplier is paid twice for one
+ * delivery.
+ *
+ * The rule is the same narrow one as the other five, and deliberately so:
+ * refused only when the material is ALREADY ON one of the receipts this invoice
+ * covers. A freight line, a service charge, or a part none of those receipts
+ * contained still passes untouched — which is the property that lets this ship
+ * without breaking PI-native lines.
+ *
+ * TWO WAYS IT DIFFERS FROM ITS FIVE SIBLINGS, both because this is the money one.
+ *
+ * **It takes a SET of receipts, not one.** A purchase invoice is line-level
+ * multi-receipt by design; the header's `grn_id` is the PRIMARY ref only. Passing
+ * just the header ref let an unlinked goods line billing a SECONDARY note's
+ * material through — the exact refused shape, one note over. Callers therefore
+ * hand in the header ref UNION every receipt reachable through the invoice's own
+ * linked lines (`purchase_invoice_items.grn_item_id -> grn_items.grn_id`), which
+ * is the walk `purchase-invoices.ts` already does twice for READS.
+ *
+ * **It FAILS CLOSED.** The answer is a result, not a bare array: an empty code
+ * set is an unconditional pass, so a swallowed read error opened the door
+ * silently. `{ ok: false }` means the caller must refuse the write, not proceed.
+ */
+export type PiUnlinkedVerdict =
+  /** The check could not be performed. The caller must NOT write. */
+  | { ok: false; reason: string }
+  | { ok: true; offenders: UnlinkedReturnOffender[] };
+
+export async function findUnlinkedPiLines(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  /** Every receipt this invoice covers: the header ref plus the ones its linked
+   *  lines descend from. Nulls and duplicates are fine — they are dropped. */
+  grnIds: Array<string | null | undefined>,
+  lines: UnlinkedCandidate[],
+): Promise<PiUnlinkedVerdict> {
+  const ids = [...new Set(grnIds.map((x) => String(x ?? '').trim()).filter(Boolean))];
+  // The header names no receipt -> there is nothing to bypass. Same carve-out as
+  // all five siblings, and the reason a PI-native invoice still works.
+  if (ids.length === 0) return { ok: true, offenders: [] };
+  // Nothing unlinked -> the cap already sees every line. Skip the read.
+  if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
+
+  const { codeToReceipt, error } = await readGrnMaterialCodes(sb, ids);
+  if (error) return { ok: false, reason: error };
+
+  /* The PREDICATE is the shared one — one definition of "the same item" across all
+     six chains. It is applied per receipt so each offender names the receipt that
+     actually carries its material, which is the document the operator has to open. */
+  const offenders: UnlinkedReturnOffender[] = [];
+  const byReceipt = new Map<string, Set<string>>();
+  for (const [code, receipt] of codeToReceipt) {
+    const s = byReceipt.get(receipt) ?? new Set<string>();
+    s.add(code);
+    byReceipt.set(receipt, s);
+  }
+  const claimed = new Set<string>();
+  for (const [receipt, codes] of byReceipt) {
+    for (const o of findUnlinkedSoItemLines(receipt, lines, codes)) {
+      if (claimed.has(o.lineRef)) continue;   // already named by an earlier receipt
+      claimed.add(o.lineRef);
+      offenders.push({ lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: receipt });
+    }
+  }
+  return { ok: true, offenders };
+}
+
+/** The 500 body for a guard that could not run. Its own refusal, because "we
+ *  could not check" and "there is nothing to find" are opposite facts and only
+ *  one of them authorises billing the supplier. */
+export function unlinkedCheckFailedResponse(reason: string) {
+  return {
+    error: 'unlinked_check_failed',
+    message: 'Could not check whether any line bills goods the named Goods Receipt already '
+      + 'contains, so this invoice was NOT saved — the same goods could otherwise be paid for '
+      + `twice. Please try again (${reason}).`,
+    reason,
+  };
 }
 
 export function unlinkedReturnResponse(
@@ -143,4 +313,102 @@ export function unlinkedReturnResponse(
     parentNo: parent,
     offenders,
   };
+}
+
+/** The invoice refusal. Its own wording because the consequence is MONEY, not
+ *  stock: the operator has to understand that the goods get PAID FOR twice.
+ *
+ *  TWO CORRECTIONS TO THE FIRST DRAFT OF THIS MESSAGE, both because a refusal that
+ *  misdirects is worse than a terse one:
+ *
+ *  · It used to say *"Pick those items from the Goods Receipt instead of adding
+ *    them by hand"* — on the screen where this fires most, the invoice DETAIL
+ *    editor, there is no receipt-line picker at all and its add payload cannot
+ *    carry a `grnItemId` (`PurchaseInvoiceDetail.tsx`: *"New free-entry line —
+ *    full insert payload (grnItemId null)"*). A correctly-refused operator was
+ *    dead-ended, and the way out of a dead end is to retype the code until it
+ *    stops matching, which is the double-bill itself. It now names the route that
+ *    exists: raise the invoice FROM the receipt, or delete the hand-typed line.
+ *  · It used to promise a freight or service line was *"unaffected"*, full stop.
+ *    A GRN can carry its own service line (`grns.ts` splits a receipt's freight
+ *    pool across its goods lines), and when it does, a hand-added duplicate of
+ *    THAT line is refused — correctly. The promise is now qualified.
+ *
+ *  Each offender names the receipt that actually carries its material, which for
+ *  a multi-note invoice is not necessarily the header's primary ref. */
+export function unlinkedInvoiceResponse(offenders: UnlinkedReturnOffender[]) {
+  const parent = offenders[0]?.parentNo ?? '';
+  const receipts = [...new Set(offenders.map((o) => o.parentNo).filter(Boolean))];
+  const list = [...new Set(offenders.map((o) => o.itemCode))].join(', ');
+  const where = receipts.length <= 1
+    ? `Goods Receipt ${parent}`
+    : `these Goods Receipts: ${receipts.join(', ')}`;
+  return {
+    error: 'unlinked_grn_lines',
+    message:
+      `${offenders.length} line(s) on this invoice bill an item that is already on ${where}, ` +
+      `without being linked to it: ${list}. An unlinked line still bills the supplier but ticks ` +
+      `nothing off the receipt, so the same goods can be invoiced and paid for a second time. ` +
+      `Raise the invoice from that receipt (Goods Receipt -> Transfer to Purchase Invoice) so each ` +
+      `line is linked, or remove the hand-typed line. Any item those receipts do NOT contain — ` +
+      `including a freight or service charge they do not carry — is unaffected.`,
+    parentNo: parent,
+    receipts,
+    offenders,
+  };
+}
+
+/* Non-null string dedupe. It came across with coveredGrnIds rather than being
+   imported back out of the router: this module is the guard's home and a lib
+   that reaches into a route for a two-line helper is a cycle waiting to be
+   written. The router keeps its own `uniq` for its ten other call sites. */
+const uniqIds = (xs: Array<string | null | undefined>) =>
+  [...new Set(xs.filter((x): x is string => !!x))];
+
+/* MOVED HERE 2026-08-20, from routes/purchase-invoices.ts. It computes the very
+   receipt set findUnlinkedPiLines below consumes, and every one of its three
+   CALL SITES stays in the router where the per-handler proof in
+   return-unlinked-lines.test.ts can still see it. */
+/* ── coveredGrnIds — EVERY receipt a purchase invoice bills ──────────────────
+   The header's `grn_id` is only the PRIMARY ref. `/from-grn-items` says so where
+   it stamps it — "PRIMARY note ref … the line-level grn_item_id is the
+   authoritative linkage" — because one supplier invoice may cover several notes
+   (owner 2026-08-06, migration 0267). This file already walks
+   `grn_item_id -> grn_items.grn_id` twice for READS (the detail's `sourceGrns`,
+   the linked-docs fan-out); the unlinked-line GUARD was the one place still
+   trusting the header ref alone, so a hand-added line billing a SECONDARY note's
+   material passed the very check written to refuse it.
+
+   Every read binds its error and the result carries `error`, because the CALLER
+   is a money guard: an id list short by one receipt is a door left open, and it
+   is indistinguishable from a receipt that legitimately has no lines. */
+export async function coveredGrnIds(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  args: {
+    /** The header's primary ref, when there is one. */
+    headerGrnId?: string | null;
+    /** Walk this invoice's OWN lines for the receipts they descend from. */
+    piId?: string | null;
+    /** Receipt LINE ids from the request body (a create has no invoice yet). */
+    grnItemIds?: Array<string | null | undefined>;
+  },
+): Promise<{ ids: string[]; error: string | null }> {
+  const grnItemIds = [...(args.grnItemIds ?? [])];
+  if (args.piId) {
+    const { data, error } = await sb.from('purchase_invoice_items')
+      .select('grn_item_id').eq('purchase_invoice_id', args.piId);
+    if (error) return { ids: [], error: `invoice lines: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ grn_item_id: string | null }>) grnItemIds.push(r.grn_item_id);
+  }
+  const lineIds = uniqIds(grnItemIds);
+  const out = uniqIds([args.headerGrnId ?? null]);
+  if (lineIds.length > 0) {
+    const { data, error } = await sb.from('grn_items').select('grn_id').in('id', lineIds);
+    if (error) return { ids: [], error: `receipt lines: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ grn_id: string | null }>) {
+      if (r.grn_id && !out.includes(r.grn_id)) out.push(r.grn_id);
+    }
+  }
+  return { ids: out, error: null };
 }

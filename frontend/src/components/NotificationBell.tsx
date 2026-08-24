@@ -57,7 +57,7 @@ export function NotificationBell({
   tone = "sidebar",
   unread = "count",
 }: Props) {
-  const { feed, totalUnread } = useNotifications();
+  const { feed, totalUnread, loadFailed } = useNotifications();
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -73,8 +73,10 @@ export function NotificationBell({
     queryKey: announcementFeedKey("system"),
     queryFn: () =>
       api.get<BannerResponse>("/api/announcements/banner?scope=system"),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    // 3 min, not 30s: the bell is not real-time chat, and the backend caches the
+    // banner per-user for 5 min, so this lands mostly on hits and cuts call volume.
+    staleTime: 180_000,
+    refetchInterval: 180_000,
     enabled: !!user?.id,
   });
 
@@ -93,8 +95,13 @@ export function NotificationBell({
       try {
         await api.post(`/api/announcements/${a.id}/ack`);
       } catch {
-        // Best-effort: the local hide stands for this session; the next poll
-        // re-surfaces the notice if the server never got the ack.
+        // silent-write-ok: OPTIMISTIC WITH RECONCILE, deliberately. The local
+        // hide stands for this session and the next poll re-surfaces the notice
+        // if the server never got the ack, so the screen self-corrects rather
+        // than trapping the reader behind a failing request. NOTE for whoever
+        // revisits this: the publisher's read-receipt list is the record, and
+        // it does NOT self-correct. Whether a compulsory notice should refuse
+        // to dismiss on a failed ack is the owner's call, not this file's.
       }
       // Same invalidation the pop-up's ack performs — every consumer of the
       // feed namespace (mobile badge, mobile bell) drops the notice at once.
@@ -166,6 +173,7 @@ export function NotificationBell({
       {open && (
         <BellPopover
           feed={feed}
+          loadFailed={loadFailed}
           systemNotices={systemNotices}
           onMarkRead={markRead}
           onNavigate={() => setOpen(false)}
@@ -179,6 +187,7 @@ export function NotificationBell({
 
 function BellPopover({
   feed,
+  loadFailed,
   systemNotices,
   onMarkRead,
   onNavigate,
@@ -186,6 +195,7 @@ function BellPopover({
   align,
 }: {
   feed: NotificationItem[];
+  loadFailed: boolean;
   systemNotices: BannerAnnouncement[];
   onMarkRead: (a: BannerAnnouncement) => void;
   onNavigate: () => void;
@@ -262,7 +272,21 @@ function BellPopover({
           </div>
         )}
 
-        {total === 0 ? (
+        {/* THREE consumers read useNotifications(); TWO of them consulted
+            `loadFailed` before rendering a reassuring empty state and this one
+            did not — the same rule-at-N-call-sites-present-at-N-minus-1 shape
+            the rest of this branch is about. The hook's own contract says
+            consumers MUST consult it (hooks/useNotifications.tsx), because
+            `feed: []` after a failed poll means "we don't know", not "there is
+            nothing". This popover is the fastest surface in the app for
+            deciding whether anything needs you, and on a failed poll it said
+            you were caught up. */}
+        {total === 0 && loadFailed ? (
+          <div className="px-4 py-8 text-center text-[11px] text-ink-muted">
+            <p className="font-semibold text-ink">We couldn't load your notifications.</p>
+            <p className="mt-1">This is not the same as having none. Open Notifications to retry.</p>
+          </div>
+        ) : total === 0 ? (
           <div className="px-4 py-8 text-center text-[11px] text-ink-muted">
             Nothing new. You're caught up.
           </div>

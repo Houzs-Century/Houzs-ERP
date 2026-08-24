@@ -36,8 +36,9 @@
 // autotable didDrawPage hook + jsPDF putTotalPages.
 // ----------------------------------------------------------------------------
 
-import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneyCenti, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
+import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
+import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -72,9 +73,9 @@ type PoHeader = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency:      string;
-  subtotal_centi: number;
-  tax_centi:     number;
-  total_centi:   number;
+  subtotal_sen: number;
+  tax_sen:     number;
+  total_sen:   number;
   notes:         string | null;
   /** PR #102 — header extras for the AutoCount layout. All optional; the PDF
       renders dashes when blank so old POs without these fields still print. */
@@ -102,15 +103,15 @@ type PoHeader = {
 };
 
 type PoItem = {
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku:  string | null;
   qty:           number;
-  unit_price_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  line_total_sen: number;
   /** PR #102 — AutoCount layout extras. All optional. */
   uom?:           string | null;
-  discount_centi?: number | null;
+  discount_sen?: number | null;
   delivery_date?: string | null;
   /* Migration 0180 — per-line supplier-revised dates; the printed per-line
      "Delivery:" uses the EFFECTIVE (latest) of these + delivery_date. */
@@ -135,14 +136,14 @@ type PoItem = {
   so_doc_no?:     string | null;
 };
 
-const fmtMoney = (centi: number, currency: string): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency: string): string => fmtMoneySen(centi, currency);
 
 const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /* A sofa is split into per-MODULE PO lines. Each line's `variants` carries that
    ONE module's spatial slot at the TOP LEVEL (x / y / rot + cellIndex), its module
-   code lives in `material_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
+   code lives in `item_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
    describes the whole sofa. So we build ONE cell per line and the caller groups
    lines by `summary` into the full layout. (The earlier `variants.cells`-array
    assumption was wrong — real lines store the slot flat, so nothing ever drew.)
@@ -150,7 +151,7 @@ const fmtAmount = (centi: number): string =>
 const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.length - a.length);
 function sofaCellFromLine(
   variants: Record<string, unknown> | null | undefined,
-  materialCode: string | null | undefined,
+  itemCode: string | null | undefined,
 ): { cell: Cell; depth: Depth; groupKey: string; idx: number } | null {
   if (!variants || typeof variants !== 'object') return null;
   const v = variants as Record<string, unknown>;
@@ -158,9 +159,9 @@ function sofaCellFromLine(
   const y = v.y;
   if (typeof x !== 'number' || !Number.isFinite(x)) return null;
   if (typeof y !== 'number' || !Number.isFinite(y)) return null;
-  // Module id = the SOFA_MODULES id the material_code ENDS with (longest match):
+  // Module id = the SOFA_MODULES id the item_code ENDS with (longest match):
   // "XAMMAR-2A(RHF)" → "2A(RHF)".
-  const code = (materialCode ?? '').trim();
+  const code = (itemCode ?? '').trim();
   const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
   if (!moduleId || !findModule(moduleId)) return null;
   const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
@@ -183,11 +184,11 @@ function sofaCellFromLine(
    caller can skip them. Never throws. */
 const SOFA_MODULE_TOKEN_RE = /([A-Za-z0-9]+(?:\([A-Za-z]+\))+|CNR|Console|STOOL|1NA|2NA|1S|2S|3S)\s*$/;
 function sofaModuleFromLine(
-  materialCode: string | null | undefined,
+  itemCode: string | null | undefined,
   fallbackText: string | null | undefined,
 ): { moduleId: string; baseModel: string } | null {
   // Preferred: the SKU code's longest known-module suffix.
-  const code = (materialCode ?? '').trim();
+  const code = (itemCode ?? '').trim();
   if (code) {
     const suffix = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id));
     if (suffix && findModule(suffix)) {
@@ -274,21 +275,27 @@ async function renderPurchaseOrderInto(
   /* "Your Ref No." = the source S/O No.; falls back to the per-line so_doc_no roll-up. */
   const lineSoDocs = [...new Set(items.map((it) => (it.so_doc_no ?? '').trim()).filter(Boolean))];
   // MRP / bulk-convert POs record their source SO(s) only in the free-text
-  // "From SOs: ..." note (they carry no per-line so_item_id), so the structured
-  // refs above and the per-line roll-up are both empty — fall back to that note
-  // so the source SO still prints. Owner 2026-07-20.
-  const noteSoDocs = (() => {
-    const m = /^\s*From SOs?:\s*(.+)$/i.exec((header.notes ?? '').trim());
-    return m ? m[1].trim() : '';
-  })();
+  // provenance note (they carry no per-line so_item_id), so the structured refs
+  // above and the per-line roll-up are both empty — fall back to that note so
+  // the source SO still prints. Owner 2026-07-20.
+  //
+  // Through the SHARED parser since 2026-08-18, not a fourth private regex.
+  // Two things that were wrong here are fixed by that alone:
+  //   - this copy omitted the `m` flag, so a note whose label sat on line 2
+  //     printed NO source SO while the relationship map beside it showed one;
+  //   - `noteSoDocs.includes(',')` decided single-vs-multi source by looking
+  //     for a comma character, so a trailing comma ("SO-1,") read as multi.
+  // Both disappear by counting parsed TOKENS instead of scanning a string.
+  const noteSoDocTokens = parseProvenanceNote(header.notes);
+  const noteSoDocs = noteSoDocTokens.join(', ');
   const yourRef = header.your_ref_no
     ?? header.source_so_doc_no
     ?? (lineSoDocs.length > 0 ? lineSoDocs.join(', ') : noteSoDocs);
-  // When the whole PO traces to exactly ONE source SO (the note lists a single
-  // doc, no comma) a line with no per-line link falls back to it, so the
-  // "For SO" column reads that SO instead of a dash. Multi-SO POs keep the
-  // dash per line (all SOs are already listed in Your Ref No above).
-  const singleSourceSo = (!lineSoDocs.length && noteSoDocs && !noteSoDocs.includes(',')) ? noteSoDocs : '';
+  // When the whole PO traces to exactly ONE source SO a line with no per-line
+  // link falls back to it, so the "For SO" column reads that SO instead of a
+  // dash. Multi-SO POs keep the dash per line (all SOs are already listed in
+  // Your Ref No above).
+  const singleSourceSo = (!lineSoDocs.length && noteSoDocTokens.length === 1) ? noteSoDocTokens[0]! : '';
 
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block — Company, Code, Address, Tel, Fax, Email,
@@ -375,11 +382,11 @@ async function renderPurchaseOrderInto(
   //   UOM | Qty | U/Price | Disc | Total
   /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
      services) — mirror the sales side. The shared helper keys on `item_code`,
-     but PO lines expose `material_code`; sort a shimmed view that carries the
+     but PO lines expose `item_code`; sort a shimmed view that carries the
      original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.material_code, __row: it })),
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
@@ -415,9 +422,9 @@ async function renderPurchaseOrderInto(
       [...new Set(descParts)].join('\n'),
       (it.uom ?? 'UNIT').toUpperCase(),
       String(it.qty),
-      fmtAmount(it.unit_price_centi),
-      it.discount_centi ? fmtAmount(it.discount_centi) : '',
-      fmtAmount(it.line_total_centi),
+      fmtAmount(it.unit_price_sen),
+      it.discount_sen ? fmtAmount(it.discount_sen) : '',
+      fmtAmount(it.line_total_sen),
     ];
   });
 
@@ -473,17 +480,17 @@ async function renderPurchaseOrderInto(
   };
   doc.setFontSize(9);
   let totY = lastY;
-  drawRow('Subtotal', fmtMoney(header.subtotal_centi, header.currency), totY); totY += 4;
-  if (header.tax_centi > 0) {
-    drawRow('Tax',    fmtMoney(header.tax_centi,      header.currency), totY); totY += 4;
+  drawRow('Subtotal', fmtMoney(header.subtotal_sen, header.currency), totY); totY += 4;
+  if (header.tax_sen > 0) {
+    drawRow('Tax',    fmtMoney(header.tax_sen,      header.currency), totY); totY += 4;
   }
   doc.setFontSize(11);
-  drawRow('TOTAL',    fmtMoney(header.total_centi,    header.currency), totY + 2, true, true);
+  drawRow('TOTAL',    fmtMoney(header.total_sen,    header.currency), totY + 2, true, true);
 
   /* Amount in words — wrapped to the left half so a long amount never
      collides with the totals column. */
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-  const words = doc.splitTextToSize(amountInWordsMyr(header.total_centi), totalsX - margin - 6) as string[];
+  const words = doc.splitTextToSize(amountInWordsMyr(header.total_sen), totalsX - margin - 6) as string[];
   doc.text(words, margin, lastY);
   doc.setFont('helvetica', 'normal');
   const wordsY = lastY + words.length * 3.6 + 2;
@@ -537,7 +544,7 @@ async function renderPurchaseOrderInto(
 
   for (const it of items) {
     const soNo = (it.so_doc_no ?? '').trim();
-    const part = sofaCellFromLine(it.variants, it.material_code);
+    const part = sofaCellFromLine(it.variants, it.item_code);
     if (part) {
       // ── Stored-geometry path (POS-configured sofas) — UNCHANGED. ──
       const gk = `${soNo}|${part.groupKey}`;
@@ -547,26 +554,26 @@ async function renderPurchaseOrderInto(
         // to the first '·'), else the per-line model name.
         const model = (part.groupKey ? (part.groupKey.split('·')[0] ?? '').trim() : '')
           || (it.material_name ?? '').trim()
-          || (it.material_code ?? '').trim();
+          || (it.item_code ?? '').trim();
         g = { parts: [], depth: part.depth, model, soNo };
         sofaGroups.set(gk, g);
       }
       g.parts.push({ cell: part.cell, idx: part.idx });
       // Record the base model so a reconstructed group can't double-draw it.
-      const bm = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+      const bm = sofaModuleFromLine(it.item_code, it.material_name ?? it.description);
       if (bm) geometryKeys.add(baseModelKey(soNo, bm.baseModel));
       continue;
     }
     // ── Reconstruction path (geometry-less BACKEND / old sofas). ──
     if ((it.item_group ?? '').toLowerCase() !== 'sofa') continue;
-    const mod = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+    const mod = sofaModuleFromLine(it.item_code, it.material_name ?? it.description);
     if (!mod) continue;
     const depthRaw = (it.variants as { depth?: unknown } | null)?.depth;
     const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
     const fk = baseModelKey(soNo, mod.baseModel);
     let fg = fallbackGroups.get(fk);
     if (!fg) {
-      const model = (it.material_name ?? '').trim() || (it.material_code ?? '').trim();
+      const model = (it.material_name ?? '').trim() || (it.item_code ?? '').trim();
       fg = { modules: [], depth, model, soNo };
       fallbackGroups.set(fk, fg);
     }

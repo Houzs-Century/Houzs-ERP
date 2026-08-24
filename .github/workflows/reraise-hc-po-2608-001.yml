@@ -1,0 +1,71 @@
+name: Re-raise HC-PO-2608-001 into AutoCount (PLAN by default)
+
+# Owner-triggered, 2026-08-17, for ONE document and no other.
+#
+# HC-PO-2608-001 reached the account book as PO-009968 because the SO-to-PO
+# transfer arm threw away the composed body and sent no DocNo (#2365, fixed;
+# host binary rebuilt 2026-08-17). PO-009968 has been CANCELLED in the live book
+# with the owner's explicit approval — measured on the host by a human, twice,
+# and NOT by anything in this workflow. The ERP still records the document as
+# being in AutoCount, so nothing will ever send it again: enqueuePoCreate skips
+# a purchase order that carries a linked_ac_docno.
+#
+# This clears that one link and queues the create. Two writes, one document,
+# both named in the script's header.
+#
+# PLAN unless mode=apply, and apply also needs the confirm phrase typed in —
+# the phrase is the fact the script cannot check for itself.
+#
+# Access path: DATABASE_URL, the only database secret this repo holds. Copied
+# from why-so-line-not-purchasable.yml, which runs. NOT from
+# recompute-2990-so-allocation.yml (DELETED 2026-08-20), which was wired to SUPABASE_URL +
+# SUPABASE_SERVICE_ROLE_KEY, neither of which exists here, and has never run.
+#
+# It runs under `npx tsx` rather than plain node because it imports the REAL
+# enqueuePoCreate out of src/ — the composer the Worker runs. A re-implementation
+# in .mjs would drift, and the day it drifts is the day it pushes a document the
+# real composer would have refused. Same reason, same shape, as
+# requeue-autocount-skipped.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: 'The ERP purchase order. Anything but HC-PO-2608-001 is refused'
+        required: false
+        default: 'HC-PO-2608-001'
+        type: string
+      mode:
+        description: 'plan reads only; apply clears the link and queues the create'
+        required: false
+        default: 'plan'
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only. Type: PO-009968 IS CANCELLED IN AUTOCOUNT'
+        required: false
+        default: ''
+        type: string
+
+# Its own group. A recovery run must never queue behind — or displace — a deploy.
+concurrency:
+  group: reraise-hc-po-2608-001
+  cancel-in-progress: false
+
+jobs:
+  reraise:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: re-raise (PLAN unless mode=apply)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          DOC_NO: "${{ inputs.doc_no }}"
+          MODE: "${{ inputs.mode }}"
+          CONFIRM: "${{ inputs.confirm }}"
+        run: npx tsx scripts/reraise-hc-po-2608-001.mjs

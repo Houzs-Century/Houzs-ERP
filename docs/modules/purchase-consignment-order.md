@@ -77,7 +77,7 @@ anything either), but worth knowing before you tell a user to just cancel it.
 | Surface | File |
 |---|---|
 | Desktop list | `frontend/src/pages/scm-v2/PurchaseConsignmentOrders.tsx` |
-| Desktop detail | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderDetail.tsx` |
+| Desktop detail | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderDetail.tsx` — since 2026-08-20 the detail Edit is FIELD-LEVEL (matches the backend §8 GAP-1 lock): a live PC Receive disables only supplier / currency / purchase location (`identityLocked`), dates + notes stay editable; `hardLocked` = a non-editable status. The PC-Receive detail (`PurchaseConsignmentReceiveDetail.tsx`) splits the same way. |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderNew.tsx` |
 | Query hooks | `frontend/src/vendor/scm/lib/purchase-consignment-order-queries.ts` |
 
@@ -110,7 +110,7 @@ One guard, `scm.consignment.po_orders`, over the whole router — read and write
 | GET | `/:id` | Detail — header + items |
 | GET | `/:id/linked` | Downstream receives / returns, for the detail's links |
 | POST | `/` | Create — lands as `SUBMITTED` |
-| PATCH | `/:id` | Update the header |
+| PATCH | `/:id` | Update the header. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PC Receive exists, `supplier_id` / `currency` / `purchase_location_id` freeze (409 `pco_identity_locked`); dates + notes stay editable. Was a whole-doc `pcoHasDownstream` 409 before. The lock **column set is sourced from the ONE rulebook** `backend/src/scm/shared/document-policy.ts` (`PCO_LOCK_COLS`), so it can't drift from the sibling documents. |
 | POST | `/:id/items` | Add a line |
 | PATCH | `/:id/items/:itemId` | Update a line |
 | DELETE | `/:id/items/:itemId` | Remove a line (child-lock applies) |
@@ -167,10 +167,10 @@ first (itself cancel-only — it has no delete either), then the PC Order.
 
 | Table | Role |
 |---|---|
-| `scm.purchase_consignment_orders` | Header (mig 0154) — uuid `id` PK, `pc_number TEXT UNIQUE`, `status`, `supplier_id`, `purchase_location_id`, `po_date`, `expected_at`, `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at`, `received_at`, `cancelled_at`, `company_id` |
-| `scm.purchase_consignment_order_items` | Lines — `binding_id`, `material_kind` (`mfg_product` / `fabric` / `raw`), `material_code`, `supplier_sku`, `qty`, `unit_price_centi`, `line_total_centi`, `received_qty` |
+| `scm.purchase_consignment_orders` | Header (mig 0154) — uuid `id` PK, `pc_number TEXT UNIQUE`, `status`, `supplier_id`, `purchase_location_id`, `po_date`, `expected_at`, `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at`, `received_at`, `cancelled_at`, `company_id` |
+| `scm.purchase_consignment_order_items` | Lines — `binding_id`, `material_kind` (`mfg_product` / `fabric` / `raw`), `item_code`, `supplier_sku`, `qty`, `unit_price_sen`, `line_total_sen`, `received_qty` |
 
-Numbering: `PCO-YYMM-NNN`, minted by `mintMonthlyDocNo` +
+Numbering: `PCO-YYMM-NNN`, claimed from `scm.doc_number_counters` (mig 0316) by `mintMonthlyDocNo` +
 `insertWithDocNoRetry` — a unique-violation (23505) on `pc_number` re-derives the
 next free number instead of 500ing.
 

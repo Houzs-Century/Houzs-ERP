@@ -8,12 +8,12 @@
 // service): a payee + a credit account (the bank/cash/AP the money is paid
 // FROM) + a few expense lines (description + debit account + amount) + a total
 // that posts to the GL. A SUPPLIER_PAYMENT PV can also SETTLE one or more
-// Purchase Invoices at face value (pv_allocations → PI paid_centi on post).
+// Purchase Invoices at face value (pv_allocations → PI paid_sen on post).
 //
 // GL post (source_type 'PV', mirrors postPiAccounting's JE shape but with
 // DYNAMIC legs — the PV's debit accounts + chosen credit account, not the PI's
-// fixed Dr 1200 / Cr 2000):
-//   Dr each line.debit_account_code   round(amount_centi * exchange_rate)  (MYR)
+// fixed Dr INVENTORY / Cr AP):
+//   Dr each line.debit_account_code   round(amount_sen * exchange_rate)  (MYR)
 //   Cr header.credit_account_code      = Σ of those rounded Dr legs          (MYR)
 // The credit leg is the SUM of the rounded debit legs so the JE balances
 // byte-for-byte even when rounding splits across lines.
@@ -48,6 +48,8 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { isDocumentHeld } from '../lib/document-hold';
+import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { pvLines } from '../../acc/rules';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -56,7 +58,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
-import { settlePiPaidCenti } from '../lib/pi-settlement';
+import { settlePiPaidSen } from '../lib/pi-settlement';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
 
@@ -64,7 +66,7 @@ export const paymentVouchers = new Hono<{ Bindings: Env; Variables: Variables }>
 paymentVouchers.use('*', supabaseAuth);
 
 /* The auditable header fields, camel (API) -> snake (column). Money rides as
-   total_centi: the INTEGER SEN, never a formatted amount. */
+   total_sen: the INTEGER SEN, never a formatted amount. */
 const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['payeeName', 'payee_name'],
   ['creditAccountCode', 'credit_account_code'],
@@ -74,16 +76,16 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['purpose', 'purpose'],
   ['currency', 'currency'],
   ['exchangeRate', 'exchange_rate'],
-  ['totalCenti', 'total_centi'],
+  ['totalSen', 'total_sen'],
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_centi, status, posted_at, created_at, created_by, updated_at, company_id';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id';
 
-const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_centi, created_at';
+const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
 
 /* Migration 0202 — the PV purpose. Only SUPPLIER_PAYMENT settles AP (its
-   allocations decrement the linked PIs' paid_centi); FREIGHT / OTHER post the GL
+   allocations decrement the linked PIs' paid_sen); FREIGHT / OTHER post the GL
    but touch no PI. Default SUPPLIER_PAYMENT. */
 const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' => {
   const v = String(raw ?? '').trim().toUpperCase();
@@ -122,7 +124,7 @@ const nextPvNo = async (sb: any, c: any): Promise<string> => {
    posted into a sen field) and is refused rather than rounded into a number
    nobody meant. Rejecting at the boundary matches the house rule the credit /
    debit-note routes already follow. */
-export function parseAmountCenti(raw: unknown): number | null {
+export function parseAmountSen(raw: unknown): number | null {
   const n = Number(raw ?? 0);
   if (!Number.isFinite(n)) return null; // NaN / Infinity — never a payment
   if (!Number.isInteger(n)) return null; // sen is integer; a decimal means RM
@@ -133,20 +135,20 @@ export function parseAmountCenti(raw: unknown): number | null {
 /* ── Normalise + validate the incoming lines, recompute the header total ──── */
 export function buildLines(
   raw: unknown,
-): { rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_centi: number }>; total: number } | { error: string } {
+): { rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }>; total: number } | { error: string } {
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lines_required' };
-  const rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_centi: number }> = [];
+  const rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }> = [];
   let total = 0;
   for (let i = 0; i < raw.length; i += 1) {
     const line = raw[i] as Record<string, unknown>;
     const debit = (line.debitAccountCode as string | undefined)?.trim();
-    const amount = parseAmountCenti(line.amountCenti);
+    const amount = parseAmountSen(line.amountSen);
     if (amount === null) return { error: 'line_amount_invalid' };
     rows.push({
       line_no: i + 1,
       description: (line.description as string | undefined)?.trim() || null,
       debit_account_code: debit ?? '',
-      amount_centi: amount,
+      amount_sen: amount,
     });
     total += amount;
   }
@@ -157,10 +159,10 @@ export function buildLines(
 /* ── Normalise + validate the incoming PV→PI allocations (migration 0202) ──── */
 export function buildAllocations(
   raw: unknown,
-): { rows: Array<{ pi_id: string; amount_centi: number }>; total: number } | { error: string } {
+): { rows: Array<{ pi_id: string; amount_sen: number }>; total: number } | { error: string } {
   if (raw === undefined || raw === null) return { rows: [], total: 0 };
   if (!Array.isArray(raw)) return { error: 'allocations_invalid' };
-  const rows: Array<{ pi_id: string; amount_centi: number }> = [];
+  const rows: Array<{ pi_id: string; amount_sen: number }> = [];
   let total = 0;
   for (const a of raw) {
     const row = a as Record<string, unknown>;
@@ -168,17 +170,17 @@ export function buildAllocations(
     /* Same reason as buildLines: a negative allocation used to clamp to 0 and
        then get skipped by the `<= 0` continue below, so "apply -RM 500 to this
        PI" silently applied nothing while the voucher still posted. */
-    const amount = parseAmountCenti(row.amountCenti);
+    const amount = parseAmountSen(row.amountSen);
     if (!piId) return { error: 'allocation_pi_required' };
     if (amount === null) return { error: 'allocation_amount_invalid' };
     if (amount === 0) continue; // an explicit zero settles nothing — drop the row
-    rows.push({ pi_id: piId, amount_centi: amount });
+    rows.push({ pi_id: piId, amount_sen: amount });
     total += amount;
   }
   return { rows, total };
 }
 
-/* settlePiPaidCenti moved to lib/pi-settlement, where the clamp that stops two
+/* settlePiPaidSen moved to lib/pi-settlement, where the clamp that stops two
    vouchers over-paying one invoice lives next to the SQL function that enforces
    it. It used to live here as an optimistic loop whose cap (total − paid) was
    read in the CALLER, one round trip before the write — see the header of
@@ -188,8 +190,8 @@ export function buildAllocations(
 /* ── The allocation's pi_id is CALLER-SUPPLIED, so it is checked here ────────
    An allocation row is stamped with the ACTIVE company (stampCompany, below),
    but `piId` arrives in the request body and nothing verified that the invoice
-   it names is this company's. Post the voucher and settlePiPaidCenti moves that
-   invoice's paid_centi and status by id alone — the service-role client bypasses
+   it names is this company's. Post the voucher and settlePiPaidSen moves that
+   invoice's paid_sen and status by id alone — the service-role client bypasses
    RLS (mig 0061 enabled it with NO policies) — so a company-A voucher marked a
    company-B supplier invoice PARTIALLY_PAID / PAID, and the FX-adoption branch
    further down POST /:id/post could then rewrite that invoice's exchange_rate
@@ -225,6 +227,54 @@ const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
   purchaseInvoiceIds: ids.slice(0, 20),
 });
 
+/* ── A HELD INVOICE IS NOT PAYABLE (owner, 2026-08-21: "PI also hold") ───────
+   ON_HOLD arrived on scm.purchase_invoice_status with migration 0320, for the
+   disputed supplier bill that must not go out while it is being queried.
+
+   THIS ONE HAD TO BE WRITTEN, and the other two holds did not — worth knowing,
+   because it says where to look when a fourth is added. A PO on hold is not
+   receivable because grns.ts filters receivable POs through an ALLOW-list; a
+   GRN on hold cannot be invoiced because the billable-GRN read is
+   `.eq('status','POSTED')`. Both blocks came for free. The settle path reads
+   invoices BY ID and had no status gate at all, so a held invoice would have
+   been paid exactly as before.
+
+   Checked where the id ENTERS, beside the company guard, for the same reason
+   that one gives: nothing has been written yet, so the operator gets a straight
+   refusal rather than a voucher that quietly pays a bill somebody stopped.
+
+   FAILS CLOSED on a read error — absence is what refuses here, so folding a
+   blip into "none are held" would authorise the write this exists to stop.
+
+   IT READS THE MARKER SINCE MIG 0324. The hold is no longer a status, so a held
+   invoice reads POSTED or PARTIALLY_PAID here and the old `status === 'ON_HOLD'`
+   test would have matched nothing, for ever, while still looking like a guard.
+   `isDocumentHeld` checks the flag AND the retired label, so a legacy row is
+   still caught. Selecting `on_hold` is half the fix: an unselected column reads
+   `undefined`, which is not held, which is the permissive answer. */
+async function allocationPisOnHold(
+  sb: any,
+  c: any,
+  piIds: string[],
+): Promise<string[]> {
+  const ids = [...new Set(piIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(
+    sb.from('purchase_invoices').select('id, status, on_hold').in('id', ids), c,
+  );
+  if (error) return ids;
+  return ((data ?? []) as Array<{ id: string; status: string | null; on_hold: boolean | null }>)
+    .filter((r) => isDocumentHeld(r))
+    .map((r) => r.id);
+}
+
+const ALLOCATION_ON_HOLD = (ids: string[]) => ({
+  error: 'allocation_on_hold',
+  message: 'One of the invoices this voucher pays is on hold. Take it off hold first.',
+  purchaseInvoiceIds: ids.slice(0, 20),
+});
+
+
 /* ────────────────────────────────────────────────────────────────────────
    List / get
    ──────────────────────────────────────────────────────────────────────── */
@@ -252,27 +302,27 @@ paymentVouchers.get('/:id', async (c) => {
     /* PV→PI settlement (0202) — the PIs this PV applies to, joined for the PI
        number + the live total/paid so the detail page can show "Apply to PI". */
     scopeToCompany(sb.from('pv_allocations')
-      .select('id, amount_centi, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_centi, paid_centi, status)')
+      .select('id, amount_sen, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
       .eq('pv_id', id), c),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
   /* Flatten the joined PI (Supabase returns a to-one FK as an array). */
   const allocations = ((a.data ?? []) as Array<{
-    id: string; amount_centi: number;
-    pi: { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_centi: number; paid_centi: number; status: string }
-      | Array<{ id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_centi: number; paid_centi: number; status: string }> | null;
+    id: string; amount_sen: number;
+    pi: { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string }
+      | Array<{ id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string }> | null;
   }>).map((row) => {
     const pi = Array.isArray(row.pi) ? row.pi[0] : row.pi;
     return {
       id: row.id,
-      amountCenti: Number(row.amount_centi ?? 0),
+      amountSen: Number(row.amount_sen ?? 0),
       piId: pi?.id ?? null,
       invoiceNumber: pi?.invoice_number ?? null,
       supplierInvoiceRef: pi?.supplier_invoice_ref ?? null,
       currency: pi?.currency ?? null,
-      totalCenti: pi ? Number(pi.total_centi ?? 0) : null,
-      paidCenti: pi ? Number(pi.paid_centi ?? 0) : null,
+      totalSen: pi ? Number(pi.total_sen ?? 0) : null,
+      paidSen: pi ? Number(pi.paid_sen ?? 0) : null,
       status: pi?.status ?? null,
     };
   });
@@ -316,6 +366,8 @@ export const createPaymentVoucherHandler = async (c: any) => {
   {
     const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
     if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+    const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
   }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
@@ -337,7 +389,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
     (pvNumber) => sb.from('payment_vouchers').insert({
       company_id:          activeCompanyId(c), // multi-company: stamp the active company
       pv_number:           pvNumber,
-      voucher_date:        (body.voucherDate as string) ?? todayMyt(),
+      voucher_date:        dateOrNull(body.voucherDate) ?? todayMyt(),
       payee_name:          payeeName,
       supplier_id:         (body.supplierId as string | undefined) ?? null,
       credit_account_code: creditAccountCode,
@@ -345,7 +397,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
       exchange_rate:       exchangeRate,
       purpose,
       notes:               (body.notes as string | undefined) ?? null,
-      total_centi:         built.total,
+      total_sen:         built.total,
       status:              'DRAFT',
       created_by:          user.id,
     }).select(HEADER).single(),
@@ -359,7 +411,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (lErr) { await sb.from('payment_vouchers').delete().eq('id', h.id); return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500); }
 
   // PV→PI settlement links (0202) — persist the allocations (compensating-delete
-  // the whole PV on failure). They settle paid_centi only on POST, not here.
+  // the whole PV on failure). They settle paid_sen only on POST, not here.
   if (allocBuilt.rows.length > 0) {
     const allocRows = allocBuilt.rows.map((r) => ({ ...r, pv_id: h.id }));
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
@@ -382,9 +434,9 @@ export const createPaymentVoucherHandler = async (c: any) => {
       fieldChange('purpose', null, purpose),
       fieldChange('currency', null, currency),
       fieldChange('exchangeRate', null, exchangeRate),
-      fieldChange('totalCenti', null, built.total),
+      fieldChange('totalSen', null, built.total),
       fieldChange('lineCount', null, built.rows.length),
-      fieldChange('allocatedCenti', null, allocBuilt.total),
+      fieldChange('allocatedSen', null, allocBuilt.total),
     ]),
   });
 
@@ -437,7 +489,15 @@ paymentVouchers.patch('/:id', async (c) => {
     if (!v) return c.json({ error: 'credit_account_required' }, 400);
     updates.credit_account_code = v;
   }
-  if (body.voucherDate !== undefined) updates.voucher_date = body.voucherDate;
+  /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
+     detail form sends this key on every save — cleared, DateField emits "".
+     NULL would trade one 500 for another, so a blank is refused by NAME here,
+     exactly as payeeName and creditAccountCode above are. */
+  if (body.voucherDate !== undefined) {
+    const d = dateOrNull(body.voucherDate);
+    if (!d) return c.json({ error: 'voucher_date_required' }, 400);
+    updates.voucher_date = d;
+  }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
@@ -469,7 +529,7 @@ paymentVouchers.patch('/:id', async (c) => {
     await sb.from('payment_voucher_lines').delete().eq('pv_id', id);
     const { error: lErr } = await sb.from('payment_voucher_lines').insert(stampCompany(built.rows.map((r) => ({ ...r, pv_id: id })), c));
     if (lErr) return c.json({ error: 'lines_update_failed', reason: lErr.message }, 500);
-    updates.total_centi = built.total;
+    updates.total_sen = built.total;
     newTotal = built.total;
   }
 
@@ -477,9 +537,9 @@ paymentVouchers.patch('/:id', async (c) => {
   if (body.allocations !== undefined) {
     const allocBuilt = buildAllocations(body.allocations);
     if ('error' in allocBuilt) return c.json({ error: allocBuilt.error }, 400);
-    /* total_centi is NOT NULL on a row we have already read, so this is the real
+    /* total_sen is NOT NULL on a row we have already read, so this is the real
        stored total — not a `?? 0` standing in for an unknown one. */
-    const total = newTotal ?? Number(before.total_centi);
+    const total = newTotal ?? Number(before.total_sen);
     if (allocBuilt.total > total) {
       return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total }, 400);
     }
@@ -490,6 +550,8 @@ paymentVouchers.patch('/:id', async (c) => {
     {
       const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
       if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+      const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
     }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {
@@ -555,7 +617,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
   if (!pvRaw) return c.json(NOT_THIS_COMPANY, 404);
   const pv = pvRaw as unknown as {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
-    credit_account_code: string; total_centi: number; currency: string | null;
+    credit_account_code: string; total_sen: number; currency: string | null;
     exchange_rate: string | number | null; status: string; purpose: string | null;
     company_id: number | null;
     supplier: { code: string | null; name: string | null } | null;
@@ -589,8 +651,8 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
 
   const { data: linesRaw } = await sb.from('payment_voucher_lines')
-    .select('line_no, description, debit_account_code, amount_centi').eq('pv_id', id).order('line_no');
-  const lines = (linesRaw ?? []) as Array<{ line_no: number; description: string | null; debit_account_code: string; amount_centi: number }>;
+    .select('line_no, description, debit_account_code, amount_sen').eq('pv_id', id).order('line_no');
+  const lines = (linesRaw ?? []) as Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }>;
   if (lines.length === 0) return c.json({ error: 'no_lines', message: 'Voucher has no lines to post' }, 400);
 
   /* FX conversion AT POST TIME (MYR-only today → rate 1). Each Dr leg =
@@ -598,7 +660,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
      so the JE balances exactly regardless of per-line rounding. */
   const rawRate = Number(pv.exchange_rate ?? 1);
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1;
-  const debitLegs = lines.map((l) => ({ ...l, myrSen: Math.round(Number(l.amount_centi) * rate) }));
+  const debitLegs = lines.map((l) => ({ ...l, myrSen: Math.round(Number(l.amount_sen) * rate) }));
   const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);  // MYR amount posted to the GL
   if (totalSen <= 0) return c.json({ error: 'zero_total', message: 'Voucher total is zero' }, 400);
 
@@ -657,7 +719,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
   });
 
   /* PV→PI settlement (migration 0202) — a SUPPLIER_PAYMENT PV decrements each
-     linked PI's paid_centi at FACE VALUE. Runs EXACTLY ONCE (the active-JE
+     linked PI's paid_sen at FACE VALUE. Runs EXACTLY ONCE (the active-JE
      idempotency guard above early-returns on a re-post). Cap each allocation at
      the PI's remaining outstanding. Best-effort. FREIGHT / OTHER settle nothing. */
   const overAllocated: string[] = [];
@@ -671,11 +733,11 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const rateMismatch: string[] = [];
   if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, amount_centi').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; amount_centi: number }>) {
-      const want = Math.max(0, Number(a.amount_centi ?? 0));
+      .select('id, pi_id, amount_sen').eq('pv_id', id);
+    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; amount_sen: number }>) {
+      const want = Math.max(0, Number(a.amount_sen ?? 0));
       if (want <= 0) continue;
-      /* The full allocation goes to settlePiPaidCenti and the CAP is applied by
+      /* The full allocation goes to settlePiPaidSen and the CAP is applied by
          the database, at write time, against the row as it then stands. This
          used to read the PI here, compute `outstanding = total - paid`, and cap
          the allocation itself — a cap that a second voucher settling the same
@@ -683,12 +745,12 @@ export const postPaymentVoucherHandler = async (c: any) => {
          share and the invoice ended up paid twice over. The DRAFT/CANCELLED
          skip moved into the same call for the same reason: it was a separate
          read of a value that could change underneath it. */
-      const settled = await settlePiPaidCenti(sb, a.pi_id, want);
+      const settled = await settlePiPaidSen(sb, a.pi_id, want);
       /* Record EXACTLY what was applied — not what was asked for. A later
          cancel reverses this figure, so recording the request after the
          database clamped it smaller would un-apply money that never moved,
          swapping an over-payment for an under-payment. */
-      await sb.from('pv_allocations').update({ applied_centi: settled.appliedCenti }).eq('id', a.id);
+      await sb.from('pv_allocations').update({ applied_sen: settled.appliedSen }).eq('id', a.id);
 
       /* A clamp is a real event, not an implementation detail: somebody tried
          to pay a supplier more than the invoice asks for, and the difference
@@ -698,11 +760,11 @@ export const postPaymentVoucherHandler = async (c: any) => {
          the GL entry above is correct and already committed, and the money did
          leave; what is in question is only how much of it this invoice
          absorbed. */
-      if (settled.clampedCenti > 0) {
+      if (settled.clampedSen > 0) {
         /* eslint-disable-next-line no-console */
         console.error('[pv-settle-pi] allocation exceeded the invoice outstanding — clamped:',
-          pv.pv_number, 'pi', a.pi_id, 'requested', want, 'applied', settled.appliedCenti);
-        overAllocated.push(`${a.pi_id}: asked ${want} sen, applied ${settled.appliedCenti} sen`);
+          pv.pv_number, 'pi', a.pi_id, 'requested', want, 'applied', settled.appliedSen);
+        overAllocated.push(`${a.pi_id}: asked ${want} sen, applied ${settled.appliedSen} sen`);
       }
       if (!settled.ok) {
         /* eslint-disable-next-line no-console */
@@ -720,7 +782,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
          is no transaction to roll back into and nothing about a costing refresh
          justifies 500-ing a payment that already happened. So every failure below
          is logged and stepped over, exactly as the settle failure above is. */
-      if (settled.appliedCenti > 0) {
+      if (settled.appliedSen > 0) {
         try {
           const { data: piRaw } = await sb.from('purchase_invoices')
             .select('id, invoice_number, currency, exchange_rate, grn_id').eq('id', a.pi_id).maybeSingle();
@@ -730,7 +792,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
           } | null;
           if (piRow) {
             const plan = planPvRateAdoption({
-              appliedCenti: settled.appliedCenti,
+              appliedSen: settled.appliedSen,
               pvCurrency: pv.currency,
               pvExchangeRate: pv.exchange_rate,
               pi: {
@@ -773,7 +835,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
                     fieldChange('exchangeRate', plan.oldRate, plan.rate),
                     fieldChange('currency', null, normalizeCurrency(piRow.currency)),
                     fieldChange('rateSourcePv', null, pv.pv_number),
-                    fieldChange('appliedCenti', null, settled.appliedCenti),
+                    fieldChange('appliedSen', null, settled.appliedSen),
                   ]),
                 });
                 /* Re-cost the GRN this invoice bills so the corrected rate reaches
@@ -939,8 +1001,8 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   });
 
   /* PV→PI settlement reversal (0202) — un-apply what this PV settled. Decrement
-     each linked PI's paid_centi by the EXACT applied_centi recorded at post.
-     Only a SUPPLIER_PAYMENT PV ever moved paid_centi. Best-effort. */
+     each linked PI's paid_sen by the EXACT applied_sen recorded at post.
+     Only a SUPPLIER_PAYMENT PV ever moved paid_sen. Best-effort. */
   /* FX-RATE RETENTION on cancel (2026-07-30) — the invoices still carrying the rate
      this voucher established, named so the History panel says so out loud. See
      lib/pv-rate-adoption.ts (isRateRetainedFromPv) for WHY the rate and the re-cost
@@ -950,12 +1012,12 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   const fxRateRetained: string[] = [];
   if (normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, applied_centi').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; applied_centi: number }>) {
-      const applied = Math.max(0, Number(a.applied_centi ?? 0));
+      .select('id, pi_id, applied_sen').eq('pv_id', id);
+    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; applied_sen: number }>) {
+      const applied = Math.max(0, Number(a.applied_sen ?? 0));
       if (applied <= 0) continue;
 
-      /* Read BEFORE the reversal: the settle moves paid_centi and status, never the
+      /* Read BEFORE the reversal: the settle moves paid_sen and status, never the
          rate, but reading first keeps this notice about the state the operator was
          looking at when they pressed Cancel. */
       try {
@@ -995,7 +1057,7 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
         console.error('[pv-fx-rate] retention notice skipped — cancel continues:', cancelled.pv_number, 'pi', a.pi_id, e);
       }
 
-      const reversed = await settlePiPaidCenti(sb, a.pi_id, -applied);
+      const reversed = await settlePiPaidSen(sb, a.pi_id, -applied);
       /* Only zero the allocation when the reversal actually landed. Clearing it
          after a failed settle would erase the one record of how much is still
          sitting on the PI, and no later run could put it back. */
@@ -1005,12 +1067,12 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
            the reversal had nothing to take off. That is a standing disagreement
            between the allocation and the invoice — the kind of thing the old
            silent Math.max(0, ...) is why nobody ever noticed. */
-        if (reversed.clampedCenti < 0) {
+        if (reversed.clampedSen < 0) {
           /* eslint-disable-next-line no-console */
           console.error('[pv-settle-pi] reversal exceeded what the invoice was carrying:',
-            cancelled.pv_number, 'pi', a.pi_id, 'recorded', applied, 'reversed', -reversed.appliedCenti);
+            cancelled.pv_number, 'pi', a.pi_id, 'recorded', applied, 'reversed', -reversed.appliedSen);
         }
-        await sb.from('pv_allocations').update({ applied_centi: 0 }).eq('id', a.id);
+        await sb.from('pv_allocations').update({ applied_sen: 0 }).eq('id', a.id);
       } else {
         /* eslint-disable-next-line no-console */
         console.error('[pv-settle-pi] reversal failed — PI still carries this payment:',

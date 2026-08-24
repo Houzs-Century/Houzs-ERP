@@ -10,7 +10,7 @@
 //
 // Below row, per-category variants (only when SKU picked + has variants):
 //   BEDFRAME → Fabrics / Gaps / Divan Heights / Leg Heights · Specials accordion
-//   SOFA     → Fabrics / Seat Heights / Leg Heights        · Specials accordion
+//   SOFA     → Fabrics / Seat Size / Leg Heights           · Specials accordion
 //   MATTRESS / ACCESSORY / OTHERS → no variants section
 //
 // Wired to:
@@ -34,7 +34,8 @@ import {
   type MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
-import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneyCenti } from '@2990s/shared';
+import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   useMaintenanceConfig,
@@ -44,25 +45,36 @@ import {
   type MfgProductRow,
   type SpecialAddonRow,
 } from '../lib/mfg-products-queries';
-import { useFabricTrackings, useFabricColoursSearch, type FabricTrackingRow, type FabricColourRow } from '../lib/fabric-queries';
+import { useFabricTrackingsLite, useFabricColoursSearch, type FabricLite, type FabricColourRow } from '../lib/fabric-queries';
 import { useFabricLibrary } from '../lib/queries';
 import {
   useUploadSoItemPhoto,
   useDeleteSoItemPhoto,
 } from '../lib/sales-order-queries';
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
+import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
+import { seedFollowerVariants } from '../lib/so-variant-cascade';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
+import { DateField } from "./DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+
+/* The tallest either portalled picker on this card wants to be. Matches
+   `.suggestList { max-height: 460px }` in SoLineCard.module.css, which is now
+   only the fallback for a render before the first measurement — the live value
+   comes from lib/anchoredPanel, which shortens it whenever the room on the
+   chosen side is less than this. */
+const SUGGEST_LIST_MAX_H = 460;
 
 const isBlankVariant = (v: unknown): boolean =>
   v === undefined || v === null || String(v).trim() === '';
@@ -96,12 +108,18 @@ export type SoLineDraft = {
   description:    string;
   uom:            string;
   qty:            number;
-  unitPriceCenti: number;
-  discountCenti:  number;
-  unitCostCenti:  number;
+  unitPriceSen: number;
+  discountSen:  number;
+  unitCostSen:  number;
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
+  /* Client-only, like overriddenKeys: TRUE once the operator has typed into
+     this line's price box. It is how a deliberate RM 0 is told apart from a
+     SKU that simply has no sell price (a sofa the server prices from its
+     Model's modules at save). Parents send it as `zeroPriceIntended` via
+     vendor/scm/lib/zeroPriceClaim; it is never persisted. */
+  priceAuthored?: boolean;
   /* PR-E — Per-item delivery date + cascade override flag. */
   lineDeliveryDate?:           string | null;
   lineDeliveryDateOverridden?: boolean;
@@ -117,7 +135,7 @@ export type SoLineDraft = {
 /** Factory for a fresh empty SO line draft. */
 export const emptySoLine = (): SoLineDraft => ({
   itemCode: '', itemGroup: 'others', description: '', uom: 'UNIT',
-  qty: 1, unitPriceCenti: 0, discountCenti: 0, unitCostCenti: 0,
+  qty: 1, unitPriceSen: 0, discountSen: 0, unitCostSen: 0,
   variants: {}, remark: '',
   lineDeliveryDate: null,
   lineDeliveryDateOverridden: false,
@@ -222,7 +240,7 @@ const SoLineCardInner = ({
   /* fabric_trackings stays ONLY for the read-only pricing-tier breakdown
      (pickedFabric below) — the Fabrics DROPDOWN now sources the selling-side
      fabric_colours, same as POS (SO-parity, Loo 2026-06-06). */
-  const fabricsQ = useFabricTrackings();
+  const fabricsQ = useFabricTrackingsLite();
   const fabrics = useMemo(() => fabricsQ.data ?? [], [fabricsQ.data]);
   const fabricLibQ     = useFabricLibrary();
   /* Special Add-ons (the per-Model system POS sells from + the server prices
@@ -241,6 +259,36 @@ const SoLineCardInner = ({
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
   const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
+     The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
+     typed unit price never survived: the next rebuild re-derived 250 over it
+     and the operator watched 250 -> 125 "nuke the line to 0". The sanctioned
+     reduction is the line DISCOUNT, which the PATCH has always accepted and
+     #2490 taught the rebuild to keep — but nothing on this screen could ever
+     enter one, so that road was reachable only from the POS voucher split.
+     So on a fee line this cell SHOWS the net and WRITES the difference as a
+     discount: type the amount you want charged. Gross stays derived, and the
+     printed SO reads unit 250 / discount 125 / total 125, exactly like every
+     other price reduction on an order. Raising a fee is NOT expressible this
+     way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
+     for — so a higher figure clamps to no discount rather than pretending. */
+  const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
+  /* ...and the fee-vs-price verdict is LOCKED per mounted line, never
+     re-derived per keystroke. Deriving it live from the gross shipped two
+     regressions in one day (the full account is on lockedFeeSemantics): first
+     a hand-added fee line at gross 0 read "250" as a target and booked
+     nothing, then the fix for THAT let the first keystroke flip the cell into
+     target mode and pin the price at the first digit typed ("stuck at RM 2").
+     A line that arrives priced edits as a fee; a line being authored from 0
+     stays a plain unit price until it is saved and re-mounted. */
+  const feeVerdictRef = useRef<boolean | null>(null);
+  feeVerdictRef.current = lockedFeeSemantics(
+    feeVerdictRef.current, isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen,
+  );
+  const isFeeLine = feeVerdictRef.current === true;
+  const amountCellSen = isFeeLine
+    ? feeAmountSen(feeGrossSen, draft.discountSen)
+    : draft.unitPriceSen;
   /* Special-order price DISPLAY is off for EVERYONE on the order-entry
      documents (owner 2026-07-17: costing leaves the SO/DO/SI/DR forms entirely
      and moves to the separate Finance "Fulfillment Costing" module — even
@@ -261,7 +309,6 @@ const SoLineCardInner = ({
   // the options got cut at the card's bottom edge on every doc that uses this
   // card (SO / DO / DR / consignment). Wei Siang 2026-06-06.
   const pickerWrapRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   /* Multi-add (desktop MobileSkuPicker.onPickMany parity) — when the parent
      wires onAddProducts, ticked SKUs collect here; "Add N" commits them (first
      → this line, rest → new lines). Keyed by MfgProductRow.id. */
@@ -277,7 +324,7 @@ const SoLineCardInner = ({
      every keystroke (which jumps the cursor and blocks typing). Synced back
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
-  const [priceText, setPriceText] = useState((draft.unitPriceCenti / 100).toFixed(2));
+  const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
      this the product picker fired one /mfg-products?search=… request per
      keystroke even when the picker wasn't open (every render of an
@@ -368,23 +415,27 @@ const SoLineCardInner = ({
   // Sync picker search box to the description after picking.
   useEffect(() => { setSearch(draft.description ?? ''); }, [draft.description]);
 
-  // Reflect external Unit Price changes (e.g. product pick → 0) into the
-  // local text box, but leave the operator's in-progress typing untouched.
+  // Reflect external amount changes (e.g. product pick → 0, or a delivery fee
+  // re-derived by the server) into the local text box, but leave the
+  // operator's in-progress typing untouched. On a fee line the canonical value
+  // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
     const parsed = Math.round(Number(priceText) * 100) || 0;
-    if (parsed !== draft.unitPriceCenti) setPriceText((draft.unitPriceCenti / 100).toFixed(2));
+    if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.unitPriceCenti]);
+  }, [amountCellSen]);
 
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
     const category = p.category.toLowerCase();
     /* PR #141 — Sofa-set inherit: same-category follower lines copy the
-       master's variants on pick. PR #147 — reset overriddenKeys on a fresh
-       pick so cascade can repopulate everything cleanly. */
-    const inherited = inheritVariantsByCategory?.[category];
-    const seedVariants: Record<string, unknown> =
-      inherited && Object.keys(inherited).length > 0 ? { ...inherited } : {};
+       master's variants on pick. The seed only removes the flash of an empty
+       configurator; the live cascade in the parent form is what actually keeps
+       a follower in step, including when the master is typed AFTER this line
+       already exists (the owner's two-sofa multi-add). Both go through
+       lib/so-variant-cascade so the never-inherited keys are stripped in one
+       place. PR #147 — reset overriddenKeys on a fresh pick. */
+    const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
     onChange({
       itemCode:       p.code,
       itemGroup:      category,
@@ -395,7 +446,7 @@ const SoLineCardInner = ({
          predates the cost/sell split; base_price_sen remains COST and still
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
-      unitPriceCenti: p.sell_price_sen ?? 0,
+      unitPriceSen: p.sell_price_sen ?? 0,
       variants:       seedVariants,
       overriddenKeys: [],
     });
@@ -421,26 +472,31 @@ const SoLineCardInner = ({
     setShowPicker(false);
   };
 
-  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. */
-  const parseInches = (s: unknown): number => {
-    if (s === null || s === undefined) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
-  const computedTotalHeight = useMemo(() => {
-    if (category !== 'bedframe') return '';
-    const d = parseInches(draft.variants.divanHeight);
-    const l = parseInches(draft.variants.legHeight);
-    const g = parseInches(draft.variants.gap);
-    if (d === 0 && l === 0 && g === 0) return '';
-    return `${d + l + g}"`;
-  }, [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap]);
+  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. The rule
+     itself lives in vendor/shared/total-height.ts; this card is one of sixteen
+     writers that used to carry a private copy of it. */
+  const computedTotalHeight = useMemo(
+    () => computeTotalHeight(category, draft.variants),
+    [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap],
+  );
 
+  /* THE `if (!computedTotalHeight) return;` THAT USED TO SIT HERE IS GONE, and
+     removing it is the behavioural half of unifying this rule. It made the
+     writer refuse to write an EMPTY total, so clearing divan/leg/gap on a line
+     that already carried one left the OLD number in the draft — and that stale
+     number was saved, priced by mfg-pricing.ts, and gated by
+     allowed-options-check.ts, which can refuse the line for a `total_height`
+     the form has no input to correct. The fourteen purchasing screens had
+     always cleared it; only this card and MobileNewSO did not.
+
+     The decision now lives in `totalHeightPatch`, which returns null ONLY when
+     the stored value already equals the computed one — never merely because the
+     computed one is empty. That is deliberately not a guard a caller can get
+     wrong here again, and it is pinned by total-height.canonical.test.ts. */
   useEffect(() => {
-    if (category !== 'bedframe') return;
-    if (!computedTotalHeight) return;
-    if (String(draft.variants.totalHeight ?? '') === computedTotalHeight) return;
-    onChange({ variants: { ...draft.variants, totalHeight: computedTotalHeight } });
+    const patch = totalHeightPatch(category, draft.variants);
+    if (!patch) return;
+    onChange({ variants: { ...draft.variants, ...patch } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computedTotalHeight, category]);
 
@@ -470,7 +526,7 @@ const SoLineCardInner = ({
      variant. Pull the per-context tier (sofa_price_tier vs
      bedframe_price_tier) so the shared compute function can switch
      basePriceSen ↔ price1Sen exactly the same way the server does. */
-  const pickedFabric: FabricTrackingRow | null = useMemo(() => {
+  const pickedFabric: FabricLite | null = useMemo(() => {
     const code = String(draft.variants.fabricCode ?? '');
     if (!code) return null;
     return fabrics.find((f) => f.fabric_code === code) ?? null;
@@ -533,7 +589,23 @@ const SoLineCardInner = ({
      offering e.g. a leg height the SKU rejects on save (variant_not_allowed).
      SO-parity (Loo 2026-06-06) — `picked` only exists for a freshly-picked
      product; EDITING a saved line on SO Detail used to render unrestricted.
-     Resolve the pools by item code too so saved lines filter identically. */
+     Resolve the pools by item code too so saved lines filter identically.
+
+     THIS DOES NOT MAKE variant_not_allowed UNREACHABLE, and reading it that way
+     is what left a bedframe refusal with no message for months (2026-08-18).
+     Filtering a picker can only cover fields that HAVE a picker: `totalHeight`
+     is computed below and has no control here, and `size_code` / `compartment`
+     come off the product row, so all three can still refuse on save. The
+     refusal is now rendered for the operator on the error path — see
+     vendor/scm/lib/refusal-detail.ts; do not add a second copy of that
+     wording here.
+
+     `restrictP`/`restrictS` also compare RAW, so a pool value spelled with a
+     curly inch mark (prod's `gaps` pool holds ten of them) matches no
+     maintenance value and the option is silently dropped from the dropdown.
+     The SERVER-side gate folds those spellings now (allowed-options-check.ts
+     `inPool`); these two filters deliberately still do not, because widening
+     them CHANGES WHICH OPTIONS APPEAR — an owner's call, not a bug fix. */
   const allowedByCodeQ = useModelAllowedOptionsByCode(draft.itemCode || undefined);
   const allowOpts = picked?.allowed_options ?? allowedByCodeQ.data ?? null;
   const restrictP = (opts: Array<{ value: string; priceSen: number }>, pool?: string[] | null) =>
@@ -612,8 +684,8 @@ const SoLineCardInner = ({
     : 0;
 
   const lineTotal = useMemo(
-    () => Math.max(0, draft.qty * draft.unitPriceCenti - draft.discountCenti),
-    [draft.qty, draft.unitPriceCenti, draft.discountCenti],
+    () => Math.max(0, draft.qty * draft.unitPriceSen - draft.discountSen),
+    [draft.qty, draft.unitPriceSen, draft.discountSen],
   );
 
   /* Colour KIV (owner 2026-07-24, SO-2607-016) — the line committed to a
@@ -640,24 +712,13 @@ const SoLineCardInner = ({
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
-  // Keep the portal'd SKU dropdown pinned under its input while open; reposition
-  // on scroll/resize so it tracks the page.
-  useEffect(() => {
-    if (!showPicker || !isEditing) { setMenuPos(null); return; }
-    const update = () => {
-      const el = pickerWrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [showPicker, isEditing]);
+  /* Keep the portal'd SKU dropdown pinned to its input while open. The
+     geometry — flip above when there is more room there, clamp the height to
+     the room actually available — is the shared house rule in
+     lib/anchoredPanel, not a copy. Owner 2026-08-21: he typed a code, the list
+     opened downward past the bottom of the window, and the last rows plus the
+     green "Add N" bar could not be reached at all. */
+  const menuPos = useAnchoredPanel(pickerWrapRef, showPicker && isEditing, SUGGEST_LIST_MAX_H);
 
   return (
     <div className={styles.card}>
@@ -735,7 +796,7 @@ const SoLineCardInner = ({
                class's absolute top:100%/left/right. */
             <ul
               className={styles.suggestList}
-              style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: menuPos.width, right: 'auto', marginTop: 0, zIndex: 1000 }}
+              style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
             >
               {multiEnabled && candidates.length > 0 && (
                 /* Multi-add toggle (MobileSkuPicker.onPickMany parity). onMouseDown
@@ -836,24 +897,38 @@ const SoLineCardInner = ({
           className={styles.priceInput}
           value={priceText}
           disabled={!isEditing || !canEditPrice}
-          title={!canEditPrice ? 'Price follows the SKU Master sell price — admin can override' : undefined}
+          title={
+            !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
+              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : undefined
+          }
           onChange={(e) => {
             const t = e.target.value;
             setPriceText(t);
-            onChange({ unitPriceCenti: Math.round(Number(t) * 100) || 0 });
+            if (isFeeLine) {
+              /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
+                 0, which would read as charge-nothing and discount the whole
+                 line on the way to retyping it — and a blur right then would
+                 save that. A real waiver is typed as 0, which still lands. */
+              const n = Number(t);
+              if (t.trim() === '' || !Number.isFinite(n)) return;
+              onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
+              return;
+            }
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
           }}
-          onBlur={() => setPriceText((draft.unitPriceCenti / 100).toFixed(2))}
+          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
-        <input
-          type="date"
+        <DateField
+          fullWidth
           className={styles.input}
           value={draft.lineDeliveryDate ?? ''}
           disabled={!isEditing}
           title={!draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
-          onChange={(e) => onChange({
-            lineDeliveryDate: e.target.value || null,
+          onChange={(iso) => onChange({
+            lineDeliveryDate: iso || null,
             lineDeliveryDateOverridden: true,
           })}
           style={
@@ -983,7 +1058,12 @@ const SoLineCardInner = ({
               onSelect={pickFabricColour}
             />
             <VariantSelect
-              label="Seat Heights" required={variantsRequired}
+              /* "Seat Size" is the system-wide name (vendor/shared/so-variant-rule
+                 declares it, and PO / GRN / Stock Adjustment / PI / PR / PoLineCard
+                 / PcVariantEditor all render it). This card was the last screen
+                 still saying "Seat Heights", and the only one anywhere that
+                 pluralised it. */
+              label="Seat Size" required={variantsRequired}
               value={String(draft.variants.seatHeight ?? '')}
               disabled={!isEditing}
               options={sortByNumeric(restrictS(maintPickerValues(maint!.sofaSizes, String(draft.variants.seatHeight ?? '')), allowOpts?.sizes).map((s) => {
@@ -1065,12 +1145,12 @@ const SoLineCardInner = ({
                 <span className={styles.priceLabel}>
                   Unit × {draft.qty}
                 </span>
-                <span className={styles.priceValue}>{fmtRm(draft.unitPriceCenti)}</span>
+                <span className={styles.priceValue}>{fmtRm(draft.unitPriceSen)}</span>
               </div>
-              {draft.discountCenti > 0 && (
+              {draft.discountSen > 0 && (
                 <div className={styles.priceRow}>
                   <span className={styles.priceLabel}>− Discount</span>
-                  <span className={styles.priceValue}>{fmtRm(draft.discountCenti)}</span>
+                  <span className={styles.priceValue}>{fmtRm(draft.discountSen)}</span>
                 </div>
               )}
               <div className={styles.priceTotalRow}>
@@ -1332,7 +1412,6 @@ const FabricColourCombobox = ({
   const [open, setOpen]     = useState(false);
   const [search, setSearch] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   /* Same debounce + length>=2 + open gate the SKU picker uses, so the query
      only fires while the operator is actively picking. */
@@ -1352,24 +1431,10 @@ const FabricColourCombobox = ({
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 
-  /* Pin the portalled dropdown under the input (escapes the card's
-     overflow:hidden clip), tracking scroll/resize — same as the SKU picker. */
-  useEffect(() => {
-    if (!open || disabled) { setMenuPos(null); return; }
-    const update = () => {
-      const el = wrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [open, disabled]);
+  /* Pin the portalled dropdown to the input (escapes the card's
+     overflow:hidden clip), tracking scroll/resize — the same shared geometry
+     the SKU picker above uses, so both flip and clamp identically. */
+  const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
 
@@ -1393,10 +1458,10 @@ const FabricColourCombobox = ({
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
           title={value || undefined}
         />
-        {open && !disabled && menuPos && createPortal(
+        {menuPos && createPortal(
           <ul
             className={styles.suggestList}
-            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: menuPos.width, right: 'auto', marginTop: 0, zIndex: 1000 }}
+            style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
           >
             {results.length > 0 ? (
               /* Owner 2026-06-23: show ONLY the fabric code — the code IS the

@@ -371,7 +371,11 @@ soAmendments.get('/:id', async (c) => {
         // mig 0280 — new_remark is the free-text instruction the requester typed
         // onto the line. Omitting it here would leave the approver signing off a
         // line whose whole point (a service line's job description) is invisible.
-        'new_variants, new_qty, new_unit_price_sen, new_remark, old_snapshot')
+        /* mig 0317 — new_discount_sen. The write path shipped WITHOUT this read:
+           the card computed every stored line as delta-free and told the
+           approver "No line changes recorded" about a money change it was
+           holding. A channel is not done until every reader returns it. */
+        'new_variants, new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
       .eq('amendment_id', id),
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
@@ -572,7 +576,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
+      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
     const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
@@ -637,12 +641,15 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
-        postcode?: string | null; local_total_centi?: number | null;
+        postcode?: string | null;
       };
-      const { data: payRows } = await sb.from('mfg_sales_order_payments')
-        .select('amount_centi').eq('so_doc_no', amendment.so_doc_no);
-      const paidCenti = ((payRows ?? []) as Array<{ amount_centi?: number | null }>)
-        .reduce((sum, p) => sum + Number(p.amount_centi ?? 0), 0);
+      /* NO DEPOSIT TERM — owner ruling 2026-08-20, 「以电脑为准 —— 两边都不查」.
+         This read summed `mfg_sales_order_payments` to weigh the money before
+         approving an amendment that sets a Processing Date. Approving such an
+         amendment is the same act as setting the date on the header, so leaving
+         the condition here would have kept the rule surface-dependent — the
+         exact defect the ruling closes — one screen further along. The payments
+         read went with it; nothing else on this path used it. */
       const gateProblems = collectProcessingGateProblems({
         procDate: nextProc,
         delivDate: nextDeliv || null,
@@ -653,13 +660,11 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
            so approving a legitimately-old reschedule cannot be blocked here. */
         origProcDate: nextProc,
         origDelivDate: nextDeliv || null,
-        companyCode: c.get('companyCode') ?? null,
         completeness: {
           hasCustomerName: !!String(soRow.debtor_name ?? '').trim(),
           hasAddress: !!String(soRow.address1 ?? '').trim(),
           hasPostcode: !!String(soRow.postcode ?? '').trim(),
         },
-        deposit: { paidCenti, totalCenti: Number(soRow.local_total_centi ?? 0) },
       });
       if (gateProblems.length > 0) {
         return c.json({
@@ -731,7 +736,18 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      snapshot upsert is idempotent on (so_doc_no, revision). */
   let applied: { soDocNo: string; revision: number };
   try {
-    applied = await applySoAmendment(sb, id, user.id, c, { soVersion, leaseToken: applyToken });
+    /* The sixth argument is this gate's RECEIPT, and it is what lets the apply
+       persist the unit prices the amendment requested instead of re-pricing them
+       to the catalogue (owner 2026-08-16 — the amendment is the sanctioned road
+       for money on a locked SO). It is constructed HERE and nowhere else,
+       AFTER `hasHouzsPerm(c, approveKey)` above and the transition check: a
+       requested price is client-authored and unvalidated, so what makes it
+       payable is this signature, never the payload. Any other caller of
+       applySoAmendment must pass `null` and gets the catalogue behaviour. */
+    applied = await applySoAmendment(sb, id, user.id, c, { soVersion, leaseToken: applyToken }, {
+      approvedByUserId: String(user.id),
+      approvalPermission: approveKey,
+    });
   } catch (e) {
     await sb.from('mfg_sales_orders').update({
       edit_lease_token: null,

@@ -59,9 +59,12 @@ describe('the .mjs mirror agrees with the TypeScript rule', () => {
 });
 
 describe('the rules themselves, stated once', () => {
-  test('a SOLO event says SOLO even when an organizer was picked', () => {
+  test('a picked organizer wins the NAME slot even on a solo event; the CODE keeps SOLO', () => {
+    /* Owner 2026-08-17 (IOI Mall Damansara): the calendar said SOLO while the
+       Excel organizer column said MALL MGMT. The name follows the organizer
+       field; the code is the immutable identity and keeps its SOLO segment. */
     expect(tsName({ state: 'SABAH', brand: 'AKEMI', organizer: 'KAI HAO', venue: 'SURIA', event_type_slug: 'solo' }))
-      .toBe('SABAH [AKEMI] SOLO @ SURIA');
+      .toBe('SABAH [AKEMI] KAI HAO @ SURIA');
     expect(tsCode({ year: 2026, month: 8, state: 'SABAH', brand: 'AKEMI', organizer: 'KAI HAO', venue: 'SURIA', event_type_slug: 'solo' }))
       .toBe('2026-08-SOLO-SABAH-SURIA-AKEMI');
   });

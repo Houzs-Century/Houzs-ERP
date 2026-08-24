@@ -45,8 +45,17 @@ export const useOutstanding = (
 
 export type OutstandingSummary = Record<OutstandingModule, {
   count: number;
-  total_centi?: number;
-  total_outstanding_centi?: number;
+  total_sen?: number;
+  total_outstanding_sen?: number;
+  /* SI only, since 2026-08-23. `false` means the figure does NOT subtract the
+     deposits taken on the source sales orders — it is a CEILING, never an
+     under-statement, and `deposit_note` says why in plain language.
+     `unavailable` means nothing could be read: the numbers are meaningless and
+     the card must print a dash, because a 0 on a page about money owed reads as
+     "nothing outstanding". */
+  deposit_applied?: boolean;
+  deposit_note?: string | null;
+  unavailable?: boolean;
 }>;
 
 export const useOutstandingSummary = (opts?: { from?: string; to?: string }) => {

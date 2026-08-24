@@ -17,20 +17,20 @@
 // ----------------------------------------------------------------------------
 
 /* Header-level: cost / margin / per-category revenue+cost subtotals + deposit.
-   Order totals shown to EVERYONE who passes the access gate (local_total_centi
-   / balance_centi / paid_centi / paid_total_centi / total_revenue_centi) are
+   Order totals shown to EVERYONE who passes the access gate (local_total_sen
+   / balance_sen / paid_sen / paid_total_sen / total_revenue_sen) are
    deliberately NOT listed here — that is the line #625 drew and this keeps. */
 export const SO_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi', 'service_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi', 'service_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis', 'deposit_centi',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen', 'service_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen', 'service_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis', 'deposit_sen',
 ] as const;
 
-/* Per-LINE cost/margin (the ITEM row carries unit_cost_centi / line_cost_centi
-   / line_margin_centi). All snake_case — these routes emit PostgREST column
-   names verbatim. A camelCase surface (e.g. `unitCostCenti`) would escape this
+/* Per-LINE cost/margin (the ITEM row carries unit_cost_sen / line_cost_sen
+   / line_margin_sen). All snake_case — these routes emit PostgREST column
+   names verbatim. A camelCase surface (e.g. `unitCostSen`) would escape this
    list, so a route that camelCases its payload must strip in ITS vocabulary. */
-export const SO_ITEM_FINANCE_KEYS = ['unit_cost_centi', 'line_cost_centi', 'line_margin_centi'] as const;
+export const SO_ITEM_FINANCE_KEYS = ['unit_cost_sen', 'line_cost_sen', 'line_margin_sen'] as const;
 
 /* PRODUCT / SKU cost — the CATALOG vocabulary, not the document one above.
    mfg_products.cost_price_sen is not derived and is not an artifact: it is
@@ -89,7 +89,7 @@ export function stripProductPriceHistory<T extends { field?: string }>(rows: rea
 }
 
 /* AUDIT-LOG vocabulary — the camelCase escape hatch warned about above, made
-   concrete. The line PATCH records `cmp('unitCostCenti', prev.unit_cost_centi,
+   concrete. The line PATCH records `cmp('unitCostSen', prev.unit_cost_sen,
    unitCost)` into mfg_so_audit_log.field_changes, so the HISTORY carries the
    old AND new unit cost in plain sight — keyed by the API's camelCase names,
    which is precisely why it never matched the snake_case lists above. Stripping
@@ -97,7 +97,7 @@ export function stripProductPriceHistory<T extends { field?: string }>(rows: rea
    BOTH /mfg-sales-orders/:docNo/audit-log and /consignment-orders/:docNo/audit-log
    read this SAME table — gate them together or repeat the #600/#625/#632 shape. */
 export const AUDIT_FINANCE_FIELDS: ReadonlySet<string> = new Set([
-  'unitCostCenti', 'lineCostCenti', 'lineMarginCenti', 'depositCenti',
+  'unitCostSen', 'lineCostSen', 'lineMarginSen', 'depositSen',
 ]);
 
 /** Drop the finance entries from every row's `field_changes`, in place. The

@@ -28,13 +28,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { fmtDate as fmtDateShared, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { fmtDateOrDash, fmtDateTime, fmtQty } from '@2990s/shared';
 import {
   useStockTakeDetail,
   useUpdateStockTakeLines,
@@ -51,17 +51,11 @@ import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-const fmtDateTime = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
 
 const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
   if (scopeType === 'ALL') return 'All SKUs';
@@ -73,7 +67,7 @@ const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
 // Local row state: counted_qty as string so empty input = null, not 0.
 type LineDraft = {
   id: string;
-  productCode: string;
+  itemCode: string;
   productName: string | null;
   variantLabel: string | null;
   /* null while the server strips it (blind take, non-supervisor viewer). */
@@ -89,7 +83,7 @@ type LineDraft = {
 
 const toDraft = (l: StockTakeLine): LineDraft => ({
   id:               l.id,
-  productCode:      l.product_code,
+  itemCode:      l.item_code,
   productName:      l.product_name,
   variantLabel:     l.variant_label,
   systemQty:        l.system_qty,
@@ -169,7 +163,7 @@ export const StockTakeDetail = () => {
     const q = search.trim().toLowerCase();
     if (!q) return lines;
     return lines.filter((l) =>
-      l.productCode.toLowerCase().includes(q) ||
+      l.itemCode.toLowerCase().includes(q) ||
       (l.productName ?? '').toLowerCase().includes(q) ||
       (l.variantLabel ?? '').toLowerCase().includes(q),
     );
@@ -207,6 +201,47 @@ export const StockTakeDetail = () => {
     };
   }, [lines]);
 
+  /* ── Print ──────────────────────────────────────────────────────────────
+     This document had no print handler at all until now, on any surface.
+     (A fabricated owner quote was attached here and has been removed — see
+     row-menus.ts for the provenance note.)
+
+     The SERVER rows, not the local drafts: a count that has not been saved is
+     not yet part of the record, and a printed sheet that carries typed-but-
+     unsaved numbers is a document nobody can reconcile against the take.
+
+     BLIND NEEDS NO SPECIAL CASE HERE. The server has already stripped
+     `system_qty` / `variance` from this payload for a non-supervising viewer,
+     so the generator has nothing to leak and prints a count sheet instead.
+
+     "Print now" goes through the PDF (action: 'print') and never
+     window.print(): index.css's @media print block hides `body *`, so printing
+     this page directly yields a blank sheet. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    const d = detail.data;
+    if (!d) return;
+    return import('../../vendor/scm/lib/stock-take-pdf')
+      .then(({ generateStockTakePdf }) => generateStockTakePdf(
+        {
+          ...d.take,
+          /* Resolved here, never inside the PDF lib — `assignee_staff_id` is a
+             uuid and a uuid never reaches a person. */
+          assignee_name: d.take.assignee_staff_id ? actorNameOf(d.take.assignee_staff_id) : null,
+        },
+        d.lines,
+        { action },
+      ))
+      .catch((e) => notify({
+        title: 'PDF generation failed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  /* The list's right-click Print navigates here with ?print=1 — same contract
+     every other document's row menu uses. */
+  useOpenPrintPreviewFromUrl(print.openPreview, !!detail.data);
+
   // ── Local edit helpers ───────────────────────────────────────────────
   const setLine = (id: string, patch: Partial<LineDraft>) => {
     setLines((cur) => cur.map((l) => (l.id === id ? { ...l, ...patch } : l)));
@@ -235,18 +270,18 @@ export const StockTakeDetail = () => {
   /* One-click "all zero for this group" (phase 1): the common truth for a
      variant-heavy model is "none of these are physically here". Local draft
      only — Save persists, so a slip is undoable. */
-  const zeroGroup = (productCode: string) => {
+  const zeroGroup = (itemCode: string) => {
     setLines((cur) => cur.map((l) =>
-      l.productCode === productCode ? { ...l, countedQtyInput: '0' } : l,
+      l.itemCode === itemCode ? { ...l, countedQtyInput: '0' } : l,
     ));
     setDirty(true);
   };
 
-  const toggleGroup = (productCode: string) => {
+  const toggleGroup = (itemCode: string) => {
     setExpanded((cur) => {
       const next = new Set(cur);
-      if (next.has(productCode)) next.delete(productCode);
-      else next.add(productCode);
+      if (next.has(itemCode)) next.delete(itemCode);
+      else next.add(itemCode);
       return next;
     });
   };
@@ -402,6 +437,12 @@ export const StockTakeDetail = () => {
                   someone needs to see who changed what. */}
               <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
                 <History {...ICON} /> History
+              </Button>
+              {/* Unconditional, like History. An OPEN take prints as the count
+                  sheet somebody walks the aisles with; a POSTED one prints as
+                  the variance record. Both are wanted. */}
+              <Button variant="ghost" size="md" onClick={print.openPreview}>
+                <Printer {...ICON} /> Print PDF
               </Button>
               {isDraft && (
                 <>
@@ -628,13 +669,13 @@ export const StockTakeDetail = () => {
                           fontFamily: 'var(--font-mono)',
                           paddingLeft: inGroup ? 22 : undefined,
                         }}>
-                          {ln.productCode}
+                          {ln.itemCode}
                         </span>
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.productName || <span className={styles.muted}>—</span>}
                       </td>
-                      {/* Variant bucket (migration 0183) — the (product_code,
+                      {/* Variant bucket (migration 0183) — the (item_code,
                           variant_key) this line counts. A plain SKU shows '—'. */}
                       <td style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.variantLabel
@@ -715,18 +756,18 @@ export const StockTakeDetail = () => {
                    collapsed until expanded; single-line models render plain. */
                 return groups.flatMap((g) => {
                   if (g.lines.length === 1) return [lineRow(g.lines[0], false)];
-                  const isOpen = expanded.has(g.productCode);
+                  const isOpen = expanded.has(g.itemCode);
                   const groupVariance = blindActive ? null : g.lines.reduce<number | null>((acc, l) => {
                     const v = varianceOf(l);
                     if (v == null) return acc;
                     return (acc ?? 0) + v;
                   }, null);
                   const header = (
-                    <tr key={`grp-${g.productCode}`} style={{ background: 'var(--c-cream)' }}>
+                    <tr key={`grp-${g.itemCode}`} style={{ background: 'var(--c-cream)' }}>
                       <td>
                         <button
                           type="button"
-                          onClick={() => toggleGroup(g.productCode)}
+                          onClick={() => toggleGroup(g.itemCode)}
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: 6,
                             border: 'none', background: 'transparent', cursor: 'pointer',
@@ -738,7 +779,7 @@ export const StockTakeDetail = () => {
                           {isOpen
                             ? <ChevronDown size={14} strokeWidth={1.75} />
                             : <ChevronRight size={14} strokeWidth={1.75} />}
-                          {g.productCode}
+                          {g.itemCode}
                         </button>
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>
@@ -776,7 +817,7 @@ export const StockTakeDetail = () => {
                         <td>
                           <button
                             type="button"
-                            onClick={() => zeroGroup(g.productCode)}
+                            onClick={() => zeroGroup(g.itemCode)}
                             className={styles.chip}
                             title="Fill every line in this model with counted qty 0"
                             style={{ fontSize: 'var(--fs-11)', cursor: 'pointer' }}
@@ -828,6 +869,26 @@ export const StockTakeDetail = () => {
           onClose={closeHistory}
         />
       )}
+
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Stock Take"
+        docNo={t.take_no}
+        rows={[
+          { label: 'Warehouse', value: warehouseLabel(t.warehouse) ?? t.warehouse_id },
+          { label: 'Scope', value: scopeLabel(t.scope_type, t.scope_value) },
+          { label: 'Date', value: fmtDateOrDash(t.take_date) },
+          { label: 'Lines', value: `${totals.counted} counted of ${totals.totalLines}` },
+          /* The card says what the sheet will say. On a blind take the
+             variance is exactly the number the counter must not see, so it
+             names the blind instead of printing a figure. */
+          blindActive
+            ? { label: 'Variance', value: 'Hidden — blind count' }
+            : { label: 'Net variance', value: `${totals.varianceNet > 0 ? '+' : ''}${fmtQty(totals.varianceNet)}` },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 };

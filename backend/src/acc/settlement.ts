@@ -98,7 +98,7 @@ export async function loadPaymentCandidates(
 
   const { data: soRaw, error: soErr } = await sb
     .from('mfg_sales_order_payments')
-    .select('id, so_doc_no, paid_at, amount_centi, approval_code, method, merchant_provider, collected_by, created_by')
+    .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
     .eq('company_id', companyId)
     .eq('merchant_provider', name)
     .gte('paid_at', lo)
@@ -107,7 +107,7 @@ export async function loadPaymentCandidates(
 
   const { data: siRaw, error: siErr } = await sb
     .from('sales_invoice_payments')
-    .select('id, sales_invoice_id, paid_at, amount_centi, approval_code, method, merchant_provider, collected_by, created_by')
+    .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
     .eq('company_id', companyId)
     .eq('merchant_provider', name)
     .gte('paid_at', lo)
@@ -149,7 +149,7 @@ export async function loadPaymentCandidates(
       id: String(r.id),
       docNo: String(r.so_doc_no ?? ''),
       paidOn: isoDay(r.paid_at),
-      amountSen: Number(r.amount_centi ?? 0),
+      amountSen: Number(r.amount_sen ?? 0),
       approvalCode: r.approval_code ?? null,
       customerName: customerOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
@@ -164,7 +164,7 @@ export async function loadPaymentCandidates(
          uuid on screen is not a document reference to anybody. */
       docNo: customerOf.get(`SI#:${String(r.sales_invoice_id ?? '')}`) ?? String(r.sales_invoice_id ?? ''),
       paidOn: isoDay(r.paid_at),
-      amountSen: Number(r.amount_centi ?? 0),
+      amountSen: Number(r.amount_sen ?? 0),
       approvalCode: r.approval_code ?? null,
       customerName: customerOf.get(`SI:${String(r.sales_invoice_id ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,

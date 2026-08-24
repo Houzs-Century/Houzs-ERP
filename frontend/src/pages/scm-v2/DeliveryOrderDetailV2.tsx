@@ -8,7 +8,7 @@
 //   · Print PDF       — print-preview card + Download/Print
 //   · Edit            — navigate to the New DO form
 //
-// Stateful DO transitions (Cancel DO / Mark signed / Convert to SI) are
+// Stateful DO transitions (Cancel DO / Mark signed / Transfer to Sales Invoice) are
 // kept as CONDITIONAL secondary buttons within the same header, positioned
 // between Print PDF and Edit so they don't hide from ops but also don't
 // dominate the primary action bar.
@@ -42,6 +42,12 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  doAdvanceBlockReason,
+  doAdvanceStep,
+  siTransferBlockReason,
+} from "../../vendor/scm/lib/do-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
@@ -73,16 +79,19 @@ import {
 } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
+import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
+import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
 
-type DoHeader = {
+type DoHeader = HoldFields & {
   id: string;
   do_number: string;
   so_doc_no: string | null;
@@ -121,6 +130,12 @@ type DoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* Proof of delivery, as stored. Both are on the detail payload already
+     (delivery-orders-mfg.ts:305 selects `pod_r2_key, signature_data`); this
+     page simply never declared them, which is part of why it could close a
+     delivery without noticing there was no evidence on the row. */
+  signature_data?: string | null;
+  pod_r2_key?: string | null;
   lifecycle_state?: DoLifecycle;
   currency: string;
   created_at?: string;
@@ -130,20 +145,20 @@ type DoHeader = {
   // rolls line prices/costs up in recomputeTotals; present on the DETAIL
   // payload for every caller (only the LIST endpoint strips these — #574).
   // The UI gates the Totals·Margin card behind project_finance_viewer.
-  local_total_centi?: number | null;
-  total_cost_centi?: number | null;
-  total_margin_centi?: number | null;
+  local_total_sen?: number | null;
+  total_cost_sen?: number | null;
+  total_margin_sen?: number | null;
   margin_pct_basis?: number | null;
-  mattress_sofa_centi?: number | null;
-  bedframe_centi?: number | null;
-  accessories_centi?: number | null;
-  others_centi?: number | null;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number | null;
-  bedframe_cost_centi?: number | null;
-  accessories_cost_centi?: number | null;
-  others_cost_centi?: number | null;
-  service_cost_centi?: number | null;
+  mattress_sofa_sen?: number | null;
+  bedframe_sen?: number | null;
+  accessories_sen?: number | null;
+  others_sen?: number | null;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number | null;
+  bedframe_cost_sen?: number | null;
+  accessories_cost_sen?: number | null;
+  others_cost_sen?: number | null;
+  service_cost_sen?: number | null;
 };
 
 type DoItem = {
@@ -153,7 +168,7 @@ type DoItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi?: number;
+  unit_price_sen?: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -172,16 +187,8 @@ type DoItem = {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
-
 // The DO document is quantity-only for customers. The centi money formatter
-// (fmtMoneyCenti) that fed the finance-gated Totals·Margin card is gone with
+// (fmtMoneySen) that fed the finance-gated Totals·Margin card is gone with
 // that card (owner 2026-07-17) — the DO detail renders no money figures.
 
 const refOf = (h: DoHeader): string =>
@@ -237,7 +244,7 @@ const EFFECTIVE_TONE: Record<
 // even when the effective bucket collapses to "shipped".
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
-  LOADED: "Loaded",
+  LOADED: "Confirmed",
   DISPATCHED: "Dispatched",
   IN_TRANSIT: "In transit",
   SIGNED: "Signed",
@@ -779,13 +786,25 @@ export function DeliveryOrderDetailV2() {
       updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
   };
-  const doMarkSigned = () => {
+  /* The ONE status-advance control. Its verb and its target both come from
+     do-next-step.ts, so a DRAFT delivery order gets the same "Confirm"
+     (→ DISPATCHED) the mobile shell has always offered — until now the desktop
+     had no way to advance a draft at all: `canMarkSigned` excluded DRAFT and no
+     other control on this page or its editor writes a status. A draft raised on
+     the desktop could only be moved forward by picking up a phone, which is
+     precisely the "我又不是两套系统" complaint in a second costume. Same
+     endpoint, same body, same permission gate the phone already uses. */
+  const doAdvance = () => {
     if (!deliveryOrder) return;
-    updateStatus.mutate({ id: deliveryOrder.id, status: "DELIVERED" });
+    const step = doAdvanceStep(deliveryOrder.status);
+    if (!step) return;
+    /* The only advance step now is DRAFT → Confirm (owner 2026-08-21 removed
+       "Mark signed"); closing a delivery with its signature is the driver's
+       Proof-of-Delivery screen. So there is nothing to warn about here. */
+    updateStatus.mutate({ id: deliveryOrder.id, status: step.status });
   };
   const goConvertToSi = () =>
-    deliveryOrder &&
-    navigate(`/scm/sales-invoices/from-do?do=${deliveryOrder.id}`);
+    deliveryOrder && navigate(convertToLink('doToSi', deliveryOrder.id));
 
   // Render the DO PDF via the SAME generator the list's Export PDF and the V1
   // detail page use (jspdf, client-side). The old `?print=1` navigation was dead
@@ -798,7 +817,12 @@ export function DeliveryOrderDetailV2() {
   const doDeliverPdf = (action: PdfAction) => {
     return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(deliveryOrder as never, items as never, { action })
+        generateDeliveryOrderPdf(
+          // loadScanId arms the print's "scan to mark loaded" QR.
+          { ...(deliveryOrder as Record<string, unknown>), loadScanId: (deliveryOrder as { id?: string }).id } as never,
+          items as never,
+          { action },
+        )
       )
       .then(() => {
         // Downloads and prints are terminal — close behind them. A new-tab
@@ -889,9 +913,9 @@ export function DeliveryOrderDetailV2() {
       key: "type",
       label: "Type",
       width: "88px",
-      getValue: (l) => (Number(l.unit_price_centi ?? 0) === 0 ? "FOC" : "Sale"),
+      getValue: (l) => (Number(l.unit_price_sen ?? 0) === 0 ? "FOC" : "Sale"),
       render: (l) => {
-        const isFoc = Number(l.unit_price_centi ?? 0) === 0;
+        const isFoc = Number(l.unit_price_sen ?? 0) === 0;
         return (
           <Badge tone={isFoc ? "warning" : "neutral"} size="xs">
             {isFoc ? "FOC" : "Sale"}
@@ -956,18 +980,21 @@ export function DeliveryOrderDetailV2() {
   };
 
   const rawStatus = (deliveryOrder.status || "").toLowerCase();
-  const canMarkSigned =
-    rawStatus === "loaded" ||
-    rawStatus === "dispatched" ||
-    rawStatus === "in_transit";
-  const canConvertToSi =
-    rawStatus === "signed" || rawStatus === "delivered";
+  /* Both questions this page asks about status now come from ONE module, which
+     the list drawer, the phone bar below and the native mobile shell also
+     import. They used to be re-derived here by hand, and the copies disagreed:
+     on DISPATCHED this page offered "Mark signed" while the mobile shell offered
+     "Mark In Transit" for the same document. See vendor/scm/lib/do-next-step.ts. */
+  const advanceStep = doAdvanceStep(deliveryOrder.status);
+  const advanceReason = doAdvanceBlockReason(deliveryOrder.status);
+  const siReason = siTransferBlockReason(deliveryOrder.status);
+  const canConvertToSi = siReason === null;
   const isCancelled = rawStatus === "cancelled";
 
   const soNo = deliveryOrder.so_doc_no;
 
   return (
-    <div className="pb-24 md:pb-0">
+    <div className="pb-56 md:pb-0">
       {/* ─── Mobile-only dark sticky header ─────────────────────────── */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
@@ -995,9 +1022,15 @@ export function DeliveryOrderDetailV2() {
             {deliveryOrder.debtor_name || "—"}
           </h1>
           <div className="mt-2">
-            <Badge tone={badgeTone} variant="solid" size="xs">
-              {stageLabel}
-            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone={badgeTone} variant="solid" size="xs">
+                {stageLabel}
+              </Badge>
+              {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
+                  the stage rather than instead of it: the warehouse still
+                  needs to know where the goods are. */}
+              <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
+            </span>
           </div>
         </div>
       </div>
@@ -1019,9 +1052,15 @@ export function DeliveryOrderDetailV2() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   {deliveryOrder.debtor_name || "—"}
                 </h1>
-                <Badge tone={badgeTone} size="sm">
-                  {stageLabel}
-                </Badge>
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={badgeTone} size="sm">
+                    {stageLabel}
+                  </Badge>
+                  {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
+                      the stage rather than instead of it: the warehouse still
+                      needs to know where the goods are. */}
+                  <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
+                </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-accent-ink">
@@ -1047,7 +1086,8 @@ export function DeliveryOrderDetailV2() {
               </div>
             </div>
           </div>
-          <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+          <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="ghost"
               icon={<History size={14} />}
@@ -1078,22 +1118,47 @@ export function DeliveryOrderDetailV2() {
                 Cancel DO
               </Button>
             )}
-            {canMarkSigned && canWriteDo && (
+            {/* ── The two status-driven controls. BOTH ARE ALWAYS RENDERED for
+                anyone who may operate a DO — disabled when the state forbids
+                them, never removed, and each carrying the sentence that says
+                why and what to do instead.
+
+                Owner, 2026-08-18, holding one delivery order from each company
+                side by side: "一个公司显示 Transfer to Sales Invoice，另一个公司
+                却是 Mark signed，这不是同一个系统会统一的东西来的吗？我又不是两套
+                系统." The code was correct — the two documents differed only in
+                STATUS — but the transfer was not shown as unavailable, it was
+                not shown at all, so from the second seat the product simply did
+                not have the feature. Absence is not a message.
+
+                The ADVANCE slot keeps one job (move THIS document along) and the
+                TRANSFER slot keeps one job (produce the NEXT document), so the
+                green button in this corner never changes meaning between two
+                documents. That is the other half of the complaint: the operator
+                should not have to read a status badge to learn what the primary
+                button will do. ── */}
+            {canWriteDo && advanceStep && (
               <Button
                 variant="secondary"
                 icon={<CheckCircle2 size={14} />}
-                onClick={doMarkSigned}
+                onClick={doAdvance}
               >
-                Mark signed
+                {advanceStep.label}
               </Button>
             )}
-            {canConvertToSi && canWriteDo && (
+            {/* The transfer takes the PRIMARY slot; the advance above stays
+                secondary because it changes THIS document's own status rather
+                than producing the next document (owner rule, 2026-08-17). */}
+            {canWriteDo && (
               <Button
-                variant="secondary"
+                variant="primary"
                 icon={<Receipt size={14} />}
                 onClick={goConvertToSi}
+                disabled={!canConvertToSi}
+                title={siReason ?? undefined}
+                aria-describedby={siReason ? "do-si-reason" : undefined}
               >
-                Convert to SI
+                {transferToLabel('si')}
               </Button>
             )}
             {canWriteDo && (
@@ -1105,6 +1170,16 @@ export function DeliveryOrderDetailV2() {
                 Edit
               </Button>
             )}
+          </div>
+          {/* The reasons, as TEXT. A `title` tooltip needs a hover and would
+              have said nothing on a touch screen — and the ids below are what
+              the disabled buttons point at with aria-describedby. */}
+          {canWriteDo && (
+            <div className="flex max-w-[420px] flex-col items-end gap-0.5 text-right">
+              <NextStepNote id="do-advance-reason" reason={advanceReason} />
+              <NextStepNote id="do-si-reason" reason={siReason} />
+            </div>
+          )}
           </div>
         </div>
       </div>
@@ -1322,7 +1397,7 @@ export function DeliveryOrderDetailV2() {
               <SourceRackCard
                 items={items}
                 doId={deliveryOrder.id}
-                locked={["dispatched", "in_transit", "signed", "delivered", "invoiced"].includes(rawStatus)}
+                locked={(DO_SHIPPED_STATES as readonly string[]).some((s) => s.toLowerCase() === rawStatus)}
                 notify={notify}
               />
 
@@ -1437,14 +1512,52 @@ export function DeliveryOrderDetailV2() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone only) */}
+      {/* Fixed bottom action bar (phone only).
+
+          THE SAME TWO CONTROLS AS THE DESKTOP HEADER, and for the same reason.
+          This bar used to carry Edit / Print / Call and nothing else: at phone
+          width this page offered no next step at ANY status — not even a
+          disabled one — so a storeman looking at a signed delivery order saw a
+          finished document and the Sales Invoice was never raised. A fix that
+          lands on one breakpoint of one page reproduces exactly the defect it
+          was written to end, which is how DateField came to be wired into 14 of
+          189 date inputs. The reason renders as TEXT here because a `title`
+          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
+        {canWriteDo && (
+          <div className="mb-1.5 flex flex-col gap-0.5">
+            <NextStepNote id="do-advance-reason-phone" reason={advanceReason} />
+            <NextStepNote id="do-si-reason-phone" reason={siReason} />
+          </div>
+        )}
+        {canWriteDo && (
+          <div className="mb-2 flex items-center gap-2">
+            {advanceStep && (
+            <button
+              type="button"
+              onClick={doAdvance}
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
+            >
+              <CheckCircle2 size={16} /> {advanceStep.label}
+            </button>
+            )}
+            <button
+              type="button"
+              onClick={goConvertToSi}
+              disabled={!canConvertToSi}
+              aria-describedby={siReason ? "do-si-reason-phone" : undefined}
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:bg-primary/40"
+            >
+              <Receipt size={16} /> {transferToLabel('si')}
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {canWriteDo && (
             <button
               type="button"
               onClick={goEdit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
             >
               <Edit3 size={16} /> Edit
             </button>

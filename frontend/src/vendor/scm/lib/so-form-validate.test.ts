@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   companyRequiresStockLocation,
   soStockLocationError,
+  soRequiredFieldErrors,
+  soRequiredFieldsMessage,
+  soProceedingAddressErrors,
   LOCATION_REQUIRED_COMPANY_CODES,
+  type SoRequiredFieldsInput,
 } from "./so-form-validate";
 
 /* Owner 2026-08-13, after both AutoCount write-back test orders were refused
@@ -167,5 +171,144 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
   it("says up front what it will produce, and labels the button to match", () => {
     expect(source).toContain("The order lands as a DRAFT");
     expect(source).toContain('landsDraft ? "Save draft SO"');
+  });
+});
+
+/* Owner 2026-08-20, live QA: "为什么要慢慢爆呢" — the create form popped ONE
+   missing field at a time (customer name -> phone -> venue -> salesperson ->
+   delivery State), so the operator fixed-and-retried five times. soRequiredFieldErrors
+   collects the always-required set in one pass so they see it all at once. */
+describe("soRequiredFieldErrors — one message, not one-at-a-time", () => {
+  const houzsConfirm: SoRequiredFieldsInput = {
+    customerName: "",
+    phone: "",
+    hasNamedLine: false,
+    asDraft: false,
+    hasVenue: false,
+    hasSalesperson: false,
+    location: { companyCode: "HOUZS", salesLocation: "", state: "", mappingsLoaded: true },
+  };
+
+  it("collects EVERY missing required field at once (not just the first)", () => {
+    const missing = soRequiredFieldErrors(houzsConfirm);
+    expect(missing).toEqual([
+      "Customer name",
+      "Phone number",
+      "At least one line item with a product",
+      "Venue",
+      "Salesperson",
+      "Delivery State (it sets the shipping warehouse)",
+    ]);
+  });
+
+  it("returns empty when everything required is present", () => {
+    expect(soRequiredFieldErrors({
+      customerName: "Lim", phone: "0123", hasNamedLine: true, asDraft: false,
+      hasVenue: true, hasSalesperson: true,
+      location: { companyCode: "HOUZS", salesLocation: "PG WAREHOUSE", state: "Selangor", mappingsLoaded: true },
+    })).toEqual([]);
+  });
+
+  it("a DRAFT needs none of the confirm-only fields", () => {
+    // Same empty inputs, but asDraft — only the two non-confirm fields remain.
+    expect(soRequiredFieldErrors({ ...houzsConfirm, asDraft: true, location: { ...houzsConfirm.location, asDraft: true } }))
+      .toEqual(["Customer name", "Phone number", "At least one line item with a product"]);
+  });
+
+  it("company 2 (2990) is not asked for a Delivery State", () => {
+    const missing = soRequiredFieldErrors({
+      ...houzsConfirm, customerName: "A", phone: "1", hasNamedLine: true, hasVenue: true, hasSalesperson: true,
+      location: { companyCode: "2990", salesLocation: "", state: "", mappingsLoaded: true },
+    });
+    expect(missing).toEqual([]);
+  });
+
+  it("does NOT fold the 'State has no warehouse' config error into the list (a picked State)", () => {
+    // State IS picked but resolves no warehouse — that's an admin config problem,
+    // handled by soStockLocationError afterwards, NOT a field the operator forgot.
+    const missing = soRequiredFieldErrors({
+      ...houzsConfirm, customerName: "A", phone: "1", hasNamedLine: true, hasVenue: true, hasSalesperson: true,
+      location: { companyCode: "HOUZS", salesLocation: "", state: "Selangor", mappingsLoaded: true },
+    });
+    expect(missing).toEqual([]);
+    // ...and soStockLocationError still catches it as its own message.
+    expect(soStockLocationError({ companyCode: "HOUZS", salesLocation: "", state: "Selangor", mappingsLoaded: true })).not.toBeNull();
+  });
+});
+
+describe("soRequiredFieldsMessage", () => {
+  it("names the single field directly", () => {
+    expect(soRequiredFieldsMessage(["Phone number"], [])).toEqual({ title: "Phone number is required." });
+  });
+  it("lists them all together when several are missing", () => {
+    const m = soRequiredFieldsMessage(["Customer name", "Venue"], []);
+    expect(m.title).toContain("Fill in the required fields");
+    expect(m.body).toBe("Still missing: Customer name, Venue.");
+  });
+
+  /* ONE PRESS, ONE LIST. Owner 2026-08-23: 「create salesorder 要两次？」 —
+     Venue and Delivery State came back on the first press, address line 1 and
+     postcode on the second, because the address group sat behind a `return`.
+     Its condition is only "a Processing Date was entered", which is known on the
+     first press, so it belongs in the same list. */
+  it("merges the proceeding-address list into the SAME message", () => {
+    const m = soRequiredFieldsMessage(["Venue"], ["address line 1", "postcode"]);
+    expect(m.body).toContain("Venue");
+    expect(m.body).toContain("address line 1");
+    expect(m.body).toContain("postcode");
+  });
+
+  it("says WHY the address fields are required, so they do not read as arbitrary", () => {
+    const m = soRequiredFieldsMessage(["Venue"], ["postcode"]);
+    expect(m.body).toContain("Processing Date");
+  });
+
+  it("leads with the reason when ONLY the address half is missing", () => {
+    const m = soRequiredFieldsMessage([], ["address line 1"]);
+    expect(m.title).toContain("Processing Date");
+  });
+
+  /* Deliberately NOT the bare "postcode is required." — that sentence gives an
+     operator no way to know a postcode became required when they set a
+     Processing Date. The reason is the useful half. */
+  it("a lone proceeding field keeps its reason instead of the bare shortcut", () => {
+    const m = soRequiredFieldsMessage([], ["postcode"]);
+    expect(m.title).toContain("Processing Date");
+    expect(m.body).toContain("postcode");
+  });
+});
+
+describe("soProceedingAddressErrors", () => {
+  const filled = {
+    processingDate: "2026-09-01",
+    customerName: "Lim",
+    fillAddressLater: false,
+    address1: "12 Jalan Ujian",
+    postcode: "47810",
+    deliveryDate: "2026-09-05",
+  };
+
+  it("asks for nothing when the order is not proceeding", () => {
+    expect(soProceedingAddressErrors({ ...filled, processingDate: "", address1: "", postcode: "" })).toEqual([]);
+  });
+
+  it("asks for nothing when everything is filled", () => {
+    expect(soProceedingAddressErrors(filled)).toEqual([]);
+  });
+
+  it("collects EVERY missing one at once, not the first", () => {
+    const got = soProceedingAddressErrors({ ...filled, address1: "", postcode: "", deliveryDate: "" });
+    expect(got).toEqual(["address line 1", "postcode", "delivery date"]);
+  });
+
+  /* Ticking it BLANKS the address out of the payload, so a typed address that
+     is about to be discarded still counts as missing. */
+  it("counts the address as missing when 'fill in later' is ticked, even if typed", () => {
+    const got = soProceedingAddressErrors({ ...filled, fillAddressLater: true });
+    expect(got).toEqual(["address line 1", "postcode"]);
+  });
+
+  it("a whitespace-only processing date is not a proceeding order", () => {
+    expect(soProceedingAddressErrors({ ...filled, processingDate: "   ", address1: "" })).toEqual([]);
   });
 });

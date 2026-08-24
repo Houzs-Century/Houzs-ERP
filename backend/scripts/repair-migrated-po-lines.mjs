@@ -132,12 +132,12 @@ async function main() {
     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL
     ORDER BY linked_ac_docno`;
   const rows = has_dtlkey
-    ? await sql`SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.qty,
+    ? await sql`SELECT i.id, i.purchase_order_id, i.item_code, i.supplier_sku, i.qty,
                        i.description2, i.delivery_date, i.so_item_id, i.item_group, i.linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                   JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
                  WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
-    : await sql`SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.qty,
+    : await sql`SELECT i.id, i.purchase_order_id, i.item_code, i.supplier_sku, i.qty,
                        i.description2, i.delivery_date, i.so_item_id, i.item_group, NULL::bigint AS linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                   JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
@@ -193,7 +193,7 @@ async function main() {
          so this repair has nothing to read for it. */
       for (const r of erpRows) {
         if (r.so_item_id && r.delivery_date && r.linked_ac_dtlkey != null) continue;
-        unresolved.push({ poNo: h.po_number, code: r.material_code, reason: `AutoCount document ${h.linked_ac_docno} is not in either committed PO export, so there is nothing to read for this line` });
+        unresolved.push({ poNo: h.po_number, code: r.item_code, reason: `AutoCount document ${h.linked_ac_docno} is not in either committed PO export, so there is nothing to read for this line` });
       }
       continue;
     }
@@ -219,10 +219,10 @@ async function main() {
       for (const id of r.rowIds ?? []) {
         const row = rowById.get(id);
         if (row && row.so_item_id && row.delivery_date && row.linked_ac_dtlkey != null) continue;
-        unresolved.push({ poNo: h.po_number, code: row?.material_code, reason: `REFUSED group "${r.code}": ${r.reason}` });
+        unresolved.push({ poNo: h.po_number, code: row?.item_code, reason: `REFUSED group "${r.code}": ${r.reason}` });
       }
     }
-    for (const r of m.unmatchedErp) unresolved.push({ poNo: h.po_number, code: r.material_code, reason: `no AutoCount line on ${h.linked_ac_docno} owns supplier_sku "${r.supplier_sku ?? "-"}"` });
+    for (const r of m.unmatchedErp) unresolved.push({ poNo: h.po_number, code: r.item_code, reason: `no AutoCount line on ${h.linked_ac_docno} owns supplier_sku "${r.supplier_sku ?? "-"}"` });
 
     /* Deterministic order so a re-run hands the same SO lines to the same PO
        lines: AutoCount DtlKey ascending, then ERP row id. */
@@ -236,13 +236,13 @@ async function main() {
       /* Carries the evidence, not just the values: the DRY-RUN prints one line
          per planned write so a human can check any single one against
          AutoCount before the write happens. */
-      const upd = { id: row.id, poNo: h.po_number, code: row.material_code, acKey: ac.key, how };
+      const upd = { id: row.id, poNo: h.po_number, code: row.item_code, acKey: ac.key, how };
       let want = false;
 
       if (!row.delivery_date) {
         const d = acDeliveryDate(ac.raw);
         if (d) { upd.deliveryDate = d; want = true; }
-        else unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `AutoCount line ${ac.key} carries no delivery date` });
+        else unresolved.push({ poNo: h.po_number, code: row.item_code, reason: `AutoCount line ${ac.key} carries no delivery date` });
       }
       /* Counted even when the column is not applied yet, so the DRY-RUN reports
          the true number it would key rather than only the lines it happens to
@@ -253,9 +253,9 @@ async function main() {
         const fromKey = acFromSoDtlKey(ac.raw);
         const src = fromKey ? soByDtl.get(fromKey) : null;
         if (!fromKey) {
-          unresolved.push({ poNo: h.po_number, code: row.material_code, reason: "AutoCount line has no FromSODtlKey — this PO was not raised from a sales order" });
+          unresolved.push({ poNo: h.po_number, code: row.item_code, reason: "AutoCount line has no FromSODtlKey — this PO was not raised from a sales order" });
         } else if (!src) {
-          unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `FromSODtlKey ${fromKey} names a sales-order line that is not in the cutover snapshot (its order was fully delivered and correctly never imported)` });
+          unresolved.push({ poNo: h.po_number, code: row.item_code, reason: `FromSODtlKey ${fromKey} names a sales-order line that is not in the cutover snapshot (its order was fully delivered and correctly never imported)` });
         } else {
           /* Which codes this row may claim, and whether the SO line names a
              different product, is dedicationCandidates() in the shared lib —
@@ -268,17 +268,17 @@ async function main() {
           let model = poBase.replace(/-1S$/i, "");
           model = SOFA_MODEL_ALIAS[model] || model;
           const { attempts, crossProduct: isCrossProduct } =
-            dedicationCandidates(row.material_code, base, model ? `${model}-1S` : null);
+            dedicationCandidates(row.item_code, base, model ? `${model}-1S` : null);
           let picked = null;
           for (const code of attempts) { picked = taker.take(src.doc, code); if (picked) break; }
           if (picked) { upd.soItemId = picked; upd.soDoc = src.doc; upd.fromKey = fromKey; want = true; }
           else if (isCrossProduct) {
             /* The only reason left is the one this rule created, so name it
                rather than hiding it behind the taker's generic explanation. */
-            crossProduct.push({ poNo: h.po_number, code: row.material_code, base, soDoc: src.doc, acCode: src.code, fromKey });
-            unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `REFUSED cross-product dedication: AutoCount SO ${src.doc} line "${src.code}" maps to ERP code ${base}, which is a DIFFERENT product from this PO line's ${row.material_code} (tried ${attempts.join(" / ")})` });
+            crossProduct.push({ poNo: h.po_number, code: row.item_code, base, soDoc: src.doc, acCode: src.code, fromKey });
+            unresolved.push({ poNo: h.po_number, code: row.item_code, reason: `REFUSED cross-product dedication: AutoCount SO ${src.doc} line "${src.code}" maps to ERP code ${base}, which is a DIFFERENT product from this PO line's ${row.item_code} (tried ${attempts.join(" / ")})` });
           }
-          else unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `${taker.explain(src.doc, row.material_code)} (AutoCount SO ${src.doc}, tried ${attempts.join(" / ")})` });
+          else unresolved.push({ poNo: h.po_number, code: row.item_code, reason: `${taker.explain(src.doc, row.item_code)} (AutoCount SO ${src.doc}, tried ${attempts.join(" / ")})` });
         }
       }
       if (want) plan.push(upd);
@@ -305,7 +305,7 @@ async function main() {
      it would put in the row — not "so_item_id 99". Nothing is truncated. */
   log("");
   log(`PLANNED WRITES — one line per row, nothing truncated (${plan.length}):`);
-  log("   po / material_code / AC DtlKey / match / -> so_item_id (AC SO, FromSODtlKey) / date / dtlkey");
+  log("   po / item_code / AC DtlKey / match / -> so_item_id (AC SO, FromSODtlKey) / date / dtlkey");
   for (const p of plan) {
     const bits = [];
     if (p.soItemId) bits.push(`so_item_id=${p.soItemId} (from AC SO ${p.soDoc}, FromSODtlKey ${p.fromKey})`);
@@ -405,7 +405,7 @@ async function main() {
     keyVerdicts[v]++;
     if (v === "disagree") {
       disagreements.push({
-        poNo: poNoByPoId.get(r.purchase_order_id), code: r.material_code, id: r.id,
+        poNo: poNoByPoId.get(r.purchase_order_id), code: r.item_code, id: r.id,
         stored: r.linked_ac_dtlkey, derived: hit.ac.key, how: hit.how,
         /* The evidence, inline. "split" means the ERP row's OWN (qty, Desc2) —
            copied verbatim by the import — partitioned this document's lines
@@ -446,7 +446,7 @@ async function main() {
   const gapRows = [];
   for (const r of rows) {
     const doc = docNoByPoId.get(r.purchase_order_id);
-    const codeMatched = codeMatchIndex.has(`${doc}|${norm(r.material_code)}`);
+    const codeMatched = codeMatchIndex.has(`${doc}|${norm(r.item_code)}`);
     const ac = acByRowId.get(r.id)?.ac ?? null;
     const reason = codeMatchGapReason({
       codeMatched,

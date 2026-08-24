@@ -325,14 +325,26 @@
   align-items: center;
   gap: 6px;
   padding: 4px var(--space-3);
-  background: rgba(230, 129, 0, 0.05);
-  border-bottom: 1px solid var(--line);
+  /* Neutral wash (owner 2026-08-19: the burnt-orange tint read off-theme next
+     to the SO list) — same quiet grey family as .groupZone; the chips + the
+     funnel highlights already say "filtered". */
+  background: rgba(34, 31, 32, 0.03);
+  border-bottom: 1px solid #e3e6e0;
   font-family: var(--font-sans);
   font-size: var(--fs-11);
   color: var(--fg-muted);
   min-height: 26px;
 }
 .filterChipCol { color: var(--fg-muted); font-weight: 600; }
+/* "Filtered by:" lead-in — the SO toolbar's caption voice (10px caps). */
+.filterBarLabel {
+  font-family: var(--font-button);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #767b6e;
+}
 .filterChipVal { color: var(--c-ink); }
 .filterBarClear {
   background: transparent;
@@ -412,7 +424,10 @@
   border-collapse: collapse;
   width: max-content;
   min-width: 100%;
-  font-size: var(--fs-12);
+  /* 13px body = the DataTable lists' base cell size (owner 2026-08-19:
+     "delivery planning table 要和 sales order design 设计,字体,颜色一样").
+     The old fs-12 ledger density predates the Theme C alignment. */
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 /* Header theme = the shared DataTable's (owner 2026-07-25: the Delivery
@@ -489,7 +504,9 @@
 .tbody { background: var(--c-paper); }
 
 .tr {
-  border-bottom: 1px solid var(--line);
+  /* Row separator = the DataTable's border-subtle (#e3e6e0), not the stronger
+     --line — the SO list's rows read lighter than the old ledger rule. */
+  border-bottom: 1px solid #e3e6e0;
   cursor: pointer;
 }
 /* Row hover + selection wear the app accents, not 2990's burnt orange —
@@ -499,12 +516,14 @@
 .tr:last-child { border-bottom: 0; }
 
 .td {
-  padding: 4px 12px;
+  /* DataTable cell rhythm (px-3 py-1.5 on 13px text → ~34px rows) instead of
+     the old 28px ledger density — same owner ask as the .table size above. */
+  padding: 6px 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--c-ink);
-  height: 28px;
+  color: #11140f;
+  height: 34px;
   vertical-align: middle;
 }
 /* Figures = one font system-wide (owner 2026-06-18: Mono). --font-mono is the
@@ -579,7 +598,7 @@
 }
 
 /* ── Row context menu (right-click) ─────────────────────────────────
-   AutoCount-style: New / Edit / View / Convert to DO / Delete.
+   AutoCount-style: New / Edit / View / Transfer to Delivery Order / Delete.
    z-index sits above sticky <thead> and the header ctx menu so the
    floating menu always clears chrome. */
 .contextMenu {

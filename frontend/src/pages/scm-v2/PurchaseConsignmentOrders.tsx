@@ -10,7 +10,7 @@
 // navigation points at /purchase-consignment.
 //
 // Dropped from the PO clone (per scope): the "From Sales Order" button + the
-// multi-select "Convert to GRN" batch flow + the per-line "Received (GRN)"
+// multi-select "Transfer to Goods Received" batch flow + the per-line "Received (GRN)"
 // breakdown column (consignment receiving lives on the parallel Purchase
 // Consignment Receive flow).
 // ----------------------------------------------------------------------------
@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrders,
   usePurchaseConsignmentOrderDetail,
@@ -48,7 +48,7 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
 ];
 
-const fmtMoney = (centi: number, currency: Currency): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency: Currency): string => fmtMoneySen(centi, currency);
 
 // The backend PC-orders list returns pc_number (the consignment doc number),
 // but the shared PoHeaderRow type carries po_number. Read pc_number first with
@@ -60,7 +60,7 @@ const summarizeItems = (items: PoHeaderRow['items']): string | null => {
   if (!items || items.length === 0) return null;
   const HEAD = 3;
   const shown = items.slice(0, HEAD)
-    .map((it) => `${it.material_code}×${it.qty}`)
+    .map((it) => `${it.item_code}×${it.qty}`)
     .join(' · ');
   const extra = items.length - HEAD;
   return extra > 0 ? `${shown} · +${extra} more` : shown;
@@ -105,7 +105,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
       const summary = summarizeItems(po.items);
       return (
         <span
-          title={(po.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join('\n')}
+          title={(po.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join('\n')}
           style={{
             display: 'block',
             fontFamily: 'var(--font-mono)',
@@ -120,7 +120,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
         </span>
       );
     },
-    searchValue: (po) => (po.items ?? []).map((it) => `${it.material_code} ${it.qty}`).join(' '),
+    searchValue: (po) => (po.items ?? []).map((it) => `${it.item_code} ${it.qty}`).join(' '),
     /* Accessor is JSX → export the readable "code×qty · …" summary string. */
     exportValue: (po) => summarizeItems(po.items) ?? '',
   },
@@ -145,17 +145,17 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
     groupValue: (po) => po.currency,
   },
   {
-    key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'total_sen', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (po) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(po.total_centi, po.currency)}
+        {fmtMoney(po.total_sen, po.currency)}
       </span>
     ),
-    searchValue: (po) => fmtMoney(po.total_centi, po.currency),
+    searchValue: (po) => fmtMoney(po.total_sen, po.currency),
     /* Accessor is JSX → export the NUMBER in ringgit (not "MYR 1,234.00") so
        Excel can SUM the column. */
-    exportValue: (po) => (po.total_centi ?? 0) / 100,
-    sortFn: (a, b) => a.total_centi - b.total_centi,
+    exportValue: (po) => (po.total_sen ?? 0) / 100,
+    sortFn: (a, b) => a.total_sen - b.total_sen,
   },
   {
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
@@ -282,9 +282,9 @@ const buildDrilldownColumns = (
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code}</span>,
-    searchValue: (it) => it.material_code,
-    sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code}</span>,
+    searchValue: (it) => it.item_code,
+    sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
   {
     key: 'description', label: 'Description', width: 240, minWidth: 180,
@@ -329,15 +329,15 @@ const buildDrilldownColumns = (
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_centi ?? 0), currency),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 110, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
-    searchValue: (it) => String(it.line_total_centi ?? 0),
-    sortFn: (a, b) => Number(a.line_total_centi ?? 0) - Number(b.line_total_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    searchValue: (it) => String(it.line_total_sen ?? 0),
+    sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },
 ];
 
@@ -371,7 +371,7 @@ const ExpandedLines = ({ po }: { po: PoHeaderRow }) => {
   }
 
   let subtotal = 0;
-  for (const it of items) subtotal += Number(it.line_total_centi ?? 0);
+  for (const it of items) subtotal += Number(it.line_total_sen ?? 0);
 
   const columns = buildDrilldownColumns(po.currency, po.expected_at ?? null);
 

@@ -66,7 +66,7 @@ export type Warehouse = {
 
 export type InventoryBalance = {
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   /* Migration 0095 — attribute-composition bucket; '' = unclassified.
      Present on the default (non-showAll) balances rows. */
   variant_key?: string;
@@ -94,7 +94,7 @@ export type InventoryBalance = {
 
 /* PR #38 — Product totals view (one row per SKU, summed qty across warehouses) */
 export type InventoryProductTotal = {
-  product_code: string;
+  item_code: string;
   product_name: string;
   category: 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
   size_label: string | null;
@@ -113,7 +113,7 @@ export type InventoryProductTotal = {
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
-  main_supplier_price_centi: number | null;
+  main_supplier_price_sen: number | null;
   /* Owner 2026-07-24 six-column planning model (computed server-side, GET
      /inventory/products). committed_scheduled + unscheduled_qty == the whole
      open net-of-delivered SO demand (reserved_total):
@@ -162,7 +162,7 @@ export type InventoryMovement = {
   id: string;
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'TRANSFER';
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   qty: number;
   unit_cost_sen?: number;
@@ -180,7 +180,7 @@ export type InventoryLot = {
   id: string;
   warehouse_id: string;
   warehouse_code?: string;
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   qty_received: number;
   qty_remaining: number;
@@ -189,6 +189,12 @@ export type InventoryLot = {
   received_at: string;
   source_doc_type: string | null;
   source_doc_no: string | null;
+  /* Server-stamped consignment verdict (scm/routes/inventory.ts), derived from
+     the lot's SOURCE by the one classifier isConsignmentLotSource — never from
+     the warehouse's own is_consignment flag, which a mis-posted PC Receive
+     defeats. Optional only for a cached payload that predates the stamp; a
+     consumer must treat "absent" as unknown, not as owned. */
+  is_consignment?: boolean;
 };
 
 export type CogsEntry = {
@@ -196,7 +202,7 @@ export type CogsEntry = {
   consumed_at: string;
   warehouse_id: string;
   warehouse_code: string;
-  product_code: string;
+  item_code: string;
   qty_consumed: number;
   unit_cost_sen: number;
   total_cost_sen: number;
@@ -282,9 +288,9 @@ export type InventoryAnalytics = {
   distinctSkus: number;
   aging: { key: string; label: string; qty: number; valueSen: number }[];
   turnover: { trailingCogsSen: number; annualizedTurns: number; daysOnHand: number | null };
-  deadStock: { product_code: string; product_name: string; qty: number; valueSen: number; lastSoldAt: string | null }[];
+  deadStock: { item_code: string; product_name: string; qty: number; valueSen: number; lastSoldAt: string | null }[];
   abc: {
-    items: { product_code: string; product_name: string; cogsSen: number; onHandValueSen: number; cumPct: number; class: 'A' | 'B' | 'C' }[];
+    items: { item_code: string; product_name: string; cogsSen: number; onHandValueSen: number; cumPct: number; class: 'A' | 'B' | 'C' }[];
     summary: Record<'A' | 'B' | 'C', { count: number; valueSen: number }>;
   };
 };
@@ -305,32 +311,32 @@ export function useInventoryAnalytics(opts?: { days?: number; warehouseId?: stri
 }
 
 /* PR #38 — Per-warehouse breakdown for a single product (drilldown drawer) */
-export function useInventoryProductBreakdown(productCode: string | null) {
+export function useInventoryProductBreakdown(itemCode: string | null) {
   return useQuery({
-    queryKey: ['inventory', 'breakdown', productCode],
+    queryKey: ['inventory', 'breakdown', itemCode],
     // Migration 0095 — per (warehouse × attribute-composition) rows so the
     // drawer can show a SKU broken into its variant buckets, each with qty.
     queryFn: () =>
       authedFetch<{ balances: InventoryBalance[] }>(
-        `/inventory/breakdown/${encodeURIComponent(productCode ?? '')}`,
+        `/inventory/breakdown/${encodeURIComponent(itemCode ?? '')}`,
       ),
-    enabled: Boolean(productCode),
+    enabled: Boolean(itemCode),
     staleTime: 30_000,
   });
 }
 
-export function useInventoryLots(productCode: string | null, opts?: { warehouseId?: string; includeClosed?: boolean }) {
+export function useInventoryLots(itemCode: string | null, opts?: { warehouseId?: string; includeClosed?: boolean }) {
   return useQuery({
-    queryKey: ['inventory', 'lots', productCode, opts ?? {}],
+    queryKey: ['inventory', 'lots', itemCode, opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
       if (opts?.includeClosed) params.set('includeClosed', 'true');
       return authedFetch<{ lots: InventoryLot[] }>(
-        `/inventory/lots/${encodeURIComponent(productCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
+        `/inventory/lots/${encodeURIComponent(itemCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
       ).then((r) => r.lots);
     },
-    enabled: Boolean(productCode),
+    enabled: Boolean(itemCode),
     staleTime: 30_000,
   });
 }
@@ -339,7 +345,7 @@ export function useInventoryLots(productCode: string | null, opts?: { warehouseI
    A batch = the source PO number; sofa set components share one batch so the
    outbound side (Stage 3) can ship a whole colour-matched set from one dye lot. */
 export type BatchComponent = {
-  productCode: string;
+  itemCode: string;
   variantKey: string | null;
   productName: string | null;
   qtyRemaining: number;
@@ -360,13 +366,13 @@ export type InventoryBatch = {
   components: BatchComponent[];
 };
 
-export function useInventoryBatches(opts?: { warehouseId?: string; productCode?: string }) {
+export function useInventoryBatches(opts?: { warehouseId?: string; itemCode?: string }) {
   return useQuery({
     queryKey: ['inventory', 'batches', opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.productCode) params.set('productCode', opts.productCode);
+      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
       return authedFetch<{ batches: InventoryBatch[] }>(
         `/inventory/batches${params.toString() ? `?${params.toString()}` : ''}`,
       ).then((r) => r.batches);
@@ -375,13 +381,13 @@ export function useInventoryBatches(opts?: { warehouseId?: string; productCode?:
   });
 }
 
-export function useCogsEntries(opts?: { warehouseId?: string; productCode?: string; from?: string; to?: string }) {
+export function useCogsEntries(opts?: { warehouseId?: string; itemCode?: string; from?: string; to?: string }) {
   return useQuery({
     queryKey: ['inventory', 'cogs', opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.productCode) params.set('productCode', opts.productCode);
+      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
       if (opts?.from) params.set('from', opts.from);
       if (opts?.to) params.set('to', opts.to);
       return authedFetch<{ cogs: CogsEntry[] }>(
@@ -410,7 +416,7 @@ export type InventoryReservation = {
   warehouse_id: string;
   warehouse_code: string | null;
   warehouse_name: string | null;
-  product_code: string;
+  item_code: string;
   product_name: string | null;
   variant_key: string;
   batch_no: string | null;
@@ -456,9 +462,24 @@ export type InventoryReservation = {
    totals with consignment excluded from value (owner rule: show consignment
    quantity, keep it out of inventory value). FIFO order (oldest received first)
    is preserved as the backend returns it. Null-safe throughout. */
-export type StockBreakdown = {
-  ownedLots: InventoryReservation[];
-  consignmentLots: InventoryReservation[];
+/* The MINIMUM a row must carry to be split and valued. Structural on purpose:
+   the SAME transform now serves two different lot feeds — /inventory/reservations
+   (InventoryReservation, richer) and /inventory/lots/:itemCode (InventoryLot,
+   the FIFO drilldown the desktop Stock Card reads). Both carry the qty, the unit
+   cost and the server-stamped consignment verdict, which is all this needs; the
+   generic keeps each caller its own row type on the way out. Adding a THIRD
+   filter for the second feed is what produced the defect this closes. */
+export type StockLotLike = {
+  qty_remaining: number;
+  unit_cost_sen: number;
+  is_consignment?: boolean;
+  assigned_qty?: number;
+  free_qty?: number;
+};
+
+export type StockBreakdown<T extends StockLotLike = InventoryReservation> = {
+  ownedLots: T[];
+  consignmentLots: T[];
   ownedQty: number;
   ownedValueSen: number;
   consignmentQty: number;
@@ -472,17 +493,17 @@ export type StockBreakdown = {
 
 /* Per-lot on-hand split, null-safe: a lot with no MRP fields (older/degraded
    payload) is treated as fully FREE (assigned 0), matching the endpoint. */
-export function lotAssignedQty(l: InventoryReservation): number {
+export function lotAssignedQty(l: StockLotLike): number {
   return Math.max(0, Math.round(l.assigned_qty ?? 0));
 }
-export function lotFreeQty(l: InventoryReservation): number {
+export function lotFreeQty(l: StockLotLike): number {
   const qty = l.qty_remaining ?? 0;
   return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
 }
 
-export function buildStockBreakdown(
-  rows: InventoryReservation[] | null | undefined,
-): StockBreakdown {
+export function buildStockBreakdown<T extends StockLotLike>(
+  rows: T[] | null | undefined,
+): StockBreakdown<T> {
   const list = rows ?? [];
   const ownedLots = list.filter((l) => !l.is_consignment);
   const consignmentLots = list.filter((l) => l.is_consignment);
@@ -515,13 +536,13 @@ export function isMakeToOrderCategory(category: string | null | undefined): bool
   return c.includes('SOFA') || c.includes('BEDFRAME');
 }
 
-export function useInventoryReservations(opts?: { warehouseId?: string; productCode?: string }) {
+export function useInventoryReservations(opts?: { warehouseId?: string; itemCode?: string }) {
   return useQuery({
     queryKey: ['inventory', 'reservations', opts ?? {}],
     queryFn: ({ signal }) => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.productCode) params.set('productCode', opts.productCode);
+      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
       return authedFetch<{ reservations: InventoryReservation[] }>(
         `/inventory/reservations${params.toString() ? `?${params.toString()}` : ''}`,
         { signal },
@@ -533,7 +554,7 @@ export function useInventoryReservations(opts?: { warehouseId?: string; productC
 
 export function useInventoryMovements(opts?: {
   warehouseId?: string;
-  productCode?: string;
+  itemCode?: string;
   docType?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -543,7 +564,7 @@ export function useInventoryMovements(opts?: {
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.productCode) params.set('productCode', opts.productCode);
+      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
       if (opts?.docType) params.set('docType', opts.docType);
       if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);

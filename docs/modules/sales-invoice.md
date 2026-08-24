@@ -28,14 +28,23 @@ only document in it that leaves the building as a customer's own copy.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). |
-| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments. Status flags computed at `:991-998`. |
-| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | |
+| Desktop list | `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` | Server-paginated, `pageSize = 50` (`:777`). Outstanding column / cards / drawer / KPI are all net of the source order's deposit, via `vendor/scm/lib/si-outstanding.ts`; a `dep` marker on the cell and an off-by-default **SO deposit** column say why the figure is smaller. **Mark paid** here opens the detail screen's payment editor rather than writing a status — see the section below. |
+| Desktop detail | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2.tsx` | Header + lines + payments + a separate read-only **Collected on `<SO>`** panel. `outstandingOf` / `effectiveOf` both take the applied order deposit as a REQUIRED argument, so the Outstanding figure and the status pill cannot disagree. **Mark paid** records a receipt — it does not write a status; the rule is `frontend/src/pages/scm-v2/markPaidPlan.ts`, see the section below. |
+| Desktop new | `frontend/src/pages/scm-v2/SalesInvoiceNew.tsx` | Salesperson picker — see the note under this table. |
 | Desktop from-DO | `frontend/src/pages/scm-v2/SalesInvoiceFromDo.tsx` | Line-level picker over `/invoiceable-do-lines`. |
 | Desktop report | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing.tsx` | Detail-listing report. |
-| Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is computed client-side as `total − paid`, floored at 0 (`balanceCenti`, `:287-291`). |
+| Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["sales-invoices"]` (`:1113-1152`). Balance is `balanceSen`, which since 2026-08-23 also subtracts the source order's deposit through `vendor/scm/lib/si-outstanding.ts`. Shared with purchase invoices, whose rows carry no such key, so PI is untouched. |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:275`; status actions `:498-511`. |
 | Mobile convert (DO→SI) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "si"` (`:73`). |
+
+> **The Salesperson picker names the person the source document already carries
+> (2026-08-21).** It reads `usePickableStaff({ onlySales: true, include: [<the
+> source doc's salesperson_id>] })`. `onlySales` narrows to Sales positions
+> (owner 2026-07-22), and `include` is what stops that narrowing labelling a
+> sitting employee **"(former staff)"** — the label is now reachable only for a
+> row that genuinely is gone. Contract: `team-members.md`, *"`GET
+> /staff/pickable` ALWAYS holds the caller"*. Trace:
+> `docs/bugs/0504-the-salesperson-picker-hid-the-person-using-it-so-the-so-sai.md`.
 
 Desktop routes: `frontend/src/App.tsx:658-661`, behind
 `<ScmGuard area="scm.sales.invoices" allowSales>` for list + detail, without
@@ -77,6 +86,10 @@ Three layers as in `docs/modules/sales-order.md` §1. SI specifics:
 
 ---
 
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
+
 ## 2. API surface
 
 `backend/src/scm/routes/sales-invoices.ts`, mounted at `/api/scm/sales-invoices`
@@ -93,6 +106,45 @@ SOs; writes need `edit` on `scm.sales.invoices`.
 | POST | `/` | `:797` | Create. `asDraft: true` → DRAFT (no GL); else posts revenue at `:946`. |
 | POST | `/from-dos` | `:985` | Line-level batch convert from DO picks. |
 | POST | `/:id/items/from-do/:doId` | `:1216` | Append another DO's lines onto an existing invoice. |
+
+**Which deliveries may be invoiced — the server's answer, since 2026-08-18.** Both
+entry points above call `siTransferRefusal` (`scm/lib/do-line-remaining.ts`),
+which reads the one declaration `SI_TRANSFERABLE_DO_STATES`
+(`scm/shared/do-shipped-states.ts`). Before it, the rule lived only in clients and
+had four disagreeing spellings — this route refused just `CANCELLED`, so anything
+else went through from the API or a phone while the desktop greyed the button out.
+Three 409s, and the codes matter to API callers:
+
+| code | when |
+|---|---|
+| `do_cancelled` | the delivery was cancelled — raise a new one |
+| `do_not_confirmed` | still a DRAFT; #2485 keeps Confirm a prerequisite |
+| `do_not_transferable` | any other status, `INVOICED` included (nothing writes it, so the label means "somebody set it") |
+
+`LOADED` is deliberately NOT refused. #2485 widened the rule to every CONFIRMED
+delivery on 2026-08-19; #2557 took LOADED back out of the server's PICKER on
+2026-08-20 as a side effect of a stock fix, leaving the button offered and the
+lines unavailable; and the owner settled it the same day — **不要拦 ——
+人自己知道**, 「我们自己开啊 manually开的不是吗」. The invoice is raised by hand
+by someone who knows whether the goods arrived, so the system does not
+second-guess them. The picker, this gate and the write-path cap all now read
+the `'invoiceable'` basis of `do-line-remaining.ts`, so they cannot disagree
+again; `backend/tests/loadedStaysInvoiceable.test.ts` fails by name if LOADED is
+re-excluded.
+
+**#2485's argument was false for LOADED and stopped being false on 2026-08-22.**
+It justified itself with "stock was already deducted at dispatch", which was true
+of `DISPATCHED` and `IN_TRANSIT` and not of `LOADED` — so the rule stood on the
+owner's choice rather than on that reasoning. He has since moved the deduction to
+the confirm step (「once confirmed就代表出货了 就是直接扣库存」), so `LOADED` is a
+member of `DO_SHIPPED_STATES` and the stock IS out by the time an invoice can be
+raised. Nothing about this gate changes: the rule was already right, and it is
+now right for the reason #2485 gave as well as the one it actually rested on.
+Full trace in `docs/modules/delivery-order.md`.
+
+The batch path's `DO_HEADER` projection must keep selecting `status`;
+it did not at first, and the guard then refused every batch invoice
+(`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:1426` / `:1515` / `:1632` | Line CRUD (frozen once issued). |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:1685` / `:1777` / `:1850` | Payments ledger. |
@@ -118,7 +170,7 @@ posting.
    - Legacy (`:665-675`): `order invoice_date desc`, `.limit(500)`, scope, raw
      `status`, `scopeToCompany`.
    - Paginated (`:677-744`): sort whitelist
-     `invoice_date | invoice_number | debtor_name | status | total_centi` (`:682`)
+     `invoice_date | invoice_number | debtor_name | status | total_sen` (`:682`)
      with `invoice_number` as tiebreaker; bucket resolution via
      `SI_STATUS_BUCKETS` (`:542-547`); `q` ilikes over `invoice_number,
      so_doc_no, debtor_name, debtor_code, ref, branding, sales_location` plus
@@ -169,6 +221,11 @@ posting.
   with `sent_at` / `confirmed_at` NULL and **commits nothing** — no AR/GL, no
   customer credit (`:872-876`). A non-draft create calls `postSiRevenue` at
   `:946`.
+- **Create from DO lines** (`POST /from-dos`, `createSalesInvoiceFromDoLinesHandler`).
+  Same `asDraft` contract, read strictly (`body.asDraft === true`) and landed at
+  `status: isDraft ? 'DRAFT' : 'SENT'`, with `invoice_date` forced to
+  `todayMyt()`. **Since 2026-08-20 the phone always sends `asDraft: true`** — see
+  the ruling below.
 - **Confirm** (DRAFT → SENT, inside the status handler at `:1958-2005`). Stamps
   `sent_at` + `confirmed_at` with a `.eq('status','DRAFT')` race gate (`:1969-1971`),
   posts revenue (`:1978`, idempotent), then auto-applies any customer credit.
@@ -184,15 +241,187 @@ posting.
   is the ISSUED gate in front of it (see §6).
 - **Payments** (`:1777`). Refuses CANCELLED and DRAFT (`:1782-1786`), then
   `recomputePaid` (`:1730`) re-sums the ledger and re-derives the status ladder.
+- **What AutoCount is told about a create.** Both create paths write exactly one
+  `scm.autocount_outbox` row, before the DRAFT early return, so a draft and a
+  posted invoice record the same one. `POST /from-dos` decides inline from its
+  picks; `POST /` delegates to `scm/lib/si-autocount-source.ts`, which resolves
+  the source from the PERSISTED links (`sales_invoice_items.do_item_id`, then
+  `sales_invoices.delivery_order_id`). One source DO with every line linked
+  queues `do_to_iv`; several record the merged-conversion skip; a linked line
+  beside a standalone line is refused as `mixed-source-lines`; only a genuine
+  no-source invoice is recorded parentless. Until 2026-08-17 `POST /` recorded
+  parentless UNCONDITIONALLY, so every desktop from-DO invoice was filed as
+  ERP-only — see BUG-HISTORY and `docs/modules/autocount-writeback.md` §7d.
 
-### `recomputePaid` (`:1730-1775`) — read this before touching payments
+### Every line verb on an invoice is STRICTLY company-scoped — a stamp is not a gate
+
+All four line verbs resolve the invoice by `id`, which is a uuid and therefore
+globally unique — so the danger here is not an ambiguous key, it is that a uuid
+from the other company's books resolves perfectly well. Each one must prove the
+INVOICE is ours before touching a line:
+
+| verb | gate |
+| --- | --- |
+| `POST /:id/items` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `PATCH /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `DELETE /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `POST /:id/items/from-do/:doId` | `scopeToCompany` on the invoice AND on the source DO |
+
+`POST /:id/items` had none of it until 2026-08-19 — the other three were fixed in
+the 2026-08-13 sweep and this one was missed. What made it invisible is worth
+knowing, because the shape recurs: the insert carried
+`company_id: activeCompanyId(c)`, so the statement MENTIONED the company and read
+as scoped. **A stamp is not a predicate.** It wrote our company onto a line
+appended to their invoice, and the recompute, the AR/GL re-post and the AutoCount
+outbox row all followed from that line. This is the fifth blind spot named in
+`CLAUDE.md`; `check-company-scope.mjs` asserts against it in its own self-test.
+
+**Use the STRICT pair, not `scopeToCompany`, on a money write.** `scopeToCompany`
+DEGRADES to no predicate when the company is unresolved — correct for a read that
+must keep serving, wrong for a write that posts to a ledger.
+`requireActiveCompanyId` refuses with a 409 instead.
+
+**The gate goes BEFORE business validation.** Item-code validation used to run
+first, so a caller pointed at another company's invoice was told its *item code*
+was wrong — an answer about a document they cannot see. Same ordering rule the
+price-override handler in `mfg-sales-orders.ts` adopted on 2026-07-22.
+
+Covered by `backend/tests/companyScopeSalesInvoiceMoney.test.ts`, which mounts the
+exported handlers against a fake PostgREST client and asserts BOTH directions plus
+"nothing was written" — a refusal that still inserted would pass a status-only
+check.
+
+### `recomputePaid` — read this before touching payments
+
+It no longer lives in this router. Since 2026-08-23 it is
+`recomputeSiPaid` in `backend/src/scm/lib/si-order-deposit.ts`, re-exported into
+`sales-invoices.ts` under its old name; it moved because the SALES ORDER's
+payment writer has to run the same roll (see the section below).
 
 Fails **closed**: a failed payments read or header read aborts with a log rather
-than writing `paid = 0` (`:1738-1752`). The comment records why — folding a
-transient blip into 0 does not merely understate `paid_centi`, it drives the
-status ladder, so a fully PAID invoice silently reverted to SENT and re-entered
-the AR chase. DRAFT and CANCELLED are frozen out of the ladder entirely
-(`:1760`).
+than writing `paid = 0`. The comment records why — folding a transient blip into
+0 does not merely understate `paid_sen`, it drives the status ladder, so a fully
+PAID invoice silently reverted to SENT and re-entered the AR chase. DRAFT and
+CANCELLED are frozen out of the ladder entirely. A failed read of the ORDER's
+deposit is the third case and behaves the same way: `paid_sen` is still written
+(that read succeeded), and the STATUS is left exactly as it was rather than
+guessed at zero.
+
+### The deposit taken on the SALES ORDER (2026-08-23)
+
+Money can arrive on either of two ledgers — `scm.mfg_sales_order_payments`
+(keyed by `so_doc_no`) or `scm.sales_invoice_payments` (keyed by
+`sales_invoice_id`) — and until this date nothing applied one to the other. An
+order holding a MYR 2,000 deposit produced an invoice reading
+"No payments recorded yet" with the full total outstanding
+(`docs/bugs/0525-payments-taken-on-the-sales-order-never-reached-the-sales-in.md`).
+
+**It READS THROUGH; it does not copy rows.** Copying would double-post: an order
+payment books SOPAY and an invoice payment books SIPAY, both through
+`customerPaymentLines` (`backend/src/acc/rules.ts`), which is Dr cash/bank and
+**Cr AR** — so a copied row would debit cash twice and relieve the same
+receivable twice, and `acc/daily-close.ts`'s `systemTakings` sums BOTH tables for
+one day's cash-up. Nothing in this change posts, journals or writes back to
+AutoCount.
+
+`backend/src/scm/lib/si-order-deposit.ts` owns the rule:
+
+| Question | Answer |
+|---|---|
+| What has the order collected? | `soPaidSen` from `scm/shared/so-outstanding.ts` — the SO's own rule, imported not re-derived, so it carries the LEGACY header `deposit_sen` on an AutoCount-migrated order too |
+| One order, several invoices? | earliest first, consume until exhausted, spill to the next (owner 2026-08-23:「先扣第一张，扣完再溢到下一张」) |
+| Ordering key | `invoice_date` then `invoice_number` — a total order. NOT `created_at`, which two invoices converted in one action can tie on |
+| Which invoices absorb? | every status except **CANCELLED** and **DRAFT**, both of which the payment routes already refuse (`not_payable`) |
+| How much does one absorb? | `min(what is left of the order's money, its own total less its own paid_sen)` |
+| Does `paid_sen` change meaning? | **No.** It is still receipts banked against THIS invoice. The deposit is added to the STATUS decision only, and served to the screen as its own field |
+
+`GET /:id` therefore returns two more keys beside `salesInvoice` and `items`:
+`orderDeposit` (`{ so_doc_no, order_collected_sen, applied_sen, transactions[] }`,
+or `null`) and `orderDepositUnavailable` — the honest third answer for an invoice
+whose order could not be read, which the screen surfaces as a warning rather than
+silently reporting a bigger outstanding.
+
+#### ONE field name, on every surface — `so_deposit_applied_sen`
+
+*Added 2026-08-23, the day after the rule shipped detail-only.* The detail page
+knowing this and the LIST not knowing it was worse than neither knowing: the two
+screens then disagreed about the same invoice, and the list is the one the office
+scans to decide who to chase (measured on production: detail 2,400, list 4,400,
+list KPI 10,200 — `docs/bugs/0527-the-invoice-list-still-chased-money-the-order-had-collected.md`).
+
+`stampOrderDeposit` (`scm/lib/si-order-deposit.ts`, re-exported from
+`scm/lib/si-list-stamps.ts`) stamps the scalar onto a PAGE of rows in **three
+batched reads**, whatever the page size — the style `stampSoDates` and
+`stampDoNumber` set. It is called by:
+
+| endpoint | what it feeds |
+|---|---|
+| `GET /sales-invoices` (both the legacy and the paginated path) | the desktop list + KPI + cards + drawer + CSV, and the mobile list |
+| `GET /sales-invoices/:id` | the detail header (beside the richer `orderDeposit` object) and, through it, the invoice PDF |
+| `GET /outstanding/si` (`backend/src/scm/routes/outstanding.ts`) | the `/scm/outstanding` SI tab — the handler subtracts the slice from the row's `outstanding_sen` |
+| `GET /reports/sales-invoice-detail-listing` (`backend/src/scm/routes/reports.ts`) | the SI Detail Listing `balance_sen`, resolved once per invoice rather than once per line — that join returns one row per LINE, so stamping per row would re-read the same orders dozens of times. `DetailListingShell`'s Outstanding tile and its `?outstanding=1` filter both read `balance_sen`, so they follow. |
+
+**The page is not the population.** The split depends on an invoice's SIBLINGS,
+which can sit on another page or be filtered out of this one, so the sibling read
+is keyed by `so_doc_no` and the allocation runs over the order's whole set before
+the page's rows take their slice. A page-local allocation would hand the same
+money to two pages.
+
+**`null` is not zero.** A failed stamp leaves the field `null`, every reader
+treats it as no deposit, and the screen shows the UN-adjusted, LARGER figure —
+today's behaviour, and the only direction a statement of what is owed may be
+wrong in.
+
+#### The Outstanding Dashboard's SI card (2026-08-23)
+
+`GET /outstanding/summary` gives every module one PostgREST aggregate over its
+`v_*_outstanding` view. For SI that sums `outstanding_sen` — `total_sen -
+paid_sen` — so the card sat above a row list that already subtracted the order
+deposit and disagreed with it, and the card was the bigger number
+(`docs/bugs/0529-the-outstanding-card-was-bigger-than-the-table-under-it.md`).
+
+**`si` alone** now takes the paginate-and-reduce path the endpoint's own header
+already offered as the correct-but-slower fallback, and applies the deposit per
+row (`backend/src/scm/lib/si-outstanding-summary.ts`). The other six modules
+keep their single aggregate. No view and no grant is touched — 0189 is why.
+
+| property | what it does |
+|---|---|
+| the aggregate is the FLOOR | the SQL number is computed first and kept; the scan only ever refines it DOWNWARD, so the figure is never smaller than the truth |
+| `SI_SUMMARY_ROW_CAP` = 4,000 | past that the aggregate stands with `deposit_applied: false` and a note. The cap limits what is READ, never what is COUNTED — a summary that quietly stops counting is worse than one that is too big |
+| a failed read | answers `unavailable: true`, not a zeroed module. On this page a `0` reads as "nothing outstanding" |
+| an unresolved order | keeps its LARGER figure, is still counted, and flips `deposit_applied` to false with the count in the note |
+| `?snapshot=1` | reads `scm.mv_ar_aging`, which has the same blindness. The MV is NOT rewritten; the response marks its SI figure `deposit_applied: false` instead |
+
+The card renders "at most RM x outstanding" whenever `deposit_applied` is false,
+and a dash plus "Could not read" when `unavailable` is set.
+
+**Cost.** At most `4 scan pages + 3 reads per batch of <=200 distinct orders` =
+**<=64 subrequests** for this module, against 7 for the whole summary before.
+How many outstanding invoices a busy tenant carries is **UNKNOWN** here and is
+not guessed; `GET /outstanding/si` already pages the same row set with no cap,
+and the Outstanding page issues it the moment anyone opens the SI tab, so this
+is not a new class of cost.
+
+The frontend has ONE reader, `frontend/src/vendor/scm/lib/si-outstanding.ts`
+(`siOutstandingSen` / `siDepositAppliedSen` / `siSettledSen`), replacing six
+copies of `Math.max(0, total - paid)`. Its test file reads each surface's SOURCE
+and asserts the call is there, because a screen that never calls the rule is
+invisible to any test of the rule.
+
+**Deliberately NOT adjusted, and why:**
+
+| surface | why |
+|---|---|
+| `scm.v_si_outstanding`, `scm.mv_ar_aging` | recreating a view is a NEW object with an empty ACL — the 0189 incident that took the SO list down for every user. The split is also a per-order rule no SQL column can express. `/outstanding/si` adjusts the served row instead |
+| `GET /outstanding/summary` | **FIXED 2026-08-23** — see the section below. |
+| `collection-agent.ts` (`:112`), `document-agent.ts` (`UNPAID_SI` `:494`, the PAID-but-short detector `:652`, the AR-aging buckets `:901-912`) | raw SQL `si.total_sen - si.paid_sen`, some of it bucketed aggregates. **Still wrong as of 2026-08-23** and NOT reached by the summary fix below: they over-state, so they propose chasing too much. Fixing them means restructuring those SQL aggregates, whose cost is not measurable from here |
+| customer-credit auto-apply (`sales-invoices.ts` `remainingDueSen`, `customer-credits.ts`) | a credit is REAL money movement against this invoice. Applying less of it because the order holds a deposit would strand the customer's credit. Left on `total − paid_sen` on purpose |
+
+
+`recomputeSiPaidForOrder` re-rolls every invoice on an order whenever that
+order's payments change (add / edit / delete), so the invoice LIST — which reads
+the persisted `status` — cannot fall behind the detail screen.
 
 ### Status canonicalisation
 
@@ -209,6 +438,128 @@ re-invoicing.
 moves back to DRAFT; a CANCELLED invoice may only reopen to SENT. An
 **unrecognised persisted** status fails OPEN so a legacy row is never bricked.
 
+### Who sets each status — manual vs automatic (2026-08-16)
+
+DB type is the `scm.sales_invoice_status` ENUM (`DRAFT` added by
+`migrations-pg/0041_scm_sales_invoice_status_draft.sql`); column default `SENT`.
+Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
+
+| Value | Set by | Manual / automatic |
+|---|---|---|
+| `DRAFT` | create with the draft flag | manual |
+| `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
+| `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete — on THIS invoice or on its source Sales Order |
+| `PAID` | `recomputePaid` only | **automatic**, same two triggers. The status PATCH still ACCEPTS `PAID` and no caller in this repo sends it any more — see *Mark paid records a receipt* below |
+| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does. Since 2026-08-17 it is at least VISIBLE if one arrives: it sits in the `sent` filter bucket, where it was in none | — |
+| `CANCELLED` | the status PATCH handler | manual |
+
+`recomputePaid` deliberately refuses to touch a DRAFT or CANCELLED invoice, so a
+payment can never drag a cancelled document back into a live state.
+
+Locks worth knowing: `isIssuedSi` (anything except DRAFT / CANCELLED) freezes
+lines on add / edit / delete / from-DO with
+`This invoice has already been issued to the customer, so its items can no longer
+be changed. Cancel the invoice and reopen it if it is wrong.`, and freezes the
+header fields `invoiceDate` / `currency` / `debtorName` / `debtorCode`. Payments
+on a non-live SI are refused with `SI is cancelled` / `SI is a draft — confirm it
+before recording payments` (`not_payable`).
+
+> `VOID` appears as a UI pill label in `frontend/src/vendor/scm/lib/status-pill.ts`
+> for both SI and PI. **No backend path writes it and it is in no enum** — it is a
+> dead label. The live pill relabelings that DO fire are `SENT` → "Issued",
+> `SUBMITTED` / `POSTED` → "Confirmed", `DISPATCHED` → "Shipped".
+
+### Mark paid records a RECEIPT, never a status (2026-08-23)
+
+**What it did until this date.** The button PATCHed `/:id/status` with
+`{ status: 'PAID' }` and wrote no payment. That left `status = 'PAID'` beside
+`paid_sen = 0` on one document, and the derivation above then reverted it the
+next time anything touched that invoice's money. Full trace:
+`docs/bugs/0528-mark-paid-on-a-sales-invoice-recorded-no-payment-status-said.md`.
+
+**What it does now.** It seeds the same payments editor **Record payment** opens
+with one row pre-filled at the outstanding balance, and commits on Save through
+`POST /:id/payments`. Nothing about the status is written by the client at all —
+`recomputeSiPaid` derives it, exactly as it does for a hand-entered receipt, so
+the GL posting, the overpay/credit reconciliation and the AutoCount enqueue all
+happen once and on one path.
+
+| Question | Answer |
+|---|---|
+| How much? | the invoice's outstanding **net of the source order's deposit** — the same `outstandingOf(header, items, depositSen)` the Outstanding hero prints. A MYR 4,400 invoice whose order collected MYR 2,000 records **2,400** |
+| Why net? | the order's deposit is read THROUGH, never copied, because both ledgers post Dr cash/bank and Cr AR and `acc/daily-close.ts` sums both for one day's takings. Recording the gross total would debit cash twice |
+| Which method? | the OPERATOR's. There is no honest default — a silent `cash` lands in the daily cash-up and leaves the drawer short — so the button stops at the editor and Save is the commit point |
+| When is it offered? | only when it can write an honest receipt. `canOfferMarkPaid` in `frontend/src/pages/scm-v2/markPaidPlan.ts` |
+
+`markPaidPlan.ts` refuses four ways, and every refusal is a refusal to record
+money that did not arrive:
+
+| Refusal | Why |
+|---|---|
+| `nothing_outstanding` | a zero-value receipt is not a payment. The button is HIDDEN rather than shown-and-refusing |
+| `deposit_unknown` | `orderDepositUnavailable` — the server could not read the source order, so the outstanding on screen fell back to the full total and is too high by the whole deposit |
+| `not_payable` (CANCELLED) | `POST /:id/payments` and `PATCH /:id/payment` both 409 it; an entry that can only 409 is not offered |
+| `not_payable` (DRAFT) | same, and a draft has posted no revenue yet |
+
+> **The visibility rule INVERTED.** It was `outstanding === 0` from #311 until
+> this change, so the button was only ever reachable on an invoice that owed
+> nothing — which is why it could not have been recording a receipt. It is now
+> offered when there IS a balance and hidden when there is not.
+
+> **The LIST delegates here rather than computing.** Its **Mark paid** and
+> **Record payment** both navigate to this screen carrying `?pay=balance` /
+> `?pay=open` (`frontend/src/pages/scm-v2/siPaymentIntent.ts`), and this screen
+> acts on the intent once and strips it. The list must NOT compute a receipt
+> itself: a list row carries only `so_deposit_applied_sen`, and
+> `siDepositAppliedSen` reads absent-or-null as 0 — so "the order collected
+> nothing" and "we could not read the order" are the same value there. That is
+> the safe default for a DISPLAYED figure and the dangerous one for cash.
+> `orderDepositUnavailable`, served only by `GET /:id`, is what tells them apart.
+>
+> The old link was `?tab=payments&record=1`, which **nothing read** — this page
+> calls `useSearchParams()` and never calls `.get()` — so Record payment from
+> the list opened the invoice and did nothing. The param lives in a shared
+> module now so the writer and the reader can be tested together.
+
+Pinned by `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx`, which
+mounts the real page and asserts the operator's outcome; proved RED by deleting
+each of the six guards in turn.
+
+### THE PHONE DRAFTS AN INVOICE, IT NEVER SENDS ONE (owner ruling, 2026-08-20)
+
+His words: **「以电脑为准 —— 手机也先出草稿」** — the desktop is the standard, and
+the phone drafts first too.
+
+**What the phone did until this ruling.** `MobileConvertWizard`'s DO→SI arm
+posted `{ picks }` and nothing else. `POST /from-dos` reads `asDraft` strictly,
+so an absent flag is not a neutral default — it is `status: 'SENT'`, with
+`sent_at` and `confirmed_at` stamped, revenue posted, and `invoice_date` forced
+to today. **Three taps on a phone therefore ISSUED a customer-facing invoice**:
+no due date, no terms, no review, and no way back except cancelling a document
+the customer may already have been given.
+
+**Why that was a defect and not merely a difference.** The desktop cannot reach
+that endpoint at all — it goes `SalesInvoiceFromDo` → `SalesInvoiceNew` → `POST /`
+with a ~30-key header form, which IS the review step. (`useConvertDosToSi` in
+`vendor/scm/lib/sales-invoice-queries.ts` exists and has zero consumers.) So one
+surface made issuing an invoice a deliberate act and the other made it a
+side effect of transferring lines.
+
+**What it does now.** The SI arm sends `asDraft: true`, mirroring the GRN arm of
+the same wizard, which had already reasoned its way to the same answer for
+stock: post the draft, let the operator confirm it from the document. Confirm
+(DRAFT → SENT) is the single AR/revenue-writing chokepoint, exactly as
+`PATCH /:id/post` is for a GRN's stock.
+
+**The operator can still see and issue it.** The mobile detail screen already
+offers `Confirm Invoice` on a DRAFT (`mobile/MobileModuleDetail.tsx`,
+`sales-invoices` status actions: DRAFT → SENT, plus Cancel), and the wizard
+returns to the convert home screen exactly as it does for the draft GRN — no
+navigation assumed a sent invoice, so nothing else had to move.
+
+Pinned by `frontend/src/mobile/mobileConvertDraftInvoice.test.tsx`, which drives
+the real wizard and asserts the POSTED BODY, not the source text.
+
 ---
 
 ## 4. Database
@@ -221,17 +572,33 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 
 | Table | Role |
 |-------|------|
-| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi`, **`paid_centi`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_centi`, `total_cost_centi`, `total_margin_centi`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
-| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, `variants`. |
-| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_centi` over this table. |
+| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen`, **`paid_sen`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
+| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`. |
+| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_sen` over this table. |
+| `scm.mfg_sales_order_payments` | READ ONLY from here. The deposit taken on the source Sales Order, applied to this invoice by `scm/lib/si-order-deposit.ts`. No row is ever copied into `sales_invoice_payments` — see *The deposit taken on the SALES ORDER* above. |
 | `scm.customer_credits` | Overpay / cancelled-invoice credit. Written by `applyCustomerCreditToSi`, `creditFromCancelledSi`, `reverseCancelledSiCredit`, `reconcileSiOverpay` (`backend/src/scm/lib/customer-credits.ts`). |
-| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_centi`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
+| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_sen`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
 | `scm.delivery_orders` / `scm.delivery_order_items` | Upstream. The DO's `has_children` lock counts non-cancelled SIs. |
 
-Status vocabulary: canonical set at `:552-567`. Filter buckets (`:542-547`):
-`sent` = DRAFT+SENT+ISSUED, `partial` = PARTIALLY_PAID+PARTIAL,
-`paid` = PAID+COMPLETED, `cancelled` = CANCELLED. Note `sent` deliberately
-includes DRAFT.
+Status vocabulary: canonical set at `SI_STATUS_CANON`. Filter buckets
+(`SI_STATUS_BUCKETS`): `sent` = DRAFT+SENT+OVERDUE, `partial` = PARTIALLY_PAID,
+`paid` = PAID, `cancelled` = CANCELLED. Note `sent` deliberately includes DRAFT.
+Every member of `sales_invoice_status` is in exactly one bucket and no bucket
+holds a non-member — pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`.
+
+> **FIXED 2026-08-17, two faults in one map.** (1) The buckets carried `ISSUED`,
+> `PARTIAL` and `COMPLETED` under a comment calling them a "backward-compatible
+> fallback". They are not members of the enum, so no row can ever have held one,
+> and each made its tab **500 `invalid input value for enum
+> sales_invoice_status`** while its count failed silently to 0 (production, both
+> companies: `total=1` with `{sent:0, partial:0, paid:0, cancelled:0}`). The
+> three spellings survive on the WRITE path via `SI_STATUS_CANON`, which is where
+> an input alias belongs. (2) `OVERDUE` was in NO bucket, so an overdue invoice
+> counted in `all` and appeared in no tab; it is in `sent` now — the bucket
+> `SalesInvoicesListV2`'s `statusFor()` already put it in by fallback, and an
+> overdue invoice is an issued, unpaid one. A count that cannot be read now
+> returns `500 status_counts_failed` rather than 0.
 
 ---
 
@@ -250,7 +617,7 @@ What the SI moves instead is **money and the ledger**:
 
 | Event | What is written |
 |-------|-----------------|
-| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_centi` (`:946`, `:1978`) |
+| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_sen` (`:946`, `:1978`) |
 | Line or total change on a live invoice | `resyncSiRevenue` → void + repost (`:1510`, `:1627`, `:1679`) |
 | Cancel | `reverseSiRevenue` (`:2095`) + `creditFromCancelledSi` (`:2122`) |
 | Reopen | `postSiRevenue` (`:2139`) + `reverseCancelledSiCredit` (`:2162`) |
@@ -347,12 +714,12 @@ Everything is integer sen.
 
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
-| `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
-| `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
-| `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi` | header | Derived by `recomputeTotals` (`:264`); `total_centi` is what the GL posts. |
-| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
-| per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_centi`, `local_total_centi` and `paid_centi` are NOT gated — everyone sees what is owed. |
-| `amount_centi` | `sales_invoice_payments` | The ledger rows `paid_centi` sums. |
+| `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
+| `unit_cost_sen`, `line_cost_sen`, `line_margin_sen` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
+| `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen` | header | Derived by `recomputeTotals` (`:264`); `total_sen` is what the GL posts. |
+| `paid_sen` | header | Derived by `recomputePaid` from `sales_invoice_payments` — receipts on THIS invoice only. The source order's deposit is deliberately NOT added here (the GL, `scm.v_si_outstanding` and the AutoCount write-back all read this column); it reaches the screen and the status ladder separately. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
+| per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_sen`, `local_total_sen` and `paid_sen` are NOT gated — everyone sees what is owed. |
+| `amount_sen` | `sales_invoice_payments` | The ledger rows `paid_sen` sums. |
 
 `recomputeTotals` (`:264`) **fails closed and never throws** (`:254-263`): a read
 it cannot vouch for must not become a written total, and it aborts by logging
@@ -375,7 +742,7 @@ a warning, not a block.
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
-| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "si"`) |
+| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** with **`asDraft: true`** (a straight transfer, no edit step — so it DRAFTS, see below) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
 
 `canOperateSalesInvoices` matters here for the same reason as on the DO: Sales
@@ -419,3 +786,60 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** An SI row offers
+`Print`, `Print Sales Order <no>` and `Print Delivery Order <no>` in place — the
+row already carries `so_doc_no` and `delivery_order_id` + `do_number`, so no
+extra read is needed and no payload change was required. `document-conversion.md`
+§8b has the rule and the per-list enumeration.
+
+## The source Delivery Order's NUMBER, not its uuid
+
+`sales_invoices` stores its parent delivery order only as `delivery_order_id`, a
+uuid — **there is no `do_number` column on the invoice**. The readable number is
+stamped on at read time by `stampDoNumber` in `backend/src/scm/routes/sales-invoices.ts`,
+which batches one lookup against `delivery_orders` and writes `r.do_number`.
+
+**It is called on all three read paths** — both list paths and the detail path.
+The detail was missing until 2026-08-23 and its own comment said "Called on BOTH
+list paths", which was true and was the bug: the field simply was not served
+there.
+
+**The field is `do_number`.** `do_doc_no` is a real column on DELIVERY RETURNS
+and has never existed on a sales invoice; the detail page read that name and so
+always saw `undefined`. The list read `do_number` and was correct throughout, so
+the two screens disagreed about the same invoice.
+
+**No uuid slug fallback.** The detail page used to render
+`delivery_order_id.slice(0, 8)` when it had no number, justified as "so the field
+never renders blank". A dash is the better answer: a blank says we have nothing
+to show; an eight-character hex fragment in a field labelled "Transfer From (DO)"
+says something FALSE in the exact shape of the true answer, and cost the owner a
+question about whether his own document chain was linked at all.
+
+See `docs/bugs/0526-the-invoice-showed-its-delivery-order-as-a-uuid-fragment.md`.

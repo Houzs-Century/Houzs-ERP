@@ -7,8 +7,9 @@
 // Data: usePurchaseOrders (vendored suppliers-queries slice).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { purchaseOrderRowMenu } from "./row-menus";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -35,6 +36,7 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
   DocumentLinesExpansion,
   AssignedSoCell,
@@ -54,6 +56,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
+  useEnrichedPoListRows,
   usePurchaseOrderDetail,
   useCancelPurchaseOrder,
   fetchPurchaseOrderDetail,
@@ -65,8 +68,13 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { useHoldAction } from "./use-hold-action";
+import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { purchaseOrderPrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -81,17 +89,12 @@ type StatusTab =
   | "open"
   | "partial"
   | "received"
-  | "cancelled";
+  | "cancelled"
+  | "on_hold";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PoHeaderRow): string =>
   r.supplier?.name || r.supplier_id || "—";
@@ -99,14 +102,17 @@ const supplierNameOf = (r: PoHeaderRow): string =>
 const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 
 /* Items summary for the list column + Excel export (owner 2026-08-05) — the
-   list embed already carries (material_code, qty) per line; render the same
+   list embed already carries (item_code, qty) per line; render the same
    compact "CODE×qty · CODE×qty" the expansion details. */
 const itemsSummaryOf = (r: PoHeaderRow): string =>
-  (r.items ?? []).map((it) => `${it.material_code}×${it.qty}`).join(" · ");
+  (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
-/* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
+/* Purchase Location display — the ONE warehouse rule, code first then name
+   (vendor/scm/lib/warehouse-label.ts). This column printed the NAME first and
+   the grid truncated it to "BALAKONG WAREHO…", while the same page's PDF
+   export already printed the CODE — one page, two answers for one warehouse. */
 const locationOf = (r: PoHeaderRow): string =>
-  r.purchase_location?.name || r.purchase_location?.code || "";
+  warehouseLabel(r.purchase_location) ?? "";
 
 /* Supplier-SKU summary (owner 2026-08-05) — the SUPPLIER's own codes, aligned
    with the Items column line-for-line ("—" holds the slot for an unbound
@@ -114,9 +120,9 @@ const locationOf = (r: PoHeaderRow): string =>
 const supplierSkusOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => it.supplier_sku?.trim() || "—").join(" · ");
 
-// Committed value = total_centi (subtotal + tax); the PO's face value.
+// Committed value = total_sen (subtotal + tax); the PO's face value.
 const totalOf = (r: PoHeaderRow): number =>
-  r.total_centi ?? r.subtotal_centi ?? 0;
+  r.total_sen ?? r.subtotal_sen ?? 0;
 
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
@@ -130,6 +136,10 @@ const STATUS_TONE: Record<
   PARTIALLY_RECEIVED: { tone: "warning", label: "Partially received", bucket: "partial" },
   RECEIVED:           { tone: "success", label: "Received",           bucket: "received" },
   CANCELLED:          { tone: "error",   label: "Cancelled",          bucket: "cancelled" },
+  /* ON_HOLD (mig 0318, owner 2026-08-21) — the REVERSIBLE stop the purchase
+     side never had. A held PO is not receivable: grns.ts filters receivable
+     POs through an allow-list, so the block needs no code here. */
+  ON_HOLD:            { tone: "warning", label: "On Hold",            bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -328,7 +338,7 @@ function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeader
               <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.po_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {supplier}
@@ -505,7 +515,7 @@ function DetailDrawer({
                   // fulfillment cols) merged: a PO drawer needs both the fabric/
                   // colour line AND the received-vs-ordered progress.
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code,
+                    code: l.item_code,
                     description: l.description || l.material_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -551,7 +561,7 @@ function DetailDrawer({
                         {balance > 0 ? balance : "—"}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                        {fmtRm(l.line_total_centi ?? 0)}
+                        {fmtRm(l.line_total_sen ?? 0)}
                       </span>
                     </div>
                   );
@@ -594,7 +604,7 @@ function DetailDrawer({
                         icon={<CheckCircle2 size={14} />}
                         onClick={onConvertGrn}
                       >
-                        Convert to GRN
+                        {transferToLabel('grn')}
                       </Button>
                     )}
                   </>
@@ -655,10 +665,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. PO backend whitelist is
-// { po_date, po_number, status, total_centi }; only `total` differs from its
+// { po_date, po_number, status, total_sen }; only `total` differs from its
 // backend name. Non-whitelisted columns (supplier / expected) carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -682,16 +692,16 @@ function PoLinesExpansion({ id }: { id: string }) {
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.material_code ?? null,
+    code: l.item_code ?? null,
     description: l.description || l.material_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti: l.line_total_centi ?? 0,
-    assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
-    sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
-    provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],
-    deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
+    amountSen: l.line_total_sen ?? 0,
+    assignedSos: byCode.get((l.item_code ?? "").trim()) ?? [],
+    sourceLinked: linkedSkus.has((l.item_code ?? "").trim()),
+    provenance: provByCode.get((l.item_code ?? "").trim()) ?? [],
+    deliveredDos: deliveredMap.get((l.item_code ?? "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -763,9 +773,14 @@ export function PurchaseOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPo = useCancelPurchaseOrder();
+  const holdAction = useHoldAction("po");
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  // Server already filtered + sorted this page — render verbatim. The MRP-derived
+  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
+  // a beat later and are merged in here, so opening the list no longer waits on a
+  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
+  const serverRows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  const rows = useEnrichedPoListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -775,6 +790,7 @@ export function PurchaseOrdersListV2() {
     partial: 0,
     received: 0,
     cancelled: 0,
+    on_hold: 0,
   };
 
   /* The rows the TABLE is actually showing — the page rows minus whatever the
@@ -852,13 +868,13 @@ export function PurchaseOrdersListV2() {
   const goSuppliers = () => navigate("/scm/suppliers");
   const goGrn = () => navigate("/scm/grns");
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
-  const goPrint = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
-  // Convert to GRN routes to the reviewable From-PO picker pre-scoped to this
+  // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
   // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
-    navigate(`/scm/grns/from-po?poId=${r.id}`);
+    navigate(convertToLink('poToGrn', r.id));
 
   // ── Multi-select bulk convert ──────────────────────────────────────────────
   const toggleSelect = (id: string) =>
@@ -882,7 +898,7 @@ export function PurchaseOrdersListV2() {
     if (selectedIds.size === 0) return;
     const ids = [...selectedIds];
     clearSelection();
-    navigate(`/scm/grns/from-po?poId=${ids.join(",")}`);
+    navigate(convertToLink('poToGrn', ids));
   };
 
   /* Batch supplier-revised date (owner 2026-08-03) — a supplier who pushes a
@@ -995,6 +1011,24 @@ export function PurchaseOrdersListV2() {
     }
   };
 
+  /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
+     — SUBMITTED or PARTIALLY_RECEIVED.
+
+     THE HOLD USED TO RIDE ALONG FOR FREE AND NO LONGER DOES. This comment said
+     "a held or cancelled PO is excluded by being absent from it, which is why
+     ON_HOLD needed no line here", and that was true only while a hold OVERWROTE
+     the status. Since mig 0324 a held PO still reads SUBMITTED, so `rowIsHeld`
+     is checked explicitly — on the server too (grns.ts `isReceivablePo`), which
+     is the half that actually protects the stock. */
+  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
+     The prompt wording and the write live in ./use-hold-action.ts. */
+  const setPoHold = (r: PoHeaderRow, onHold: boolean) => holdAction(r.id, r.po_number, onHold);
+  const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
+    open: goFullPage, edit: goEdit, print: printDocument,
+    transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
+    canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
+    canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
+  });
   const doCancel = (r: PoHeaderRow) => {
     if (window.confirm(`Cancel PO ${r.po_number}? This can only be undone if no GRN has been raised.`)) {
       cancelPo.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -1058,7 +1092,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => itemsSummaryOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {itemsSummaryOf(r) || "—"}
@@ -1075,7 +1109,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => supplierSkusOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {supplierSkusOf(r) || "—"}
@@ -1178,7 +1212,8 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -1210,6 +1245,7 @@ export function PurchaseOrdersListV2() {
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "received", label: `Received · ${counts.received}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (
@@ -1246,7 +1282,7 @@ export function PurchaseOrdersListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
-                  From Sales Order
+                  {transferFromLabel('so')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button
@@ -1417,7 +1453,8 @@ export function PurchaseOrdersListV2() {
                   onToggle: toggleSelect,
                   onToggleAll: toggleSelectAll,
                 }}
-                exportName="purchase-orders"
+                contextMenu={poContextMenu}
+            exportName="purchase-orders"
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
@@ -1491,7 +1528,7 @@ export function PurchaseOrdersListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(purchaseOrderPrintChain(selected).own)}
         onCancel={() => selected && doCancel(selected)}
         onConvertGrn={() => selected && goGrnFromPo(selected)}
       />

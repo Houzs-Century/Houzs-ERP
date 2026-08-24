@@ -103,7 +103,8 @@ export async function registerNativePush(): Promise<void> {
     if (receive !== "granted") return;
     await p.register();
   } catch {
-    // Push is an enhancement; a failure must never disturb sign-in.
+    // silent-write-ok: push is an enhancement and this runs during sign-in.
+    // A failure must never interrupt someone logging in.
   }
 }
 

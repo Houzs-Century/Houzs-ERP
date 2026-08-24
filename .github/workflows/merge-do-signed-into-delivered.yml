@@ -1,0 +1,58 @@
+name: Merge DO status SIGNED into DELIVERED (DRY-RUN gated)
+
+# The owner ruled on 2026-08-21 that SIGNED and DELIVERED are one state:
+# 「SIGNED 和 DELIVERED 意思几乎重叠 … 这个整合」. Nothing in this system branches
+# on one and not the other — same stock effect, same invoiceability, both count
+# as delivered — so two words are a question staff answer and the system never
+# asks.
+#
+# DEFAULT IS DRY-RUN, and the dry run performs the real UPDATE inside a
+# transaction it then rolls back: what you read is what would happen, not a
+# description of it. Run it first, read the count, then apply with the phrase.
+#
+# The enum LABEL cannot be removed (Postgres has no DROP VALUE), so the app
+# keeps folding SIGNED into the delivered bucket regardless of when this runs.
+# See docs/modules/delivery-order.md.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (rolls back) or apply (writes)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: 'apply only: type  I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: merge-do-signed-into-delivered
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Plan (and, on apply, perform) the merge
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/merge-do-signed-into-delivered.mjs

@@ -69,7 +69,7 @@ async function main() {
   }
   log(`items with a known purchase cost: ${bestByErp.size}`);
 
-  const lots = await sql`SELECT l.id, l.product_code, l.qty_received, l.qty_remaining, l.movement_id
+  const lots = await sql`SELECT l.id, l.item_code, l.qty_received, l.qty_remaining, l.movement_id
     FROM scm.inventory_lots l
     WHERE l.company_id = 1 AND l.source_doc_type = 'AC_CUTOVER'
       AND (l.unit_cost_sen = 0 OR l.unit_cost_sen IS NULL)
@@ -79,9 +79,9 @@ async function main() {
   const plan = []; let consumed = 0, noPrice = 0, noPriceUnits = 0;
   for (const l of lots) {
     if (Number(l.qty_remaining) !== Number(l.qty_received)) { consumed++; continue; }
-    const cost = bestByErp.get(norm(l.product_code));
+    const cost = bestByErp.get(norm(l.item_code));
     if (!(cost > 0)) { noPrice++; noPriceUnits += Number(l.qty_remaining); continue; }
-    plan.push({ id: l.id, movementId: l.movement_id, code: l.product_code, qty: Number(l.qty_received), sen: Math.round(cost * 100) });
+    plan.push({ id: l.id, movementId: l.movement_id, code: l.item_code, qty: Number(l.qty_received), sen: Math.round(cost * 100) });
   }
   const units = plan.reduce((s, p) => s + p.qty, 0);
   const value = plan.reduce((s, p) => s + p.qty * p.sen, 0) / 100;

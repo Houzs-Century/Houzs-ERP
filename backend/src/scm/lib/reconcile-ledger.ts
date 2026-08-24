@@ -38,12 +38,13 @@ export type ReconcileResult = { asOf: string; issueCount: number; issues: Ledger
 // consignment-notes' SHIPPED_STATES" is what this comment used to CLAIM, and a
 // claim is not a mechanism.
 //
-// This is the 5-state set, so a COMPLETED delivery order is NOT scanned — and
-// COMPLETED is a legal DO status (DO_STATUSES, delivery-orders-mfg.ts) that sits
-// past INVOICED, i.e. one whose OUT should exist. Behaviour is unchanged from
-// the hand-typed list this replaced; whether the sweep should widen to
-// DO_STOCK_OUT_STATES is a real question and an owner's call, not something to
-// change while collapsing a duplicated list. Flagged in the PR, not fixed here.
+// This paragraph used to leave a question open: the sweep reads the 5-state set,
+// so a COMPLETED delivery order is not scanned, and whether to widen it to
+// DO_STOCK_OUT_STATES was "an owner's call". The question is CLOSED, and it was
+// never a call to make: COMPLETED is not a member of scm.do_status (Postgres
+// refused it in prod on 2026-08-17; evidence in shared/do-shipped-states.ts), so
+// there is no such row to miss. The two sets are equal now and this sweep's
+// coverage is unchanged.
 const DO_SHIPPED: readonly string[] = DO_SHIPPED_STATES;
 
 // A row from any document header read below: id + a doc-number col + status.

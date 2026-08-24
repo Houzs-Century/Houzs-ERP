@@ -50,6 +50,7 @@ const SCM_TRANSIENT_KEYS = new Set(
  */
 export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "auth-token", classification: "AUTH", storage: ["localStorage", "sessionStorage"], keyFamily: "auth:token", matches: exact("auth:token") },
+  { id: "auth-pass", classification: "AUTH", storage: ["localStorage", "sessionStorage"], keyFamily: "auth:pass (session pass, mirrors auth:token store)", matches: exact("auth:pass") },
   { id: "auth-local-suppression", classification: "AUTH", storage: ["sessionStorage"], keyFamily: "auth:local-token-suppressed", matches: exact("auth:local-token-suppressed") },
   { id: "active-company", classification: "AUTH", storage: ["localStorage", "sessionStorage"], keyFamily: "houzs.activeCompanyId.v2 (durable, keyed u<user>) + houzs.activeCompanyId.tab (this tab) + pre-v2 ownerless keys, cleanup only", matches: prefix("houzs.activeCompanyId") },
   { id: "remembered-login", classification: "AUTH", storage: ["localStorage"], keyFamily: "houzs:login:lastEmail:v1 (+ legacy aliases)", matches: (key) => ["houzs:login:lastEmail:v1", "auth:lastEmail", "houzs_remember_email"].includes(key) },
@@ -181,5 +182,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
+  // Persisted DataGrid funnel filters (dg-filters:<idKey>, DEVICE_PREF via the
+  // dg- family) — the DataTable dt:filters twin. Column keys and filter values
+  // only; the company scoping rides the layout idKey, never storage-read.
+  "vendor/scm/components/dataGridFilterStorage.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

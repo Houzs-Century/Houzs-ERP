@@ -26,6 +26,13 @@
 //   • flow-queries hooks → the vendored sales-order-queries slice.
 //   • The dead `supabase` import is dropped; flushPendingPhotos reads the
 import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/scm/lib/scan-learning';
+import {
+  cascadeMasterVariants,
+  seedFollowerVariants,
+  seedableMasterVariants,
+  FABRIC_IDENTITY_KEYS,
+  type MasterVariantSnapshot,
+} from '../../vendor/scm/lib/so-variant-cascade';
 //     freshly-created SO back through the vendored authedFetch (→ /api/scm)
 //     instead of a hand-rolled supabase token + VITE_API_URL fetch.
 //   • Navigation repointed to /scm/sales-orders/*.
@@ -46,14 +53,18 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
+import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -94,10 +105,11 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage, soProceedingAddressErrors } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -116,7 +128,7 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
@@ -333,9 +345,10 @@ export const SalesOrderNew = () => {
         description:    it.description ?? '',
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
-        unitPriceCenti: it.unit_price_centi ?? 0,
-        discountCenti:  it.discount_centi ?? 0,
-        unitCostCenti:  it.unit_cost_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
+        priceAuthored: true, // copied off the SOURCE order's persisted row: a 0 IS its price
+        discountSen:  it.discount_sen ?? 0,
+        unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
         remark:         it.remark ?? '',
       })));
@@ -444,7 +457,7 @@ export const SalesOrderNew = () => {
         installmentMonthsLabel: p.installmentLabel || '',
         onlineType:             p.onlineTypeValue || '',
         approvalCode:           p.approvalCode || '',
-        amountCenti:            p.depositCenti > 0 ? p.depositCenti : 0,
+        amountSen:            p.depositSen > 0 ? p.depositSen : 0,
         /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
            deposit's slip. Tag the draft with the receipt's R2 key so the save
            records the deposit through the SO-create proof (receiptImageKey on
@@ -525,7 +538,7 @@ export const SalesOrderNew = () => {
           itemGroup:      l.itemGroup || 'others',
           description:    l.description,
           qty:            l.qty > 0 ? l.qty : 1,
-          unitPriceCenti: l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
           remark:         l.remark,
           ...((fabricCode || specialCodes.length > 0)
             ? { variants: { ...seeded.variants, ...fabricVariants, ...specialVariants } }
@@ -578,7 +591,14 @@ export const SalesOrderNew = () => {
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
-  const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
+  // Debounce before hitting the server: debtorName updates on every keystroke,
+  // so passing it raw fired one /debtors/search per character. Measured on prod
+  // 2026-08-20, one customer name = 35 requests and the serialized API answered
+  // 34 of them 503 (silent — the suggestion list just stayed empty). The
+  // consignment sibling (ConsignmentOrderDetail) already debounces at 200ms;
+  // match it so a name is 2-3 requests, not one per keystroke.
+  const debouncedDebtorName = useDebouncedValue(debtorName, 200);
+  const debtors = useDebtorSearch(debouncedDebtorName.trim().length >= 2 ? debouncedDebtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
   /* Portalled, because this module has no `.field { position: relative }` and
      `.card { overflow: hidden }` left 130px of room for a 260px list. */
@@ -601,9 +621,7 @@ export const SalesOrderNew = () => {
      When one sofa compartment picks a colour we mirror exactly these onto the
      sibling compartments (item 1) — the same keys, so the sibling dropdowns +
      swatches + pricing tier all follow. */
-  const FABRIC_SYNC_KEYS = [
-    'fabricCode', 'colourId', 'fabricId', 'fabricLabel', 'colourLabel', 'colourHex',
-  ] as const;
+  const FABRIC_SYNC_KEYS = FABRIC_IDENTITY_KEYS;
 
   const updateLine = (rid: string, patch: Partial<SoLineDraft>) =>
     setLines((prev) => {
@@ -690,15 +708,14 @@ export const SalesOrderNew = () => {
     setLines((prev) => {
       const seed: DraftLine[] = rows.map((p) => {
         const category = p.category.toLowerCase();
-        const inherited = inheritVariantsByCategory[category];
         const base = newLine(deliveryDate || null);
         return {
           ...base,
           itemCode:       p.code,
           itemGroup:      category,
           description:    p.name,
-          unitPriceCenti: p.sell_price_sen ?? 0,
-          variants:       inherited ? { ...inherited } : {},
+          unitPriceSen: p.sell_price_sen ?? 0,
+          variants:       seedFollowerVariants(inheritVariantsByCategory[category]),
           overriddenKeys: [],
         };
       });
@@ -722,80 +739,58 @@ export const SalesOrderNew = () => {
     });
   }, [deliveryDate]);
 
-  /* PR #142 / #145 / #147 — Master-follower cascade for line variants.
-     LINE 1 of each category drives variant changes on subsequent lines,
-     unless a follower has manually overridden a key. */
-  useEffect(() => {
-    const masterByCategory: Record<string, Record<string, unknown>> = {};
-    const masterIdx: Record<string, number> = {};
-    lines.forEach((l, idx) => {
-      if (!l.itemGroup) return;
-      if (masterIdx[l.itemGroup] !== undefined) return;
-      masterIdx[l.itemGroup] = idx;
-      if (l.variants) masterByCategory[l.itemGroup] = l.variants;
-    });
+  /* Master-follower cascade for line variants — LINE 1 of each category drives
+     the rest. The rule itself is the shared layer (vendor/scm/lib/
+     so-variant-cascade); this is only the wiring, and MobileNewSO imports the
+     same module rather than carrying a second copy of it.
 
-    const fabricSyncSet = new Set<string>(FABRIC_SYNC_KEYS);
+     Owner ruling 2026-08-21 — the master's LATEST change always wins, so a
+     follower the operator had already typed by hand IS overwritten when line 1
+     moves again. `overriddenKeys` no longer vetoes this cascade; it still
+     guards the per-sofa colour sync in updateLine above, which is a different
+     rule (one physical sofa, not one category).
+
+     masterSnapshotRef is what makes "latest" mean anything: it holds the master
+     variants as of the previous run, so a key the MASTER just moved is forced
+     onto the followers while a key it did not is only used to fill a blank —
+     without it a follower could never be edited at all. */
+  const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
+  useEffect(() => {
+    const { variants, masters } = cascadeMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      masterSnapshotRef.current,
+      /* Desktop cascades EVERY category — a mattress line's specials included.
+         Passed explicitly because mobile answers this differently. */
+      null,
+    );
+    masterSnapshotRef.current = masters;
     let didUpdate = false;
     const next = lines.map((l, idx) => {
-      if (!l.itemGroup) return l;
-      if (masterIdx[l.itemGroup] === idx) return l;
-      const masterVariants = masterByCategory[l.itemGroup];
-      if (!masterVariants) return l;
-      const cur = (l.variants ?? {}) as Record<string, unknown>;
-      const overridden = new Set(l.overriddenKeys ?? []);
-      /* Owner — fabric COLOUR only follows within the SAME sofa. When both the
-         master and this follower carry a variants.buildKey (a split sofa) and
-         they DIFFER, this follower is a different sofa: do NOT let the category
-         master's fabric-identity keys cross into it (the per-sofa colour sync
-         in updateLine handles same-buildKey compartments). Non-fabric axes
-         (seat/leg height etc.) keep the pre-existing category-wide behavior. */
-      const masterBk = (masterVariants as { buildKey?: unknown }).buildKey;
-      const followerBk = (cur as { buildKey?: unknown }).buildKey;
-      const differentSofa =
-        typeof masterBk === 'string' && masterBk !== '' &&
-        typeof followerBk === 'string' && followerBk !== '' &&
-        masterBk !== followerBk;
-      const patch: Record<string, unknown> = {};
-      let hasChange = false;
-      for (const k of Object.keys(masterVariants)) {
-        if (overridden.has(k)) continue;
-        if (differentSofa && fabricSyncSet.has(k)) continue;
-        const masterVal = masterVariants[k];
-        if (masterVal === undefined || masterVal === null || masterVal === '') continue;
-        if (cur[k] !== masterVal) {
-          patch[k] = masterVal;
-          hasChange = true;
-        }
-      }
-      if (!hasChange) return l;
+      if (variants[idx] === l.variants) return l;
       didUpdate = true;
-      return { ...l, variants: { ...cur, ...patch } };
+      return { ...l, variants: variants[idx]! };
     });
     if (didUpdate) setLines(next);
   }, [lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen),
       0,
     ),
     [lines],
   );
 
   /* PR #141 — Per-category variants captured from the FIRST line of that
-     category that has any variants set. */
-  const inheritVariantsByCategory = useMemo(() => {
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const l of lines) {
-      const cat = l.itemGroup;
-      if (!cat || out[cat]) continue;
-      if (l.variants && Object.keys(l.variants).length > 0) {
-        out[cat] = l.variants;
-      }
-    }
-    return out;
-  }, [lines]);
+     category that has any variants set. Shared with mobile + SoLineCard, and
+     deliberately NOT the same question the cascade's master asks (that one
+     takes the first line of the category even when it is still empty). */
+  const inheritVariantsByCategory = useMemo(
+    () => seedableMasterVariants(
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+    ),
+    [lines],
+  );
 
   // ── Locality cascade — shared layer, both directions (address-cascade.ts) ──
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
@@ -978,61 +973,39 @@ export const SalesOrderNew = () => {
   }, [staffList, salespersonAllowedEmails, currentUser?.email]);
 
   /* Owner 2026-06-23 — the Salesperson must NEVER be blank for whoever creates
-     the order: the creator IS the salesperson. The 2990 bridge only knew the
-     creator when they had a scm.staff row, so a user without one (the owner)
-     got "Pick staff". We now resolve the creator from the staff list FIRST
-     (by id, then email, then name) so a real staff user keeps their canonical
-     id; when no staff row matches we synthesize a UI-only "self" option from
-     the Houzs auth user so their NAME is always selectable + shown. */
-  const SELF_SALESPERSON = '__self__';
-  const selfStaffMatch = useMemo(() => {
-    /* user_id FIRST. It is the only link that actually exists on this data (102
-       of 140 staff rows carry it; 18 carry an email), and it is what the backend
-       already resolves the caller by — resolveOwnerStaffId joins staff.user_id.
-       Matching the frontend to the backend's own key is what stops the two
-       disagreeing about whether the caller has a staff row at all: the IT Admin
-       HAS one (user_id 4, email NULL), yet id/email/name all missed it, so the
-       page offered a synthesized self-option the create path then discarded. */
-    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
-    const byUserId = selfUserId != null
-      ? staffList.find((s) => s.userId != null && Number(s.userId) === selfUserId)
-      : undefined;
-    if (byUserId) return byUserId;
-    const byId = currentStaff?.id
-      ? staffList.find((s) => s.id === currentStaff.id)
-      : undefined;
-    if (byId) return byId;
-    const email = (currentUser?.email ?? '').trim().toLowerCase();
-    const byEmail = email
-      ? staffList.find((s) => (s.email ?? '').trim().toLowerCase() === email)
-      : undefined;
-    if (byEmail) return byEmail;
-    const name = (currentUser?.name ?? currentStaff?.name ?? '').trim().toLowerCase();
-    return name
-      ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
-      : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id]);
+     the order: the creator IS the salesperson.
 
-  /* The creator's display name for the synthesized self-option (only used when
-     selfStaffMatch is undefined — i.e. they have no scm.staff row). */
-  const selfDisplayName =
-    (currentUser?.name ?? '').trim() ||
-    (currentStaff?.name ?? '').trim() ||
-    (currentUser?.email ?? '').trim() ||
-    'Me';
+     Owner 2026-08-21 — and it must never be the word "me" either: it has to be
+     a REAL employee. This used to synthesize a UI-only `__self__` option
+     labelled "<name> (me)" whenever the creator was missing from the roster,
+     and then drop it at submit time so the backend re-derived the id. The
+     creator was missing for one reason only — GET /staff/pickable?onlySales=1
+     narrows to Sales positions and the owner is not one — so the sentinel was
+     papering over a roster that had been asked the wrong question. The roster
+     now ALWAYS carries the caller (staff.ts, THE ALWAYS-HOLDS RULE), so this
+     resolves to a real staff id on every account and the sentinel is gone.
 
-  /* Seed salespersonId to the creator once auth/staff resolve. A real staff
-     row seeds its canonical id; a creator with NO staff row seeds the
-     SELF_SALESPERSON sentinel so the field shows their name (never blank).
-     Only seeds when the user hasn't already picked someone (don't stomp an
-     admin's manual choice on re-render). */
+     The ladder itself is the SHARED `resolveSelfStaff` (vendor/scm/lib) — user_id
+     FIRST, then the bridge staff id, then email, then name. It was written here
+     and mobile MobileNewSO carried a THIRD, older copy that stopped at
+     email-then-name; one module is what stops them disagreeing again. */
+  const selfStaffMatch = useMemo(
+    () => resolveSelfStaff(staffList, {
+      userId: currentUser?.id,
+      staffId: currentStaff?.id,
+      email: currentUser?.email,
+      name: currentUser?.name,
+      staffName: currentStaff?.name,
+    }),
+    [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id],
+  );
+
+  /* Seed salespersonId to the creator once auth/staff resolve — always their
+     canonical staff id. Only seeds when the user hasn't already picked someone
+     (don't stomp an admin's manual choice on re-render). */
   useEffect(() => {
-    if (selfStaffMatch) {
-      setSalespersonId((prev) => prev || selfStaffMatch.id);
-    } else if (selfDisplayName) {
-      setSalespersonId((prev) => prev || SELF_SALESPERSON);
-    }
-  }, [selfStaffMatch, selfDisplayName]);
+    if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
+  }, [selfStaffMatch]);
 
   /* Derive the resolved venue from whichever salesperson is currently
      picked. Falls back to the auth user's own venue_id if the staff list
@@ -1173,7 +1146,7 @@ export const SalesOrderNew = () => {
     return { failed, skipped };
   };
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountCenti > 0 && !d.receiptImageKey);
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
 
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -1192,7 +1165,7 @@ export const SalesOrderNew = () => {
           idempotencyKey:  d.idempotencyKey,
           paidAt:          d.paidAt,
           method,
-          amountCenti:     d.amountCenti,
+          amountSen:     d.amountSen,
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
@@ -1330,7 +1303,7 @@ export const SalesOrderNew = () => {
         return {
           rawText,
           qtyGuess: l.qty,
-          priceRmGuess: l.unitPriceCenti > 0 ? l.unitPriceCenti / 100 : null,
+          priceRmGuess: l.unitPriceSen > 0 ? l.unitPriceSen / 100 : null,
           skuMatch: l.itemCode
             ? {
                 code: l.itemCode,
@@ -1385,16 +1358,39 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    if (!debtorName.trim()) {
-      void notify({ title: 'Customer name is required.', tone: 'error' });
-      return;
-    }
-    if (!phone.trim()) {
-      void notify({
-        title: 'Phone number is required',
-        body: 'every sales order must have a contact number.',
-        tone: 'error',
-      });
+    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
+       — the form popped ONE missing field per click). Collect EVERY always-required
+       field the operator is missing and show them together. The CONDITIONAL guards
+       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
+       "State has no warehouse" config case, payment sub-fields) still run one at a
+       time, because each only applies once an earlier choice is made. Shared with
+       mobile via soRequiredFieldErrors so the required set can't drift. */
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    const missingRequired = soRequiredFieldErrors({
+      customerName: debtorName,
+      phone,
+      hasNamedLine: validLines.length > 0,
+      asDraft,
+      hasVenue: !!effectiveVenueId,
+      hasSalesperson: !!salespersonId,
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+    });
+    /* BOTH lists, ONE dialog. The proceeding-address group's condition is
+       `processingDate`, which is known right here — it only READ like a
+       sequential guard because it sat in a second `if` further down that the
+       return above never reached. Owner 2026-08-23: 「create salesorder 要两
+       次？」 — Venue and State on the first press, address and postcode on the
+       second. */
+    const missingProceeding = soProceedingAddressErrors({
+      processingDate,
+      customerName: debtorName,
+      fillAddressLater,
+      address1,
+      postcode,
+      deliveryDate,
+    });
+    if (missingRequired.length > 0 || missingProceeding.length > 0) {
+      void notify({ ...soRequiredFieldsMessage(missingRequired, missingProceeding), tone: 'error' });
       return;
     }
     // Date sanity (set-together / not-past / processing≤delivery) — shared with
@@ -1402,11 +1398,6 @@ export const SalesOrderNew = () => {
     const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
     if (dateErr) {
       void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
-    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    if (validLines.length === 0) {
-      void notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
       return;
     }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
@@ -1451,21 +1442,10 @@ export const SalesOrderNew = () => {
          Check it HERE too, or a blank address — or "Fill in address later" left
          ticked, which BLANKS the address out of the payload — comes back as a
          bare validation_failed naming no field. */
-      const addrMissing = [
-        !debtorName.trim() ? 'customer name' : null,
-        fillAddressLater || !address1.trim() ? 'address line 1' : null,
-        fillAddressLater || !postcode.trim() ? 'postcode' : null,
-        !deliveryDate.trim() ? 'delivery date' : null,
-      ].filter(Boolean) as string[];
-      if (addrMissing.length > 0) {
-        void notify({
-          title: 'A Processing Date means this order is proceeding, so it needs a delivery address.',
-          body: `Still missing: ${addrMissing.join(', ')}.`
-            + (fillAddressLater ? '\n\nUntick "Fill in address later" to enter it.' : ''),
-          tone: 'error',
-        });
-        return;
-      }
+      /* The address fields moved UP into the one-pass check above — see
+         soProceedingAddressErrors. Nothing is checked twice: reaching here means
+         that list was empty. The "untick Fill in address later" hint went with
+         them into the shared message. */
       const missOf = (l: SoLineDraft): string[] =>
         missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
       const variantGaps = validLines
@@ -1481,26 +1461,11 @@ export const SalesOrderNew = () => {
       }
     }
     /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. The backend enforces both
-       (validation_failed); the pre-checks just say it in one sentence before
-       the round-trip. The SELF sentinel counts as a salesperson: the backend
-       stamps the caller's own staff row for it. */
-    if (!asDraft && !effectiveVenueId) {
-      void notify({
-        title: 'Pick a venue before confirming this order.',
-        body: 'The venue follows the picked salesperson. A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
-    if (!asDraft && !salespersonId) {
-      void notify({
-        title: 'Pick a salesperson before confirming this order.',
-        body: 'A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
+       salesperson; drafts stay freely saveable. Both are now collected in the
+       one-pass required-field check above (soRequiredFieldErrors), so the backend
+       stays the authoritative gate and the operator sees them alongside the other
+       missing fields rather than in two more separate dialogs. The SELF sentinel
+       counts as a salesperson: the backend stamps the caller's own staff row. */
     /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
        ship from a warehouse or AutoCount refuses the whole document. SHARED
        with mobile via soStockLocationError; the backend is the authoritative
@@ -1532,7 +1497,7 @@ export const SalesOrderNew = () => {
        exactly what to pick. Only checks amount-bearing rows (a zeroed/blank row
        is dropped at flush time). */
     const methodGaps = paymentDrafts
-      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountCenti > 0 ? missingMethodSubField(d) : null }))
+      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
       .filter((x) => x.missing !== null);
     if (methodGaps.length > 0) {
       const g = methodGaps[0]!;
@@ -1554,13 +1519,13 @@ export const SalesOrderNew = () => {
        upload (the receipt, on the header as receipt_image_key, IS the proof).
        flushPaymentDrafts skips it. A manually-added row is unaffected. */
     const receiptDeposit = paymentDrafts.find(
-      (d) => d.amountCenti > 0 && Boolean(d.receiptImageKey),
+      (d) => d.amountSen > 0 && Boolean(d.receiptImageKey),
     );
     const receiptDepositBody = receiptDeposit
       ? (() => {
           const { method } = labelToApi(receiptDeposit.methodLabel);
           return {
-            depositCenti:      receiptDeposit.amountCenti,
+            depositSen:      receiptDeposit.amountSen,
             paymentMethod:     method,
             merchantProvider:  receiptDeposit.merchantProvider || undefined,
             installmentMonths: parseInstallmentMonths(receiptDeposit.installmentMonthsLabel) ?? undefined,
@@ -1585,29 +1550,31 @@ export const SalesOrderNew = () => {
        would have re-opened the very deadlock this field exists to close, a
        slip-less deposit counting as RM0 against a Processing Date the operator
        can see is paid for. */
-    const pendingDepositCenti = paymentIntents()
-      .reduce((sum, d) => sum + d.amountCenti, 0);
+    const pendingDepositSen = paymentIntents()
+      .reduce((sum, d) => sum + d.amountSen, 0);
 
     create.mutate(
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
-        pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
-        /* DRAFT flow — backend reads `asDraft: true` to create the SO with
-           status 'DRAFT' instead of 'CONFIRMED'. Omitted (undefined) for a
-           normal Create so the body stays unchanged in that path. */
+        pendingDepositSen: pendingDepositSen > 0 ? pendingDepositSen : undefined,
+        /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
+           not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
+        /* `manualEntry: true` stood here — a bare literal on EVERY create, which
+           the backend read as "drop the deposit condition for this screen". The
+           phone sent nothing and was refused the identical order. Owner ruling
+           2026-08-20 (「以电脑为准 —— 两边都不查」) removed the condition itself,
+           so there is nothing left to waive and no flag to send. */
         debtorName,
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
         email: email || undefined,
-        /* The SELF_SALESPERSON sentinel is a UI-only placeholder for a creator
-           with no scm.staff row — never send it as an id (it isn't one). A real
-           staff id submits normally; the sentinel is omitted so the backend
-           keeps its own caller-based resolution rather than choking on a fake
-           id. */
-        salespersonId:
-          salespersonId && salespersonId !== SELF_SALESPERSON ? salespersonId : undefined,
+        /* Always a real scm.staff uuid now — the roster carries the caller, so
+           there is no sentinel to strip. Omitted only when the field is
+           genuinely empty (roster still loading), where the backend falls back
+           to its own caller-based resolution. */
+        salespersonId: salespersonId || undefined,
         customerType: customerType || undefined,
         customerSoNo: customerSoNo || undefined,
         /* Commander 2026-05-27: Venue is locked to the picked salesperson's
@@ -1650,9 +1617,11 @@ export const SalesOrderNew = () => {
           description:    l.description,
           uom:            l.uom,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti:  l.discountCenti,
-          unitCostCenti:  l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          /* A TYPED 0 is a free line; an untouched 0 is an unpriced SKU the server must still price. */
+          ...zeroPriceClaim(l.unitPriceSen, l.priceAuthored === true),
+          discountSen:  l.discountSen,
+          unitCostSen:  l.unitCostSen,
           variants:       l.variants,
           remark:         l.remark,
           /* PR-E — per-item delivery date + cascade override flag. */
@@ -1662,6 +1631,9 @@ export const SalesOrderNew = () => {
       },
       {
         onSuccess: async (res: { docNo: string }) => {
+          /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
+             behind a permission key knew. Never blocks — the order is saved. */
+          await notifyAcNotSent(notify, res, 'Sales order');
           /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
              We don't gate navigation on success — if a payment fails the
              SO still exists, so we navigate to the Detail page where
@@ -1705,16 +1677,10 @@ export const SalesOrderNew = () => {
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },
-        onError:   (err) => {
-          /* Aggregated save-gate failure → list every reason (owner 2026-07-18),
-             same popup as the SO Detail + mobile paths. */
-          const problems = parseSaveProblems((err as { body?: string } | undefined)?.body);
-          if (problems && problems.length > 0) {
-            void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
-          } else {
-            void notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-          }
-        },
+        /* Aggregated save-gate failure → every reason at once (owner
+           2026-07-18); anything else keeps this page's own "Save failed" popup. */
+        onError: (err) => { void notifySaveProblems(notify, err,
+          (m) => { void notify({ title: 'Save failed', body: m, tone: 'error' }); }); },
       },
     );
   };
@@ -1887,17 +1853,14 @@ export const SalesOrderNew = () => {
                   disabled={!canChangeSalesperson}
                 >
                   {/* Owner 2026-06-23 — the creator is ALWAYS a selectable
-                      option so Salesperson is never blank. When the creator has
-                      a scm.staff row, selfStaffMatch carries its canonical id +
-                      code; when they don't (e.g. the owner), a synthesized
-                      "self" option (SELF_SALESPERSON) shows their name and sits
-                      at the TOP of the list. */}
-                  {!selfStaffMatch && (
-                    <option value={SELF_SALESPERSON}>{selfDisplayName} (me)</option>
-                  )}
+                      option so Salesperson is never blank; owner 2026-08-21 —
+                      and always a REAL person. selfStaffMatch carries their
+                      canonical id + staff code on every account, because
+                      GET /staff/pickable appends the caller's own row whatever
+                      narrowing it applied. */}
                   {/* Non-admin roles are pinned to themselves: only the creator
                       option renders. Admin / director / super-admin get the full
-                      pickable list (with the self option already on top). */}
+                      pickable list (which already contains the creator). */}
                   {!canChangeSalesperson && selfStaffMatch && (
                     <option value={selfStaffMatch.id}>
                       {selfStaffMatch.name} ({selfStaffMatch.staffCode})
@@ -1983,23 +1946,23 @@ export const SalesOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={`${styles.fieldInput} ${editedClass('processingDate', processingDate)}`}
                 value={processingDate}
                 min={today}
-                onChange={(e) => setProcessingDate(e.target.value)}
+                onChange={(iso) => setProcessingDate(iso)}
                 style={datesXor && !processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={`${styles.fieldInput} ${editedClass('deliveryDate', deliveryDate)}`}
                 value={deliveryDate}
                 min={today}
-                onChange={(e) => setDeliveryDate(e.target.value)}
+                onChange={(iso) => setDeliveryDate(iso)}
                 style={datesXor && !deliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
@@ -2288,7 +2251,7 @@ export const SalesOrderNew = () => {
             fontWeight: 800,
             color: 'var(--c-burnt)',
           }}>
-            Subtotal: {fmtRm(subtotalCenti)}
+            Subtotal: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>
@@ -2304,7 +2267,7 @@ export const SalesOrderNew = () => {
         docNo={null}
         payments={paymentDrafts}
         onChange={setPaymentDrafts}
-        grandTotalCenti={subtotalCenti}
+        grandTotalSen={subtotalSen}
         currency="MYR"
         slipUpload
         collectedByAllowedIds={paymentsCollectedByAllowedIds}

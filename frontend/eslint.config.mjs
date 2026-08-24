@@ -40,20 +40,50 @@ export default tseslint.config(
       },
     },
     plugins: {
-      // REGISTERED, every rule OFF. 97 `eslint-disable-next-line react-hooks/…`
-      // directives already exist in src/ — written against a plugin this repo
-      // never installed. Without the plugin registered ESLint fails each of them
-      // with "Definition for rule 'react-hooks/exhaustive-deps' was not found",
-      // which is a hard error and would make the job red on 97 comments rather
-      // than on any code. Turning the rules ON is a separate PR with its own
-      // evidence; it is not smuggled in under this one.
+      // Registered so the 97 `eslint-disable-next-line react-hooks/…`
+      // directives already in src/ — written against a plugin this repo never
+      // installed — do not each fail with "Definition for rule … was not
+      // found", which is a hard error and would make the job red on 97 comments
+      // rather than on any code.
       'react-hooks': reactHooks,
     },
     linterOptions: { reportUnusedDisableDirectives: 'off' },
     rules: {
       ...sharedRules,
-      'react-hooks/rules-of-hooks': 'off',
+      // ON at error level since 2026-08-17. This is a CORRECTNESS rule, not a
+      // style one: a hook called after a conditional `return` runs on the
+      // loaded render and not on the loading one, so React throws
+      // "Rendered more hooks than during the previous render" (minified #310)
+      // and the whole page dies. Ten components were in that state — three of
+      // them confirmed crashing in production on a direct URL / refresh of a
+      // Purchase Order, Purchase Invoice or Goods Receipt (arriving from the
+      // list hid it, because react-query already had the detail cached so the
+      // isPending branch never rendered first).
+      //
+      // `error`, not `warn`, and deliberately outside the ratchet: the ratchet
+      // counts warnings per file and lets existing ones sit at their ceiling,
+      // which is the right shape for style debt and the wrong one for a rule
+      // whose every violation is a page that crashes. A new violation must fail
+      // the build on its first appearance, in any file, ceiling or not.
+      'react-hooks/rules-of-hooks': 'error',
+      // Left OFF on purpose — noisy, and a missing dep is a stale value, not a
+      // crash. Separate piece of work with its own evidence.
       'react-hooks/exhaustive-deps': 'off',
     },
+  },
+  {
+    /* `vendor/shared/do-shipped-states.ts` IS the declaration the do-status
+       selector points at — the byte-identical twin of
+       backend/src/scm/shared/do-shipped-states.ts, which the backend config
+       exempts by path for exactly this reason. It is allowed to spell the lists
+       out; that is its job, and it is the whole point of the file existing.
+
+       EXEMPTED BY PATH, NOT BY AN INLINE DISABLE, and that is load-bearing:
+       check-shared-mirrors.mjs --strict reports this pair as IDENTICAL only
+       while the two files match byte for byte. An `eslint-disable-next-line`
+       comment in the frontend copy would silence the rule and simultaneously
+       break the property the copy exists to have. */
+    files: ['src/vendor/shared/do-shipped-states.ts'],
+    rules: { 'no-restricted-syntax': 'off' },
   },
 );

@@ -77,14 +77,14 @@ type SoHeader = {
   address2: string | null;
   address3: string | null;
   address4: string | null;
-  mattress_sofa_centi: number;
-  bedframe_centi: number;
-  accessories_centi: number;
-  others_centi: number;
-  local_total_centi: number;
+  mattress_sofa_sen: number;
+  bedframe_sen: number;
+  accessories_sen: number;
+  others_sen: number;
+  local_total_sen: number;
   /* Expected deposit target the commander sets on the SO. Distinct from
      amounts actually collected — those live in the payments ledger below. */
-  deposit_centi?: number;
+  deposit_sen?: number;
   line_count: number;
   currency: string;
   note: string | null;
@@ -113,7 +113,7 @@ type SoHeader = {
   salesperson_phone?: string | null;
   /* Authoritative received-to-date rollup stamped by GET /:docNo (ledger +
      legacy header deposit). Falls back to summing `payments` when absent. */
-  paid_centi_total?: number | null;
+  paid_sen_total?: number | null;
   /* POS handover customer signature (data-URL or bare base64 PNG). */
   signature_b64?: string | null;
   /* Owner 2026-07 — brand letterhead. Stamped by GET /:docNo (SOFA→ZANOTTI,
@@ -133,9 +133,9 @@ type SoItem = {
   description2?: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  total_sen: number;
   variants: Record<string, unknown> | null;
   remark?: string | null;
   /* A retired line. GET /:docNo returns cancelled rows along with the live ones
@@ -161,7 +161,7 @@ type SoPayment = {
   installment_months: number | null;
   online_type?: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   collected_by_name: string | null;
   note: string | null;
@@ -519,9 +519,9 @@ export async function renderSalesOrderInto(
       it.item_code,
       lines.join('\n'),
       `${it.qty} ${it.uom}`,
-      fmtRm(it.unit_price_centi, header.currency),
-      it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—',
-      fmtRm(it.total_centi, header.currency),
+      fmtRm(it.unit_price_sen, header.currency),
+      it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—',
+      fmtRm(it.total_sen, header.currency),
     ];
   });
 
@@ -598,7 +598,7 @@ export async function renderSalesOrderInto(
       methodLabel(p),
       p.approval_code ?? '—',
       p.collected_by_name ?? '—',
-      fmtRm(p.amount_centi, header.currency),
+      fmtRm(p.amount_sen, header.currency),
     ]);
     autoTable(doc, {
       startY: ty,
@@ -623,13 +623,19 @@ export async function renderSalesOrderInto(
   // ── Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE ─────────
   /* POS-printout parity: the SO model has no separate subtotal — the grand
      total stands in (add-ons ride inside the line totals). Paid-to-date
-     prefers the authoritative paid_centi_total stamped by GET /:docNo
+     prefers the authoritative paid_sen_total stamped by GET /:docNo
      (ledger + legacy header deposit), falling back to summing the rows. */
-  const subtotalCenti = header.local_total_centi;
-  const paidCenti = typeof header.paid_centi_total === 'number'
-    ? header.paid_centi_total
-    : payments.reduce((sum, p) => sum + (p.amount_centi || 0), 0);
-  const balanceCenti = Math.max(0, subtotalCenti - paidCenti);
+  const subtotalSen = header.local_total_sen;
+  const paidSen = typeof header.paid_sen_total === 'number'
+    ? header.paid_sen_total
+    : payments.reduce((sum, p) => sum + (p.amount_sen || 0), 0);
+  /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
+     not floor the excess away and quietly tell the customer he is square when
+     the business is holding RM 250 of his money. Negative flips the LABEL
+     rather than printing "BALANCE DUE −250.00", which reads as a debt with a
+     typo; the figure itself is shown as the positive credit it is. */
+  const balanceSen = subtotalSen - paidSen;
+  const overpaidSen = balanceSen < 0 ? -balanceSen : 0;
   if (ty > 240) { doc.addPage(); ty = margin; }
   const awTopY = ty;
   const totalsX = pageW - margin - 70;
@@ -639,26 +645,31 @@ export async function renderSalesOrderInto(
     doc.text(label, totalsX, ry);
     doc.text(val, pageW - margin, ry, { align: 'right' });
   };
-  drawRow('Subtotal',     fmtRm(subtotalCenti, header.currency), ty);     ty += 4;
+  drawRow('Subtotal',     fmtRm(subtotalSen, header.currency), ty);     ty += 4;
   /* Standard-checklist tax line — the SO model carries no header tax (prices
      are tax-inclusive / exempt), so this prints as a dash, not a number. */
   drawRow('Tax',          '—',                                   ty);     ty += 4;
-  drawRow('Total',        fmtRm(subtotalCenti, header.currency), ty);     ty += 4;
-  drawRow('Paid to date', fmtRm(paidCenti,     header.currency), ty);     ty += 2;
+  drawRow('Total',        fmtRm(subtotalSen, header.currency), ty);     ty += 4;
+  drawRow('Paid to date', fmtRm(paidSen,     header.currency), ty);     ty += 2;
   doc.setDrawColor(0);
   doc.line(totalsX, ty, pageW - margin, ty);
   doc.setFontSize(11);
-  drawRow('BALANCE DUE', fmtRm(balanceCenti, header.currency), ty + 5, true);
+  drawRow(
+    overpaidSen > 0 ? 'CREDIT BALANCE' : 'BALANCE DUE',
+    fmtRm(overpaidSen > 0 ? overpaidSen : balanceSen, header.currency),
+    ty + 5,
+    true,
+  );
   ty += 12;
 
   // Expected-deposit line — only shown when the commander has set one
   // on the header. Keeps the "target vs. collected" distinction visible.
-  if ((header.deposit_centi ?? 0) > 0) {
+  if ((header.deposit_sen ?? 0) > 0) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(110);
     doc.text(
-      `Expected deposit: ${fmtRm(header.deposit_centi ?? 0, header.currency)}`,
+      `Expected deposit: ${fmtRm(header.deposit_sen ?? 0, header.currency)}`,
       margin, ty,
     );
     doc.setTextColor(0);
@@ -668,7 +679,7 @@ export async function renderSalesOrderInto(
   // Amount in words (left, aligned with the totals block).
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
   doc.text(
-    doc.splitTextToSize(`Amount in words: ${amountInWordsMyr(subtotalCenti)}`, totalsX - margin - 8) as string[],
+    doc.splitTextToSize(`Amount in words: ${amountInWordsMyr(subtotalSen)}`, totalsX - margin - 8) as string[],
     margin, awTopY + 1,
   );
   doc.setTextColor(0);

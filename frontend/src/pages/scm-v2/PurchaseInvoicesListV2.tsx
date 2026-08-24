@@ -4,7 +4,7 @@
 // customer. Outstanding here is what WE owe, not what customers owe us.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -21,6 +21,7 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -46,8 +47,10 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseInvoicesPaged,
+  useEnrichedPiListRows,
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
+  usePostPurchaseInvoice,
   useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -56,18 +59,23 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { purchaseInvoiceRowMenu } from "./row-menus";
+import { useHoldAction } from "./use-hold-action";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { purchaseInvoicePrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type PiRow = {
+type PiRow = HoldFields & {
   id: string;
   invoice_number: string;
   status: string;
   invoice_date: string | null;
   due_date: string | null;
-  total_centi?: number;
-  paid_centi?: number;
+  total_sen?: number;
+  paid_sen?: number;
   currency?: string;
   notes?: string | null;
   supplier?: {
@@ -96,7 +104,6 @@ type PiRow = {
 
 type PiItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -104,27 +111,21 @@ type PiItem = {
   variants?: Record<string, unknown> | null;
   uom?: string;
   qty?: number;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
 };
 
-type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled";
+type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled" | "on_hold";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PiRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PiRow): string => r.supplier?.code || "—";
 
-const totalOf = (r: PiRow): number => r.total_centi ?? 0;
-const paidOf = (r: PiRow): number => r.paid_centi ?? 0;
+const totalOf = (r: PiRow): number => r.total_sen ?? 0;
+const paidOf = (r: PiRow): number => r.paid_sen ?? 0;
 const outstandingOf = (r: PiRow): number => Math.max(0, totalOf(r) - paidOf(r));
 
 const sourceOf = (r: PiRow): string =>
@@ -136,10 +137,14 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   DRAFT:          { tone: "warning", label: "Draft",           bucket: "draft" },
-  POSTED:         { tone: "warning", label: "Posted",          bucket: "posted" },
+  POSTED:         { tone: "warning", label: "Confirmed",       bucket: "posted" },
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },
+  /* ON_HOLD (mig 0320) — the disputed bill that must not be paid while it is
+     queried. This is the ONE hold of the three that needed a written guard:
+     payment-vouchers.ts refuses to settle a held invoice (allocation_on_hold). */
+  ON_HOLD:        { tone: "warning", label: "On Hold",         bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -258,7 +263,7 @@ function CardsGrid({ rows, onOpen }: { rows: PiRow[]; onOpen: (r: PiRow) => void
               <span className="font-mono text-[12.5px] font-semibold text-ink">
                 {r.invoice_number}
               </span>
-              <Badge tone={st.tone} size="xs">{st.label}</Badge>
+              <StatusWithHold tone={st.tone} label={st.label} row={r} />
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">
               {supplierNameOf(r)}
@@ -409,7 +414,7 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code || l.item_code,
+                    code: l.item_code || l.item_code,
                     description: l.description,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -432,10 +437,10 @@ function DetailDrawer({
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty ?? 0}</span>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                      {fmtRm(l.unit_price_centi ?? 0)}
+                      {fmtRm(l.unit_price_sen ?? 0)}
                     </span>
                     <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                      {fmtRm(l.line_total_centi ?? 0)}
+                      {fmtRm(l.line_total_sen ?? 0)}
                     </span>
                   </div>
                   );
@@ -533,10 +538,10 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. PI backend whitelist is
-// { invoice_date, invoice_number, status, total_centi }; only `total` differs
+// { invoice_date, invoice_number, status, total_sen }; only `total` differs
 // from its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -558,15 +563,15 @@ function PiLinesExpansion({ id }: { id: string }) {
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => {
-    const code = (l.material_code || l.item_code || "").trim();
+    const code = (l.item_code || l.item_code || "").trim();
     return {
       itemGroup: l.item_group ?? null,
-      code: l.material_code || l.item_code || null,
+      code: l.item_code || l.item_code || null,
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
       qty: Number(l.qty ?? 0),
-      amountCenti: l.line_total_centi ?? 0,
+      amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
       provenance: provByCode.get(code) ?? [],
@@ -639,10 +644,15 @@ export function PurchaseInvoicesListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPi = useCancelPurchaseInvoice();
+  const postPi = usePostPurchaseInvoice();
   const recordPayment = useRecordPiPayment();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.purchaseInvoices ?? []) as PiRow[];
+  // Server already filtered + sorted this page — render verbatim. The four
+  // MRP-derived columns (Assigned SO / Delivered) arrive from the deferred
+  // enrichment endpoint a beat later and are merged in here, so opening the list
+  // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
+  const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
+  const rows = useEnrichedPiListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -651,6 +661,7 @@ export function PurchaseInvoicesListV2() {
     partial: 0,
     paid: 0,
     cancelled: 0,
+    on_hold: 0,
   };
 
   /* The rows the TABLE is showing — the server page minus whatever the
@@ -726,7 +737,7 @@ export function PurchaseInvoicesListV2() {
   const goGrns = () => navigate("/scm/grns");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goEdit = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}?edit=1`);
-  const goPrint = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -812,9 +823,66 @@ export function PurchaseInvoicesListV2() {
     navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
   const doMarkPaid = (r: PiRow) => {
     if (window.confirm(`Mark invoice ${r.invoice_number} as paid?`)) {
-      recordPayment.mutate({ id: r.id, amountCenti: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
+      recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
     }
   };
+
+  /* CONFIRM + CANCEL, from the right-click menu (owner 2026-08-22).
+
+     Cancel needed no new endpoint and no new hook: `useCancelPurchaseInvoice()`
+     was already called on this page and its result was used by nothing, so the
+     capability sat here unreachable. Confirm calls the same `/:id/post` route
+     the detail page's own Post button calls.
+
+     Both carry an onError, because a refusal that reaches nobody reads to the
+     operator as "the menu did nothing" — the exact bug class
+     `check-silent-mutations.mjs` exists to stop. */
+  const doConfirm = (r: PiRow) => {
+    if (!window.confirm(`Confirm invoice ${r.invoice_number}? Inventory and Payables will be updated.`)) return;
+    postPi.mutate(r.id, {
+      onSuccess: () => setSelected(null),
+      onError: (e) =>
+        notify({
+          title: `Couldn't confirm ${r.invoice_number}`,
+          body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
+          tone: "error",
+        }),
+    });
+  };
+  const doCancelPi = (r: PiRow) => {
+    if (!window.confirm(`Cancel invoice ${r.invoice_number}? Any posted amount will be reversed via a contra JE.`)) return;
+    cancelPi.mutate(r.id, {
+      onSuccess: () => setSelected(null),
+      onError: (e) =>
+        notify({
+          title: `Couldn't cancel ${r.invoice_number}`,
+          body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
+          tone: "error",
+        }),
+    });
+  };
+  /* The server refuses a cancel once ANY money has been paid against the
+     invoice (PAID, or paid_sen > 0 -> 409), so the menu must not offer it
+     there. Mark paid and Record payment stay on the drawer, beside the
+     outstanding figure that justifies them. */
+  /* Keyed by `id`: the route is `PATCH /purchase-invoices/:id/hold`. Only the
+     Sales Order's is keyed by document number (document-hold-routes.ts). */
+  const holdAction = useHoldAction("pi");
+  const setPiHold = (r: PiRow, onHold: boolean) => holdAction(r.id, r.invoice_number, onHold);
+
+  const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
+    open: goFullPage,
+    edit: goEdit,
+    print: printDocument,
+    confirm: doConfirm,
+    setHold: setPiHold,
+    cancel: doCancelPi,
+    canConfirm: (r) => (r.status || "").toUpperCase() === "DRAFT",
+    canCancel: (r) => {
+      const st = (r.status || "").toUpperCase();
+      return st !== "CANCELLED" && st !== "PAID" && paidOf(r) === 0;
+    },
+  });
 
   const columns: Column<PiRow>[] = [
     {
@@ -924,7 +992,8 @@ export function PurchaseInvoicesListV2() {
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
-        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
+        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
     {
@@ -958,10 +1027,11 @@ export function PurchaseInvoicesListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "draft", label: `Draft · ${counts.draft}` },
-    { value: "posted", label: `Posted · ${counts.posted}` },
+    { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "partial", label: `Partial · ${counts.partial}` },
     { value: "paid", label: `Paid · ${counts.paid}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
+    { value: "on_hold", label: `On Hold · ${counts.on_hold ?? 0}` },
   ];
 
   return (
@@ -992,7 +1062,7 @@ export function PurchaseInvoicesListV2() {
             primaryAction={
               <div className="flex items-stretch gap-2">
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromGrn}>
-                  From GRN
+                  {transferFromLabel('grn')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">
@@ -1133,6 +1203,7 @@ export function PurchaseInvoicesListV2() {
                   isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
                 }
                 onRowClick={(r) => setSelected(r)}
+                contextMenu={piContextMenu}
                 expandable={{
                   render: (r) => <PiLinesExpansion id={r.id} />,
                   rowKey: (r) => r.id,
@@ -1212,7 +1283,7 @@ export function PurchaseInvoicesListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
+        onPrint={() => selected && printDocument(purchaseInvoicePrintChain(selected).own)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
         onMarkPaid={() => selected && doMarkPaid(selected)}
       />

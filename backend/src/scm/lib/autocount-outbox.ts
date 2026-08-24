@@ -45,6 +45,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
@@ -52,6 +53,7 @@ import {
   LOCATION_MAP,
   BRANDING_MAP,
   VENUE_MAP,
+  AC_DEBTOR_CODE,
   AC_PURCHASE_AGENT,
   bookSpelling,
   bookSpellingOrOwn,
@@ -75,6 +77,7 @@ import {
   KeylessLineError,
   MissingAgentError,
   MissingCreditorError,
+  AcSoToPoAlignmentError,
   MissingLocationError,
   MissingSalesLocationError,
   SofaCollapseError,
@@ -95,14 +98,68 @@ import { soEditHeader } from './so-edit-header';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
 import {
-  AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs, readPoEnqueueShape,
+  AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
+  readWarehouseCode,
 } from './autocount-read';
+/* The reason a parentless create records, kept beside the needle that
+   classifies it and pinned by a test — see acParentlessCreateReason. */
+import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
+/* Line identity, split out 2026-08-17 for the same cap reason as the two
+   imports above. Same function, same call site in dispatchOne. */
+import { persistLineKeys } from './autocount-line-keys';
+import { readMfgProductBindings } from './supplier-bindings';
+import {
+  soLine,
+  present,
+  DOWNSTREAM,
+  CONVERT_TARGET,
+  readConvertSourceKeys,
+  readConvertTargetLines,
+  readConvertHeaderFacts,
+  /* Moved into that module 2026-08-20: all four are derived from or ask about
+     CONVERT_TARGET, which lives there, and this file was at its cap again. */
+  SALES_CONVERSION,
+  PURCHASE_CONVERSION,
+  readConvertCreditor,
+  downstreamEditHeader,
+  downstreamTransferHeader,
+  downstreamNotCarried,
+  type AcDownstreamSpec,
+  type AcHeaderCtx,
+} from './autocount-convert-lines';
+
+/* The operator's half of a refusal. The skipped row this file writes is the
+   engineer's half and has not changed — see lib/ac-preflight.ts for why there
+   are two and why only ONE module is allowed to write either sentence. */
+import { acNotSentProblems, acNotCarriedProblems, type AcDocKind } from './ac-preflight';
+import type { SaveProblem } from '../shared/so-save-problems';
 
 type Sb = SupabaseClient<any, any, any>;
+
+/** What to call each document in a sentence an operator reads. */
+const AC_DOC_NOUN: Record<AcDocType, AcDocKind> = {
+  SO: 'sales order', PO: 'purchase order', DO: 'document',
+  GR: 'document', IV: 'document', PI: 'document',
+};
+
+/**
+ * What an enqueue did, and — when it refused — what to TELL the operator.
+ *
+ * `queued` is the old boolean, unchanged. `problems` is the answer the composer
+ * has always computed inside the caller's own request and thrown away: every
+ * refusal below is raised, caught and filed while the route still holds the
+ * response it is about to return. Empty for every ordinary outcome (queued, the
+ * flag off, no company, a cutover-imported document, a dedupe collision) — a
+ * warning nobody needed is how an operator learns to stop reading them.
+ */
+export type AcEnqueueOutcome = { queued: boolean; problems: SaveProblem[] };
+
+const AC_ENQUEUE_SILENT: AcEnqueueOutcome = { queued: false, problems: [] };
 
 /** Past this an operation is surfaced as FAILED instead of retrying forever. */
 export const MAX_ATTEMPTS = 6;
 const DRAIN_BATCH = 20;
+
 
 /** The ERP tables that can carry an AutoCount counterpart number. */
 export type AcLinkTable =
@@ -134,6 +191,44 @@ export interface AcOutboxPayload {
   body: Record<string, unknown>;
   /** Set body.FromDocNo from this ERP document's linked_ac_docno. */
   fromDoc?: AcDocRef;
+  /**
+   * SEVERAL sources into ONE target — set body.FromDocNos from their
+   * linked_ac_docno, in the order the ERP named them.
+   *
+   * A MERGED conversion (two sales orders shipped on one delivery order, four
+   * purchase orders received on one GRN) used to be recorded `skipped` with
+   * "AutoCount transfers from ONE source document". That sentence stopped being
+   * true on 2026-08-16: `PlanTransfer` (AcSyncService.cs) reads `FromDocNos`,
+   * the documented `FullTransfer` takes an ARRAY of document numbers, and the
+   * by-line shape groups the keys by the document they belong to and invokes
+   * the primitive once per group. The service was ready and the ERP kept
+   * refusing — four routes, one `docNos.length === 1`.
+   *
+   * SEPARATE FROM `fromDoc`, not a replacement for it. The drain REPLAYS a
+   * stored payload and never recomposes, so every row queued before this field
+   * existed still carries `fromDoc` and must keep working exactly as it did.
+   */
+  fromDocs?: AcDocRef[];
+  /**
+   * The line PHOTOGRAPHS this edit should carry, named by the AutoCount line
+   * they belong to.
+   *
+   * KEYS, NOT BYTES, AND THAT IS THE WHOLE DESIGN DECISION. A cutover photo is
+   * a few KB and a document can hold five, so the base64 of one edit is tens of
+   * KB — in an APPEND-ONLY audit table, written again on every save of every
+   * photographed order. The payload records what the user's save MEANT (these
+   * pictures, on this line); `dispatchOne` materialises the bytes out of R2 in
+   * the moment it sends, exactly as `fromDoc` names a document and the drain
+   * resolves it to a number. The snapshot stays a snapshot and stays small.
+   *
+   * EDIT ONLY, because that is the only route the service takes them on
+   * (`AcSyncService.Edit()` reads `Photos` per line; `CreateSo` does not), and
+   * the only shape proven against the live book — scratch order `ERP-FDPROBE-1`,
+   * 2026-08-15: rendered on the entry screen AND in the printed preview, read
+   * back `truncated=False`, our own bytes kept unchanged. A newly created order
+   * carries its photographs on its first edit, not on the create.
+   */
+  photos?: Array<{ dtlKey: number; keys: string[] }>;
   /** Set body.DocNo from this ERP document's linked_ac_docno (cancel / edit). */
   selfDoc?: AcDocRef;
   /** Write the AutoCount document number the call returns back onto this row. */
@@ -165,6 +260,12 @@ export interface AcOutboxPayload {
      */
     desc2?: Array<string | null>;
   };
+  /** Header facts this operation did NOT carry, one operator sentence each,
+   *  from `downstreamNotCarried` (two different silences — see it). Never goes
+   *  on the wire: `dispatchOne` POSTs `payload.body` and this is its sibling.
+   *  The DURABLE half of the report; `last_error` is the half seen at save time
+   *  and the drain clears that on success while the blank in the book stays. */
+  notCarried?: string[];
 }
 
 export interface AcOutboxRow {
@@ -248,23 +349,23 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    ERP-created order: address3 and address4 were written ONLY by the cutover
    import, so without these three the AutoCount document carried the street
    lines and nothing else (soInvoiceAddress packs the five into four).
-   customer_po / customer_so_no are the other two columns that have held the
-   customer's own reference — PR #140 left `customer_so_no` as the only one any
-   surface still writes, so reading po_doc_no alone sent ToPONo nowhere
-   (soCustomerRef). */
+   customer_so_no is the customer's own reference; po_doc_no / customer_po were
+   the other two columns that once held it, both 0%-filled and DROPPED from
+   scm.mfg_sales_orders by migration 0310 — `customer_so_no` is the only one any
+   surface still writes, and it is what ToPONo reads (soCustomerRef). */
 /* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
    Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
    the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
    DeliverPhone1 when it differs from Phone1 and inserts it as
    emergency_contact_phone (:390/:412). Reading `phone` for both would put the
    customer's number in front of the driver.
-   total_revenue_centi + deposit_centi are two of the three inputs to the
+   total_revenue_sen + deposit_sen are two of the three inputs to the
    outstanding balance the BALANCE UDF carries; the third is the payments ledger
-   (readSoOutstandingCenti). NOT balance_centi — recomputeTotals rewrites that to
+   (readSoOutstandingSen). NOT balance_sen — recomputeTotals rewrites that to
    the gross total on every edit, and it is the column the cutover's UDF_BALANCE
    landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, total_revenue_centi, deposit_centi, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
@@ -277,17 +378,21 @@ const SO_HEADER_COLS =
    (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
    of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
-const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+/* purchase_location_id is the PO's OWN ship-to warehouse (PR #77); AutoCount has
+   the same header field and the ERP had never sent one, so the book defaulted it
+   on every purchase order it has written. Guide §7c3b-ii. */
+const PO_HEADER_COLS =
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -316,37 +421,6 @@ const PO_ITEM_COLS =
  *     where a miss yields null. Sending that null would BLANK a real agent on a
  *     document the ERP is not the authority for.
  */
-/* Declared HERE rather than beside the other enqueue helpers: DOWNSTREAM below
-   is a module-level const that references it during module evaluation, so a
-   later `const soLine` would be in its temporal dead zone and every import of
-   this module would throw. */
-const soLine = (r: Record<string, unknown>): ErpLine => ({
-  id: r.id == null ? null : String(r.id),
-  item_code: String(r.item_code ?? r.material_code ?? ''),
-  item_group: (r.item_group as string) ?? null,
-  /* undefined on the five tables that do not select it, which soBranding reads
-     as "this line has no brand" — the same convention `cancelled` runs under. */
-  branding: (r.branding as string) ?? null,
-  description: (r.description as string) ?? null,
-  description2: (r.description2 as string) ?? null,
-  qty: Number(r.qty ?? 0),
-  unit_price_centi: Number(r.unit_price_centi ?? 0),
-  variants: (r.variants as Record<string, unknown> | null) ?? null,
-  linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
-  /* `line_delivery_date` on a sales-order line, `delivery_date` on a purchase
-     one — the same fact under two column names. Null on the four DOWNSTREAM
-     tables, whose column lists select neither, and that costs them nothing:
-     those documents only ever reach `/edit`, where composeEdit drops a null
-     DeliveryDate rather than blanking the date the conversion gave the book.
-     Same reasoning DOWNSTREAM's header already records for DocDate. */
-  delivery_date: (r.line_delivery_date as string | null) ?? (r.delivery_date as string | null) ?? null,
-  /* undefined on the five tables that have no such column, which composeEdit
-     reads as "live" — the same answer the column's own default gives. */
-  cancelled: r.cancelled === true,
-  /* Filled in by withLocations below. The raw column is a warehouse UUID and
-     AutoCount wants the short code, so the line cannot carry it on its own. */
-  location: null,
-});
 
 /**
  * Hang the AutoCount stock location on each line.
@@ -406,127 +480,6 @@ async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<stri
   return name || null;
 }
 
-interface AcDownstreamSpec {
-  table: AcLinkTable;
-  itemTable: AcLineTable;
-  /** The column on the item table that points back at the header. */
-  itemFk: string;
-  /** The line table this document's lines were transferred FROM. */
-  sourceItemTable: AcLineTable;
-  /** The column on the item table naming the SOURCE line it came from. NULL
-   *  there means an ad-hoc line with no counterpart to transfer. */
-  sourceFk: string;
-  headerCols: string;
-  itemCols: string;
-  /** The human document number, for the outbox row's doc_no. */
-  docNoOf: (h: Record<string, unknown>) => string;
-  line: (r: Record<string, unknown>) => ErpLine;
-  /** NEVER `string | null`: a present-null key BLANKS the book. See `present`. */
-  header: (h: Record<string, unknown>) => Record<string, string>;
-}
-
-const str = (v: unknown): string | null => (v == null ? null : String(v));
-
-/**
- * A header with every BLANK KEY REMOVED. The one rule /edit runs under.
- *
- * `AcSyncService.Edit()` is `ContainsKey`-gated and `Str` turns a present-null
- * into `""`, so `{Ref: null}` does not mean "unchanged" — it means "blank the
- * reference the account book holds". Every one of these builders emitted
- * `x ?? null` unconditionally, so an edit blanked whatever the ERP's column did
- * not answer for; on the SO that was `ref`, `address3` and `address4` on
- * essentially every ERP-created order (audit 2026-08-14, finding 10).
- *
- * Applied at the ONE place a header is built rather than per key, so the next
- * field added to one of these cannot reintroduce it.
- */
-const present = (o: Record<string, string | null>): Record<string, string> => {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(o)) {
-    const s = (v ?? '').trim();
-    if (s) out[k] = s;
-  }
-  return out;
-};
-
-const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
-  DO: {
-    table: 'delivery_orders',
-    itemTable: 'delivery_order_items',
-    itemFk: 'delivery_order_id',
-    sourceItemTable: 'mfg_sales_order_items',
-    sourceFk: 'so_item_id',
-    headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
-    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
-    docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
-    line: soLine,
-    header: (h) => present({
-      DebtorName: str(h.debtor_name),
-      Attention: str(h.debtor_name),
-      Ref: str(h.ref),
-      Phone1: str(h.phone),
-      Note: str(h.note),
-    }),
-  },
-  GR: {
-    table: 'grns',
-    itemTable: 'grn_items',
-    itemFk: 'grn_id',
-    sourceItemTable: 'purchase_order_items',
-    sourceFk: 'purchase_order_item_id',
-    headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
-    itemCols: 'id, material_code, item_group, description, description2, qty_accepted, unit_price_centi, variants, linked_ac_dtlkey, created_at',
-    docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
-    /* qty_ACCEPTED, not qty_received. AutoCount's GR line quantity is what
-       entered stock, and qty_accepted is the number this ERP posts to stock and
-       rolls up onto the PO. The received/rejected split has no AutoCount
-       counterpart at all, so sending qty_received would make AutoCount's PO
-       outstanding disagree with the ERP's by exactly the rejected quantity. */
-    line: (r) => soLine({ ...r, qty: r.qty_accepted }),
-    header: (h) => present({
-      Ref: str(h.delivery_note_ref),
-      Description: str(h.notes),
-    }),
-  },
-  IV: {
-    table: 'sales_invoices',
-    itemTable: 'sales_invoice_items',
-    itemFk: 'sales_invoice_id',
-    sourceItemTable: 'delivery_order_items',
-    sourceFk: 'do_item_id',
-    headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
-    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
-    docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
-    line: soLine,
-    header: (h) => present({
-      DebtorName: str(h.debtor_name),
-      Attention: str(h.debtor_name),
-      Ref: str(h.ref),
-      Phone1: str(h.phone),
-      Note: str(h.note),
-    }),
-  },
-  PI: {
-    table: 'purchase_invoices',
-    itemTable: 'purchase_invoice_items',
-    itemFk: 'purchase_invoice_id',
-    sourceItemTable: 'grn_items',
-    sourceFk: 'grn_item_id',
-    headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
-    itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
-    docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
-    line: soLine,
-    header: (h) => present({
-      Ref: str(h.supplier_invoice_ref),
-      Description: str(h.notes),
-    }),
-  },
-};
-
-/** The line table each conversion's TARGET lines live in, for key capture. */
-const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 'DO' | 'GR' | 'IV' | 'PI'> = {
-  so_to_do: 'DO', po_to_gr: 'GR', do_to_iv: 'IV', gr_to_pi: 'PI',
-};
 
 /**
  * Write a failed compose down instead of dropping it.
@@ -572,7 +525,7 @@ async function noteReadFailure(
   sb: Sb,
   e: unknown,
   ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
-): Promise<void> {
+): Promise<SaveProblem[]> {
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
     || e instanceof ItemCodeError
@@ -580,8 +533,12 @@ async function noteReadFailure(
     || e instanceof MissingLocationError
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
-    || e instanceof MissingCreditorError;
-  if (!refused && !(e instanceof AcReadError)) return;
+    || e instanceof MissingCreditorError
+    /* THE LIST IS THE WHOLE MECHANISM: an error missing from it is SWALLOWED by
+       the early return below — no row, no log line, nothing to read. Pinned
+       against acNotSentProblems' twin chain in ac-preflight.test.ts. */
+    || e instanceof AcSoToPoAlignmentError;
+  if (!refused && !(e instanceof AcReadError)) return [];
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
@@ -610,6 +567,13 @@ async function noteReadFailure(
         : `compose failed, nothing sent: ${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
+  /* AND THE OPERATOR IS TOLD. The skipped row is what an ENGINEER reads; it is
+     durable and it names the foreign key. It is not what the person holding the
+     document reads, and until now nothing was — the create returned 201 and the
+     refusal lived only in a queue with its own permission key
+     (index.ts:433, `scm.autocount.read`). Same facts, addressed to the operator:
+     lib/ac-preflight.ts owns the sentence, this only carries it back out. */
+  return acNotSentProblems(e, AC_DOC_NOUN[ctx.docType] ?? 'document');
 }
 
 // ── enqueue helpers, one per flow ───────────────────────────────────────────
@@ -618,16 +582,16 @@ async function noteReadFailure(
 export async function enqueueSoCreate(
   sb: Sb,
   opts: { companyId: number | null | undefined; docNo: string; createdBy?: number | null },
-): Promise<boolean> {
+): Promise<AcEnqueueOutcome> {
   try {
-    if (opts.companyId == null) return false;
-    if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
+    if (opts.companyId == null) return AC_ENQUEUE_SILENT;
+    if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readOrThrow('mfg_sales_orders header',
       sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', opts.docNo).maybeSingle());
-    if (!header) return false;
+    if (!header) return AC_ENQUEUE_SILENT;
     /* A cutover-imported SO ALREADY exists in AutoCount (mig 0271). Creating it
        again would duplicate the order in the live book. */
-    if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return false;
+    if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
@@ -644,11 +608,11 @@ export async function enqueueSoCreate(
        gets, and it can only choose between values it has been given. */
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
-    const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
+    const outstandingSen = await readSoOutstandingSen(sb, header as Record<string, unknown>);
     const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
     const body = composeCreateSo(
-      header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings });
-    return await enqueueAcOp(sb, {
+      header as never, lines, salespersonName, outstandingSen, paymentRefs, { bindings });
+    return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
       docType: 'SO',
@@ -667,10 +631,10 @@ export async function enqueueSoCreate(
       },
       dedupeKey: `create_so:${opts.docNo}`,
       createdBy: opts.createdBy ?? null,
-    });
+    }), problems: [] };
   } catch (e) {
-    await noteReadFailure(sb, e, { companyId: opts.companyId as number, op: 'create_so', docType: 'SO', docNo: opts.docNo });
-    return false;
+    const problems = await noteReadFailure(sb, e, { companyId: opts.companyId as number, op: 'create_so', docType: 'SO', docNo: opts.docNo });
+    return { queued: false, problems };
   }
 }
 
@@ -699,6 +663,8 @@ async function readPoHeader(sb: Sb, poId: string) {
       sb.from('suppliers').select('code, name').eq('id', String(h.supplier_id)).maybeSingle())
     : null;
   const s = supplier as { code?: string | null; name?: string | null } | null;
+  /* The same id -> code hop withLocations does for the lines, one row not a set. */
+  const purchaseLocation = await readWarehouseCode(sb, h.purchase_location_id);
   return {
     id: String(h.id ?? poId),
     /* Carried for the binding lookup, which narrows by the PO's OWN supplier:
@@ -713,6 +679,7 @@ async function readPoHeader(sb: Sb, poId: string) {
     agent: AC_PURCHASE_AGENT,
     ref: null,
     notes: (h.notes as string | null) ?? null,
+    purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
   };
 }
@@ -721,17 +688,17 @@ async function readPoHeader(sb: Sb, poId: string) {
 export async function enqueuePoCreate(
   sb: Sb,
   opts: { companyId: number | null | undefined; poId: string; createdBy?: number | null },
-): Promise<boolean> {
+): Promise<AcEnqueueOutcome> {
   /* Falls back to the id: a header read that FAILED has no number to name the
      note row by, and the id is what every PO route addresses anyway. */
   let poNumber = opts.poId;
   try {
-    if (opts.companyId == null) return false;
-    if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
+    if (opts.companyId == null) return AC_ENQUEUE_SILENT;
+    if (!(await isWritebackEnabled(sb, opts.companyId))) return AC_ENQUEUE_SILENT;
     const header = await readPoHeader(sb, opts.poId);
-    if (!header) return false;
+    if (!header) return AC_ENQUEUE_SILENT;
     poNumber = header.po_number || opts.poId;
-    if (header.linked_ac_docno) return false;
+    if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
@@ -746,16 +713,24 @@ export async function enqueuePoCreate(
     const body = composeCreatePo(header, lines, { bindings });
     if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
-    return await enqueueAcOp(sb, {
+    return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: shape.kind === 'transfer' ? 'so_to_po' : 'create_po',
       docType: 'PO',
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest. */
+        /* ONE MASTER, TWO SHAPES. FromDocNo resolves at DRAIN; everything else
+           a transfer sends is `body`, the object composeCreatePo built two lines
+           up, because composeSoToPo takes it and spreads it. That is the fix and
+           the reason it is not a third field: this branch used to build its own
+           master, and twice a field the create had was missing from it — the
+           creditor (host 2026-08-17 09:15, reported as FK_PO_DisplayTerm) and
+           the number (10:15, `PO-009968` for `HC-PO-2608-001`, divergence D5).
+           Both were patched one at a time and FIVE were still missing after.
+           Guide §7c3a, §7c3b, §7c3b-i. */
         body: (shape.kind === 'transfer'
-          ? composeSoToPo(shape.dtlKeys, details)
+          ? composeSoToPo(body, shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */
@@ -771,12 +746,12 @@ export async function enqueuePoCreate(
       },
       dedupeKey: `create_po:${opts.poId}`,
       createdBy: opts.createdBy ?? null,
-    });
+    }), problems: [] };
   } catch (e) {
-    await noteReadFailure(sb, e, {
+    const problems = await noteReadFailure(sb, e, {
       companyId: opts.companyId as number, op: 'create_po', docType: 'PO', docNo: poNumber, docId: opts.poId,
     });
-    return false;
+    return { queued: false, problems };
   }
 }
 
@@ -787,7 +762,18 @@ export async function enqueueConvert(
   opts: {
     companyId: number | null | undefined;
     op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>;
-    from: AcDocRef;
+    /**
+     * The source document, or ALL of them when the target merges several.
+     *
+     * An array is not a special case to be talked out of: merging is the daily
+     * shape on the delivery board and the GRN picker, and it used to be written
+     * down as `skipped` on the strength of a service limitation that no longer
+     * exists (see `AcOutboxPayload.fromDocs`). Pass every source the target
+     * actually drew from — the order is kept, and one parent without an
+     * AutoCount counterpart makes the whole conversion wait rather than sending
+     * a partial merge.
+     */
+    from: AcDocRef | AcDocRef[];
     to: AcDocRef;
     docType: 'DO' | 'IV' | 'GR' | 'PI';
     docNo: string;
@@ -796,13 +782,18 @@ export async function enqueueConvert(
     ref?: string | null;
     createdBy?: number | null;
   },
-): Promise<boolean> {
+  /* RETURNS THE OPERATOR'S SENTENCES, the shape the two create routes return
+     (#2499) — but the OTHER verdict: the document IS in the accounts and some
+     of its fields are not, so `AC_SENT_INCOMPLETE`, and never a block. */
+): Promise<AcEnqueueOutcome> {
   /* WHICH SOURCE LINES THIS CONVERSION ACTUALLY TOOK.
      Resolved BEFORE the enqueue so a refusal is recorded instead of a wrong
      transfer being queued. */
   const source = await readConvertSourceKeys(sb, opts.op, opts.docId ?? null);
   if (source.refuse) {
-    return recordConvertSkipped(sb, {
+    /* No problems: the skip is written where the operator looks and carries its
+       own sentence there (classifyAcSkip). */
+    await recordConvertSkipped(sb, {
       companyId: opts.companyId,
       op: opts.op,
       docType: opts.docType,
@@ -811,8 +802,25 @@ export async function enqueueConvert(
       reason: source.refuse,
       createdBy: opts.createdBy ?? null,
     });
+    return AC_ENQUEUE_SILENT;
   }
-  return enqueueAcOp(sb, {
+  /* THE SUPPLIER, for the two conversions whose target is a purchase document.
+     Resolved here rather than inline below so a null is one branch and not a
+     silent empty spread buried in an object literal. */
+  const froms = Array.isArray(opts.from) ? opts.from : [opts.from];
+  /* A caller that names no source at all is a caller that has lost its parent;
+     it belongs in recordParentlessCreate, not here, and enqueueing a transfer
+     with nothing to transfer FROM would fail on the host with a message about
+     the payload rather than about the document. */
+  if (!froms.length) return AC_ENQUEUE_SILENT;
+  const creditor = PURCHASE_CONVERSION.has(opts.op)
+    ? await readConvertCreditor(sb, froms[0])
+    : null;
+  /* THE DOCUMENT'S OWN HEADER, resolved before the enqueue for the same reason
+     the source keys are: what goes in the payload is decided once, here, where
+     an omission can still be written down. */
+  const own = await readConvertHeaderFacts(sb, opts.docType, opts.docId ?? null);
+  const queued = await enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
     docType: opts.docType,
@@ -842,19 +850,67 @@ export async function enqueueConvert(
            raised in its own UI keeps its own series in parallel — which is
            what tells the two apart. */
         DocNo: opts.docNo ?? null,
-        /* OMITTED WHEN THE ERP HAS NONE, not sent as null. `SalesHeader` /
-           `PurchaseHeader` apply `Set(() => doc.Ref = Str(p, "Ref"))`
-           unconditionally, and `Str` turns a present-null into "" — so every
-           conversion was writing an empty Ref over whatever the transfer had
-           put there. No caller passes `ref` yet (audit finding 13); until they
-           do, saying nothing is the only answer that cannot destroy a value.
-           `DocDate` was already correct and is written the same way for the
-           same reason: the target keeps the transfer's own posting date. */
+        /* ── THE DOCUMENT'S OWN HEADER, AND IT IS NOT A LIST OF FIELDS ───────
+           `AcDownstreamSpec.facts` projected onto the keys this route's header
+           applier actually applies. A fact added to a spec reaches this payload
+           with no edit here; one no route can carry fails the build by name.
+           Why, and what the four conversions used to drop: the composer's own
+           notes in autocount-convert-lines.ts, and guide §7c5.
+           THE CALLER STILL WINS — `opts` is spread AFTER, and the `if` stays
+           because a present-null is how you blank a live book. Neither key has
+           ever been passed by a caller (all eight verified, §7c5). */
+        ...own.header,
         ...(opts.docDate ? { DocDate: opts.docDate } : {}),
         ...(opts.ref ? { Ref: opts.ref } : {}),
+        /* THE CUSTOMER, AND THE TRANSFER DOES NOT HAPPEN WITHOUT ONE.
+           PROVEN on the AutoCount host 2026-08-17 00:55: a conversion whose
+           target carries no DebtorCode when the transfer runs is refused —
+           `AppException: Debtor Code is empty.` from FullTransfer, and the
+           contentless `Invalid transfer item.` from AddPartialTransferDetail,
+           which is what kept HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001
+           out of the book for a week. `cmd.AddNew()` creates the target empty
+           and `SalesHeader` never set one.
+
+           #2340 made the service fall back to reading the account off the
+           SOURCE document in the book, and that fallback has to stay — it is
+           the only thing that drains an outbox row composed before this line
+           existed. But it is a lookup the ERP should not be making the service
+           do: we know the customer, and a payload that states it cannot be
+           wrong about which source row the service happened to read.
+
+           BOTH SIDES NOW, AND D15 IS CLOSED. This used to read "SALES SIDE ONLY",
+           on two grounds that were both wrong by 2026-08-17. The first — that a
+           creditor needs a `grn -> purchase_order -> supplier` join because those
+           tables have no supplier column — is refuted by the schema: `grns` and
+           `purchase_invoices` each carry `supplier_id uuid NOT NULL`, so it is
+           one hop (see SUPPLIER_BEARING_SOURCE). The second — that `po_to_gr` has
+           never succeeded anyway — stopped being true at 23:09 that night, when
+           HC-GR-2608-001 and then HC-PI-2608-001 entered the book. The creditor
+           was supplied by hand for that run; this is the line that stops it
+           having to be.
+
+           The service still reads the payload FIRST and the source document in
+           the book second, and that book fallback must stay: it is the only thing
+           that drains a row composed before this line existed. `dispatchOne`
+           carries a drain-time backfill for the same rows, the way #2345 did for
+           `so_to_po` — the drain REPLAYS a stored payload and never recomposes,
+           so fixing the enqueue alone strands everything already queued. */
+        ...(SALES_CONVERSION.has(opts.op) ? { DebtorCode: AC_DEBTOR_CODE } : {}),
+        ...(creditor ?? {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
+        /* PARTIAL BY QUANTITY, and only then. readConvertSourceKeys returns
+           this exclusively when some source line is being taken in PART —
+           "3 of 5" — because a quantity on the payload routes AcSyncService
+           onto the documented PartialTransfer overloads, which it refuses to
+           fall back from. Without it the service moves each named line's WHOLE
+           outstanding quantity: a delivery of 2 out of 5 booked 5 in a licensed
+           account book and answered ok. */
+        ...(source.details ? { Details: source.details } : {}),
       },
-      fromDoc: opts.from,
+      /* ONE source keeps the field it has always used, so a payload composed
+         today is byte-identical to one composed last week and the contract test
+         over AcSyncService.cs still reads FromDocNo where it expects it. */
+      ...(froms.length === 1 ? { fromDoc: froms[0] } : { fromDocs: froms }),
       writeback: opts.to,
       /* The conversion routes report the lines they created exactly as the
          create routes do (AcSyncService.cs:163-166 pick the detail table, :171
@@ -865,179 +921,37 @@ export async function enqueueConvert(
          degrades to "no keys stored", which costs a refused edit later and is
          visible, and must never cost the conversion itself. */
       lineWriteback: await readConvertTargetLines(sb, opts.op, opts.docId ?? null),
+      /* WHAT THIS DOCUMENT IS GOING WITHOUT, kept here as well as in the row's
+         reason: the drain clears last_error on success and the blank in the
+         book does not go with it. */
+      ...(own.notCarried.length ? { notCarried: own.notCarried } : {}),
     },
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
+    /* `acNeedsAttention` branches on STATUS, so a note on a `pending` row
+       reports without crying wolf. */
+    reason: acNotCarriedReason(own.notCarried),
     createdBy: opts.createdBy ?? null,
   });
+  /* NOTHING QUEUED, NOTHING TO SAY: flag off, no company, or already queued —
+     none of those left a field behind, and a warning about something that did
+     not happen is how people learn to click through warnings. */
+  return { queued, problems: queued ? acNotCarriedProblems(own.notCarried, AC_DOC_KIND[opts.docType]) : [] };
 }
 
-/**
- * WHICH LINES OF THE PARENT THIS CONVERSION TOOK, as AutoCount DtlKeys.
- *
- * Three outcomes, and the difference between them is the whole safety argument:
- *
- *   { keys }   — every line of this document names a source line, and every one
- *                of those source lines carries an AutoCount DtlKey. The subset
- *                is expressible exactly, so send it.
- *   { refuse } — the ERP took a STRICT SUBSET of the parent's lines and cannot
- *                name it, because some source line has no DtlKey stored. Sending
- *                no DtlKeys here is the defect: AutoCount would transfer every
- *                outstanding line, shipping or receiving goods in a live book
- *                that did not move in the ERP. A visible skipped row is the
- *                correct outcome; the remedy is the line-key backfill.
- *   {}         — this document covers EVERY line of the parent, so "all
- *                outstanding" and "the lines we took" are the same set and the
- *                account book is the better authority on which are still
- *                untransferred. Also the answer when the ERP cannot read its own
- *                links at all: falling back is exactly the old behaviour, and a
- *                conversion must never be lost to a diagnostic read.
- *
- * NOT COVERED, and deliberately so: partial QUANTITY on a line. The SDK's only
- * primitive is AddPartialTransferDetail(fromType, dtlKeys, bool) — it takes line
- * keys, not quantities, so a DO shipping 2 of a 5-unit line still produces an
- * AutoCount DO of 5 on that line. Naming the right lines does not fix the wrong
- * number on them. See docs/modules/autocount-writeback.md.
- */
-async function readConvertSourceKeys(
-  sb: Sb,
-  op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>,
-  docId: string | null,
-): Promise<{ keys?: number[]; refuse?: string }> {
-  if (!docId) return {};
-  try {
-    const spec = DOWNSTREAM[CONVERT_TARGET[op]];
-    const { data, error } = await sb.from(spec.itemTable)
-      .select(`id, ${spec.sourceFk}`).eq(spec.itemFk, docId);
-    if (error || !data) return {};
-    const rows = data as unknown as Record<string, unknown>[];
-    if (!rows.length) return {};
+/** The noun each transferred document is called in a sentence to an operator. */
+const AC_DOC_KIND: Record<'DO' | 'IV' | 'GR' | 'PI', AcDocKind> = {
+  DO: 'delivery order', IV: 'invoice', GR: 'goods receipt', PI: 'purchase invoice',
+};
 
-    const sourceIds = [...new Set(
-      rows.map((r) => r[spec.sourceFk]).filter((v): v is string => typeof v === 'string' && !!v),
-    )];
-    /* Not one line came from a source document. Nothing to name, and the
-       parentless / ad-hoc shape is already recorded by its own route. */
-    if (!sourceIds.length) return {};
-
-    const { data: src, error: sErr } = await sb.from(spec.sourceItemTable)
-      .select('id, linked_ac_dtlkey').in('id', sourceIds);
-    if (sErr || !src) return {};
-    const srcRows = src as unknown as Array<{ id: string; linked_ac_dtlkey: number | null }>;
-
-    const keys: number[] = [];
-    const missing: string[] = [];
-    for (const id of sourceIds) {
-      const k = srcRows.find((r) => r.id === id)?.linked_ac_dtlkey;
-      const n = k == null ? NaN : Number(k);
-      if (Number.isFinite(n) && n > 0) keys.push(n); else missing.push(id);
-    }
-    if (!missing.length) return { keys };
-
-    /* Some source line has no key. Whether that is fatal depends on ONE thing:
-       is this a partial transfer? A whole-document transfer degrades safely to
-       the old behaviour; a partial one cannot. */
-    const partial = await conversionIsPartial(sb, spec, sourceIds);
-    if (!partial) return {};
-    return {
-      refuse:
-        `this ${op.replace('_to_', ' -> ').toUpperCase()} transfers only ${sourceIds.length} of the `
-        + `source document's lines, and ${missing.length} of them carry no AutoCount DtlKey, so the `
-        + 'ERP cannot name the subset. Sending the conversion without DtlKeys would make AutoCount '
-        + 'transfer EVERY outstanding line on the source — goods moving in the account book that did '
-        + `not move here. Backfill scm.${spec.sourceItemTable}.linked_ac_dtlkey for the source `
-        + 'document, then re-raise this document.',
-    };
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Does this conversion leave any of the parent's lines behind?
- *
- * Answered against the ERP's own parent, not AutoCount's — this decides only
- * whether the FALLBACK ("transfer everything outstanding") is a safe
- * approximation, and the ERP's line set is what the fallback would be wrong
- * about. On any doubt the answer is "partial", because that is the branch that
- * refuses: a wrong "no, it is whole" would let the defect through.
- */
-async function conversionIsPartial(
-  sb: Sb,
-  spec: AcDownstreamSpec,
-  takenSourceIds: string[],
-): Promise<boolean> {
-  const parentFk: Record<AcLineTable, string | null> = {
-    mfg_sales_order_items: 'doc_no',
-    purchase_order_items: 'purchase_order_id',
-    delivery_order_items: 'delivery_order_id',
-    grn_items: 'grn_id',
-    sales_invoice_items: null,
-    purchase_invoice_items: null,
-  };
-  const fk = parentFk[spec.sourceItemTable];
-  if (!fk) return true;
-  try {
-    const { data: one, error: oErr } = await sb.from(spec.sourceItemTable)
-      .select(`id, ${fk}`).eq('id', takenSourceIds[0]).maybeSingle();
-    if (oErr || !one) return true;
-    const parentKey = (one as unknown as Record<string, unknown>)[fk];
-    if (parentKey == null) return true;
-    let q = sb.from(spec.sourceItemTable)
-      .select('id', { count: 'exact', head: true }).eq(fk, parentKey as string);
-    /* A retired parent line is not one this conversion "left behind" — it is
-       one nobody will ever transfer. Only mfg_sales_order_items has the column
-       (42703 on the others), so the filter is applied only there. */
-    if (spec.sourceItemTable === 'mfg_sales_order_items') q = q.eq('cancelled', false);
-    const { count, error: cErr } = await q;
-    if (cErr || count == null) return true;
-    return count > takenSourceIds.length;
-  } catch {
-    return true;
-  }
-}
-
-/**
- * The ERP lines of a freshly-created downstream document, positionally ordered,
- * so the DtlKeys AutoCount reports can be zipped onto them.
- *
- * Returns undefined on ANY doubt — no id, an unreadable table, or no lines.
- * Undefined means "do not attempt to store line identity", which is the safe
- * outcome: the document still syncs, and only a later edit is refused.
- */
-async function readConvertTargetLines(
-  sb: Sb,
-  op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>,
-  docId: string | null,
-): Promise<AcOutboxPayload['lineWriteback']> {
-  if (!docId) return undefined;
-  try {
-    const spec = DOWNSTREAM[CONVERT_TARGET[op]];
-    const { data, error } = await sb.from(spec.itemTable).select(spec.itemCols)
-      .eq(spec.itemFk, docId)
-      .order('created_at', { ascending: true }).order('id', { ascending: true });
-    if (error || !data) return undefined;
-    const rows = data as unknown as Record<string, unknown>[];
-    if (!rows.length) return undefined;
-    const lines = rows.map(spec.line);
-    return {
-      table: spec.itemTable,
-      ids: rows.map((r) => String(r.id)),
-      codes: lines.map((l) => l.item_code),
-      desc2: lines.map((l) => composeDescription2(l)),
-    };
-  } catch {
-    return undefined;
-  }
-}
 
 /** The ItemCode column each line table spells its product in. */
 const LINE_CODE_COL: Record<AcLineTable, string> = {
   mfg_sales_order_items: 'item_code',
-  purchase_order_items: 'material_code',
+  purchase_order_items: 'item_code',
   delivery_order_items: 'item_code',
-  grn_items: 'material_code',
+  grn_items: 'item_code',
   sales_invoice_items: 'item_code',
-  purchase_invoice_items: 'material_code',
+  purchase_invoice_items: 'item_code',
 };
 
 /**
@@ -1078,13 +992,22 @@ export async function retiredLineOf(
 /**
  * Record a conversion the ERP will NOT send, and why.
  *
- * The case that forces this: the SDK's only transfer primitive is
- * AddPartialTransferDetail(fromDocType, fromDocKeys) — ONE source document
- * (AcSyncService.cs:12-20). The ERP can merge several Sales Orders into one
- * Delivery Order; AutoCount has no shape for that. Splitting it into N AutoCount
- * DOs would invent documents the ERP does not have, and dropping it silently
- * would leave a shipment that exists in one system and not the other with
- * nothing to find it by. So it is written down as 'skipped' with the reason.
+ * THE MERGED CONVERSION IS NO LONGER ONE OF THESE. This comment used to say
+ * that AutoCount has no shape for several Sales Orders on one Delivery Order,
+ * and that was true of the primitive: `AddPartialTransferDetail` refuses a key
+ * array drawn from more than one source document — measured on the live book
+ * 2026-08-16, `InvalidTransferItemException`. It was never true of the TARGET.
+ * `PlanTransfer` now takes `FromDocNos`, the documented `FullTransfer` takes an
+ * array of document numbers, and the by-line shape groups the keys per source
+ * and invokes the primitive once per group. So a merge is enqueued like any
+ * other conversion (`enqueueConvert` with an array) and no longer skipped.
+ *
+ * What still reaches this function: a conversion whose source lines cannot be
+ * NAMED — `readConvertSourceKeys` refusing a partial transfer whose source
+ * lines carry no DtlKey — and, through `recordParentlessCreate`, a document
+ * with no source document at all. Both are still real, and both are still
+ * written down rather than dropped: a shipment that exists in one system and
+ * not the other must have something to find it by.
  */
 export async function recordConvertSkipped(
   sb: Sb,
@@ -1155,11 +1078,14 @@ export async function recordParentlessCreate(
     docType: opts.docType,
     docNo: opts.docNo,
     docId: opts.docId ?? null,
-    reason:
-      `created with ${opts.missing}, so there is no source document to transfer from. `
-      + 'AutoCount builds a DO / GRN / Invoice only by transferring a source document\'s lines '
-      + '(AddPartialTransferDetail is the SDK\'s only primitive), so this document cannot be '
-      + 'created in the account book at all and will stay ERP-only.',
+    /* THE SENTENCE LIVES IN autocount-outbox-status.ts, beside the needle that
+       classifies it. It used to be written out here and it carried
+       "(AddPartialTransferDetail is the SDK's only primitive)" — which the owner
+       read off the live AutoCount Sync page on 2026-08-16, hours after having
+       that exact identifier removed from the page's own copy. It came back
+       through the SERVER. A reason is read by the owner, so what it says is now
+       pinned by a test the way the codes already were. */
+    reason: acParentlessCreateReason(opts.missing),
     createdBy: opts.createdBy ?? null,
   });
 }
@@ -1411,6 +1337,11 @@ export async function enqueueEdit(
       payload: {
         body: composed.edit() as unknown as Record<string, unknown>,
         selfDoc: composed.self,
+        /* The line photographs, as KEYS. Only the sales order composes them
+           today — it is the document the cutover pulled the pictures out of,
+           and `Photos` is an /edit field, which is the one route the service
+           takes them on. The drain fetches the bytes. */
+        ...(composed.photos ? { photos: composed.photos } : {}),
       },
       /* NULL: two successive saves are two different intents and must both be
          applied, in created_at order. */
@@ -1485,10 +1416,17 @@ async function composeDownstreamState(
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    /* The four downstream documents carry no photographs: the cutover pulled
+       FurtherDescription out of SO and PO lines, and nothing writes photo_urls
+       on a delivery, receipt or invoice line. Declared so every state builder
+       has ONE shape and the caller needs no narrowing. */
+    photos: undefined as AcOutboxPayload['photos'],
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as (() => Record<string, unknown>) | null,
+    /* The SAME master the conversion route projects, narrowed to /edit's own
+       allow-list instead — see `AcDownstreamSpec.facts`. */
     edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
+      docType, String(h.linked_ac_docno ?? docNo), downstreamEditHeader(docType, h), lines, {}, retired,
     ),
   };
 }
@@ -1504,16 +1442,19 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingCenti = await readSoOutstandingCenti(sb, h);
+  const outstandingSen = await readSoOutstandingSen(sb, h);
   const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    /* The line photographs, named by the AutoCount line. Built here because
+       this is where the rows are read; materialised at drain. */
+    photos: photosOf(soRows),
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingSen, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1521,7 +1462,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti, paymentRefs, touchedFields), lines,
+      soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1542,6 +1483,11 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
+    /* PO line photographs exist (import-po-line-photos.mjs wrote them) and are
+       NOT sent yet: the sales order is the one shape proven against the live
+       book, and a purchase order's pictures are a second rollout with its own
+       evidence, not a free ride on this one. */
+    photos: undefined as AcOutboxPayload['photos'],
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
@@ -1563,7 +1509,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * What AutoCount calls each of these products, from the LIVE binding.
  *
  * `scm.supplier_material_bindings` is this ERP's own record of the cross-ref:
- * `material_code` is our internal code, `supplier_sku` is AutoCount's, one row
+ * `item_code` is our internal code, `supplier_sku` is AutoCount's, one row
  * per supplier. It was populated at the cutover precisely so ERP codes could be
  * pushed BACK, and it is the only one of the two sources that GROWS — the
  * compiled CSV is a snapshot of the book on 2026-08-05 and cannot know a
@@ -1603,16 +1549,20 @@ async function bindingsFor(
     .map((s) => `${s.model}-1S`);
   const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
-  let q = sb.from('supplier_material_bindings')
-    .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-    .in('material_code', wanted)
-    .eq('material_kind', 'mfg_product')
-    .order('is_main_supplier', { ascending: false });
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const rows = await readOrThrow('supplier_material_bindings', q);
+  /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
+     TOTALLY ordered. `is_main_supplier` first is the rule this resolver depends
+     on — "a code bound to several suppliers resolves to the one the business
+     actually buys from" is decided by which row arrives first — and on its own
+     it leaves every tie in planner order. `readOrThrow`'s contract is kept: a
+     failed read still throws rather than resolving to a silently short map. */
+  const rows = await readOrThrow('supplier_material_bindings', readMfgProductBindings<Record<string, unknown>>(sb, {
+    codes: wanted,
+    companyId,
+    select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+  }));
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
-    const code = String(r.material_code ?? '').trim().toUpperCase();
+    const code = String(r.item_code ?? '').trim().toUpperCase();
     const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
     if (!code || !sku) continue;
     if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {
@@ -1638,133 +1588,100 @@ async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
   return (data as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null;
 }
 
-async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
-  await sb.from('autocount_outbox')
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq('id', id);
+/**
+ * WHICH BUILD of AcSyncService is answering, read once per drain sweep.
+ *
+ * Stamped onto every row the sweep dispatches (migration 0304). The point is
+ * not curiosity: a feature the host does not have is indistinguishable from a
+ * feature that ran and found nothing — `mismatches` is empty both when the host
+ * compared the creditor names and agreed, and when the host predates the
+ * comparison entirely. With the build on the row, "was this refused by a
+ * service that no longer exists" is a SELECT.
+ *
+ * BEST-EFFORT AND NEVER FATAL. /health is a diagnostic; a document must not
+ * fail to reach the account book because a diagnostic did not answer. An
+ * unreadable health leaves both columns null, and null already means "not
+ * known for this row" rather than "the host is fine".
+ */
+export interface AcHostBuild { host_built_at: string | null; host_mvid: string | null }
+
+export async function readHostBuild(
+  env: Env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AcHostBuild | null> {
+  try {
+    const res = await callAcService(env, 'health', {}, fetchImpl);
+    if (!res.ok) return null;
+    const b = res.body as { builtAt?: unknown; mvid?: unknown } | null;
+    if (!b) return null;
+    const at = typeof b.builtAt === 'string' && b.builtAt ? b.builtAt : null;
+    const id = typeof b.mvid === 'string' && b.mvid ? b.mvid : null;
+    /* Both absent means an OLD host — one that predates /health reporting either
+       — and that is worth recording as "asked and got nothing", which is what
+       nulls say. Returning null here would be the same value, so say it once. */
+    return { host_built_at: at, host_mvid: id };
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Store the DtlKeys a create/convert returned onto the ERP line rows.
+ * The photographs each KEYED line carries, for the edit payload.
  *
- * VERIFIES BEFORE IT WRITES, and writes nothing at all if the check fails.
+ * Keyed only: `Photos` is applied to a line the account book already holds, and
+ * a line with no `DtlKey` is refused by composeEdit long before this matters.
+ * Cancelled lines are skipped — a retired line is being zeroed, and attaching
+ * pictures to it would be writing to a line the ERP is in the middle of
+ * withdrawing.
  *
- * The zip is by index: the Nth line AutoCount reports is the Nth detail we sent.
- * That is true because AcSyncService returns them ordered by DtlKey, which is
- * creation order, and we created them in payload order. But "true because of a
- * chain of reasoning" is not good enough for line identity — a wrong DtlKey does
- * not fail, it silently edits a DIFFERENT line in a live account book on the
- * next save. A missing key is refused loudly by composeEdit; a wrong one is not
- * refused at all. So the count must match and every ItemCode must match, or the
- * whole batch is abandoned and the document simply keeps NULL keys.
- *
- * Never throws and never changes the outcome of the dispatch: the document IS in
- * AutoCount and the row IS sent. Failing to record identity is a degradation to
- * be logged, not a reason to re-send a document that already exists.
+ * Returns undefined rather than an empty array when nothing is photographed, so
+ * the key is absent from the payload entirely and no reader has to tell an empty
+ * list from a missing one.
  */
-async function persistLineKeys(
-  sb: Sb,
-  row: AcOutboxRow,
-  target: NonNullable<AcOutboxPayload['lineWriteback']>,
-  lines: AcCreatedLine[],
-): Promise<void> {
-  const label = `[autocount-outbox] ${row.op} ${row.doc_no} line keys`;
-  try {
-    /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
-       and the service also degrades to an empty array rather than losing the
-       DocNo when its own read-back fails. */
-    if (!lines.length) return;
-
-    if (lines.length !== target.ids.length) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `${label}: NOT STORED — AutoCount reported ${lines.length} line(s), the ERP sent `
-        + `${target.ids.length}. Storing them by position would attach a key to the wrong line.`,
-      );
-      return;
-    }
-
-    const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
-    const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
-    const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
-    for (let i = 0; i < ordered.length; i += 1) {
-      const got = norm(ordered[i].ItemCode);
-      const want = norm(target.codes[i]);
-      /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
-         is evidence the zip is wrong. */
-      if (got && want && got !== want) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
-          + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
-        );
-        return;
-      }
-    }
-
-    /* ItemCode alone stops being an identity check the moment a code repeats,
-       and on a CONVERSION that is the normal case, not an edge one: the ERP
-       never sends a line list for a conversion — AutoCount chooses the source
-       lines itself (AcSyncService.cs:382-411) — so the two orderings are only
-       PRESUMED to line up. A sofa document is the concrete failure: several
-       lines share one code and differ only in the build written into Desc2, so
-       an all-codes-match check passes while the keys land on the wrong lines,
-       and the next edit rewrites somebody else's line in a live book.
-       Desc2 is what tells those lines apart, so where it is available on both
-       sides it must agree too, and a repeated code with no Desc2 to separate it
-       is refused outright rather than guessed. */
-    const dupes = new Set(
-      target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
-    );
-    for (let i = 0; i < ordered.length; i += 1) {
-      const gotD = norm(ordered[i].Desc2);
-      const wantD = norm(target.desc2?.[i]);
-      /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2
-         is nvarchar(100) and live sofa builds already sit at exactly 100 — the
-         account book cut them itself, before the ERP ever saw them. An equality
-         test would refuse those legitimately-matching lines. A prefix test keeps
-         all the discriminating power that matters here: two different builds of
-         the same model diverge in the first few tokens, not after character
-         100. */
-      const differs = gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD);
-      if (differs) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — position ${i + 1} carries Desc2 '${ordered[i].Desc2}' in `
-          + `AutoCount but '${target.desc2?.[i]}' in the ERP. Same ItemCode, different line.`,
-        );
-        return;
-      }
-      if (dupes.has(norm(target.codes[i])) && !(gotD && wantD)) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — ItemCode '${target.codes[i]}' appears on more than one line and `
-          + 'position ' + (i + 1) + ' has no Desc2 on both sides to tell them apart. '
-          + 'Storing by position here would be a guess.',
-        );
-        return;
-      }
-    }
-
-    for (let i = 0; i < ordered.length; i += 1) {
-      /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
-         that is the build's compartments; composeEdit later accepts the build
-         only when all of them still agree on it. */
-      for (const id of groups[i]) {
-        const { error } = await sb.from(target.table)
-          .update({ linked_ac_dtlkey: ordered[i].DtlKey })
-          .eq('id', id);
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error(`${label}: partial — row ${id} failed: ${error.message}`);
-        }
-      }
-    }
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
+function photosOf(rows: Record<string, unknown>[]): AcOutboxPayload['photos'] {
+  const out: NonNullable<AcOutboxPayload['photos']> = [];
+  for (const r of rows) {
+    if (r.cancelled === true) continue;
+    const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const raw = r.photo_urls;
+    const keys = Array.isArray(raw)
+      ? raw.filter((k): k is string => typeof k === 'string' && !!k.trim())
+      : [];
+    if (keys.length) out.push({ dtlKey: n, keys });
   }
+  return out.length ? out : undefined;
 }
+
+/**
+ * Bytes to base64, the way a Worker has to do it.
+ *
+ * `Buffer` does not exist here and `btoa` takes a STRING, so the bytes go
+ * through String.fromCharCode in chunks — whole-array spread blows the call
+ * stack on anything of photograph size, which is the entire input class.
+ */
+function b64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
+}
+
+async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
+  await sb.from('autocount_outbox')
+    /* THE CLAIM COMES OFF HERE, on every outcome, because this is the one place
+       every outcome goes through — `dispatchOne` marks before each of its four
+       returns, so releasing here cannot be forgotten by a future branch the way
+       a release at each return site could. A dispatch that THROWS never reaches
+       this line and leaves the claim standing; that is what the lease is for
+       (AC_CLAIM_LEASE_MS), and it is the only case where a row waits. */
+    .update({ ...patch, claimed_at: null, updated_at: new Date().toISOString() })
+    .eq('id', id);
+}
+
 
 export type DispatchOutcome = 'sent' | 'failed' | 'retry' | 'waiting';
 
@@ -1783,9 +1700,25 @@ export async function dispatchOne(
   sb: Sb,
   row: AcOutboxRow,
   fetchImpl: typeof fetch = fetch,
+  /**
+   * The host build this sweep is talking to (migration 0304), read once by the
+   * drain and stamped on every row it touches.
+   *
+   * OPTIONAL, deliberately, and this is the exception CLAUDE.md's
+   * required-parameter rule names rather than a hole in it: it DECIDES nothing.
+   * Absent leaves both columns untouched, and NULL there already means "not
+   * known for this row" — the same thing a caller who says nothing means. A
+   * required parameter here would break every existing test call site to record
+   * a value that has no bearing on what the dispatch does.
+   */
+  hostBuild: AcHostBuild | null = null,
 ): Promise<DispatchOutcome> {
   const payload = (row.payload ?? { body: {} }) as AcOutboxPayload;
   const body: Record<string, unknown> = { ...(payload.body ?? {}) };
+  /* Spread into every terminal mark below. Not into the `waiting` ones: those
+     leave the row untouched for the next sweep, and stamping a build onto a row
+     nothing was sent for would say a call happened that did not. */
+  const stamp = hostBuild ?? {};
 
   if (payload.fromDoc) {
     const from = await acDocNoOf(sb, payload.fromDoc);
@@ -1795,6 +1728,25 @@ export async function dispatchOne(
     }
     body.FromDocNo = from;
   }
+  /* ALL OF THEM, OR NONE. A merged transfer names every source it drew from, so
+     one parent still waiting for its own create means the whole conversion
+     waits — sending the subset would transfer part of the document and leave
+     AutoCount holding a delivery the ERP does not have. `waiting` deliberately
+     does not burn an attempt, which is what lets the parents land first. */
+  if (payload.fromDocs?.length) {
+    const froms: string[] = [];
+    for (const ref of payload.fromDocs) {
+      const no = await acDocNoOf(sb, ref);
+      if (!no) {
+        await mark(sb, row.id, {
+          last_error: `waiting: ${froms.length} of ${payload.fromDocs.length} source document(s) have an AutoCount counterpart, the rest do not yet`,
+        });
+        return 'waiting';
+      }
+      froms.push(no);
+    }
+    body.FromDocNos = froms;
+  }
   if (payload.selfDoc) {
     const self = await acDocNoOf(sb, payload.selfDoc);
     if (!self) {
@@ -1802,6 +1754,101 @@ export async function dispatchOne(
       return 'waiting';
     }
     body.DocNo = self;
+  }
+
+  /* THE SUPPLIER, FOR A ROW COMPOSED BEFORE ANYONE KNEW IT WAS NEEDED.
+     The drain REPLAYS the stored payload and never recomposes, so fixing the
+     enqueue above leaves every `so_to_po` row already queued failing for ever.
+
+     THE ACCOUNT BOOK CANNOT ANSWER THIS ONE, unlike #2340's debtor: this source
+     is a SALES order, which carries a DebtorCode and no creditor, and the
+     supplier exists nowhere in AutoCount until we send it. The authority is the
+     ERP's own purchase order, which the row already points at. Best-effort — on
+     any doubt the body goes unchanged and the service's named guard answers,
+     which is a clear error and not a mystery. Guide §7c3a. */
+  if (row.op === 'so_to_po' && !body.CreditorCode && payload.writeback?.table === 'purchase_orders') {
+    try {
+      const po = await readPoHeader(sb, String(payload.writeback.key));
+      if (po?.creditor_code) {
+        body.CreditorCode = po.creditor_code;
+        if (po.creditor_name) body.CreditorName = po.creditor_name;
+      }
+    } catch (e) {
+      console.error('so_to_po: creditor backfill failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  /* THE ERP'S OWN NUMBER, for a row composed before D5 was closed here. Same
+     replay problem as the creditor above, cheaper answer: the outbox row is
+     already KEYED by the ERP's number. Without it AcSyncService auto-numbers —
+     how PO-009968 got a number nobody in this building would say. Guide §7c3b. */
+  if (row.op === 'so_to_po' && !body.DocNo && row.doc_no) body.DocNo = row.doc_no;
+
+  /* THE SUPPLIER ON A PURCHASE CONVERSION, for a row composed before D15 was
+     closed. Exactly the `so_to_po` shape twelve lines up and for exactly the
+     reason given there: the drain replays the stored payload and never
+     recomposes, so the enqueue fix alone leaves every `po_to_gr` / `gr_to_pi`
+     row already in the queue going out with no account.
+
+     UNLIKE `so_to_po`, THE ACCOUNT BOOK CAN ALSO ANSWER THIS ONE — the source is
+     a purchase document, so AutoCount holds its creditor and the service falls
+     back to reading it. This is therefore belt-and-braces rather than the only
+     answer, and it is still worth having: a value the ERP STATES cannot be wrong
+     about which row the service happened to read. Best-effort, like its twin —
+     on any doubt `readConvertCreditor` returns null, the body goes unchanged and
+     the service's own fallback is what answers. Guide §7c3. */
+  /* THE CUSTOMER ON A SALES CONVERSION — the replay problem a third time, and
+     the one that was costing documents. HC-DO-2608-003 failed with the
+     contentless "Invalid transfer item." and five invoices waited behind it;
+     AcSyncService.cs:988 names the cause, a target with no DebtorCode, which
+     AddPartialTransferDetail reports as an invalid ITEM and not as a missing
+     account. enqueueConvert has supplied it since #2340 and the drain replays,
+     so every row queued before that line still goes out bare.
+     Cheapest of the three and the only one that cannot fail: the purchase twins
+     read a document to learn the account, the debtor is a constant here. The
+     guard leaves a row composed after #2340 exactly as it was stored. */
+  if ((SALES_CONVERSION as ReadonlySet<string>).has(row.op) && !body.DebtorCode) body.DebtorCode = AC_DEBTOR_CODE;
+
+  const creditorSource = payload.fromDoc ?? payload.fromDocs?.[0];
+  if (PURCHASE_CONVERSION.has(row.op) && !body.CreditorCode && creditorSource) {
+    /* THE FIRST SOURCE ANSWERS FOR A MERGE, and it is not an arbitrary pick:
+       both merged purchase conversions are already grouped by supplier before
+       they get here (grns.ts buckets by PO supplier, purchase-invoices.ts by
+       GRN supplier), so every source in the list carries the same creditor. */
+    const creditor = await readConvertCreditor(sb, creditorSource);
+    if (creditor) Object.assign(body, creditor);
+  }
+
+  /* THE PHOTOGRAPHS, fetched in the moment they are sent.
+     `payload.photos` names R2 keys; the bytes live in the SO_ITEM_PHOTOS
+     bucket and are turned into base64 here rather than stored in the outbox —
+     see the field's own note for why an append-only table must not carry them.
+
+     BEST-EFFORT PER PICTURE, FATAL FOR NONE. A photograph is not the document:
+     an unreadable object must not stop a price change reaching the account
+     book. What it must not do either is lie — a line whose pictures could not
+     be read sends NO `Photos` key at all, and the service leaves whatever
+     `FurtherDescription` the book already holds. Sending a SHORT list would
+     overwrite five pictures with three. */
+  if (row.op === 'edit' && payload.photos?.length) {
+    const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
+    for (const want of payload.photos) {
+      const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
+      if (!line || !want.keys.length) continue;
+      try {
+        const jpegs: Array<{ Jpeg: string }> = [];
+        for (const key of want.keys) {
+          const obj = await (env as unknown as { SO_ITEM_PHOTOS?: R2Bucket }).SO_ITEM_PHOTOS?.get(key);
+          if (!obj) throw new Error(`photo not in the bucket: ${key}`);
+          jpegs.push({ Jpeg: b64(await obj.arrayBuffer()) });
+        }
+        if (jpegs.length === want.keys.length) line.Photos = jpegs;
+      } catch (e) {
+        console.warn(
+          `photos not attached to ${row.doc_type} ${row.doc_no} line ${want.dtlKey}: `
+          + (e instanceof Error ? e.message : String(e)),
+        );
+      }
+    }
   }
 
   const attempts = (row.attempts ?? 0) + 1;
@@ -1816,8 +1863,21 @@ export async function dispatchOne(
     const masters = mastersOf(body);
     if (masters) {
       const ensured = await callAcService(env, 'ensure_masters', masters, fetchImpl);
+      /* THE DOCUMENT STILL GOES. A creditor code the book resolves to a DIFFERENT
+         company is an accounting error, not a technical one — the ERP holds a
+         trading name where the book holds the registered one on many suppliers,
+         so refusing here would block legitimate purchasing every day. Reported,
+         and reported BEFORE the ok check, because a payload can name several
+         masters and fail on an unrelated one; the finding must not be lost with
+         the call. `mismatches` is empty when the host runs a build older than
+         the comparison, which is "not reported", not "compared and agreed" —
+         GET /health's builtAt says which build answered. */
+      for (const m of ensured.mismatches) {
+        console.warn(`MISMATCH ${m.master} erp=${m.erp} book=${m.book} — ${row.doc_type} ${row.doc_no} sent anyway`);
+      }
       if (!ensured.ok) {
         await mark(sb, row.id, {
+          ...stamp,
           attempts,
           last_error: `masters not opened, document not sent: ${ensured.error ?? 'unknown'}`,
           ...(ensured.retryable && attempts < MAX_ATTEMPTS ? {} : { status: 'failed' }),
@@ -1831,6 +1891,7 @@ export async function dispatchOne(
 
   if (result.ok) {
     await mark(sb, row.id, {
+      ...stamp,
       status: 'sent',
       attempts,
       last_error: null,
@@ -1855,6 +1916,7 @@ export async function dispatchOne(
 
   const giveUp = !result.retryable || attempts >= MAX_ATTEMPTS;
   await mark(sb, row.id, {
+    ...stamp,
     status: giveUp ? 'failed' : 'pending',
     attempts,
     last_error: giveUp && result.retryable
@@ -1886,6 +1948,10 @@ export async function drainAutoCountOutbox(
   if (!acServiceConfig(env)) return { skipped: 'ac_service_not_configured', ...zero };
 
   const sb = getSupabaseService(env);
+  /* BEFORE ANYTHING IS SELECTED. A row whose claimant died mid-send would
+     otherwise never be picked up again — the claim outlives the process that
+     took it, and nothing else in the system clears one. */
+  await releaseExpiredClaims(sb);
   const { data, error } = await sb.from('autocount_outbox')
     .select('id, company_id, op, doc_type, doc_no, doc_id, payload, status, attempts, dedupe_key')
     .eq('status', 'pending')
@@ -1894,14 +1960,31 @@ export async function drainAutoCountOutbox(
     .limit(limit);
   if (error || !data) return { skipped: error ? 'query_failed' : undefined, ...zero };
 
+  /* ONCE PER SWEEP, and only when there is something to send. /health opens no
+     database and answers from the assembly, so it is cheap — but a heartbeat
+     against the office host on every empty five-minute tick is noise, and the
+     value is only meaningful beside a row it stamped. */
+  const hostBuild = data.length ? await readHostBuild(env, fetchImpl) : null;
+
   const summary = { ...zero };
   for (const raw of data as AcOutboxRow[]) {
     /* Re-checked per row, not once per sweep: the flag is per COMPANY, and it
        may be turned off mid-sweep. Off leaves the row pending — it is not a
        failure, and the work must survive to be drained when it is on again. */
     if (!(await isWritebackEnabled(sb, raw.company_id))) continue;
+    /* CLAIM IT, OR LEAVE IT ALONE. The sweep is no longer the only dispatcher —
+       the AutoCount Sync page's "Send now" reaches `dispatchOne` too — so the
+       row this loop selected a moment ago may already be going out. A lost claim
+       is not an error and not a failure: whoever holds it is sending it, and if
+       they die the lease releases it to the next sweep. It is counted nowhere
+       for that reason, and logged so that a row losing every claim is visible
+       rather than silently never sent. */
+    if (!(await claimOutboxRow(sb, raw.id))) {
+      console.warn(`[ac-writeback] ${raw.doc_type} ${raw.doc_no} already being sent — left for the holder`);
+      continue;
+    }
     summary.processed += 1;
-    const outcome = await dispatchOne(env, sb, raw, fetchImpl);
+    const outcome = await dispatchOne(env, sb, raw, fetchImpl, hostBuild);
     if (outcome === 'sent') summary.sent += 1;
     else if (outcome === 'failed') summary.failed += 1;
     else if (outcome === 'waiting') summary.waiting += 1;

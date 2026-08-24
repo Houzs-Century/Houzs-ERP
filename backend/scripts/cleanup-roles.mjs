@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot data cleanup and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It deleted a redundant role by name. The name it was given is gone.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // One-shot: delete a redundant role by name, ONLY if no user holds it.
 // Used to remove the 0-user duplicate "Logistic Purchasing" (overlaps the
 // distinct Purchaser + Logistic roles). Refuses if any user (active or not)

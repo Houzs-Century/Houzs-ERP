@@ -35,18 +35,11 @@ import { PageHeader } from '../../components/Layout';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 type AdjustmentType = 'increase' | 'decrease';
-
-/* Total Height is AUTO-COMPUTED for bedframe = Divan + Leg + Gap (mirrors the
-   GRN / PO variant editor); it is never a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
-};
 
 /* Per-category dropdown — a small local copy of the GRN/PO variant picker so a
    found sofa/bedframe carries the same attributes a real order line needs. */
@@ -83,7 +76,7 @@ export const StockAdjustmentNew = () => {
 
   // ── Form state ─────────────────────────────────────────────────────
   const [warehouseId, setWarehouseId] = useState<string>('');
-  const [productCode, setProductCode] = useState<string>('');
+  const [itemCode, setProductCode] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
   const [type, setType]               = useState<AdjustmentType>('decrease');
   const [qty, setQty]                 = useState<number>(1);
@@ -121,24 +114,24 @@ export const StockAdjustmentNew = () => {
 
   // Open stock buckets for the DECREASE "Take from" picker — only fires once
   // both warehouse + SKU are set (enabled guard inside the hook).
-  const bucketsQ = useInventoryBuckets(productCode || null, warehouseId || null);
+  const bucketsQ = useInventoryBuckets(itemCode || null, warehouseId || null);
   const buckets  = bucketsQ.data ?? [];
   // Drive the breakdown lookup off the picked code. The hook only fires
-  // when productCode is non-empty (enabled guard inside the hook).
-  const breakdown  = useInventoryProductBreakdown(productCode || null);
+  // when itemCode is non-empty (enabled guard inside the hook).
+  const breakdown  = useInventoryProductBreakdown(itemCode || null);
 
   // Current balance @ chosen warehouse. Pulls from showAll=true so even
   // zero-stock rows appear (commander needs to be able to adjust into
   // existence, e.g. recount up from 0).
   const currentBalance: number | null = useMemo(() => {
-    if (!warehouseId || !productCode) return null;
+    if (!warehouseId || !itemCode) return null;
     const balances = breakdown.data?.balances ?? [];
     const row = balances.find((b) =>
-      b.warehouse_id === warehouseId && b.product_code === productCode,
+      b.warehouse_id === warehouseId && b.item_code === itemCode,
     );
     if (!row) return breakdown.isLoading ? null : 0;
     return row.qty ?? 0;
-  }, [warehouseId, productCode, breakdown.data, breakdown.isLoading]);
+  }, [warehouseId, itemCode, breakdown.data, breakdown.isLoading]);
 
   const qtyDelta = type === 'increase' ? qty : -qty;
   const resultingBalance: number | null = currentBalance == null ? null : currentBalance + qtyDelta;
@@ -146,7 +139,7 @@ export const StockAdjustmentNew = () => {
 
   const canSave = Boolean(
     warehouseId &&
-    productCode.trim() &&
+    itemCode.trim() &&
     qty > 0 &&
     reasonCode,
   );
@@ -169,11 +162,8 @@ export const StockAdjustmentNew = () => {
   const setVariant = (key: string, value: string) =>
     setVariants((prev) => {
       const next: Record<string, unknown> = { ...prev, [key]: value };
-      if (itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d  = parseInches(next.divanHeight);
-        const lg = parseInches(next.legHeight);
-        const g  = parseInches(next.gap);
-        next.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(itemGroup) && isTotalHeightPart(key)) {
+        next.totalHeight = computeTotalHeight(itemGroup, next);
       }
       return next;
     });
@@ -206,7 +196,7 @@ export const StockAdjustmentNew = () => {
     // INCREASE gate — sofa / bedframe must carry their variant attributes (and
     // sofa a batch number) before the found stock can be saved.
     if (type === 'increase' && hasVariantGroup) {
-      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
+      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, itemCode);
       if (errs.length > 0) {
         void notify({ title: "This adjustment can't be saved yet", body: errs.join('\n'), tone: 'error' });
         return;
@@ -235,7 +225,7 @@ export const StockAdjustmentNew = () => {
     adjust.mutate(
       {
         warehouseId,
-        productCode: productCode.trim(),
+        itemCode: itemCode.trim(),
         productName: productName.trim() || undefined,
         qtyDelta,
         reasonCode,
@@ -309,7 +299,7 @@ export const StockAdjustmentNew = () => {
               <input
                 type="text"
                 list="stock-adjustment-skus"
-                value={productCode}
+                value={itemCode}
                 onChange={(e) => onPickSku(e.target.value)}
                 placeholder="Type or pick a SKU code…"
                 className={styles.fieldInput}
@@ -337,7 +327,7 @@ export const StockAdjustmentNew = () => {
           </div>
 
           {/* Current balance hint — appears once both warehouse + SKU are set */}
-          {warehouseId && productCode && (
+          {warehouseId && itemCode && (
             <div style={{
               marginTop: 'var(--space-3)',
               background: 'var(--c-cream)',
@@ -497,7 +487,7 @@ export const StockAdjustmentNew = () => {
           {/* DECREASE — "Take from" picker. Pick which existing lot the stock
               comes out of (so the right variant/batch is reduced), instead of
               free variant entry. Shows only when warehouse + SKU are set. */}
-          {type === 'decrease' && warehouseId && productCode && (
+          {type === 'decrease' && warehouseId && itemCode && (
             <div style={{ marginTop: 'var(--space-4)' }}>
               {bucketsQ.isLoading ? (
                 <span style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Loading open stock…</span>

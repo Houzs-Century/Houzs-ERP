@@ -14,10 +14,12 @@
 //   - The coverage DECISION is the pure `isSoFullyCovered` below (unit-tested);
 //     this module's async wrapper is the thin Supabase glue around it.
 
+import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
+import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
 
 export type SoLineQty = { id: string; qty: number };
 export type DoLineQty = { soItemId: string | null; qty: number };
@@ -54,6 +56,20 @@ export function isSoFullyCovered(
 
 // SO statuses we may auto-advance to DELIVERED. Anything already at
 // INVOICED/CLOSED is done; ON_HOLD/CANCELLED must NOT be auto-flipped.
+//
+// NO `on_hold` TERM HERE, AND THAT IS DELIBERATE (mig 0324). Every guard that
+// asks "may somebody ACT on this document" gained one; this is not that kind of
+// site. This is a WRITER that re-derives a status from a fact — the goods were
+// delivered — and the reason ON_HOLD was excluded was that the auto-flip would
+// have OVERWRITTEN a hold a person had set. Since the hold moved into its own
+// column, writing `status` cannot touch it, so a held order whose delivery
+// completes should read DELIVERED and carry its Hold chip: both facts, at once,
+// which is precisely what a status-hold made impossible.
+//
+// `ON_HOLD` stays in neither list and out of DELIVERABLE_FROM for a different
+// reason that still holds: a LEGACY row sitting on that label keeps its hold in
+// the status column and nowhere else, so auto-flipping it would destroy the
+// hold. Same reasoning as recomputePoReceived in routes/grns.ts.
 const DELIVERABLE_FROM = ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED'];
 
 // Bug #4 — the status we RELEASE a DELIVERED SO back to when its DO is cancelled
@@ -106,17 +122,55 @@ export async function syncSoDeliveredFromDo(
       // reference these SO items (a line may be split over several DOs). This is
       // re-derived live every call, so a cancelled DO drops out of the sum.
       // Keep the DO line id so returns can be traced back to the SO line below.
-      // LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped — it must never count
-      // toward SO delivery coverage (else a draft could auto-advance the SO to
-      // DELIVERED or stamp lines READY without any stock leaving). Excluded
-      // alongside CANCELLED, so any path that re-runs this sync stays safe.
+      // LEAK GUARD (PRE-SHIP): a DO that has not shipped must never count
+      // toward SO delivery coverage (else it could auto-advance the SO to
+      // DELIVERED or stamp lines READY without any stock leaving). That is
+      // DRAFT and CANCELLED. It named only DRAFT until 2026-08-20, then DRAFT
+      // *and* LOADED; on 2026-08-22 LOADED left again because the owner moved
+      // the stock-out to the confirm step, so a Confirmed delivery HAS shipped
+      // and must count. The literal is built from DO_NOT_DELIVERED_STATES, so it
+      // cannot drift from the JS predicate the coverage engine uses — which is
+      // why that ruling re-computed this site rather than leaving it behind.
+      // The HOLD is deliberately not read here (mig 0324): a held delivery's
+      // goods have still left, and freezing its counts is exactly what #2661
+      // avoided by leaving this site status-only.
       const { data: doItemsRaw } = await sb
         .from('delivery_order_items')
         .select('id, so_item_id, qty, delivery_orders!inner(status)')
         .in('so_item_id', soLines.map((l) => l.id))
-        .not('delivery_orders.status', 'in', '("CANCELLED","DRAFT")');
+        .not('delivery_orders.status', 'in', DO_NOT_DELIVERED_IN_LIST);
       const doItemRows = (doItemsRaw ?? []) as Array<{ id: string; so_item_id: string | null; qty: number }>;
       const doLines = doItemRows.map((d) => ({ soItemId: d.so_item_id, qty: Number(d.qty) }));
+
+      /* THE SAME SHIPMENT, READ THE OTHER WAY. `so_item_id` is nullable behind
+         an `ON DELETE SET NULL` FK, so deleting ONE Sales-Order line blanks the
+         pointer on every document that served it — and isSoFullyCovered, which
+         opens with `if (!d.soItemId) continue`, then reads a delivered order as
+         undelivered and leaves it CONFIRMED for good (26 lines across 8 live
+         2990 DOs on 2026-08-17, while MRP re-ordered the same goods). The DO
+         header's own so_doc_no still records which order it served; attribute
+         on that, capped by what the real links already cover, so the two
+         readings can never double-count. Best-effort by construction: a failed
+         read yields [] and this stays exactly as strict as it was. */
+      const linkedByLine = new Map<string, number>();
+      for (const d of doLines) {
+        if (!d.soItemId) continue;
+        linkedByLine.set(d.soItemId, (linkedByLine.get(d.soItemId) ?? 0) + d.qty);
+      }
+      const attributed = await loadUnlinkedDoCoverage(
+        sb,
+        [docNo],
+        soLines.map((l) => ({ id: l.id, docNo, itemCode: l.item_code, qty: l.qty })),
+        linkedByLine,
+      );
+      /* Pushed into BOTH collections as ordinary delivered rows: doLines feeds
+         coverage + the READY stamp, doItemRows is what the return-netting maps
+         do_item_id through — a return against one of these must re-open the
+         order exactly as it does for a linked line. */
+      for (const a of attributed) {
+        doItemRows.push({ id: a.doLineId, so_item_id: a.soItemId, qty: a.qty });
+        doLines.push({ soItemId: a.soItemId, qty: a.qty });
+      }
 
       // DR 3B — Σ returned qty per SO line across all non-cancelled Delivery
       // Returns. A DR line carries do_item_id (the DO line it returns), so map

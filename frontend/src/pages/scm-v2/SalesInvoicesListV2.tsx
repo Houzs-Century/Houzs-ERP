@@ -12,6 +12,14 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { siPaymentIntentSearch } from "./siPaymentIntent";
+import { salesInvoiceRowMenu } from "./row-menus";
+import {
+  siDepositAppliedSen,
+  siOutstandingSen,
+} from "../../vendor/scm/lib/si-outstanding";
+import { brandingToneForLabel } from "../../lib/brandingTone";
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -68,8 +76,10 @@ import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { salesInvoicePrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -114,9 +124,14 @@ type SiRow = {
   city: string | null;
   postcode: string | null;
   customer_state: string | null;
-  local_total_centi: number;
-  total_centi: number;
-  paid_centi: number;
+  local_total_sen: number;
+  total_sen: number;
+  paid_sen: number;
+  /* The slice of the source Sales Order's deposit that settles this invoice,
+     stamped by the list endpoint (backend lib/si-list-stamps). `null` means the
+     server could not read the order — read as 0, which shows the LARGER
+     outstanding. Kept apart from paid_sen: different money, different document. */
+  so_deposit_applied_sen?: number | null;
   status: string;
   currency: string;
   line_count?: number;
@@ -127,18 +142,18 @@ type SiRow = {
   building_type: string | null;
   // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
   //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -156,12 +171,6 @@ const fmtRm = (centi: number): string =>
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
-
 // Customer's PO / Ref — same fallback chain as SO/DO V2.
 const refOf = (r: SiRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
@@ -172,23 +181,30 @@ const soOf = (r: SiRow): string => r.so_doc_no || "—";
 const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
-const brandTone = (b: string): "success" | "neutral" | "warning" => {
-  const s = (b || "").toUpperCase();
-  if (s.includes("2990") || s.includes("SOFA")) return "success";
-  if (s.includes("AKEMI")) return "neutral";
-  if (s === "—" || !s) return "neutral";
-  return "warning";
-};
+/* Was a THREE-tone copy while the other four lists had four — the drift this
+   module exists to end. ../../lib/brandingTone is the one home. */
+const brandTone = brandingToneForLabel;
 
 // SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
-// PAID → CANCELLED. Buckets: sent (Draft + Sent) / partial / paid / cancelled.
+// PAID → CANCELLED. Buckets: sent (Draft + Sent + Overdue) / partial / paid /
+// cancelled — the same split SI_STATUS_BUCKETS uses server-side
+// (backend/src/scm/routes/sales-invoices.ts), which is what the tab COUNTS are
+// computed from. A row whose bucket here disagrees with the server's is a row
+// the operator sees in one tab and counted in another.
+//
+// `overdue` is spelled out rather than left to the fallback below. It reached
+// the same bucket either way, but only by accident of the fallback, and it read
+// as a raw "OVERDUE" chip in the neutral tone — the one status where the
+// operator most needs the badge to shout. The server puts OVERDUE in `sent` for
+// this reason: an overdue invoice is an issued, unpaid one.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
   sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
-  issued:          { tone: "warning", label: "Issued",      bucket: "sent" },
+  issued:          { tone: "warning", label: "Confirmed",   bucket: "sent" },
+  overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
   partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
   partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },
   paid:            { tone: "success", label: "Paid",        bucket: "paid" },
@@ -206,19 +222,31 @@ const statusFor = (
     bucket: "sent",
   };
 
-// Derived outstanding (Total − Paid). Guards against negative from over-payment.
+/* Derived outstanding: Total − (Paid on this invoice + the source ORDER's
+   deposit). The deposit term is why this delegates to the shared rule instead
+   of subtracting inline — the detail page, the mobile list, the PDF and the
+   Outstanding ledger all have to answer the same number, and until 2026-08-23
+   they answered six different ones (vendor/scm/lib/si-outstanding.ts). */
 const outstandingOf = (r: SiRow): number =>
-  Math.max(0, (r.total_centi || r.local_total_centi || 0) - (r.paid_centi || 0));
+  siOutstandingSen(r.total_sen || r.local_total_sen || 0, r.paid_sen || 0, siDepositAppliedSen(r));
 
 // ─── Split-menu dropdown ────────────────────────────────────────────────────
 
+/* No "New from Sales Order" entry, and that is deliberate. A Sales Invoice in
+   this system is built from DELIVERY ORDERS — the only converter the backend
+   exposes is POST /sales-invoices/from-dos, fed by
+   GET /sales-invoices/invoiceable-do-lines. The menu carried a "New from Sales
+   Order" item until 2026-08-16 that navigated to /scm/sales-invoices/from-so:
+   no such route is registered in App.tsx, so it fell through to
+   /scm/sales-invoices/:id with id="from-so" and asked the API for an invoice
+   whose id is the literal string "from-so". Removed rather than pointed
+   somewhere, because there is nothing to point it at — SO → SI is not a
+   conversion this ERP has, in either direction. */
 function SplitDropdown({
   onFromDo,
-  onFromSo,
   onImport,
 }: {
   onFromDo: () => void;
-  onFromSo: () => void;
   onImport: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -253,16 +281,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onFromSo();
-              }}
-            >
-              New from Sales Order
             </button>
             <button
               type="button"
@@ -362,7 +380,7 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  Outstanding
+                  Outstanding{siDepositAppliedSen(r) > 0 ? " · after SO deposit" : ""}
                 </div>
                 <div
                   className={cn(
@@ -374,7 +392,7 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.total_centi || r.local_total_centi)}
+                {fmtRm(r.total_sen || r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -411,38 +429,37 @@ function DetailDrawer({
 }) {
   const detailQ = useSalesInvoiceDetail(row?.id ?? null);
   const items: Array<{
-    product_code?: string;
-    product_name?: string;
     item_code?: string;
+    product_name?: string;
     description?: string;
     description2?: string;
     item_group?: string;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_centi?: number;
-    amount_centi?: number;
-    total_centi?: number;
+    unit_price_sen?: number;
+    amount_sen?: number;
+    total_sen?: number;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
-      product_code?: string;
-      product_name?: string;
       item_code?: string;
+      product_name?: string;
       description?: string;
       description2?: string;
       item_group?: string;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_centi?: number;
-      amount_centi?: number;
-      total_centi?: number;
+      unit_price_sen?: number;
+      amount_sen?: number;
+      total_sen?: number;
     }>) ?? [];
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  const totalCenti = row?.total_centi ?? row?.local_total_centi ?? 0;
-  const paidCenti = row?.paid_centi ?? 0;
-  const outstanding = Math.max(0, totalCenti - paidCenti);
+  const totalSen = row?.total_sen ?? row?.local_total_sen ?? 0;
+  const paidSen = row?.paid_sen ?? 0;
+  const depositSen = siDepositAppliedSen(row);
+  const outstanding = siOutstandingSen(totalSen, paidSen, depositSen);
 
   return (
     <ResizableDetailDrawer
@@ -491,8 +508,8 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
@@ -560,11 +577,11 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const amt =
-                    l.amount_centi ??
-                    l.total_centi ??
-                    (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+                    l.amount_sen ??
+                    l.total_sen ??
+                    (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.item_code || l.product_code,
+                    code: l.item_code || l.item_code,
                     description: l.description || l.product_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -589,7 +606,7 @@ function DetailDrawer({
                         {l.qty ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_centi ?? 0)}
+                        {fmtRm(l.unit_price_sen ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
@@ -603,8 +620,22 @@ function DetailDrawer({
                   what the operator actually reads on this doc. Subtotal / SST
                   are 6%-inclusive in Malaysia so we don't split them out. */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="Invoice total" v={fmtRm(totalCenti)} strong />
-                <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
+                <TotalRow k="Invoice total" v={fmtRm(totalSen)} strong />
+                <TotalRow
+                  k={depositSen > 0 ? "Paid on this invoice" : "Paid"}
+                  v={fmtRm(paidSen)}
+                  tone="success"
+                />
+                {/* Named for the document that took it, exactly as the detail
+                    page does — netting it silently into Paid would lose the one
+                    fact the office needs. */}
+                {depositSen > 0 && (
+                  <TotalRow
+                    k={`Deposit on ${row.so_doc_no ?? "the order"}`}
+                    v={fmtRm(depositSen)}
+                    tone="success"
+                  />
+                )}
                 <TotalRow
                   k="Outstanding"
                   v={outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
@@ -749,11 +780,11 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. SI backend whitelist is
-// { invoice_date, invoice_number, debtor_name, status, total_centi }; only the
+// { invoice_date, invoice_number, debtor_name, status, total_sen }; only the
 // `amount` (Total) column key differs from its backend name. Non-whitelisted
 // columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  amount: "total_centi",
+  amount: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -771,15 +802,15 @@ function SiLinesExpansion({ id }: { id: string }) {
     ((detailQ.data as { items?: Array<DrillItemFields & { source_pos?: string[] | null; source_adj?: boolean }> } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.item_code || l.product_code || null,
+    code: l.item_code || l.item_code || null,
     description: l.description || l.product_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti:
-      l.amount_centi ??
-      l.total_centi ??
-      Number(l.qty ?? 0) * (l.unit_price_centi ?? 0),
+    amountSen:
+      l.amount_sen ??
+      l.total_sen ??
+      Number(l.qty ?? 0) * (l.unit_price_sen ?? 0),
     // An SI is invoiced from a DO — show which PO the goods were procured on
     // (batch_no = source PO), not an Assigned SO (owner 2026-07-31).
     sourcePos: l.source_pos ?? [],
@@ -835,9 +866,11 @@ export function SalesInvoicesListV2() {
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw statuses it covers (sent = DRAFT+SENT+ISSUED, partial =
-  // PARTIALLY_PAID+PARTIAL, paid = PAID+COMPLETED, cancelled = CANCELLED).
-  // `all` omits the filter.
+  // bucket to the raw statuses it covers (sent = DRAFT+SENT+OVERDUE, partial =
+  // PARTIALLY_PAID, paid = PAID, cancelled = CANCELLED). `all` omits the filter.
+  // ISSUED / PARTIAL / COMPLETED were listed here until 2026-08-17 and are not
+  // members of the sales_invoice_status enum — sending them made each of those
+  // three tabs 500. The server-side map is the authority (SI_STATUS_BUCKETS).
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useSalesInvoicesPaged({
@@ -884,17 +917,20 @@ export function SalesInvoicesListV2() {
   // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
   // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
-    let revenueCenti = 0;
-    let outstandingCenti = 0;
-    let paidCenti = 0;
+    let revenueSen = 0;
+    let outstandingSen = 0;
+    let paidSen = 0;
     for (const r of visible.rows) {
-      const t = r.total_centi ?? r.local_total_centi ?? 0;
-      const paid = r.paid_centi ?? 0;
-      revenueCenti += t;
-      paidCenti += paid;
-      outstandingCenti += Math.max(0, t - paid);
+      const t = r.total_sen ?? r.local_total_sen ?? 0;
+      const paid = r.paid_sen ?? 0;
+      revenueSen += t;
+      paidSen += paid;
+      /* The KPI sums the SAME per-row figure the Outstanding column renders, so
+         the card and the table cannot disagree — which is the whole reason this
+         block sums the rows on screen rather than asking the server. */
+      outstandingSen += siOutstandingSen(t, paid, siDepositAppliedSen(r));
     }
-    return { revenueCenti, outstandingCenti, paidCenti };
+    return { revenueSen, outstandingSen, paidSen };
   }, [visible.rows]);
 
   const setPageParam = (p: number) => {
@@ -945,12 +981,11 @@ export function SalesInvoicesListV2() {
 
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
-  const goFromSo = () => navigate("/scm/sales-invoices/from-so");
   const goImport = () => navigate("/scm/sales-invoices?import=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goOutstanding = () => navigate("/scm/outstanding");
   const goEdit = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?edit=1`);
-  const goPrint = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?print=1`);
+  const printDocument = usePrintDocument();
   const goFullPage = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}`);
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -1027,24 +1062,32 @@ export function SalesInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
-  const doMarkPaid = (r: SiRow) =>
-    updateStatus.mutate(
-      { id: r.id, status: "paid" },
-      {
-        onSuccess: () => setSelected(null),
-        /* The sibling Reopen below always had an onError; Mark paid never did,
-           so a rejected write left the row unchanged and silent — and "paid" is
-           the one status nobody re-checks. */
-        onError: (e) =>
-          notify({
-            title: `Couldn't mark ${r.invoice_number} as paid`,
-            body: `${e instanceof Error ? e.message : "Something went wrong."} The invoice is unchanged — please try again.`,
-            tone: "error",
-          }),
-      }
-    );
+  /* A cancelled or draft invoice takes no payment — the server refuses both
+     with `not_payable`, and the menu simply does not offer what it would
+     refuse. */
+  const siContextMenu = salesInvoiceRowMenu<SiRow>({
+    open: goFullPage, edit: goEdit, print: printDocument,
+    recordPayment: (r) => goRecordPayment(r),
+    canPay: (r) => canWriteSi && !["CANCELLED", "DRAFT", "PAID"].includes(r.status.toUpperCase()),
+  });
+  /* Mark paid used to `updateStatus.mutate({ status: "paid" })` from here —
+     a hand-written status and no receipt, so the invoice read as settled with
+     nothing banked and the server's own rollup reverted it on the next touch
+     (docs/bugs/0528-…). It now opens the DETAIL screen's payment editor with the
+     balance seeded, because the amount has to be computed where
+     `orderDepositUnavailable` is known: a list row carries only
+     `so_deposit_applied_sen`, which reads absent-or-null as 0, so an order this
+     screen could not resolve would show the FULL total and book the customer's
+     deposit a second time. */
+  const goMarkPaid = (r: SiRow) => {
+    setSelected(null);
+    navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("balance")}`);
+  };
+  /* WAS `?tab=payments&record=1`, and nothing anywhere read `tab` or `record`
+     on a sales invoice — the detail page calls `useSearchParams()` and never
+     calls `.get()`. So this button opened the invoice and did nothing. */
   const goRecordPayment = (r: SiRow) =>
-    navigate(`/scm/sales-invoices/${r.id}?tab=payments&record=1`);
+    navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("open")}`);
   // Reopen a cancelled invoice → SENT (2990 SalesInvoicesList "Reopen Invoice"
   // parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SiRow) => {
@@ -1110,7 +1153,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
@@ -1123,7 +1166,7 @@ export function SalesInvoicesListV2() {
          from. Previously only the raw delivery_order_id UUID was on the row, so
          the list could not show a readable source DO. */
       key: "do_number",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.do_number ?? "",
@@ -1207,19 +1250,35 @@ export function SalesInvoicesListV2() {
       label: "Outstanding",
       width: "128px",
       align: "right",
-      // Derived (Total − Paid) — not a backend-sortable column.
+      // Derived (Total − Paid − the order's deposit) — not backend-sortable.
       disableSort: true,
       getValue: (r) => outstandingOf(r),
       render: (r) => {
         const outstanding = outstandingOf(r);
+        const dep = siDepositAppliedSen(r);
+        /* A smaller number with no explanation invites "why is this 2,400 when
+           the invoice is 4,400" — so when a deposit is in play the cell SAYS
+           so. The marker carries the amount and the order it was taken on, the
+           same distinction the detail page draws, rather than silently netting
+           the two kinds of money into one figure. */
         return (
           <span
             className={cn(
-              "font-money text-[13px] font-semibold",
+              "inline-flex items-center gap-1 font-money text-[13px] font-semibold",
               outstanding > 0 ? "text-err" : "text-synced"
             )}
+            title={
+              dep > 0
+                ? `${fmtRm(dep)} was collected on ${r.so_doc_no ?? "the sales order"} and settles this invoice.`
+                : undefined
+            }
           >
             {outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
+            {dep > 0 && (
+              <span className="rounded-sm bg-surface-2 px-1 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
+                dep
+              </span>
+            )}
           </span>
         );
       },
@@ -1229,10 +1288,10 @@ export function SalesInvoicesListV2() {
       label: "Total",
       width: "128px",
       align: "right",
-      getValue: (r) => r.total_centi ?? r.local_total_centi,
+      getValue: (r) => r.total_sen ?? r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.total_centi || r.local_total_centi)}
+          {fmtRm(r.total_sen || r.local_total_sen)}
         </span>
       ),
     },
@@ -1282,15 +1341,37 @@ export function SalesInvoicesListV2() {
       },
     },
     {
+      /* Off by default: most invoices have no order deposit, and a column of
+         dashes is noise. On when finance wants to reconcile the "dep" marker
+         above against an amount. Exports with the CSV like any other column. */
+      key: "so_deposit",
+      label: "SO deposit",
+      width: "120px",
+      align: "right",
+      defaultHidden: true,
+      disableSort: true,
+      getValue: (r) => siDepositAppliedSen(r),
+      render: (r) => {
+        const dep = siDepositAppliedSen(r);
+        return dep > 0 ? (
+          <span className="font-money text-[13px] text-synced" title={r.so_doc_no ?? undefined}>
+            {fmtRm(dep)}
+          </span>
+        ) : (
+          <span className="text-[12.5px] text-ink-muted">—</span>
+        );
+      },
+    },
+    {
       key: "paid",
       label: "Paid",
       width: "110px",
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.paid_centi ?? 0,
+      getValue: (r) => r.paid_sen ?? 0,
       render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_centi ?? 0)}</span>
+        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_sen ?? 0)}</span>
       ),
     },
     {
@@ -1421,147 +1502,147 @@ export function SalesInvoicesListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_centi",
+            key: "service_sen",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_centi ?? 0,
+            getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_centi",
+            key: "service_cost_sen",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_centi ?? 0,
+            getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1606,7 +1687,7 @@ export function SalesInvoicesListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} invoice{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(money.revenueCenti)}</span> billed
+            <span className="font-money">{fmtRm(money.revenueSen)}</span> billed
           </div>
         </div>
       </div>
@@ -1626,7 +1707,7 @@ export function SalesInvoicesListV2() {
                     icon={<ArrowRightLeft size={14} />}
                     onClick={goFromDo}
                   >
-                    From Delivery Order
+                    {transferFromLabel('do')}
                   </Button>
                   <div className="flex items-stretch">
                     <Button
@@ -1639,7 +1720,6 @@ export function SalesInvoicesListV2() {
                     </Button>
                     <SplitDropdown
                       onFromDo={goFromDo}
-                      onFromSo={goFromSo}
                       onImport={goImport}
                     />
                   </div>
@@ -1669,14 +1749,14 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Billed"
-              value={fmtRm(money.revenueCenti)}
+              value={fmtRm(money.revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
-              value={fmtRm(money.outstandingCenti)}
+              value={fmtRm(money.outstandingSen)}
               subtitle={visible.filtered ? "Balance · filtered" : "Balance on this page"}
               tone="error"
               rail="bg-err"
@@ -1684,7 +1764,7 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Paid"
-              value={fmtRm(money.paidCenti)}
+              value={fmtRm(money.paidSen)}
               subtitle={visible.filtered ? "Receipts · filtered" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"
@@ -1784,7 +1864,8 @@ export function SalesInvoicesListV2() {
                 onToggle: toggleSelect,
                 onToggleAll: toggleSelectAll,
               }}
-              exportName="sales-invoices"
+              contextMenu={siContextMenu}
+            exportName="sales-invoices"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={
@@ -1858,8 +1939,8 @@ export function SalesInvoicesListV2() {
         onClose={() => setSelected(null)}
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
-        onPrint={() => selected && goPrint(selected)}
-        onMarkPaid={() => selected && doMarkPaid(selected)}
+        onPrint={() => selected && printDocument(salesInvoicePrintChain(selected).own)}
+        onMarkPaid={() => selected && goMarkPaid(selected)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canWrite={canWriteSi}

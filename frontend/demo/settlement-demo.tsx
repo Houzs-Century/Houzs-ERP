@@ -25,7 +25,7 @@ import { DialogProvider } from '../src/hooks/useDialog';
 import { MerchantRecon } from '../src/pages/scm-v2/MerchantRecon';
 import { BankRecon } from '../src/pages/scm-v2/BankRecon';
 import { SettlementSetup } from '../src/pages/scm-v2/SettlementSetup';
-import { fmtCenti } from '../src/vendor/shared/format';
+import { fmtSen } from '../src/vendor/shared/format';
 
 // authedFetch refuses to run without a token; the demo server ignores it.
 localStorage.setItem('auth:token', 'demo-token');
@@ -40,7 +40,7 @@ type Ledger = {
     lines: Array<{ account_code: string; account_name: string; debit_sen: number; credit_sen: number; notes: string }>;
   }>;
   transitBalanceSen: number;
-  payments: Array<{ id: string; so_doc_no?: string; sales_invoice_id?: string; amount_centi: number; merchant_provider: string; approval_code: string | null; paid_at: string }>;
+  payments: Array<{ id: string; so_doc_no?: string; sales_invoice_id?: string; amount_sen: number; merchant_provider: string; approval_code: string | null; paid_at: string }>;
   settledPaymentIds: string[];
 };
 
@@ -62,7 +62,7 @@ const LedgerPanel = () => {
         background: led && led.transitBalanceSen === 0 ? 'rgba(47,93,79,0.12)' : 'rgba(184,51,31,0.10)',
       }}>
         <div style={{ fontSize: 12, color: '#666' }}>在途结算款 320-0000（对账就是把它清零）</div>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtCenti(led?.transitBalanceSen ?? 0)}</div>
+        <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtSen(led?.transitBalanceSen ?? 0)}</div>
       </div>
 
       <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
@@ -85,8 +85,8 @@ const LedgerPanel = () => {
                 <tr key={i}>
                   <td style={{ padding: '2px 4px' }}>{l.account_code}</td>
                   <td style={{ padding: '2px 4px' }}>{l.account_name}</td>
-                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{l.debit_sen ? fmtCenti(l.debit_sen) : ''}</td>
-                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{l.credit_sen ? fmtCenti(l.credit_sen) : ''}</td>
+                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{l.debit_sen ? fmtSen(l.debit_sen) : ''}</td>
+                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{l.credit_sen ? fmtSen(l.credit_sen) : ''}</td>
                 </tr>
               ))}
             </tbody>

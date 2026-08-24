@@ -44,6 +44,7 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
+import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -202,7 +203,10 @@ accounting.post('/journal-entries', async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  const entryDate = body.entryDate ?? todayMyt();
+  /* `??` is NULLISH — a cleared <input type="date"> posts "", which sails past
+     it into journal_entries.entry_date (`date NOT NULL`) and 500s the post.
+     Blank takes the same path an absent key already takes: today. */
+  const entryDate = dateOrNull(body.entryDate) ?? todayMyt();
   /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
      body.sourceType, which let an operator mint an entry that impersonates a
      document type ('SI', 'PV', …) — colliding with the real document's
@@ -374,7 +378,7 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
 });
 
 /* ── postPiAccounting (extracted 2026-06-01) — idempotent PI → GL post ──────
-   Writes Dr Inventory (1200) / Cr Payables (2000) for the PI total. Shared by
+   Writes Dr INVENTORY / Cr AP for the PI total, by ROLE. Shared by
    the manual POST /post/pi route AND resyncPiAccounting (void+repost on a
    post-issue line edit). Mirrors postSiRevenue: keyed on an ACTIVE (non-reversed)
    PI JE, so a reversed original never blocks a fresh re-post. */
@@ -390,14 +394,14 @@ export type PostPiResult =
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
-    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
+    .select('id, invoice_number, invoice_date, supplier_id, total_sen, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !piRaw) return { ok: false, status: 'invoice_not_found' };
 
   /* MIGRATED PAPERWORK POSTS NO JOURNAL (migration 0280). This invoice mirrors
      one AutoCount already raised, and AutoCount already booked the payable
-     behind it. Posting Dr 1200 / Cr 2000 here would count the same money in two
+     behind it. Posting Dr INVENTORY / Cr AP here would count the same money in two
      books. The guard lives in this function rather than at its call sites so
      every caller — the confirm handler, resyncPiAccounting, any future one — is
      covered by construction. */
@@ -412,21 +416,21 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
     invoice_number: string;
     invoice_date: string;
     supplier_id: string | null;
-    total_centi: number;
+    total_sen: number;
     currency: string | null;
     exchange_rate: string | number | null;
     company_id: number | null;
     suppliers: { code: string | null; name: string | null } | null;
   };
 
-  /* Multi-currency AP (migration 0082) — the PI's total_centi is in the PI's OWN
+  /* Multi-currency AP (migration 0082) — the PI's total_sen is in the PI's OWN
      currency (RMB / USD / SGD / MYR). The GL must be MYR, so convert AT POST TIME:
      exchange_rate = MYR per 1 unit of `currency` (1 for MYR). The PI row is
      untouched — only the JE legs below carry the converted amount. For an MYR PI
      the rate is 1, so this is a no-op (totalSen unchanged) and existing MYR GL
      behaviour is byte-for-byte identical. The single Dr/Cr pair post the SAME
      figure, so the JE always balances. */
-  const foreignTotalSen = Number(pi.total_centi);
+  const foreignTotalSen = Number(pi.total_sen);
   if (foreignTotalSen <= 0) return { ok: false, status: 'zero_total' };
   const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate); // MYR posted to the GL
 
@@ -505,7 +509,7 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
 /* ════════════════════════════════════════════════════════════════════════
    PI accounting reversal (bug #5) — mirror of reverseSiRevenue
    ────────────────────────────────────────────────────────────────────────
-   PI posting writes Dr Inventory (1200) / Cr Payables (2000). On PI cancel we
+   PI posting writes Dr INVENTORY / Cr AP (by role). On PI cancel we
    must trace that back ("取消 PI 要追溯回去") with a contra JE that nets the
    original to zero + flags the original `reversed = true`, so payables +
    inventory value stop being overstated. The balance views only count
@@ -568,15 +572,15 @@ export async function resyncPiAccounting(
      today. */
   const { data: pi, error: piErr } = await sb
     .from('purchase_invoices')
-    .select('total_centi, exchange_rate')
+    .select('total_sen, exchange_rate')
     .eq('invoice_number', invoiceNumber)
     .maybeSingle();
   if (piErr) return { ok: false, status: 'resync_read_failed', reason: `pi: ${piErr.message}` };
-  const piRow = pi as { total_centi?: number; exchange_rate?: string | number | null } | null;
+  const piRow = pi as { total_sen?: number; exchange_rate?: string | number | null } | null;
   // Migration 0082 — the posted JE is in MYR; compare against the MYR-equivalent
   // of the (foreign) PI total so a foreign PI doesn't churn a void+repost every
-  // edit. MYR ⇒ rate 1, so newTotal === total_centi (unchanged behaviour).
-  const newTotal = toMyrSen(Number(piRow?.total_centi ?? 0), safeRate(piRow?.exchange_rate));
+  // edit. MYR ⇒ rate 1, so newTotal === total_sen (unchanged behaviour).
+  const newTotal = toMyrSen(Number(piRow?.total_sen ?? 0), safeRate(piRow?.exchange_rate));
   if (Number(active.total_debit_sen) === newTotal) return { ok: true, status: 'unchanged' };
 
   // Total changed → void the stale JE, then re-post at the new amount.
@@ -845,10 +849,10 @@ export const controlCheckHandler = async (c: any) => {
     const drift: Drift[] = [];
     if (role === 'AR') {
       const { data: docs, error } = await sb.from('sales_invoices')
-        .select('invoice_number, total_centi, status, migrated_no_stock')
+        .select('invoice_number, total_sen, status, migrated_no_stock')
         .eq('company_id', companyId);
       if (error) return { role, accountCode, error: error.message };
-      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; status: string | null; migrated_no_stock: boolean | null }>) {
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_sen: number; status: string | null; migrated_no_stock: boolean | null }>) {
         const s = (d.status ?? '').toUpperCase();
         const je = jeByDoc.get(d.invoice_number);
         if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
@@ -856,7 +860,7 @@ export const controlCheckHandler = async (c: any) => {
           jeByDoc.delete(d.invoice_number);
           continue;
         }
-        const docTotal = Number(d.total_centi ?? 0);
+        const docTotal = Number(d.total_sen ?? 0);
         if (!je) {
           if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
         } else {
@@ -866,10 +870,10 @@ export const controlCheckHandler = async (c: any) => {
       }
     } else {
       const { data: docs, error } = await sb.from('purchase_invoices')
-        .select('invoice_number, total_centi, exchange_rate, status, migrated_no_stock')
+        .select('invoice_number, total_sen, exchange_rate, status, migrated_no_stock')
         .eq('company_id', companyId);
       if (error) return { role, accountCode, error: error.message };
-      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_sen: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
         const s = (d.status ?? '').toUpperCase();
         const je = jeByDoc.get(d.invoice_number);
         if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
@@ -877,10 +881,26 @@ export const controlCheckHandler = async (c: any) => {
           jeByDoc.delete(d.invoice_number);
           continue;
         }
-        /* PI posts on demand — a confirmed PI with no journal is NORMAL here,
-           not drift (the AP aging is the place that surfaces unposted PIs). */
-        if (!je) continue;
-        const docTotal = toMyrSen(Number(d.total_centi ?? 0), safeRate(d.exchange_rate));
+        /* A confirmed PI with no active journal IS drift, and this arm used to
+           skip it — the AR arm four lines up reports the identical shape. The
+           skip carried two reasons and BOTH are false: a PI does not "post on
+           demand" (postPurchaseInvoiceHandler calls postPiAccounting on both of
+           its arms, so a confirm that reaches this state had its post FAIL), and
+           v_ap_aging is not "the place that surfaces unposted PIs" — that view
+           selects from purchase_invoices alone and never joins journal_entries,
+           so it has no notion of posted at all.
+
+           Found live 2026-08-22: HC-PI-2608-002 and -003 both confirmed with no
+           journal, AP CLEAN, while AR reported HC-SI-2608-002 for the same
+           thing. The one check built to catch it was the one that couldn't.
+
+           `docTotal > 0` mirrors AR: postPiAccounting refuses a zero total
+           (`zero_total`), so a zero-value invoice legitimately has no journal. */
+        const docTotal = toMyrSen(Number(d.total_sen ?? 0), safeRate(d.exchange_rate));
+        if (!je) {
+          if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+          continue;
+        }
         if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total (MYR)' });
         jeByDoc.delete(d.invoice_number);
       }

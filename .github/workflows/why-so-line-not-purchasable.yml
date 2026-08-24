@@ -1,0 +1,43 @@
+name: Why is an SO line not purchasable (read-only)
+
+# Owner-triggered, 2026-08-16. HC-SO-2608-003 is CONFIRMED, its bedframe line
+# shows STOCK: PENDING with no incoming PO, and it is in neither the MRP
+# shortage list nor the PO-from-SO picker. Those two read the SAME computation,
+# so the line is lost either BEFORE the shortage step (a demand gate) or AT it
+# (the pool covers it). This tells the two apart by printing the inputs.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output,
+# so it exits 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: 'Sales order document number'
+        required: false
+        default: 'HC-SO-2608-003'
+      company_id:
+        description: 'Company id'
+        required: false
+        default: '1'
+
+concurrency:
+  group: why-so-line-not-purchasable
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diagnose (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          DOC_NO: "${{ inputs.doc_no }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+        run: node scripts/why-so-line-not-purchasable.mjs

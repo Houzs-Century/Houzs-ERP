@@ -71,6 +71,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { provenanceNoteRe } from "./lib/transfer-vocabulary.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -128,7 +129,7 @@ async function main() {
   const poRows = (await sql`
     SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS po_hdr_id, p.linked_ac_docno AS ac,
            UPPER(COALESCE(p.status::text, '')) AS po_status, COALESCE(p.notes, '') AS po_notes,
-           i.material_code AS code, i.item_group AS grp, i.description2 AS d2, i.variants,
+           i.item_code AS code, i.item_group AS grp, i.description2 AS d2, i.variants,
            COALESCE(i.notes, '') AS remark, i.qty, i.received_qty, i.so_item_id::text AS so_item_id
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
@@ -368,7 +369,12 @@ async function main() {
   const linkedIds = new Set(poRows.filter((r) => r.so_item_id).map((r) => r.po_hdr_id));
   const mixedHdr = unlinked.filter((r) => linkedIds.has(r.po_hdr_id));
   const pureStock = unlinked.filter((r) => !linkedIds.has(r.po_hdr_id));
-  const mentionsSo = unlinked.filter((r) => /From SOs?:|HC-SO-|SO-\d/i.test(r.po_notes));
+  // The provenance label (either era, via the shared list) OR a bare doc-number
+  // shape — this one is a HEURISTIC for "the note talks about an order at all",
+  // so it stays broader than the parser on purpose.
+  const mentionsSo = unlinked.filter(
+    (r) => provenanceNoteRe().test(String(r.po_notes ?? "")) || /HC-SO-|SO-\d/i.test(String(r.po_notes ?? "")),
+  );
   log(`    PO lines with a NULL so_item_id            ${unlinked.length} of ${poRows.length}`);
   log(`      on a PO where NO line is linked          ${pureStock.length}   (a stock purchase: nothing to point at — provenance, not a defect)`);
   log(`      on a PO where OTHER lines ARE linked     ${mixedHdr.length}   (same document, some lines claimed and some not — the candidates for a LOST link)`);
@@ -502,14 +508,14 @@ async function main() {
       if (a !== null && b !== null && norm(a) === norm(b)) continue;
       diffs.push({ k, po: a, grn: b });
     }
-    const codeDiff = norm(P.material_code) !== norm(G.material_code);
+    const codeDiff = norm(P.item_code) !== norm(G.item_code);
     if (!diffs.length && !codeDiff) { same++; continue; }
 
     const poT = ts(P, "updated_at", "created_at");
     const grT = ts(G, "created_at") ?? ts(H, "created_at", "posted_at", "received_at");
-    const head = `      ${r.po_doc} -> ${r.grn_doc}  ${P.item_group} ${modelOf(P.material_code)} ${compOf(P.material_code) || norm(P.material_code)}\n` +
+    const head = `      ${r.po_doc} -> ${r.grn_doc}  ${P.item_group} ${modelOf(P.item_code)} ${compOf(P.item_code) || norm(P.item_code)}\n` +
                  `         ${diffs.map((d) => `${d.k}: PO ${d.po ?? "-"} vs GRN ${d.grn ?? "-"}`).join("\n         ")}` +
-                 (codeDiff ? `\n         code: PO ${P.material_code} vs GRN ${G.material_code}` : "");
+                 (codeDiff ? `\n         code: PO ${P.item_code} vs GRN ${G.item_code}` : "");
     if (!poT || !grT) noTime++;
     if (poT && grT && poT > grT) {
       bkt.a.push(head + `\n         (a) PO line last written ${poT.toISOString()} — AFTER the GRN (${grT.toISOString()}).` +

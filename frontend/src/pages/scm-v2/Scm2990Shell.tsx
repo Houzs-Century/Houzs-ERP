@@ -27,6 +27,7 @@ import { NotifyProvider, useNotify } from '../../vendor/scm/components/NotifyDia
 import { ConfirmProvider, useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { PromptProvider } from '../../vendor/scm/components/PromptDialog';
 import { ChoiceProvider } from '../../vendor/scm/components/ChoiceDialog';
+import { PrintChainProvider } from '../../components/scm-v2/PrintChainProvider';
 import { registerDialogService } from '../../vendor/scm/lib/dialog-service';
 import { rememberScmListReturn } from '../../lib/scmListReturn';
 import { prefetchDocCreate } from '../../lib/prefetch-routes';
@@ -65,6 +66,10 @@ export function Scm2990Shell({ children }: { children: ReactNode }) {
       <ConfirmProvider>
         <PromptProvider>
           <ChoiceProvider>
+            {/* Print preview for ANY document, opened imperatively from a row
+                menu — inside ChoiceProvider so it sits in the same dialog band
+                as Confirm / Choice / Notify and can use them. */}
+            <PrintChainProvider>
             <DialogServiceBridge />
             <ScmListReturnTracker />
             {/* Nick 2026-07-09 — "local host 还没有上面 pin 起来". `overflow-x:
@@ -78,6 +83,7 @@ export function Scm2990Shell({ children }: { children: ReactNode }) {
                 browsers (Chrome 90+, Firefox 81+, Safari 16+) all support
                 it — Nick's on current Chrome. */}
             <div className="scm2990 max-w-full [overflow-x:clip]">{children}</div>
+            </PrintChainProvider>
           </ChoiceProvider>
         </PromptProvider>
       </ConfirmProvider>

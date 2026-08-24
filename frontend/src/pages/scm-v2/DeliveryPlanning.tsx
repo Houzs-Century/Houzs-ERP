@@ -29,7 +29,8 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { useStickyFilters } from '../../hooks/useStickyFilters';
 import { MapPinned, Truck, Plus, MessageSquare, CalendarClock } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -50,6 +51,7 @@ import {
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { transferToLabel } from '../../lib/convertScope';
 import {
   useDeliveryPlanning,
   useConvertSosToDo,
@@ -73,7 +75,12 @@ export const DeliveryPlanning = () => {
      board is reachable on scm.transportation.*, so the convert actions carried no
      DO gate of their own — same ONE helper as every other DO control. */
   const canConvertToDo = canOperateDeliveryOrders(user, can, pageAccess);
-  const [params, setParams] = useSearchParams();
+  /* Sticky state/region tabs (owner 2026-08-19 "页签被清掉"): same layered
+     rule the Projects / Sales lists use — the URL stays authoritative (links
+     and refresh unchanged), and with NO param in the URL the last-used pair is
+     restored, so opening an SO (which replaces this workspace tab) and coming
+     back through the sidebar lands on the tabs the operator left. */
+  const [params, setParams] = useStickyFilters('delivery-planning', ['state', 'region']);
   const activeState = (params.get('state') ?? 'ALL').toUpperCase();
   const activeRegion = (params.get('region') ?? 'ALL').toUpperCase();
 
@@ -148,7 +155,7 @@ export const DeliveryPlanning = () => {
       setSel(new Set());
       const parts: string[] = [];
       if (res.converted.length > 0) {
-        parts.push(`Converted ${res.converted.length} sales order${res.converted.length === 1 ? '' : 's'} to DO (${res.converted.map((r) => r.doNumber).join(', ')}).`);
+        parts.push(`Transferred ${res.converted.length} sales order${res.converted.length === 1 ? '' : 's'} to Delivery Order (${res.converted.map((r) => r.doNumber).join(', ')}).`);
       }
       if (res.skipped.length > 0) {
         parts.push(`Skipped ${res.skipped.length} already fully delivered: ${res.skipped.map((r) => r.docNo).join(', ')}.`);
@@ -157,12 +164,12 @@ export const DeliveryPlanning = () => {
         parts.push(`Failed ${res.failed.length}: ${res.failed.map((r) => `${r.docNo} (${r.message})`).join('; ')}.`);
       }
       notify({
-        title: res.converted.length > 0 ? 'Conversion complete' : 'Nothing converted',
+        title: res.converted.length > 0 ? 'Transfer complete' : 'Nothing transferred',
         body: parts.join(' ') || 'No deliverable lines were found.',
         tone: res.failed.length > 0 ? 'error' : 'info',
       });
     } catch (e) {
-      notify({ title: 'Convert failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      notify({ title: 'Transfer failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
   };
 
@@ -192,9 +199,11 @@ export const DeliveryPlanning = () => {
     const docNos = selectedSoDocNos();
     if (docNos.length === 0) return;
     if (!(await askConfirm({
-      title: `Convert ${docNos.length} sales order${docNos.length === 1 ? '' : 's'} to delivery orders?`,
+      /* SINGULAR "Delivery Order" even for many sources: the label names the
+         document TYPE being produced, not the count (owner rule 2026-08-17). */
+      title: `Transfer ${docNos.length} sales order${docNos.length === 1 ? '' : 's'} to Delivery Order?`,
       body: 'Each selected Sales Order’s still-undelivered lines become a new Delivery Order (one DO per SO). Fully delivered orders are skipped.',
-      confirmLabel: `Convert ${docNos.length}`,
+      confirmLabel: `Transfer ${docNos.length}`,
     }))) return;
     await runConvert(docNos);
   };
@@ -335,7 +344,7 @@ export const DeliveryPlanning = () => {
             {canConvertToDo && (
               <Button variant="secondary" disabled={convertSos.isPending} onClick={() => void convertSelected()}>
                 <Truck size={14} strokeWidth={1.75} />
-                <span>{convertSos.isPending ? 'Converting…' : `Convert ${sel.size} to DO`}</span>
+                <span>{convertSos.isPending ? 'Transferring…' : `Transfer ${sel.size} to Delivery Order`}</span>
               </Button>
             )}
           </>
@@ -356,7 +365,7 @@ export const DeliveryPlanning = () => {
               { label: 'Edit HC fields…', onClick: () => setEditing(row) },
               { label: 'Send WhatsApp…', onClick: () => setSendingRows([row]) },
               ...(canConvertToDo
-                ? [{ label: 'Convert to DO', onClick: () => convertOne(row) }]
+                ? [{ label: transferToLabel('do'), onClick: () => convertOne(row) }]
                 : []),
               { divider: true },
               { label: 'Open Sales Order', onClick: () => openRow(row) },

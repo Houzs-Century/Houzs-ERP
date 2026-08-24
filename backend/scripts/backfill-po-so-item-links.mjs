@@ -61,6 +61,7 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { pairPoLinesToSoLines, pairPoLinesAcrossSos } from "./lib/po-so-line-pairing.mjs";
 import { parseFromSosTokens } from "./lib/doc-ref-repair-core.mjs";
+import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const TIER = (process.env.TIER || "all").trim().toLowerCase();
@@ -95,7 +96,7 @@ try {
   // Every PO line, so the pairing sees the PO's WHOLE shape (a line that is
   // already linked still occupies its item code).
   const poLines = await pg`
-    SELECT i.id, i.purchase_order_id, i.material_code AS item_code, i.qty, i.so_item_id,
+    SELECT i.id, i.purchase_order_id, i.item_code AS item_code, i.qty, i.so_item_id,
            p.po_number, p.company_id
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id`;
@@ -148,7 +149,7 @@ try {
   let tier1Links = 0;
   let tier1Pos = 0;
   if (doTier1) {
-    /* The (PO, DO, product_code) buckets whose goods actually shipped, from BOTH
+    /* The (PO, DO, item_code) buckets whose goods actually shipped, from BOTH
        ledger shapes: the drop-ship / allocated-batch OUT movement carries the PO
        number on itself, while a plain-FIFO OUT is un-batched and its CONSUMED
        LOT carries it (GRN-stamped, mig 0120). Cancelled DOs are excluded: a
@@ -158,7 +159,7 @@ try {
     const chain = await pg`
       WITH mov AS (
         SELECT DISTINCT m.batch_no AS po_number, m.company_id, m.source_doc_id AS do_id,
-               m.product_code
+               m.item_code
           FROM scm.inventory_movements m
          WHERE m.source_doc_type = 'DO'
            AND m.movement_type = 'OUT'
@@ -166,7 +167,7 @@ try {
            AND m.source_doc_id IS NOT NULL
       ), con AS (
         SELECT DISTINCT l.batch_no AS po_number, c.company_id, c.source_doc_id AS do_id,
-               c.product_code
+               c.item_code
           FROM scm.inventory_lot_consumptions c
           JOIN scm.inventory_lots l ON l.id = c.lot_id
          WHERE c.source_doc_type = 'DO'
@@ -185,7 +186,7 @@ try {
          AND UPPER(COALESCE(d.status::text, '')) <> 'CANCELLED'
         JOIN scm.delivery_order_items di
           ON di.delivery_order_id = d.id
-         AND di.item_code = ch.product_code
+         AND di.item_code = ch.item_code
          AND di.so_item_id IS NOT NULL
         JOIN scm.mfg_sales_order_items si
           ON si.id = di.so_item_id AND si.company_id = p.company_id`;
@@ -233,7 +234,7 @@ try {
     const noted = await pg`
       SELECT id, po_number, company_id, notes
         FROM scm.purchase_orders
-       WHERE notes IS NOT NULL AND notes ~* 'From SOs?:'
+       WHERE notes IS NOT NULL AND notes ~* ${provenanceNoteSqlPattern()}
        ORDER BY po_number`;
     // Validate every token against a REAL, company-owned Sales Order. An
     // unresolvable token is not an SO — it is exactly what Tier 0 repairs, and

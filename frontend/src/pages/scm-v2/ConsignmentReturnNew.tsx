@@ -20,6 +20,7 @@
 // CRN-YYMM-NNN.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -46,7 +47,8 @@ import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -57,7 +59,7 @@ const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const ConsignmentReturnNew = () => {
   const navigate = useNavigate();
@@ -74,9 +76,16 @@ export const ConsignmentReturnNew = () => {
      stalled submit, fresh on remount. */
   const idemKey = useIdempotencyKey();
   const create = useCreateConsignmentReturn();
-  const staffQ = usePickableStaff({ onlySales: true });
   const loc = useLocalities();
   const cnDetail = useConsignmentNoteDetail(fromConsignmentNote);
+  /* `include` carries the salesperson already on the SOURCE document this one is
+     being raised from, so someone the onlySales narrowing hides is still named.
+     "(former staff)" below is then only reachable for a row that genuinely is
+     gone. Declared after the source query so the id is in scope. */
+  const staffQ = usePickableStaff({
+    onlySales: true,
+    include: [(cnDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+  });
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
   const buildingTypeOptsQ = useSoDropdownOptions('building_type');
@@ -160,9 +169,9 @@ export const ConsignmentReturnNew = () => {
         description: str(it.description),
         uom: str(it.uom) || 'UNIT',
         qty: Number(it.qty ?? 1),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        discountCenti: Number(it.discount_centi ?? 0),
-        unitCostCenti: Number(it.unit_cost_centi ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: Number(it.discount_sen ?? 0),
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         condition: 'NEW',
       })));
@@ -183,7 +192,7 @@ export const ConsignmentReturnNew = () => {
       debtorCode: string | null; debtorName: string | null;
       itemCode: string; itemGroup: string | null; description: string | null;
       uom: string | null; qty: number; condition: string;
-      unitPriceCenti: number; discountCenti: number; unitCostCenti: number; variants: unknown;
+      unitPriceSen: number; discountSen: number; unitCostSen: number; variants: unknown;
     };
     const stash = readScmHandoff<Stash[]>('crFromNotePicks');
     if (!stash || stash.length === 0) return;
@@ -201,9 +210,9 @@ export const ConsignmentReturnNew = () => {
       description: s.description ?? '',
       uom: s.uom ?? 'UNIT',
       qty: Number(s.qty ?? 1),
-      unitPriceCenti: Number(s.unitPriceCenti ?? 0),
-      discountCenti: Number(s.discountCenti ?? 0),
-      unitCostCenti: Number(s.unitCostCenti ?? 0),
+      unitPriceSen: Number(s.unitPriceSen ?? 0),
+      discountSen: Number(s.discountSen ?? 0),
+      unitCostSen: Number(s.unitCostSen ?? 0),
       variants: (s.variants as Record<string, unknown>) ?? {},
       condition: s.condition || 'NEW',
       doItemId: s.noteItemId,
@@ -232,8 +241,8 @@ export const ConsignmentReturnNew = () => {
   const addLine = () => setLines((prev) => [...prev, newLine()]);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti), 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen), 0),
     [lines],
   );
 
@@ -281,9 +290,9 @@ export const ConsignmentReturnNew = () => {
           uom: l.uom,
           qtyReturned: l.qty,
           condition: l.condition || 'NEW',
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti: l.discountCenti,
-          unitCostCenti: l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen: l.discountSen,
+          unitCostSen: l.unitCostSen,
           variants: l.variants,
           consignmentDoItemId: l.doItemId,
         })),
@@ -310,7 +319,7 @@ export const ConsignmentReturnNew = () => {
           <>
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns/from-note')}>
-                <ArrowRightLeft {...ICON} /> From Consignment Note
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('cn')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns')}>
                 <X {...ICON} /> Cancel
@@ -362,11 +371,19 @@ export const ConsignmentReturnNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {salespersonId && !staffList.some((s) => s.id === salespersonId) && <option value={salespersonId}>(former staff)</option>}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={salespersonId}
+                  onChange={setSalespersonId}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(salespersonId && !staffList.some((s) => s.id === salespersonId)
+                      ? [{ value: salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -381,7 +398,7 @@ export const ConsignmentReturnNew = () => {
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date</span>
-              <input type="date" className={styles.fieldInput} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={returnDate} onChange={(iso) => setReturnDate(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>
@@ -533,7 +550,7 @@ export const ConsignmentReturnNew = () => {
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',
             fontWeight: 800, color: 'var(--c-burnt)',
           }}>
-            Returned Value: {fmtRm(subtotalCenti)}
+            Returned Value: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>

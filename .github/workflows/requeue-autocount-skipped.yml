@@ -13,14 +13,22 @@ name: AutoCount write-back — re-queue a refused document (DRY-RUN gated)
 #
 # Access path: DATABASE_URL through lib/pgrest-shim.mjs — the enqueue needs a
 # PostgREST-SHAPED client, not PostgREST credentials. Copy
-# recompute-so-allocation.yml. Do NOT copy recompute-2990-so-allocation.yml:
-# it is three characters away by name and wired to two secrets that do not
-# exist in this repo, at repo level or in any of its three environments. The
-# first dispatch of this workflow failed on exactly that.
+# recompute-so-allocation.yml. The trap that broke this workflow's first
+# dispatch — recompute-2990-so-allocation.yml, three characters away by name
+# and wired to two secrets that exist nowhere in this repo — was DELETED on
+# 2026-08-20 rather than left carrying a warning, because the warning did not
+# stop it being copied. SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are Worker
+# secrets and must never be added to Actions; see CLAUDE.md.
 #
 # Read the result with "AutoCount write-back queue — health (read-only)": a
 # re-queued document is a pending row there, and its old skip is annotated
 # `[re-queued ...]` so it stops reading as backlog.
+#
+# A CONVERSION (DO / GR / IV / PI) is re-sendable only when AutoCount ITSELF
+# refused it — a `failed` row — so those scopes need include_failed=1 and the
+# script says so rather than reporting an empty sweep. A `skipped` conversion is
+# one of the three permanent shapes (no parent, merged from several sources, or a
+# line subset the ERP cannot name) and no re-send touches any of them.
 on:
   workflow_dispatch:
     inputs:
@@ -30,11 +38,11 @@ on:
         default: ""
         type: string
       doc_type:
-        description: "Scope when no doc_no is given. Only SO and PO have an AutoCount create"
+        description: "Scope when no doc_no is given. DO/GR/IV/PI need include_failed=1 — they have no create"
         required: false
         default: "ALL"
         type: choice
-        options: [ALL, SO, PO]
+        options: [ALL, SO, PO, DO, GR, IV, PI]
       apply:
         description: "1 to write, anything else DRY-RUN"
         required: false

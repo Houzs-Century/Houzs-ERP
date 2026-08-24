@@ -25,6 +25,8 @@ import { useReturnablePcReceiveLines, type ReturnablePcReceiveLine } from '../..
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
+import { buildVariantSummary } from '@2990s/shared';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -126,7 +128,7 @@ export const PurchaseConsignmentReturnFromReceive = () => {
             disabled={locked}
             onChange={() => togglePick(r)}
             onClick={(e) => e.stopPropagation()}
-            aria-label={`Pick ${r.materialCode}`}
+            aria-label={`Pick ${r.itemCode}`}
             style={locked ? { cursor: 'not-allowed' } : undefined}
           />
         );
@@ -151,14 +153,31 @@ export const PurchaseConsignmentReturnFromReceive = () => {
       groupValue: (r) => (r.itemGroup ?? '(none)').toUpperCase(),
     },
     {
-      key: 'materialCode', label: 'Material Code', width: 140, sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 600 }}>{r.materialCode}</span>,
-      searchValue: (r) => r.materialCode ?? '',
+      key: 'itemCode', label: 'Material Code', width: 140, sortable: true,
+      accessor: (r) => <span style={{ fontWeight: 600 }}>{r.itemCode}</span>,
+      searchValue: (r) => r.itemCode ?? '',
     },
     {
-      key: 'materialName', label: 'Material', width: 220, sortable: true,
-      accessor: (r) => r.materialName || <span className={styles.muted}>—</span>,
-      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''}`.trim(),
+      /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+         Same reasoning as the PC-Receive picker: sofa/bedframe modules share a
+         material name, so returning "the wrong one" is a naming accident unless
+         the variant summary is on the row. `variants` already ride in on this
+         read (routes/purchase-consignment-returns.ts:340 selects them; :366
+         returns them). */
+      key: 'materialName', label: 'Material', width: 240, sortable: true,
+      accessor: (r) => (
+        <div>
+          <div>{r.materialName || <span className={styles.muted}>—</span>}</div>
+          <VariantDescription
+            itemCode={r.itemCode}
+            itemGroup={r.itemGroup}
+            variants={r.variants}
+            description={r.description}
+            mutedClassName={styles.muted}
+          />
+        </div>
+      ),
+      searchValue: (r) => `${r.materialName ?? ''} ${r.description ?? ''} ${buildVariantSummary(r.itemGroup, (r.variants as Record<string, unknown> | null) ?? null)}`.trim(),
     },
     {
       key: 'accepted', label: 'Accepted', width: 80, align: 'right', sortable: true,
@@ -216,13 +235,13 @@ export const PurchaseConsignmentReturnFromReceive = () => {
           supplierId: r.supplierId,
           supplierName: r.supplierName,
           materialKind: r.materialKind,
-          materialCode: r.materialCode,
+          itemCode: r.itemCode,
           materialName: r.materialName,
           itemGroup: r.itemGroup,
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceCenti: r.unitPriceCenti,
+          unitPriceSen: r.unitPriceSen,
           variants: r.variants,
         };
       })
@@ -304,10 +323,22 @@ export const PurchaseConsignmentReturnFromReceive = () => {
         /* A failed read must NEVER render as the sentence below. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen used to
+           report an empty result as a finished job — "every line has been
+           fully ...". An empty result is only ever evidence that THE QUERY
+           FOUND NOTHING: the read is scoped to the active company and
+           scopeToCompany FAILS CLOSED (scm/lib/companyScope.ts ->
+           .in('company_id', []) returns [] with error: null), PostgREST
+           truncates at db-max-rows without saying so, and a swallowed read
+           error is shaped identically to an empty one. The same claim was
+           removed from the from-PO picker in #2367 and reintroduced five
+           commits later, which is why backend/scripts/check-empty-state-claims.mjs
+           now gates it instead of a comment asking nicely. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No returnable PC Receive lines — every line has been fully returned (or there are no PC Receives)."}
+          : "This search came back with no returnable PC Receive lines. That is not the same as everything having been returned — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the consignment receive and check its balance before treating this as nothing left to return."}
       />
 
       {dialog && (

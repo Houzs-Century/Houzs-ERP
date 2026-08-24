@@ -51,6 +51,18 @@ on:
     # staging bench as the thing that unblocks everything else, and the deferred
     # FIFO ledger fix in docs/inventory-ledger-divergence-coe.md is explicitly
     # STAGING-first, so it cannot start until this works.
+    #
+    # DECOUPLED 2026-08-22: the pause muted more than it meant to. Removing
+    # `main` above also stopped MIGRATION application — the one step that never
+    # touched the dead token (STAGING_DATABASE_URL kept working; the 2026-08-12
+    # re-dispatches applied 0281 and failed only at wrangler). Staging's ledger
+    # then froze for ten days while main reached 0322, and migration 0321
+    # (written against a column 0307 had renamed) met its first real database
+    # on PROD, blocking deploys — docs/bugs/0514. Schema rehearsal now lives in
+    # staging-migrate.yml, push-to-main on migration paths, Cloudflare-free.
+    # This workflow still owns the Worker + Pages deploy, and restoring `main`
+    # here still requires the new token first; the shared `deploy-staging`
+    # concurrency group keeps the two off the tracker table at the same time.
     branches: [staging]
   workflow_dispatch:
     inputs:

@@ -48,15 +48,15 @@ export type FabricTrackingRow = {
   price_tier: FabricTier | null;
   sofa_price_tier: FabricTier | null;
   bedframe_price_tier: FabricTier | null;
-  price_centi: number;
-  soh_centi: number;
-  po_outstanding_centi: number;
-  last_month_usage_centi: number;
-  one_week_usage_centi: number;
-  two_weeks_usage_centi: number;
-  one_month_usage_centi: number;
-  shortage_centi: number;
-  reorder_point_centi: number;
+  price_sen: number;
+  soh_sen: number;
+  po_outstanding_sen: number;
+  last_month_usage_sen: number;
+  one_week_usage_sen: number;
+  two_weeks_usage_sen: number;
+  one_month_usage_sen: number;
+  shortage_sen: number;
+  reorder_point_sen: number;
   supplier: string | null;
   supplier_code: string | null;
   lead_time_days: number;
@@ -67,6 +67,26 @@ export type FabricTrackingRow = {
      code. Optional so the UI tolerates an API that predates the migration. */
   is_active?: boolean | null;
 };
+
+/* The NON-SENSITIVE subset served by GET /fabric-tracking/lite — name + price
+   tiers, NO cost/stock. Everything the SO fabric dropdown + PC-Order detail need
+   to pick a fabric and price a line, and safe to read without products access
+   (the full FabricTrackingRow carries cost/stock and stays gated). */
+export type FabricLite = Pick<
+  FabricTrackingRow,
+  | 'id'
+  | 'fabric_code'
+  | 'fabric_description'
+  // supplier_code is the DISPLAY dual-code (the "(DC-151-03)" shown in the picker
+  // label), not cost/stock — safe and needed by fabricOptionLabel.
+  | 'supplier_code'
+  | 'fabric_category'
+  | 'price_tier'
+  | 'sofa_price_tier'
+  | 'bedframe_price_tier'
+  | 'series'
+  | 'is_active'
+>;
 
 /* ─── Fabric dual-code display (owner request 2026-06-12) ──────────────────
  * Wherever a fabric is picked or displayed, show BOTH codes:
@@ -129,6 +149,38 @@ export function useFabricTrackings(opts?: {
   });
 }
 
+/* DISPLAY/PICK read — names + price tiers only, hits GET /fabric-tracking/lite
+   which is openRead (no cost/stock). Use this on surfaces gated by scm.sales.* /
+   scm.consignment.* (the SO fabric dropdown, PC-Order detail) so a user without
+   scm.procurement.products does NOT hit the 403 the full useFabricTrackings gave
+   them. The full hook stays for the products/fabric pages that show cost/stock. */
+export function useFabricTrackingsLite(opts?: {
+  category?: FabricCategoryValue;
+  search?: string;
+  includeRetired?: boolean;
+}) {
+  return useQuery({
+    queryKey: ['fabric-tracking-lite', opts?.category ?? 'all', opts?.search ?? ''],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams();
+      if (opts?.category) params.set('category', opts.category);
+      if (opts?.search) params.set('search', opts.search);
+      const res = await authedFetch<{ fabrics: FabricLite[] }>(
+        `/fabric-tracking/lite${params.toString() ? `?${params.toString()}` : ''}`,
+        { signal },
+      );
+      return res.fabrics;
+    },
+    select: (fabrics: FabricLite[]) =>
+      opts?.includeRetired === false
+        ? fabrics.filter((f) => f.is_active !== false)
+        : fabrics,
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+  });
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    HOUZS VENDOR — Fabric Converter page mutations. Copied verbatim from
    apps/backend/src/lib/fabric-queries.ts; all go through the vendored
@@ -141,7 +193,7 @@ export function useUpdateFabricTier() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (args: { id: string; field: FabricTierField; tier: FabricTier }) => {
-      return authedFetch<{ ok: true; affectedProducts: number; fabricCode: string | null }>(
+      return authedFetch<{ ok: true; affectedProducts: number | null; fabricCode: string | null }>(
         `/fabric-tracking/${args.id}/tier`,
         {
           method: 'PATCH',
@@ -152,11 +204,21 @@ export function useUpdateFabricTier() {
     onSuccess: (res, vars) => {
       qc.invalidateQueries({ queryKey: ['fabric-tracking'] });
       qc.invalidateQueries({ queryKey: ['mfg-products'] });  // price display might shift
-      if (res.affectedProducts > 0) {
-        const tierLabel = vars.tier.replace('PRICE_', 'P');
-        const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
-        // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
-        serviceNotify({
+      const tierLabel = vars.tier.replace('PRICE_', 'P');
+      const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
+      // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
+      if (res.affectedProducts === null) {
+        /* The tier DID change; only the propagation count could not be read.
+           Saying nothing would read as "nothing was affected", which is the
+           same silence a `count ?? 0` produced on the server. */
+        void serviceNotify({
+          title: `Tier updated → ${tierLabel}`,
+          body:
+            `The tier change was saved. How many ${fieldLabel} products it affects could not be read, ` +
+            `so no number is shown.`,
+        });
+      } else if (res.affectedProducts > 0) {
+        void serviceNotify({
           title: `Tier updated → ${tierLabel}`,
           body:
             `${res.affectedProducts} ${fieldLabel} product${res.affectedProducts === 1 ? '' : 's'} ` +
@@ -255,7 +317,7 @@ export type NewFabric = {
   bedframePriceTier?: FabricTier;
   supplierCode?: string;
   series?: string;
-  priceCenti?: number;
+  priceSen?: number;
   // Migration 0124/0125 — also create the customer-pickable fabric_library entry.
   label?: string;
   colours?: Array<{ colourId?: string; label: string; swatchHex?: string }>;

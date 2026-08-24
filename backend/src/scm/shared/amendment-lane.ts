@@ -73,6 +73,12 @@ const HEADER_KEY_LANE: Record<string, AmendmentLane> = {
   billToAddress:        'DELIVERY',
   installToAddress:     'DELIVERY',
   replacementDisposal:  'DELIVERY',
+  // Customer info (owner 2026-08-21): the contact block joins the CONTROLLED
+  // set (so-field-policy) and signs with Logistics — the lane whose label has
+  // always read "delivery / customer info". Never touches a PO.
+  debtorName:           'DELIVERY',
+  phone:                'DELIVERY',
+  email:                'DELIVERY',
 };
 
 export function classifyHeaderKey(payloadKey: string): AmendmentLane {

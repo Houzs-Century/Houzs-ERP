@@ -11,19 +11,55 @@
 //   `)`, `{`, `}`) therefore corrupts the filter — PostgREST either 400s or
 //   returns the wrong rows.
 //
-// THE FIX
-//   Strip the PostgREST reserved grammar characters `,(){}` from the search
-//   term (and trim surrounding whitespace) before it is interpolated. `ilike`
-//   still matches via the surrounding `%...%` wildcards, and a normal term
-//   with none of these characters is returned byte-for-byte unchanged — so
-//   ordinary searches behave exactly as before.
+// THE FIX, AND WHY THE FIRST ONE WAS WRONG
+//   This used to DELETE the reserved characters, on the reasoning that "`ilike`
+//   still matches via the surrounding `%...%` wildcards". That reasoning only
+//   holds when the deleted character sits at an END of the term. Delete one
+//   from the MIDDLE and the term is no longer a substring of the stored value,
+//   so it matches NOTHING — and the header's own example, `BOOQIT-1A(LHF)`, is
+//   exactly that case. Reproduced on production 2026-08-22, Houzs Century:
+//
+//     search            sent as             products found
+//     2376-1A           %2376-1A%           6
+//     2376-1A(          %2376-1A%           6     <- trailing, so deleting worked
+//     2376-1A(RHF)      %2376-1ARHF%        0     <- the SKU exists
+//
+//   Every parenthesised sofa code in the catalogue was unfindable by its full
+//   code in every list that searches — and `(LHF)` / `(RHF)` is how this
+//   catalogue spells a left- or right-hand facing piece.
+//
+//   Now each reserved character becomes `_`, the LIKE single-character
+//   wildcard, instead of vanishing. Position and length are preserved, so
+//   `%2376-1A_RHF_%` matches `2376-1A(RHF)`.
+//
+//   THE TRADE, stated rather than buried: `_` matches ANY one character, so the
+//   term is very slightly looser — it can also match a same-length string that
+//   differs only at those positions. That is a bounded widening of a search
+//   box, against a guaranteed zero result today. It is also consistent with
+//   what this codebase already does: `%` and `_` typed by an operator are
+//   already passed through as wildcards, so a character that cannot be sent
+//   literally becoming a single-character wildcard is the existing rule, not a
+//   new one.
+//
+//   NOT DONE HERE: the exact fix is PostgREST's double-quoted value
+//   (`code.ilike."%2376-1A(RHF)%"`), inside which `,()` are literal. That needs
+//   the QUOTES to wrap the whole pattern including the `%`, and all 43 call
+//   sites build `%${s}%` themselves — so it is a separate, mechanical change
+//   across 15 files, not a line in this one. Worth doing; not worth bundling
+//   with the fix that stops the search returning nothing.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Remove PostgREST `.or()` reserved chars (`,(){}`) so an operator's free-text
- *  (e.g. a parenthesized sofa code) can't break the filter grammar. Behaviour
- *  is identical for terms that contain none of these characters. */
+/** Make an operator's free-text safe inside a PostgREST `.or()` filter.
+ *
+ *  Each reserved grammar character (`,(){}`) becomes `_` — the LIKE
+ *  single-character wildcard — so the term keeps its length and its positions
+ *  and still matches the stored value. A term containing none of them is
+ *  returned byte-for-byte unchanged, trimmed.
+ *
+ *  See the header for why this replaces the previous DELETE, and for the
+ *  trade-off `_` carries. */
 export function escapeForOr(search: string): string {
-  return String(search ?? '').replace(/[,(){}]/g, '').trim();
+  return String(search ?? '').replace(/[,(){}]/g, '_').trim();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

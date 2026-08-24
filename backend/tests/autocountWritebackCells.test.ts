@@ -3,11 +3,19 @@ import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
+/* The GR edit wrapper moved OUT of grns.ts on 2026-08-20 (the file-size ratchet
+   refused the growth, and its own message says to move new code into a module).
+   It is still the "thin per-file wrapper" this file's matcher was written for —
+   it just lives in its own file now, so the scan has to follow it there. Without
+   this import the EDIT case reports GR unreachable while grns.ts calls it four
+   times: a true property, measured through a mechanism that lost sight of it. */
+import rawGrnOutbox from '../src/scm/lib/ac-grn-outbox.ts?raw';
 import rawSi from '../src/scm/routes/sales-invoices.ts?raw';
 import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawSoAmend from '../src/scm/routes/so-amendments.ts?raw';
 import rawPoAmend from '../src/scm/routes/po-amendments.ts?raw';
 import rawOutbox from '../src/scm/lib/autocount-outbox.ts?raw';
+import rawSiSource from '../src/scm/lib/si-autocount-source.ts?raw';
 import rawWriteback from '../src/services/autocount-writeback.ts?raw';
 import rawService from '../scripts/autocount-service/AcSyncService.cs?raw';
 
@@ -31,15 +39,17 @@ const SO = lf(rawSo);
 const PO = lf(rawPo);
 const DO = lf(rawDo);
 const GRN = lf(rawGrn);
+const GRN_OUTBOX = lf(rawGrnOutbox);
 const SI = lf(rawSi);
 const PI = lf(rawPi);
 const SO_AMEND = lf(rawSoAmend);
 const PO_AMEND = lf(rawPoAmend);
 const OUTBOX = lf(rawOutbox);
+const SI_SOURCE = lf(rawSiSource);
 const WRITEBACK = lf(rawWriteback);
 const SERVICE = lf(rawService);
 
-const ROUTERS = [SO, PO, DO, GRN, SI, PI, SO_AMEND, PO_AMEND];
+const ROUTERS = [SO, PO, DO, GRN, GRN_OUTBOX, SI, PI, SO_AMEND, PO_AMEND];
 
 const between = (hay: string, startAnchor: string, endAnchor: string): string => {
   const start = hay.indexOf(startAnchor);
@@ -107,21 +117,32 @@ describe('the four downstream document types queue an edit on every line and hea
      neighbour's block. */
   test('DO — header PATCH and line add / edit / delete', () => {
     expect(between(DO, "deliveryOrdersMfg.patch('/:id',", 'return c.json({\n    ok: true,')).toContain('queueAcDoEdit(c, id)');
-    expect(between(DO, "deliveryOrdersMfg.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
+    /* Anchored on the DECLARATION, not the registration: the add-line handler
+       became a named export (2026-08-23) so the outbound-category suite could
+       drive it, which moved `deliveryOrdersMfg.post('/:id/items',` to a one-line
+       registration BELOW the body. The pin still spans the same handler. */
+    expect(between(DO, 'export const addDeliveryOrderItemHandler', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });
 
+  /* The pinned shapes carry `sb` since 2026-08-20: the outbox helper now takes
+     its client explicitly, so a caller inside a PG transaction can hand it the
+     transactional one. Pinning the ARGUMENTS, not just the name, is what makes
+     that visible here — a signature change cannot slip past this file. */
   test('GRN — header PATCH and line add / edit / delete', () => {
-    expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, id)');
-    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, grnId)');
-    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, grnId)');
-    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, grnId, retire)');
+    expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, sb, id)');
+    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
   });
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(SI, "salesInvoices.patch('/:id',", 'return c.json({ ok: true, id });')).toContain('queueAcSiEdit(c, id)');
-    expect(between(SI, "salesInvoices.post('/:id/items',", 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
+    /* Anchored on the DECLARATION, not the registration: this handler was extracted
+     as a named export in 2026-08-19's company-scope fix so a test could mount it,
+     which moved `salesInvoices.post('/:id/items', ...)` below the body. */
+  expect(between(SI, 'export const appendSalesInvoiceItemHandler =', 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id, retire)');
   });
@@ -135,7 +156,7 @@ describe('the four downstream document types queue an edit on every line and hea
 });
 
 describe('the SO and PO mutation paths the named-anchor test did not cover', () => {
-  test('SO price override — the admin side-door that writes unit_price_centi', () => {
+  test('SO price override — the admin side-door that writes unit_price_sen', () => {
     /* UnitPrice IS an AutoCount field. This route was the one price path that
        does not go through PATCH /:docNo/items/:itemId, so the ERP and the
        account book quoted different money for the same line. */
@@ -194,7 +215,7 @@ describe('the create-side holes', () => {
     /* Gated on the status LITERAL that was inserted, not on `asDraft` — a bucket
        whose SO line resolved no warehouse is forced to DRAFT by a second rule
        that `asDraft` does not describe. */
-    expect(tail).toContain("if (headerPayload.status !== 'DRAFT')");
+    expect(tail).toContain("headerPayload.status === 'DRAFT' ? [] :");
   });
 
   test('a document AutoCount cannot hold is RECORDED, not dropped', () => {
@@ -206,10 +227,27 @@ describe('the create-side holes', () => {
       .toContain('recordParentlessCreate(sb, {');
     expect(between(GRN, 'await recordGrnCreate(sb,', 'const movementErrors = postRes && postRes.ok'))
       .toContain('recordParentlessCreate(sb, {');
+    /* SI DELEGATES, because it is the one of the four that has to CHECK first.
+       POST /sales-invoices accepts a source delivery order on both halves of
+       the document (`deliveryOrderId` on the header, `doItemId` per line), so
+       the unconditional call that used to sit here asserted a fact it never
+       tested and filed every desktop from-DO invoice as ERP-only. The record
+       still exists — one file down, on the branch that established it. */
     expect(between(SI, 'await recordSiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post'))
-      .toContain('recordParentlessCreate(sb, {');
+      .toContain('recordSiAutoCountSource(sb, {');
     expect(between(PI, 'await recordPiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing'))
       .toContain('recordParentlessCreate(sb, {');
+  });
+
+  test('the SI record is CONDITIONAL — it sits on the branch where no line has a source', () => {
+    /* The defect was never the record; it was an unconditional call claiming
+       "no source Delivery Order" beside a handler that accepts one. An anchor
+       on the branch is what stops it becoming unconditional again. */
+    const noSource = between(SI_SOURCE, 'if (doIds.size === 0) {', "return 'parentless';");
+    expect(noSource).toContain('recordParentlessCreate(sb, {');
+    // And the other side of the same decision: a real single source is QUEUED.
+    expect(SI_SOURCE).toContain("op: 'do_to_iv'");
+    expect(SI_SOURCE).toContain('enqueueConvert(sb, {');
   });
 
   test('the parentless-create record rides an op the outbox CHECK constraint admits', () => {

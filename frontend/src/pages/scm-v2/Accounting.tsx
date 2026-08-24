@@ -40,17 +40,18 @@ import {
   type UnbookedPayments,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 // The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
-const fmt = (sen: number | null | undefined) => fmtCenti(sen);
+const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
 type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
 
@@ -428,7 +429,7 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
     <div style={cardStyle} className="space-y-3">
       <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <input type="date" style={fieldStyle} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+        <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
         <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
           value={narration} onChange={(e) => setNarration(e.target.value)} />
       </div>
@@ -583,7 +584,7 @@ const GlTab = () => {
 
 /* ── Trial Balance ───────────────────────────────────────────────────── */
 
-const TrialBalanceTab = () => {
+export const TrialBalanceTab = () => {
   const q = useAccountBalances();
   // Pre-sort into the canonical statement order — DataTable's groupBy buckets
   // in first-seen row order, so this IS the group order until the user sorts.
@@ -608,20 +609,43 @@ const TrialBalanceTab = () => {
   }, [rows]);
 
   type BalanceRow = (typeof rows)[number];
+  /* A self-check folded over a list that is empty BECAUSE THE READ FAILED
+     computes dr === cr === 0, which reads as "the books balance" — in the green
+     frame, as a finding. It is not a finding about the ledger, it is the
+     absence of one. `isLoading` alone cannot tell them apart: it is FALSE after
+     a failed fetch, which is exactly when `rows` is emptiest. So the tiles show
+     the unknown marker and the failure is stated. */
+  const unknown = q.isError || (!q.isSuccess && rows.length === 0);
+  const NOT_KNOWN = '—';
   return (
     <div className="space-y-3">
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
-        <SummaryTile label="Σ Debit" value={fmt(totals.dr)} />
-        <SummaryTile label="Σ Credit" value={fmt(totals.cr)} />
+      {q.isError && (
         <div style={{
           padding: 'var(--space-3) var(--space-4)',
-          background: totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
-          border: `1px solid ${totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
+          background: 'rgba(184, 51, 31, 0.10)',
+          border: '1px solid var(--c-festive-b, #B8331F)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: 'var(--fs-13)',
+          color: 'var(--c-festive-b, #B8331F)',
+        }}>
+          <strong>The account balances could not be loaded, so this report is not a statement about the books.</strong>{' '}
+          {q.error instanceof Error ? q.error.message : 'Please try again.'}
+        </div>
+      )}
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
+        <SummaryTile label="Σ Debit" value={unknown ? NOT_KNOWN : fmt(totals.dr)} />
+        <SummaryTile label="Σ Credit" value={unknown ? NOT_KNOWN : fmt(totals.cr)} />
+        <div style={{
+          padding: 'var(--space-3) var(--space-4)',
+          background: unknown ? 'var(--c-cream)' : totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
+          border: `1px solid ${unknown ? 'var(--c-line, rgba(34,31,32,0.08))' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
           borderRadius: 'var(--radius-md)',
         }}>
           <div className={styles.subtitle} style={{ marginBottom: 2 }}>Difference (must be 0.00)</div>
-          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
-            {fmt(totals.diff)}{totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}
+          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: unknown ? 'var(--c-ink)' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
+            {unknown
+              ? `${NOT_KNOWN} — not checked`
+              : `${fmt(totals.diff)}${totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}`}
           </div>
         </div>
       </section>
@@ -630,9 +654,9 @@ const TrialBalanceTab = () => {
         tableId="accounting-balances"
         layoutFamily="accounting-balances"
         exportName="trial-balance"
-        rows={q.isLoading ? null : rows}
+        rows={q.isLoading || q.isError ? null : rows}
         loading={q.isLoading}
-        emptyLabel="No balances yet."
+        emptyLabel={q.isError ? 'The account balances could not be loaded.' : 'No balances yet.'}
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[
@@ -801,7 +825,7 @@ const ArAgingTab = () => {
 
   return (
     <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
+      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
       <DataTable<ArAgingRow>
         tableId="accounting-ar-aging"
         layoutFamily="accounting-ar-aging"
@@ -817,8 +841,8 @@ const ArAgingTab = () => {
           { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_centi / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+            getValue: (r) => r.outstanding_sen / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
           },
           { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
           { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
@@ -836,7 +860,7 @@ const ApAgingTab = () => {
 
   return (
     <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
+      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
       <DataTable<ApAgingRow>
         tableId="accounting-ap-aging"
         layoutFamily="accounting-ap-aging"
@@ -859,8 +883,8 @@ const ApAgingTab = () => {
           { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_centi / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+            getValue: (r) => r.outstanding_sen / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
           },
           { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
           { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
@@ -873,9 +897,9 @@ const ApAgingTab = () => {
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 type Bucket = 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
 
-const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_centi: number }>(rows: T[]) => {
+const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_sen: number }>(rows: T[]) => {
   const out: Record<Bucket, number> = { 'CURRENT': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
-  for (const r of rows) out[r.aging_bucket] += r.outstanding_centi;
+  for (const r of rows) out[r.aging_bucket] += r.outstanding_sen;
   return out;
 };
 

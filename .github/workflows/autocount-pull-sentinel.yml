@@ -1,0 +1,72 @@
+name: AutoCount pull sentinel (read-only)
+
+# Is the AutoCount inbound pull MOVING DATA, or only reporting that it ran?
+#
+# WHY IT EXISTS. At the Postgres cutover the INSERT in services/pull.ts named
+# seven columns the Postgres table does not have, so every sales-order row
+# failed with 42703 — and the advance is guarded by `failed === 0`, so the
+# checkpoint froze at the cutover date and the same window was refetched
+# forever. Every per-row failure was caught and counted, so the job kept
+# reporting normal-looking runs while the mirror took nothing.
+#
+# It ran every five minutes, for months, and moved nothing. It was found on
+# 2026-08-19 by a salesperson who could not raise a Service Case against an
+# order that plainly exists in AutoCount — that is, by a person who could not do
+# their job. The INSERT is fixed; NOTHING watched for the shape until this.
+#
+# WHY NOT THE EXISTING CHECK. autocount-pull-health.yml prints the same numbers
+# and always exits 0. It is a diagnostic: manual dispatch, answering a question
+# somebody already thought to ask. It could not have found this, because the
+# entire failure is that nobody knew to ask. A diagnostic and a sentinel are
+# different jobs and this repo needs both.
+#
+# ALARM CHANNEL. Read-only — the script only SELECTs. On an alarm it exits
+# non-zero, this job fails, and the owner gets the standard failed-workflow
+# email. That is the same channel do-link-sentinel.yml and mirror-sentinel.yml
+# use, and the only notifier this repo has.
+#
+# EXIT 2 = "could not answer" and also fails the job, deliberately. A sentinel
+# that cannot see must not report green; CLAUDE.md calls that "the check that is
+# not running", and this repo has already paid for it twice.
+#
+# NOTE: scheduled runs only fire from the repo's DEFAULT branch. To try it on a
+# feature branch, use "Run workflow" (workflow_dispatch) and pick the branch.
+
+on:
+  schedule:
+    - cron: "37 */6 * * *" # four times a day, off the hour so it does not pile onto :00 jobs
+  workflow_dispatch:
+
+concurrency:
+  group: autocount-pull-sentinel
+  cancel-in-progress: false
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # The judgement half runs here, every time, before the sentinel does. A
+      # checker nobody runs is not a checker, and these thresholds are the only
+      # part of a sentinel that CAN be proved without a production database.
+      - name: Test the sentinel's own rules
+        run: node --test scripts/lib/autocount-pull-rules.test.mjs
+      - run: node scripts/autocount-pull-sentinel.mjs
+        env:
+          # Same precedence as do-link-sentinel.yml: the dedicated secret wins if
+          # it is ever set, otherwise the prod DATABASE_URL this repo already
+          # uses and mirror-sentinel.yml already proves live.
+          SENTINEL_HOUZS_DB_URL: ${{ secrets.SENTINEL_HOUZS_DB_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

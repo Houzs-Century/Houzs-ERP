@@ -19,19 +19,20 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { auth, requirePermission } from "../middleware/auth";
 import { companyContext } from "../middleware/companyContext";
+import { hasPermission } from "../services/permissions";
+import { isDirectorUser } from "../services/pmsAccess";
 import {
   createSession,
   verifyPassword,
   hashPassword,
   SESSION_ORIGIN_POS,
-  type SessionOrigin,
 } from "../services/auth";
 import { setPosPinForUser } from "../services/posPin";
 
-/* sessionOrigin is set by `auth` (middleware/auth.ts) from the session row; it
-   is declared here because /exchange-web-session has to READ it — an exchanged
-   session must carry the origin of the session it was exchanged from. */
-type Vars = { user?: { id: number }; companyId?: number; sessionOrigin?: SessionOrigin };
+/* No `sessionOrigin` here on purpose. This router does not READ the origin of
+   the caller's session anywhere — /exchange-web-session used to, and the ruling
+   at that handler is why it no longer does. */
+type Vars = { user?: { id: number }; companyId?: number };
 const pos = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 const MAX_FAILURES = 5;
@@ -214,8 +215,41 @@ pos.post("/verify-pin", auth, async (c) => {
 // commission machinery, which has no Houzs home yet (#19) — so KPI is 0 and
 // Products = goods here, which is EXACTLY 2990's own value when no item-KPI flag
 // is active. status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
-// ?salesperson (owner-tier targeting) is not yet honoured — the personal card
-// always follows the caller (TODO with the HR work).
+// ?salesperson targets the Personal card at ANOTHER salesperson. Honoured since
+// 2026-08-19, and gated on canViewAllSales HERE, not on the POS: the board was
+// already filtering by it while this card silently kept answering for the
+// caller, so a director reading "SCARLETT · RM 2,990 · 2 orders" was reading his
+// OWN two orders under her name. A client-side gate is not a permission — the
+// param arrives from a browser, so an ungated read would hand any salesperson a
+// colleague's month. Unknown/unauthorised name => the caller's own figures, the
+// behaviour every caller had before.
+//
+// `showroomScope` says WHICH scope the Showroom card used, because the two are
+// not the same question: staff WITH a showroom get their showroom mates, staff
+// WITHOUT one (director / owner / coordinator) get the whole company. Both used
+// to render under the word "SHOWROOM", so a director saw company-wide figures
+// under a showroom heading and no two people's tiles agreed.
+/** May this caller point the Personal KPI tile at ANOTHER salesperson?
+ *
+ *  EXPORTED AND PURE so the test EXECUTES it. Its two predecessors both died
+ *  in ways a source-text pin cannot see: canViewAllSales(c) was called with a
+ *  context whose houzsUser is never set on this route (gate permanently
+ *  closed), and then hasPermission was handed the USER where it takes the
+ *  PERMISSIONS — `user.has is not a function`, a 500 on every sales-stats read,
+ *  both tiles "Couldn't load" (2026-08-20, reported with a screenshot both
+ *  times). An `as never` cast silenced the compiler on the second one. The
+ *  test now calls this function with real shapes instead of matching its
+ *  spelling. */
+export function canTargetSalesperson(
+  caller: { position_name?: string | null; permissions_set?: ReadonlySet<string>; permissions?: ReadonlyArray<string> } | null | undefined,
+  wantSalesperson: string,
+): boolean {
+  if (wantSalesperson === "" || wantSalesperson === "all") return false;
+  const perms = caller?.permissions_set ?? caller?.permissions ?? [];
+  return hasPermission(perms, "scm.so.view_all")
+    || isDirectorUser({ position_name: caller?.position_name ?? null, permissions_set: caller?.permissions_set } as never);
+}
+
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
   const DB = c.env.DB;
@@ -224,6 +258,38 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     `SELECT id, name, showroom_id FROM scm.staff WHERE user_id = ?`,
   ).bind(uid).first<{ id: string; name: string; showroom_id: string | null }>();
   const companyId = (c.get("companyId") as number | undefined) ?? null;
+
+  /* Whose Personal card. Defaults to the caller; a view-all caller may name
+     someone else. TWO corrections against the first version (2026-08-19, found
+     by the reporter within hours):
+     · the gate read canViewAllSales(c), whose director arm needs `houzsUser` —
+       which only scm/middleware/auth.ts stashes. On /api/pos it is never set,
+       so a Sales Director (the exact person the picker is FOR) always failed
+       the gate. Here `user` IS the real Houzs caller, so the check runs
+       directly off it: the flat key, or the director org position.
+     · the lookup matched staff.name; the POS picker sends staff.id
+       (`<option value={s.id}>`). Every lookup missed and fell back to the
+       caller — the label changed, the numbers did not. Matched by id when the
+       param is uuid-shaped (guarded: a malformed value on a uuid column 500s
+       with 22P02 — see the pin-login note above), by name otherwise.
+     A miss still falls back to the caller rather than erroring — the card is a
+     dashboard tile, and a 500 here would blank the whole page. */
+  const wantSalesperson = (c.req.query("salesperson") || "").trim();
+  /* Vars types `user` as { id } only; the runtime object is the full session
+     user (services/auth.ts getUserBySession — permissions_set: Set<string>,
+     position_name). Widening cast, not `as never`: the parameter type still
+     checks every property we read. */
+  const mayTarget = canTargetSalesperson(
+    c.get("user") as Parameters<typeof canTargetSalesperson>[0],
+    wantSalesperson,
+  );
+  const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const target = mayTarget
+    ? await DB.prepare(UUID_RX.test(wantSalesperson)
+        ? `SELECT id, name FROM scm.staff WHERE id = ? LIMIT 1`
+        : `SELECT id, name FROM scm.staff WHERE name = ? LIMIT 1`)
+        .bind(wantSalesperson).first<{ id: string; name: string }>()
+    : null;
 
   // Period (Asia/Kuala_Lumpur = UTC+8). so_date is a DATE → range compares are tz-free.
   const fromYmd = c.req.query("from") || null;
@@ -238,21 +304,33 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 
   const empty = {
     monthLabel, monthStart, monthEnd, staffName: me?.name ?? "",
+    showroomScope: me?.showroom_id ? "showroom" : "company",
     showroomTotal: 0, showroomCount: 0, showroomProducts: 0, showroomService: 0, showroomKpi: 0,
     personalTotal: 0, personalCount: 0, personalProducts: 0, personalService: 0, personalKpi: 0,
   };
   if (!me) return c.json(empty);
 
   // Shared period + company + status predicate.
-  const conds = ["status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
+  // DRAFT is COUNTED here, deliberately. #2356 excluded it on the reasoning that
+  // a draft is not a sale, which is true of commission and of the MTD reports —
+  // but this card is not a commission figure. It is the salesperson's pipeline
+  // for the month, and the owner wants a started order to appear in it.
+  // The mismatch #2356 was chasing (card 28, board 1) is closed from the other
+  // side instead: GET /mfg-sales-orders/mine now returns drafts too, so the
+  // board lists the same 28 orders this card counts. Change the two together or
+  // they drift apart again.
+  /* `NOT on_hold` since mig 0324. The hold is a MARKER beside the status, so
+     the status test alone stopped being able to see one. Raw SQL rather than a
+     PostgREST predicate here because this whole card is one aggregate query. */
+  const conds = ["NOT on_hold", "status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
   const binds: unknown[] = [monthStart];
   if (toYmd) { conds.push("so_date <= ?"); binds.push(toYmd); }
   if (companyId != null) { conds.push("company_id = ?"); binds.push(Number(companyId)); }
 
   const aggSql = (extraWhere: string) =>
     `SELECT count(*)::int AS cnt,
-            COALESCE(sum(total_revenue_centi),0)::bigint AS total_centi,
-            COALESCE(sum(COALESCE(mattress_sofa_centi,0)+COALESCE(bedframe_centi,0)+COALESCE(accessories_centi,0)+COALESCE(others_centi,0)),0)::bigint AS goods_centi
+            COALESCE(sum(total_revenue_sen),0)::bigint AS total_sen,
+            COALESCE(sum(COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)+COALESCE(others_sen,0)),0)::bigint AS goods_sen
        FROM scm.mfg_sales_orders
       WHERE ${[...conds, extraWhere].join(" AND ")}`;
 
@@ -268,14 +346,15 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomBinds.push(...ids);
   }
 
-  type Agg = { cnt: number; total_centi: number; goods_centi: number };
+  type Agg = { cnt: number; total_sen: number; goods_sen: number };
   const showroomRow = await DB.prepare(aggSql(showroomWhere)).bind(...binds, ...showroomBinds).first<Agg>();
-  const personalRow = await DB.prepare(aggSql("salesperson_id = ?")).bind(...binds, me.id).first<Agg>();
+  const personalRow = await DB.prepare(aggSql("salesperson_id = ?"))
+    .bind(...binds, target?.id ?? me.id).first<Agg>();
 
   const toMyr = (centi: number) => Math.round(Number(centi) / 100);
   const card = (r: Agg | null) => {
-    const total = Number(r?.total_centi ?? 0);
-    const goods = Number(r?.goods_centi ?? 0);
+    const total = Number(r?.total_sen ?? 0);
+    const goods = Number(r?.goods_sen ?? 0);
     return {
       total: toMyr(total),
       count: Number(r?.cnt ?? 0),
@@ -288,7 +367,11 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   const p = card(personalRow);
 
   return c.json({
-    monthLabel, monthStart, monthEnd, staffName: me.name,
+    monthLabel, monthStart, monthEnd,
+    /* WHOSE Personal card this is. The POS labels the tile from this, so the
+       name and the number can no longer disagree. */
+    staffName: target?.name ?? me.name,
+    showroomScope: me.showroom_id ? "showroom" : "company",
     showroomTotal: s.total, showroomCount: s.count,
     showroomProducts: s.products, showroomService: s.service, showroomKpi: s.kpi,
     personalTotal: p.total, personalCount: p.count,
@@ -304,27 +387,35 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 //   https://erp.houzscentury.com/#sso=<token>&next=<path>
 // in a new tab. The Houzs frontend bootstrap (src/main.tsx) reads the fragment,
 // stores the token in sessionStorage, strips the fragment, navigates to `next`.
-// The mint CARRIES the caller's origin. It used to drop it, and the comment here
-// called that deliberate — "so the drift gate treats this like an ordinary
-// desktop session". That is an SSO convenience that hands out authority the
-// caller does not have: `origin='pos'` is the hinge `isPosTabletCaller` reads
-// (scm/routes/mfg-sales-orders.ts:836) to refuse a POS-side edit that drops the
-// bill below the sales order's own total, and to withhold `trustOperatorSelling`
-// (:4232) and `posTablet` (:4299). A POS tablet that wants past those four
-// refusals only had to call this endpoint and reuse the token it got back —
-// nothing else about the caller changed, so the gate was never protecting
-// anything a tablet could not shed in one request.
 //
-// An exchange must never widen the session it is exchanged FROM. Handing the
-// origin through keeps the actual purpose intact (the salesperson still gets a
-// full desktop session token, still opens Houzs pages without a second
-// password); an office session, which is where the "ordinary desktop session"
-// case really lives, has no origin to carry and is unaffected.
+// THE MINT DROPS THE ORIGIN. It is an ERP session, and an ERP session follows
+// the ERP's rules.
+//
+// OWNER RULING 2026-08-16, after a salesperson signed in at the PIN door, came
+// through this door, opened a Sales Order in the ERP and could not change a
+// delivery-fee line from 250 to 125 — 422 `so_total_below_original`,
+// "Changes cannot reduce the bill below the original sales order total."
+// 「为什么我们要跟着 POS 的规矩?进了这个 ERP 就跟这个 ERP 的规矩。在我们
+// ERP 里编辑,金额就必须能改。」 The POS follows the ERP's rules here, not the
+// other way round.
+//
+// This reverses the 2026-08-14 change that made the mint CARRY the origin. That
+// change was right about the mechanism and wrong about the policy: it is true
+// that a tablet could shed `origin='pos'` by asking for a second token, and it
+// is exactly that shedding the owner wants, because the token it gets back is
+// only ever used to drive the ERP web app. What the gate defended — a tampered
+// POS submitting a doctored low total — it no longer defends for anyone holding
+// a PIN, and the owner has been told so and has ruled anyway. See BUG-HISTORY.md
+// and the PR that carries this line for the full blast radius.
+//
+// WHAT IS UNCHANGED: the PIN door (/pin-login) still stamps SESSION_ORIGIN_POS,
+// so the tablet's OWN token still carries it and the real POS surface is held to
+// every restriction it is held to today. The only session that loses the mark is
+// the one minted here — the one that exists solely to open ERP pages.
 pos.post("/exchange-web-session", auth, async (c) => {
   const uid = c.get("user")?.id;
   if (uid == null) return c.json({ error: "not_authenticated" }, 401);
-  const origin = c.get("sessionOrigin") as SessionOrigin | undefined;
-  const token = await createSession(c.env, Number(uid), origin);
+  const token = await createSession(c.env, Number(uid));
   return c.json({ token, userId: Number(uid) });
 });
 

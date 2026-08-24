@@ -15,6 +15,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 import type { SupplierRow } from '../lib/suppliers-queries';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
+
+/* How tall this checkbox list wants to be when there is room for it. Shorter
+   whenever there is not — lib/anchoredPanel clamps it to the space on
+   whichever side of the trigger has more, and flips it above the chip row
+   rather than letting the last suppliers fall off the bottom of the window. */
+const SUPPLIER_MENU_MAX_H = 280;
 
 /* Perf cap — bound the rendered checkbox rows so a large ACTIVE-supplier list
    can't freeze the dropdown open. A search input above the list keeps every
@@ -41,7 +48,7 @@ export function MultiSupplierPicker({
   // it); menuRef tracks the portaled node so click-outside doesn't close on an
   // in-dropdown click, and menuPos pins it under the trigger.
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const menuPos = useAnchoredPanel(wrapRef, open, SUPPLIER_MENU_MAX_H);
 
   // Click-outside closes the dropdown — must treat BOTH the wrapper and the
   // portaled menu as "inside".
@@ -54,21 +61,6 @@ export function MultiSupplierPicker({
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
-
-  // Pin the portaled dropdown under the wrapper while open.
-  useEffect(() => {
-    if (!open) { setMenuPos(null); return; }
-    const update = () => {
-      const el = wrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update); };
   }, [open]);
 
   const selectedSet = new Set(selectedIds);
@@ -181,19 +173,14 @@ export function MultiSupplierPicker({
         </button>
       </div>
 
-      {open && menuPos && createPortal(
+      {menuPos && createPortal(
         <div ref={menuRef} style={{
-          position: 'fixed',
-          top: menuPos.top,
-          left: menuPos.left,
-          width: menuPos.width,
-          maxHeight: 280,
+          ...anchoredPanelStyle(menuPos),
           overflowY: 'auto',
           background: 'var(--c-paper)',
           border: '1px solid var(--line)',
           borderRadius: 'var(--radius-sm)',
           boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-          zIndex: 1000,
           display: 'flex',
           flexDirection: 'column',
         }}>
@@ -215,7 +202,10 @@ export function MultiSupplierPicker({
               }}
             />
           )}
-          <div style={{ overflowY: 'auto' }}>
+          {/* minHeight 0 so this list gives way when the shared positioner
+              shortens the whole panel — otherwise a cramped window pushes the
+              search box off the top instead of scrolling the rows. */}
+          <div style={{ overflowY: 'auto', minHeight: 0 }}>
           {suppliers.length === 0 ? (
             <div style={{ padding: '12px', color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
               No ACTIVE suppliers.

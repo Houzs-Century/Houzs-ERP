@@ -1,5 +1,5 @@
 /**
- * The three MANDATORY owner rules in CLAUDE.md, expressed as code.
+ * The four MANDATORY owner rules in CLAUDE.md, expressed as code.
  *
  * NO SHEBANG in this file — it is imported by scripts/lib/working-agreement.test.mjs
  * (see CLAUDE.md, "Anything a TEST imports lives in scripts/lib/ and carries NO
@@ -40,7 +40,25 @@ const COMMENT_ONLY_RX = /^\s*(\/\/|\/\*|\*\/|\*(?!\/)|--|#(?!!))/;
 
 const MIGRATIONS_PG = "backend/src/db/migrations-pg/";
 
-export const BUG_HISTORY_PATH = "BUG-HISTORY.md";
+/**
+ * THE BUG LEDGER IS A DIRECTORY, one file per entry, since 2026-08-20.
+ *
+ * It was `BUG-HISTORY.md`: a single file that every code PR was required to
+ * prepend to, so every open branch edited the same first line.
+ * `.gitattributes` carried `BUG-HISTORY.md merge=union` and OUR git resolved
+ * that silently — but the attribute is applied by whichever git PERFORMS the
+ * merge, and `main` now runs a MERGE QUEUE, whose stacking is done by GitHub's
+ * git reading its own configuration. Measured on the live queue 2026-08-20:
+ * seven entries, six UNMERGEABLE, all seven touching `BUG-HISTORY.md`. The
+ * repo's own mandatory rule was serialising the queue to one PR at a time.
+ *
+ * Two PRs adding entries now write two different paths, so there is nothing
+ * for any git to call a conflict. Full trace: backend/scripts/lib/bug-ledger.mjs.
+ */
+export const BUG_ENTRY_DIR = "docs/bugs/";
+
+/** `docs/bugs/0462-the-thing-broke.md`. The README in that directory is not an entry. */
+export const BUG_ENTRY_FILE_RX = /^\d{4,}-[a-z0-9][a-z0-9-]*\.md$/;
 export const MODULE_GUIDE_DIR = "docs/modules/";
 
 export const LABEL_NO_BUG_HISTORY = "no-bug-history-needed";
@@ -78,6 +96,13 @@ export function parseUnifiedDiff(patch) {
       file = {
         path: m ? m[2] : raw.slice(11),
         oldPath: m ? m[1] : null,
+        /* Whether git CREATED this path in this diff. Rule 1 needs it: now that
+           the ledger is one file per entry, "added an entry" means "added a
+           file", and editing somebody else's entry must not read as writing
+           your own. Read from the `new file mode` header AND from
+           `--- /dev/null`, because the two diff producers this gate is fed by
+           (`git diff` and `gh pr diff`) do not both always emit the first. */
+        isNew: false,
         added: [],
         removed: [],
       };
@@ -86,6 +111,17 @@ export function parseUnifiedDiff(patch) {
       continue;
     }
     if (!file) continue;
+    if (raw.startsWith("new file mode ")) {
+      file.isNew = true;
+      continue;
+    }
+    /* `--- /dev/null` marks a creation. It is intercepted here for a second
+       reason too: it starts with `-`, so without this line it was collected as
+       a REMOVED line of text `-- /dev/null` on every file the diff adds. */
+    if (raw.startsWith("--- /dev/null")) {
+      file.isNew = true;
+      continue;
+    }
     if (raw.startsWith("+++ b/")) {
       const p = raw.slice(6);
       if (p !== "/dev/null") file.path = p;
@@ -165,14 +201,42 @@ export function detectFixIntent({ title, branch, body, templateBody }) {
 }
 
 /**
- * A NEW entry, not merely a touched file. `BUG-HISTORY.md` is 10,000+ lines;
- * a typo fix in it is not a bug log. An entry is a new `## ` heading.
+ * A NEW entry, which since 2026-08-20 means a NEW FILE under `docs/bugs/`
+ * carrying a `## ` heading.
+ *
+ * Both halves are load-bearing, and neither is new strictness:
+ *
+ *   · NEW FILE, because the ledger no longer has one file everyone appends to.
+ *     Requiring newness is also what closes the hole ESCAPE 3 recorded against
+ *     the old shape — rewording somebody else's existing heading counted as
+ *     writing your own entry, and against a single file there was no way to
+ *     tell the two apart. Against a directory there is: your entry is a path
+ *     that did not exist.
+ *   · A `## ` HEADING, because an empty file is not an entry. Same bar the old
+ *     rule set ("a typo fix in BUG-HISTORY.md is not a bug log").
+ *
+ * The FILENAME SHAPE is checked as well, and reported separately: a mis-named
+ * file is invisible to the ledger, the index and this gate all at once, which
+ * is the one failure that would otherwise look like a clean pass.
  */
-export function addsBugHistoryEntry(files) {
-  const f = files.find((x) => x.path === BUG_HISTORY_PATH);
-  if (!f) return { touched: false, entry: false, heading: null };
-  const heading = f.added.map((a) => a.text).find((t) => /^\s{0,3}##\s+\S/.test(t));
-  return { touched: true, entry: Boolean(heading), heading: heading ? heading.trim() : null };
+export function addsBugEntry(files) {
+  const touched = files.filter((x) => x.path.startsWith(BUG_ENTRY_DIR) && x.path.endsWith(".md"));
+  if (touched.length === 0) return { touched: false, entry: false, heading: null, file: null, misnamed: [] };
+
+  const misnamed = [];
+  for (const f of touched) {
+    const base = f.path.slice(BUG_ENTRY_DIR.length);
+    if (!f.isNew || base === "README.md") continue;
+    if (!BUG_ENTRY_FILE_RX.test(base)) misnamed.push(f.path);
+  }
+
+  for (const f of touched) {
+    const base = f.path.slice(BUG_ENTRY_DIR.length);
+    if (!f.isNew || !BUG_ENTRY_FILE_RX.test(base)) continue;
+    const heading = f.added.map((a) => a.text).find((t) => /^\s{0,3}##\s+\S/.test(t));
+    if (heading) return { touched: true, entry: true, heading: heading.trim(), file: f.path, misnamed };
+  }
+  return { touched: true, entry: false, heading: null, file: null, misnamed };
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +377,26 @@ const normaliseStem = (stem) =>
  * sales-order), which catches the sibling files a guide has not got around to
  * quoting.
  */
+/**
+ * Does this file's diff change CODE, as opposed to only comments, blank lines
+ * and import bookkeeping?
+ *
+ * Deliberately crude, and biased towards "no". A false NO costs one PR its
+ * guide update; a false YES makes the gate fire on a typo fix in a comment,
+ * and a gate that cries wolf is deleted within the week. The kinds of line
+ * discounted here are the ones that genuinely cannot change behaviour.
+ */
+export function changesLogic(file) {
+  const substantive = (t) => {
+    const line = String(t).trim();
+    if (line === "") return false;
+    if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line.startsWith("*/")) return false;
+    if (/^import\s/.test(line) || /^export\s+\{[^}]*\}\s+from\s/.test(line)) return false;
+    return true;
+  };
+  return file.added.some((l) => substantive(l.text)) || file.removed.some((l) => substantive(l.text));
+}
+
 export function buildModuleIndex(guides) {
   const byPath = new Map();
   const byStem = new Map();
@@ -388,6 +472,295 @@ const findStatement = (body, rx) => {
 };
 
 // ---------------------------------------------------------------------------
+// Rule 4 — a REMEDY CLAIM needs the run that proved it
+//
+// The three rules above gate CODE. Nothing gated a CLAIM ABOUT AN OPERATION —
+// a sentence telling a future reader that running some thing will repair some
+// other thing. That sentence is not code, so no test covers it; it is not a
+// population, so `completeness-claim` does not see it; it is not a migration,
+// so `Reversal:` does not apply. It goes straight into a PR body or a module
+// guide and is believed.
+//
+// 2026-08-19 is the worked example, and it cost the owner a day of a
+// salesperson's work. A PR shipped `?mode=all` on the AutoCount pull and
+// described it as "the clean way to collect a backlog". That sentence was
+// written from READING `services/pull.ts:29` — `getAll()` is called and the
+// checkpoint is not touched, both true — and the operation was never once
+// executed. Dispatched against production afterwards: 39 seconds, then HTTP 503
+// `Worker exceeded resource limits`. ~13,000 orders cannot be fetched and
+// upserted inside one Cloudflare Worker request. The remedy that shipped was
+// `?since=YYYY-MM-DD` windows.
+//
+// Note what would NOT have caught it. The code was correct — `mode=all` does
+// exactly what the source says. Types, lint, tests and review all passed,
+// because none of them was wrong. The only wrong artifact was the CLAIM, and
+// this repo had nothing that reads claims about operations.
+//
+// WHAT THIS GATE CAN AND CANNOT DO — stated plainly, because overselling a
+// check is the same failure in a different costume.
+//
+//   It CANNOT verify the pasted output is real. Unlike `completeness-claim`,
+//   which re-runs the enumeration, a production dispatch cannot be reproduced
+//   in CI. A determined author can forge an `Observed:` line.
+//
+//   It CAN catch the claim written from reading, which is the failure that
+//   actually happens here — the author is not lying, they simply never ran it
+//   and had no moment that asked. That author has NOTHING to paste. They must
+//   either go and run it, or write UNTESTED, and UNTESTED is the word that
+//   stops a reader from relying on the sentence.
+//
+// Forgetting and forging are different acts. This gate is aimed at the first.
+// ---------------------------------------------------------------------------
+
+export const LABEL_REMEDY_UNTESTED = "remedy-untested";
+
+/**
+ * PRESCRIBING an operation — telling the reader to perform one. Not merely
+ * mentioning that one exists.
+ *
+ * The distinction is the whole gate, and the first draft got it wrong in both
+ * directions when run against the real files. A bare `\brun\b` fired on "the
+ * job kept reporting a normal-looking run", which prescribes nothing; and
+ * requiring the outcome on the SAME line missed the actual defect, because
+ * "Run the pull in 'all' mode" and "the clean way to collect a backlog" are
+ * four console.log lines apart. So: an imperative must sit at a sentence
+ * boundary (capitalised, as imperatives are), or carry a modal, or be a gerund
+ * subject — and the outcome is looked for in a small WINDOW after it.
+ */
+/* CASE MATTERS for the bare imperative, and nowhere else. "Run the pull" is an
+   instruction; "a normal-looking run" is narration, and the capital is what
+   tells them apart without parsing English. The boundary set includes a quote
+   and an open paren because the sentences this gate exists for live inside
+   console.log("..."), and leaving those out made the detector silent on the
+   exact line it was built from. */
+const IMPERATIVE_RX =
+  /(?:^|[.:;!?]\s+|^\s*[-*>]\s+|["'`(\[]\s*)(?:Re-?run|Run|Dispatch|Trigger|Execute|Invoke|Kick off)\b/;
+
+/* Everything else is case-insensitive: "Just re-run it" and "just re-run it"
+   prescribe equally, and only the first was matched while this was one regex. */
+const PRESCRIPTION_RX = new RegExp(
+  [
+    String.raw`\b(?:can|could|should|shall|will|must|just|simply|to|then|please)\s+(?:re-?)?(?:run|dispatch|trigger|execute|invoke)\b`,
+    String.raw`\bre-?running\b`,
+    String.raw`\bthe (?:clean(?:est)?|right|correct|proper|only|simplest?|safe(?:st)?) way\b`,
+  ].join("|"),
+  "i",
+);
+
+/* ---------------------------------------------------------------------------
+   CHINESE. The owner writes in Chinese, and the first version of this rule was
+   English-only — so the gate was blind to the half of this repo's PR bodies
+   most likely to carry an unproved promise. Measured before writing this:
+   「跑这个就能补回来」, 「重跑一次 sync 就会好了」, 「执行 mode=all 就可以把历史补
+   齐」, 「dispatch 一次这个 workflow 就能修复」 and 「跑 all 模式是补历史的干净做
+   法」 — five real claim shapes, all five silently missed.
+
+   Chinese has no word boundaries, so `\b` does nothing and a single common
+   character carries far too much. Every pattern below is therefore a
+   MULTI-CHARACTER phrase: bare 跑 would fire on 「一直在跑」 (narration) and bare
+   好 on 「好像」. The one exception is 跑 followed by a LATIN token — 「跑 all
+   模式」, 「跑 mode=all」 — which is a command being named, and cannot collide
+   with 跑了 / 跑得 / 跑步 because those continue in CJK.
+
+   …from the RIGHT. The collision this missed comes from the LEFT (found
+   2026-08-19, the day this shipped): 「列表白跑 MRP」 — the list ran MRP FOR
+   NOTHING — is narration about waste, and 白跑 + a Latin token walked straight
+   through the exception. Paired with a 补上 twenty characters later in the
+   SAME entry's 白话, the gate's own corpus test went red on main for every PR.
+   So the exception now refuses a vain-run prefix: 白跑/空跑 are statements that
+   a run achieved nothing, which is as far from prescribing one as Chinese gets.
+   --------------------------------------------------------------------------- */
+const CN_PRESCRIPTION =
+  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|(?<![白空])跑\s*[A-Za-z0-9`'"-])/;
+
+const CN_OUTCOME =
+  /(修好|修复|补回|补齐|补上|补完|补起来|恢复|救回|解决掉|解决了|就会好|就能好|就没事|干净做法|正确做法|唯一办法|最好的做法)/;
+
+/* Negation, checked in the FOUR characters against the promise rather than
+   across the sentence — the same narrowing the English side needed. 「补不回来」
+   never matches CN_OUTCOME at all (不 sits inside the phrase), which is the
+   cheapest possible way to get 「跑了 all 模式，但是补不回来」 right. */
+const CN_NEGATED = /[不没无未别]/;
+
+/** The instruction's MATCH (so the promise can be sought after it), or null. */
+const prescribes = (line) =>
+  IMPERATIVE_RX.exec(line) ?? PRESCRIPTION_RX.exec(line) ?? CN_PRESCRIPTION.exec(line);
+
+/**
+ * The first promise in `text` that is not denied right where it stands.
+ *
+ * Negation is checked in the `lookback` characters immediately BEFORE the
+ * promise, never across the whole window, and that narrowing was bought by
+ * testing against the real file. The stale verdict in
+ * backend/scripts/check-autocount-pull-health.mjs reads:
+ *
+ *   "...uses /getAll and does NOT touch the checkpoint, so it is the clean
+ *    way to collect a backlog..."
+ *
+ * A window-wide negation check sees "does NOT" and lets the exact sentence this
+ * gate was built from walk straight through. That "not" denies a side effect; it
+ * does not deny the remedy.
+ */
+function matchPromise(text, outcomeRx, negatedRx, lookback) {
+  const m = outcomeRx.exec(text);
+  if (!m) return null;
+  const around = text.slice(Math.max(0, m.index - lookback), m.index + m[0].length);
+  return negatedRx.test(around) ? null : m;
+}
+
+/** How far after the prescription the promise may sit. Four console.log lines. */
+const CLAIM_WINDOW = 3;
+
+/** Claiming that the operation REPAIRS something. */
+const OUTCOME_RX =
+  /\b(?:fix(?:es|ed|ing)?|repairs?|recover(?:s|ed|ing|y)?|restores?|collects?|unblocks?|unfreezes?|resolves?|catch(?:es)? up|clean way|the way to|will bring|brings? (?:it|them|these|those|the \w+) in)\b/i;
+
+/**
+ * A sentence that DENIES a remedy is the opposite of the failure — it is the
+ * correction. `all` DOES NOT WORK on this book" must not trip the gate that
+ * exists because "`all` is the clean way" did.
+ */
+const NEGATED_RX =
+  /\b(?:does ?n[o']t|do ?n[o']t|did ?n[o']t|cannot|can ?n[o']t|will ?n[o']t|wo ?n[o']t|is ?n[o']t|are ?n[o']t|never|no longer|fails? to|failed to|impossible|instead of|rather than|without|not)\b/i;
+
+/** A question asks; it does not assert. */
+const QUESTION_RX = /\?\s*$/;
+
+/**
+ * Evidence. `Observed:` and its synonyms, and the value has to look like
+ * something a person LOOKED AT — a number, a URL, or an outcome word. Twelve
+ * characters of prose is the same bar rule 3 sets; the outcome token is the
+ * extra one, because "Observed: it works" is a restatement of the claim.
+ */
+const OBSERVED_RX =
+  /^\s*(?:[-*]\s*)?(?:\*\*)?(observed|ran it|i ran|actual result|output was|result was|proved by running|dispatched|measured)(?:\*\*)?\s*:(.*)$/i;
+const OUTCOME_TOKEN_RX =
+  /\d|https?:\/\/|\b(?:returned|exit|status|rows?|error|failed|succeeded|took|empty|none|zero|ok|200|503)\b/i;
+
+/** The author's own admission, per claim, in the one spelling nobody types by accident. */
+const UNTESTED_RX = /\bUNTESTED\b/;
+
+/**
+ * Find prescriptive sentences: a line that PRESCRIBES an operation, with a
+ * claim that it repairs something in the same line or the next few.
+ *
+ * Fenced blocks are skipped throughout. A fence holds a transcript or a
+ * command — the evidence, or the thing itself — not a promise about one, and
+ * failing a PR for pasting the very output the gate asked for would be absurd.
+ */
+export function findRemedyClaims(text) {
+  const claims = [];
+  const raw = String(text || "").split("\n");
+  const open = raw.map(() => false);
+  let inFence = false;
+  for (let i = 0; i < raw.length; i++) {
+    if (/^\s*```/.test(raw[i])) {
+      inFence = !inFence;
+      open[i] = true; // the fence line itself is never prose
+      continue;
+    }
+    open[i] = inFence;
+  }
+
+  for (let i = 0; i < raw.length; i++) {
+    if (open[i]) continue;
+    const line = raw[i].trim();
+    if (!line || QUESTION_RX.test(line)) continue;
+    const instruction = prescribes(line);
+    if (!instruction) continue;
+
+    // The window: this line plus the next few PROSE lines, joined. A promise
+    // may trail the instruction by a sentence or two.
+    const window = [line];
+    for (let j = i + 1; j <= i + CLAIM_WINDOW && j < raw.length; j++) {
+      if (open[j]) break;
+      window.push(raw[j].trim());
+    }
+    const joined = window.join(" ");
+
+    /* THE PROMISE MUST FOLLOW THE INSTRUCTION. Searching the whole window let a
+       sentence that merely NARRATES read as a prescription, and BUG-HISTORY.md
+       had a live example the moment the corpus grew:
+
+         「...独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处...」
+
+       「跑 MRP」 matches the 跑 + latin-token pattern and 「补上」 matches the
+       promise vocabulary — but 补上 sits BEFORE 跑 MRP and belongs to a different
+       clause entirely. The text is describing a disease that was already cured,
+       not telling anyone to run anything. Every real claim reads
+       instruction-then-promise ("Run X and it collects Y", 「跑这个就能补回来」),
+       so the search starts where the instruction ends. */
+    const after = joined.slice(instruction.index + instruction[0].length);
+
+    /* Two languages, each with its own promise vocabulary AND its own lookback
+       distance. 34 characters is about a clause of English; Chinese says the
+       same thing in a fraction of that, so a 34-character Chinese lookback
+       would reach back into an unrelated sentence and suppress real claims.
+       A line may satisfy either side — mixed-language bodies are the norm here
+       ("dispatch 一次这个 workflow 就能修复"). */
+    const promise =
+      matchPromise(after, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(after, CN_OUTCOME, CN_NEGATED, 4);
+    if (!promise) continue;
+
+    claims.push({
+      text: joined.length > 200 ? `${joined.slice(0, 197)}...` : joined,
+      line: i + 1,
+      untested: UNTESTED_RX.test(joined),
+    });
+    i += window.length - 1; // one finding per claim, not one per window line
+  }
+  return claims;
+}
+
+/** Did the author paste something they actually looked at? */
+export function findObservation(body) {
+  for (const line of String(body || "").split("\n")) {
+    const m = OBSERVED_RX.exec(line);
+    if (!m) continue;
+    const value = m[2].trim();
+    if (PLACEHOLDER_RX.test(value)) continue;
+    if (value.length < 12) continue;
+    if (!OUTCOME_TOKEN_RX.test(value)) continue;
+    return { label: m[1], value };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Rendering order
+// ---------------------------------------------------------------------------
+
+/** The rules this repo has, in the order they read best. */
+export const RULE_ORDER = ["bug-history", "module-guide", "migration-notes", "remedy-claim"];
+
+/**
+ * Every rule present in `findings`, known ones first in RULE_ORDER, unknown
+ * ones appended in first-seen order.
+ *
+ * This lives here, tested, because the runner's inline version was WRONG and
+ * wrong in the silent direction. Adding rule 4 while the runner still iterated
+ * a hardcoded three-element list produced a gate that counted "1 violation(s)",
+ * exited 1, and said nothing about what the violation was. The replacement —
+ *
+ *     ...findings.map((f) => f.rule).filter((r) => !seen.has(r) && !seen.add(r))
+ *
+ * — reads as a de-dup idiom and appends NOTHING, ever: `Set.prototype.add`
+ * returns the Set, which is truthy, so `!seen.add(r)` is always false. It was
+ * shipped with a commit message asserting it "appends any rule the list has not
+ * heard of", written from reading it and never run. Same failure as the
+ * `mode=all` claim this PR exists for, inside the fix for that claim.
+ *
+ * Hence: a pure function, in the file the tests import.
+ */
+export function renderOrder(findings) {
+  const order = [...RULE_ORDER];
+  for (const f of findings || []) {
+    if (f && f.rule && !order.includes(f.rule)) order.push(f.rule);
+  }
+  return order;
+}
+
+// ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
 
@@ -404,7 +777,7 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
   // --- rule 1 -------------------------------------------------------------
   const fix = detectFixIntent({ title, branch, body, templateBody });
   const codeFiles = files.filter((f) => isCodePath(f.path));
-  const bh = addsBugHistoryEntry(files);
+  const bh = addsBugEntry(files);
 
   if (fix.isFix && codeFiles.length > 0) {
     const why = fix.signals.map((s) => `${s.where}: "${s.match}"`).join(", ");
@@ -412,25 +785,34 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
       add(
         "escape",
         "bug-history",
-        `SKIPPED by label \`${LABEL_NO_BUG_HISTORY}\` — this PR reads as a fix (${why}) and touches ${codeFiles.length} code file(s), and is shipping with NO BUG-HISTORY.md entry.`,
+        `SKIPPED by label \`${LABEL_NO_BUG_HISTORY}\` — this PR reads as a fix (${why}) and touches ${codeFiles.length} code file(s), and is shipping with NO ${BUG_ENTRY_DIR} entry.`,
       );
     } else if (bh.entry) {
-      add("pass", "bug-history", `New BUG-HISTORY.md entry: ${bh.heading}`);
+      add("pass", "bug-history", `New bug entry ${bh.file}: ${bh.heading}`);
     } else if (bh.touched) {
       add(
         "fail",
         "bug-history",
-        `BUG-HISTORY.md was touched but no new entry was added (no new "## " heading).`,
-        `Fix signals — ${why}. CLAUDE.md: one entry, Symptom -> Root cause -> Fix -> Ref, newest first, in the SAME PR.`,
+        bh.misnamed.length
+          ? `${BUG_ENTRY_DIR} gained ${bh.misnamed.length} file(s), and none of them is a usable entry.`
+          : `${BUG_ENTRY_DIR} was touched but NO NEW entry file was added.`,
+        [
+          `Fix signals — ${why}`,
+          bh.misnamed.length
+            ? `Mis-named — ${bh.misnamed.join(", ")}. An entry file is \`${BUG_ENTRY_DIR}NNNN-slug.md\`; anything else is invisible to the ledger, the index AND this gate.`
+            : `Editing an existing entry is not logging a new bug. Add a FILE.`,
+          `Scaffold it with \`node scripts/new-bug.mjs "<title>"\`. CLAUDE.md: one entry, Symptom -> Root cause -> Fix -> Ref, in the SAME PR.`,
+        ].join("\n    "),
       );
     } else {
       add(
         "fail",
         "bug-history",
-        `This PR reads as a fix and changes code, but BUG-HISTORY.md is untouched.`,
+        `This PR reads as a fix and changes code, and adds no bug entry under ${BUG_ENTRY_DIR}.`,
         [
           `Fix signals — ${why}`,
           `Code files — ${codeFiles.slice(0, 6).map((f) => f.path).join(", ")}${codeFiles.length > 6 ? ` (+${codeFiles.length - 6} more)` : ""}`,
+          `Scaffold the entry with \`node scripts/new-bug.mjs "<title>"\` — it writes ${BUG_ENTRY_DIR}NNNN-slug.md, which is a path no other branch is writing.`,
           `CLAUDE.md marks this MANDATORY. Add the entry, or apply the \`${LABEL_NO_BUG_HISTORY}\` label so the exception is on the record.`,
         ].join("\n    "),
       );
@@ -454,6 +836,30 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
     if (!isSurfacePath(f.path)) continue;
     const changes = detectSurfaceChanges(f);
     if (changes.length) surfaces.push({ path: f.path, changes, file: f });
+  }
+
+  /* LOGIC, not only surface (owner 2026-08-18: 「backend 逻辑更改 你要更新的啊」).
+     detectSurfaceChanges only fires on five shapes — a new route, permission,
+     status value, required-field flip or lock — so a change to a RULE sailed
+     past saying nothing. Measured on this repo the same day: of the last 30
+     merges, 19 touched a file some guide quotes and 8 of those never opened the
+     guide. One of the 8 is the commit that created the shared Branding rule.
+
+     Scope is deliberately the files a guide QUOTES BY PATH — 343 of 1454, the
+     ones somebody chose to document — and not mapPathToGuides' filename-stem
+     fallback, which is a guess. A guess that fails a PR is a gate people learn
+     to route around. So: if the guide claims to describe this file and the file's
+     logic moved, the guide is stale until proven otherwise. */
+  const surfacePaths = new Set(surfaces.map((s) => s.path));
+  for (const f of files) {
+    if (surfacePaths.has(f.path)) continue;
+    if (!index.byPath.has(f.path)) continue;
+    if (!changesLogic(f)) continue;
+    surfaces.push({
+      path: f.path,
+      changes: [{ kind: "logic", detail: "code changed in a file a module guide documents" }],
+      file: f,
+    });
   }
 
   if (surfaces.length === 0) {
@@ -484,7 +890,9 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
         add(
           "fail",
           "module-guide",
-          `${m.path} changes this module's SURFACE, and its guide was not updated.`,
+          m.changes.every((c) => c.kind === "logic")
+            ? `${m.path} changed, and the guide that documents it was not updated.`
+            : `${m.path} changes this module's SURFACE, and its guide was not updated.`,
           [
             `Surface — ${m.what}`,
             `Guide — ${m.owners.map((g) => `${MODULE_GUIDE_DIR}${g}.md`).join(" or ")} (${m.reason})`,
@@ -541,6 +949,77 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
         ].join("\n    "),
       );
     }
+  }
+
+  // --- rule 4 -------------------------------------------------------------
+  /* The DE-TEMPLATED body, for the reason rule 1 uses it: the PR template is
+     contributed to every body, so a single prescriptive sentence in the
+     template would fail every pull request in the repo — the same way the
+     template's own word "fix" once reported every PR as a fix. The observation
+     is read from the RAW body, because an `Observed:` line the author typed
+     into a template field is still the author's evidence. */
+  const prose = stripTemplateLines(body, templateBody);
+  const bodyClaims = findRemedyClaims(prose);
+  const observation = findObservation(body);
+
+  if (bodyClaims.length === 0) {
+    add("info", "remedy-claim", "No remedy claim in the body (no line prescribing an operation as a repair).");
+  } else if (observation) {
+    add(
+      "pass",
+      "remedy-claim",
+      `${bodyClaims.length} remedy claim(s), and the run that proved them is in the body: ${observation.label}: ${observation.value.slice(0, 120)}`,
+    );
+  } else if (bodyClaims.every((c) => c.untested)) {
+    add(
+      "escape",
+      "remedy-claim",
+      `Every remedy claim is marked UNTESTED by the author: ${bodyClaims.map((c) => `"${c.text}"`).join(" | ")}`,
+    );
+  } else if (labelSet.has(LABEL_REMEDY_UNTESTED)) {
+    add(
+      "escape",
+      "remedy-claim",
+      `SKIPPED by label \`${LABEL_REMEDY_UNTESTED}\` — ${bodyClaims.length} remedy claim(s) are shipping with no evidence anyone ran the operation: ` +
+        bodyClaims.map((c) => `"${c.text}"`).join(" | "),
+    );
+  } else {
+    add(
+      "fail",
+      "remedy-claim",
+      `This PR tells a reader that running something will repair something, and shows no sign the operation was ever run.`,
+      [
+        ...bodyClaims.filter((c) => !c.untested).map((c) => `Claim — "${c.text}"`),
+        `Add a line reading \`Observed: <what actually happened when you ran it>\` — a status, a count, a duration, an error, a run URL.`,
+        `If you have not run it, write UNTESTED in the sentence itself, or apply \`${LABEL_REMEDY_UNTESTED}\`. Both are honest; silence is not.`,
+        `CLAUDE.md, rule 3 of "Do not guess": \`mode=all\` was written from reading pull.ts:29 and never executed. 39s -> HTTP 503 Worker exceeded resource limits.`,
+      ].join("\n    "),
+    );
+  }
+
+  /* The same sentence in a GUIDE or a check script's verdict is aimed at a
+     reader who is not in this conversation and cannot ask. It is warned, not
+     failed, for the reason the unmapped-guide finding above is warned: a gate
+     that fails on prose gets routed around, and rule 2 already brings the guide
+     author to this output. That this is not hypothetical: the `mode=all`
+     correction landed in docs/modules/system-health.md and MISSED the identical
+     claim in the check script's own VERDICT text, where it is still printing
+     today. One correction, two homes, one of them forgotten. */
+  for (const f of files) {
+    const prescriptive =
+      (f.path.startsWith(MODULE_GUIDE_DIR) && f.path.endsWith(".md")) || /(^|\/)scripts\/check-[^/]+\.mjs$/.test(f.path);
+    if (!prescriptive) continue;
+    const claims = findRemedyClaims(f.added.map((a) => a.text).join("\n")).filter((c) => !c.untested);
+    if (!claims.length) continue;
+    add(
+      "warn",
+      "remedy-claim",
+      `${f.path} adds ${claims.length} line(s) telling a future reader that an operation will repair something.`,
+      [
+        ...claims.map((c) => `Claim — "${c.text}"`),
+        `A reader of this file cannot ask you whether you ran it. Say what you observed, or write UNTESTED.`,
+      ].join("\n    "),
+    );
   }
 
   const ok = !findings.some((f) => f.level === "fail");

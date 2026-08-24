@@ -18,7 +18,7 @@ import {
   type FairPnlSummary,
   type FairCostByCategory,
 } from "../vendor/scm/lib/fair-report-queries";
-import { fmtAmt, fmtCenti } from "../lib/scm";
+import { fmtAmt, fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import "./mobile.css";
@@ -55,7 +55,7 @@ const cell = (centi: number | null | undefined): string => {
   return v ? fmtAmt(v) : "—";
 };
 /** RM-prefixed amount (always shows 0.00). */
-const rm = (centi: number | null | undefined): string => fmtCenti(centi);
+const rm = (centi: number | null | undefined): string => fmtSen(centi);
 const pct = (p: number | null | undefined): string => (p == null ? "—" : `${p.toFixed(1)}%`);
 /** Signed money for the DO cost drift (+ grew at delivery, − shrank). */
 const signedMoney = (centi: number | null | undefined): string => {
@@ -78,11 +78,11 @@ const STAGE_TABS: { key: FairStage; label: string }[] = [
 ];
 
 const catRows = (c: FairCostByCategory): [string, number][] => [
-  ["Mattress / Sofa", c.mattress_sofa_cost_centi],
-  ["Bedframe", c.bedframe_cost_centi],
-  ["Accessories", c.accessories_cost_centi],
-  ["Others", c.others_cost_centi],
-  ["Service", c.service_cost_centi],
+  ["Mattress / Sofa", c.mattress_sofa_cost_sen],
+  ["Bedframe", c.bedframe_cost_sen],
+  ["Accessories", c.accessories_cost_sen],
+  ["Others", c.others_cost_sen],
+  ["Service", c.service_cost_sen],
 ];
 
 // ── accumulated filter options (same idea as the desktop page's accumulate) ──
@@ -300,12 +300,12 @@ function SoCard({ r, onOpen }: { r: FairSoRow; onOpen: () => void }) {
         {r.venue ?? "—"} · <span style={{ color: "var(--mut)" }}>{formatDate(r.so_date)}</span> · {r.salesperson ?? "—"}
       </div>
       <div style={statGrid}>
-        <CardStat k="Amount" v={cell(r.amount_centi)} />
-        <CardStat k="Selling" v={cell(r.selling_centi)} />
-        <CardStat k="SO Cost" v={cell(r.total_so_cost_centi)} />
+        <CardStat k="Amount" v={cell(r.amount_sen)} />
+        <CardStat k="Selling" v={cell(r.selling_sen)} />
+        <CardStat k="SO Cost" v={cell(r.total_so_cost_sen)} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 11.5 }}>
-        <span style={{ color: "var(--ink2)" }}>Balance <b className="money">{rm(r.balance_centi)}</b></span>
+        <span style={{ color: "var(--ink2)" }}>Balance <b className="money">{rm(r.balance_sen)}</b></span>
         {r.below_deposit && <span className="badge b-amber">Below deposit</span>}
         <span style={{ marginLeft: "auto", color: "var(--brand)", fontWeight: 600 }}>Tap ›</span>
       </div>
@@ -314,22 +314,22 @@ function SoCard({ r, onOpen }: { r: FairSoRow; onOpen: () => void }) {
 }
 
 function DoCard({ r, onOpen }: { r: FairDoRow; onOpen: () => void }) {
-  const grew = r.cost_delta_centi > 0;
+  const grew = r.cost_delta_sen > 0;
   return (
     <div className={cardCls} style={cardStyle} onClick={onOpen}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <BrandPill brand={r.branding} />
         <span className="money" style={{ fontSize: 13, fontWeight: 700, color: "var(--brand-d)" }}>{r.do_no}</span>
         {r.do_cost_is_legacy && <span className="badge b-grey">Legacy</span>}
-        <span className="money" style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: grew ? "var(--red)" : "var(--green)" }}>{signedMoney(r.cost_delta_centi)}</span>
+        <span className="money" style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: grew ? "var(--red)" : "var(--green)" }}>{signedMoney(r.cost_delta_sen)}</span>
       </div>
       <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 5 }}>{r.so_no ?? "—"}</div>
       <div style={{ fontSize: 12, color: "var(--ink2)", marginTop: 4 }}>
         {r.venue ?? "—"} · <span style={{ color: "var(--mut)" }}>{formatDate(r.delivery_date)}</span>
       </div>
       <div style={statGrid}>
-        <CardStat k="SO Cost" v={cell(r.total_so_cost_centi)} />
-        <CardStat k="DO Cost" v={cell(r.total_do_cost_centi)} />
+        <CardStat k="SO Cost" v={cell(r.total_so_cost_sen)} />
+        <CardStat k="DO Cost" v={cell(r.total_do_cost_sen)} />
         <CardStat k="Drift" v={pts(r.do_margin_pct, r.so_margin_pct)} tone={(r.do_margin_pct ?? 0) < (r.so_margin_pct ?? 0) ? "err" : undefined} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 11.5 }}>
@@ -354,9 +354,9 @@ function InvoiceCard({ r, onOpen }: { r: FairInvoiceRow; onOpen: () => void }) {
         {r.venue ?? "—"} · <span style={{ color: "var(--mut)" }}>{formatDate(r.invoice_date)}</span>
       </div>
       <div style={statGrid}>
-        <CardStat k="Invoiced" v={cell(r.invoiced_centi)} />
-        <CardStat k="DO Cost" v={cell(r.do_cost_centi)} />
-        <CardStat k="Landed" v={cell(r.si_cost_centi)} />
+        <CardStat k="Invoiced" v={cell(r.invoiced_sen)} />
+        <CardStat k="DO Cost" v={cell(r.do_cost_sen)} />
+        <CardStat k="Landed" v={cell(r.si_cost_sen)} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 11.5 }}>
         <span style={{ color: "var(--ink2)" }}>SO → DO → SI</span>
@@ -378,14 +378,14 @@ function InvoiceCard({ r, onOpen }: { r: FairInvoiceRow; onOpen: () => void }) {
 function SoSummary({ s, rows }: { s: FairSoSummary; rows: FairSoRow[] }) {
   // Deposits collected — summed from the loaded rows, exactly as the desktop
   // KpiRow's "Paid" tile does (the summary echoes every matching row).
-  const paid = rows.reduce((a, r) => a + Number(r.paid_total_centi ?? 0), 0);
+  const paid = rows.reduce((a, r) => a + Number(r.paid_total_sen ?? 0), 0);
   return (
     <div className={cardCls} style={{ padding: "13px 14px", background: "var(--bg)" }}>
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--mut)" }}>Sales Orders · {s.orders} {s.orders === 1 ? "order" : "orders"}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginTop: 9 }}>
-        <CardStat k={`Revenue · ${pct(s.margin_pct)}`} v={rm(s.total_amount_centi)} />
-        <CardStat k="SO Cost" v={rm(s.total_so_cost_centi)} />
-        <CardStat k="Outstanding" v={rm(s.total_balance_centi)} tone={s.total_balance_centi > 0 ? "err" : undefined} />
+        <CardStat k={`Revenue · ${pct(s.margin_pct)}`} v={rm(s.total_amount_sen)} />
+        <CardStat k="SO Cost" v={rm(s.total_so_cost_sen)} />
+        <CardStat k="Outstanding" v={rm(s.total_balance_sen)} tone={s.total_balance_sen > 0 ? "err" : undefined} />
         <CardStat k="Paid" v={rm(paid)} />
       </div>
       {s.below_deposit_count > 0 && (
@@ -398,14 +398,14 @@ function SoSummary({ s, rows }: { s: FairSoSummary; rows: FairSoRow[] }) {
 }
 
 function DoSummary({ s }: { s: FairDoSummary }) {
-  const grew = s.cost_delta_centi > 0;
+  const grew = s.cost_delta_sen > 0;
   return (
     <div className={cardCls} style={{ padding: "13px 14px", background: "var(--bg)" }}>
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--mut)" }}>Delivery · {s.deliveries} {s.deliveries === 1 ? "delivery" : "deliveries"}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 9 }}>
-        <CardStat k="SO Cost" v={rm(s.total_so_cost_centi)} />
-        <CardStat k="DO Cost" v={rm(s.total_do_cost_centi)} />
-        <CardStat k="Cost Drift" v={signedMoney(s.cost_delta_centi)} tone={grew ? "err" : undefined} />
+        <CardStat k="SO Cost" v={rm(s.total_so_cost_sen)} />
+        <CardStat k="DO Cost" v={rm(s.total_do_cost_sen)} />
+        <CardStat k="Cost Drift" v={signedMoney(s.cost_delta_sen)} tone={grew ? "err" : undefined} />
       </div>
       {s.legacy_count > 0 && (
         <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 9, lineHeight: 1.5 }}>
@@ -422,8 +422,8 @@ function InvoiceSummary({ s }: { s: FairInvoiceSummary }) {
     <div className={cardCls} style={{ padding: "13px 14px", background: "var(--bg)" }}>
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--mut)" }}>Invoices · {s.invoices}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 9 }}>
-        <CardStat k="Invoiced" v={rm(s.total_invoiced_centi)} />
-        <CardStat k="Landed" v={rm(s.total_si_cost_centi)} />
+        <CardStat k="Invoiced" v={rm(s.total_invoiced_sen)} />
+        <CardStat k="Landed" v={rm(s.total_si_cost_sen)} />
         <CardStat k="Margin" v={pct(s.margin_pct)} tone={good ? undefined : "err"} />
       </div>
     </div>
@@ -431,18 +431,18 @@ function InvoiceSummary({ s }: { s: FairInvoiceSummary }) {
 }
 
 function PnlSummaryCard({ s, ratePresent, brand }: { s: FairPnlSummary; ratePresent: boolean; brand: string | null }) {
-  const net = s.net_profit_centi;
+  const net = s.net_profit_sen;
   return (
     <div className={cardCls} style={{ padding: "13px 14px", background: "var(--bg)" }}>
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--mut)" }}>Fair P&amp;L · {s.orders} orders</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginTop: 9 }}>
-        <CardStat k="Revenue" v={rm(s.total_revenue_centi)} />
-        <CardStat k={`Gross · ${pct(s.gross_margin_pct)}`} v={rm(s.gross_profit_centi)} tone={s.gross_profit_centi >= 0 ? undefined : "err"} />
-        <CardStat k="Overhead" v={rm(s.overheads.total_overhead_centi)} />
+        <CardStat k="Revenue" v={rm(s.total_revenue_sen)} />
+        <CardStat k={`Gross · ${pct(s.gross_margin_pct)}`} v={rm(s.gross_profit_sen)} tone={s.gross_profit_sen >= 0 ? undefined : "err"} />
+        <CardStat k="Overhead" v={rm(s.overheads.total_overhead_sen)} />
         <CardStat k={`Net · ${pct(s.net_margin_pct)}`} v={rm(net)} tone={net >= 0 ? undefined : "err"} />
       </div>
       <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 9, lineHeight: 1.5 }}>
-        Overhead = transport {cell(s.overheads.transport_centi)} · merchandise {cell(s.overheads.merchandise_centi)} · commission {cell(s.overheads.commission_centi)} ({pct(s.overheads.commission_pct)}{s.overheads.commission_is_boost ? " boost" : ""}).
+        Overhead = transport {cell(s.overheads.transport_sen)} · merchandise {cell(s.overheads.merchandise_sen)} · commission {cell(s.overheads.commission_sen)} ({pct(s.overheads.commission_pct)}{s.overheads.commission_is_boost ? " boost" : ""}).
         {!ratePresent && ` No cost-rate card for ${brand ?? "this brand"} — overhead is zero.`}
       </div>
     </div>
@@ -450,7 +450,7 @@ function PnlSummaryCard({ s, ratePresent, brand }: { s: FairPnlSummary; ratePres
 }
 
 function PnlCard({ r, onOpen }: { r: FairPnlRow; onOpen: () => void }) {
-  const good = r.gross_profit_centi >= 0;
+  const good = r.gross_profit_sen >= 0;
   return (
     <div className={cardCls} style={cardStyle} onClick={onOpen}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -462,12 +462,12 @@ function PnlCard({ r, onOpen }: { r: FairPnlRow; onOpen: () => void }) {
         {r.venue ?? "—"} · <span style={{ color: "var(--mut)" }}>{formatDate(r.so_date)}</span> · {r.salesperson ?? "—"}
       </div>
       <div style={statGrid}>
-        <CardStat k="Revenue" v={cell(r.revenue_centi)} />
-        <CardStat k={`COGS · ${r.effective_cost_stage}`} v={cell(r.effective_cost_centi)} />
-        <CardStat k="Gross" v={cell(r.gross_profit_centi)} tone={good ? undefined : "err"} />
+        <CardStat k="Revenue" v={cell(r.revenue_sen)} />
+        <CardStat k={`COGS · ${r.effective_cost_stage}`} v={cell(r.effective_cost_sen)} />
+        <CardStat k="Gross" v={cell(r.gross_profit_sen)} tone={good ? undefined : "err"} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 11.5 }}>
-        <span style={{ color: "var(--ink2)" }}>SO / DO / SI: {cell(r.so_cost_centi)} · {r.do_cost_centi == null ? "—" : cell(r.do_cost_centi)} · {r.si_cost_centi == null ? "—" : cell(r.si_cost_centi)}</span>
+        <span style={{ color: "var(--ink2)" }}>SO / DO / SI: {cell(r.so_cost_sen)} · {r.do_cost_sen == null ? "—" : cell(r.do_cost_sen)} · {r.si_cost_sen == null ? "—" : cell(r.si_cost_sen)}</span>
         <span style={{ marginLeft: "auto", color: "var(--brand)", fontWeight: 600 }}>Tap ›</span>
       </div>
     </div>
@@ -521,10 +521,22 @@ function FilterSheet({ filters, opts, onApply, onClose }: {
           </FRow>
           <div className="fld-row">
             <FRow label="Date from">
-              <input type="date" className="fld-i" style={selStyle} value={draft.dateFrom ?? ""} onChange={(e) => set({ dateFrom: e.target.value || undefined })} />
+              <DateField
+                fullWidth
+                className="fld-i"
+                style={selStyle}
+                value={draft.dateFrom ?? ""}
+                onChange={(iso) => set({ dateFrom: iso || undefined })}
+              />
             </FRow>
             <FRow label="Date to">
-              <input type="date" className="fld-i" style={selStyle} value={draft.dateTo ?? ""} onChange={(e) => set({ dateTo: e.target.value || undefined })} />
+              <DateField
+                fullWidth
+                className="fld-i"
+                style={selStyle}
+                value={draft.dateTo ?? ""}
+                onChange={(iso) => set({ dateTo: iso || undefined })}
+              />
             </FRow>
           </div>
           <FRow label="Branding">
@@ -616,12 +628,12 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
 
             {/* 2×3 key figures */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 9, marginTop: 15 }}>
-              <Fig k="Amount" v={rm(d.amount_centi)} />
-              <Fig k="Selling" v={rm(d.selling_centi)} />
-              <Fig k="Service Rev." v={rm(d.service_rev_centi)} />
-              <Fig k="Total SO Cost" v={rm(d.total_so_cost_centi)} />
+              <Fig k="Amount" v={rm(d.amount_sen)} />
+              <Fig k="Selling" v={rm(d.selling_sen)} />
+              <Fig k="Service Rev." v={rm(d.service_rev_sen)} />
+              <Fig k="Total SO Cost" v={rm(d.total_so_cost_sen)} />
               <Fig k="Margin %" v={pct(d.margin_pct)} hi />
-              <Fig k="Balance" v={rm(d.balance_centi)} />
+              <Fig k="Balance" v={rm(d.balance_sen)} />
             </div>
 
             {/* SO → DO → Invoice linkage, stacked vertically */}
@@ -653,10 +665,10 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
                 {secondary && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>{secondary}</div>}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 5, marginTop: 10 }}>
                   <LineCell k="Qty" v={l.qty == null ? "—" : String(l.qty)} />
-                  <LineCell k="Unit sell" v={cell(l.unit_price_centi)} />
-                  <LineCell k="Amount" v={cell(l.amount_centi)} />
-                  <LineCell k="Unit cost" v={cell(l.unit_cost_centi)} cost />
-                  <LineCell k="Line cost" v={cell(l.line_cost_centi)} cost />
+                  <LineCell k="Unit sell" v={cell(l.unit_price_sen)} />
+                  <LineCell k="Amount" v={cell(l.amount_sen)} />
+                  <LineCell k="Unit cost" v={cell(l.unit_cost_sen)} cost />
+                  <LineCell k="Line cost" v={cell(l.line_cost_sen)} cost />
                 </div>
               </div>
               );
@@ -673,7 +685,7 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               ))}
               <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 13px", fontSize: 12.5, fontWeight: 800, background: "var(--bg)" }}>
                 <span>Total SO Cost</span>
-                <span className="money">{rm(d.total_so_cost_centi)}</span>
+                <span className="money">{rm(d.total_so_cost_sen)}</span>
               </div>
             </div>
 
@@ -685,7 +697,7 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
                 <div key={i} className="card" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
                   <span style={{ fontWeight: 700, fontSize: 12.5, minWidth: 74, color: "var(--ink)" }}>{p.tender ?? "—"}</span>
                   <span style={{ flex: 1, fontSize: 11, color: "var(--mut)" }}>{merchantLine(p)}</span>
-                  <span className="money" style={{ fontWeight: 700 }}>{cell(p.amount_centi)}</span>
+                  <span className="money" style={{ fontWeight: 700 }}>{cell(p.amount_sen)}</span>
                 </div>
               ))}
             </div>
@@ -733,3 +745,5 @@ function FlowStep({ node, label, no, sub, done }: { node: string; label: string;
 }
 
 export default MobileFairReport;
+
+import { DateField } from "../vendor/scm/components/DateField";

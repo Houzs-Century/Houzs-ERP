@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
 import { soAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
-import { fmtDateTime, fmtMoneyCenti } from "@2990s/shared";
+import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
   DetailGrid,
@@ -99,7 +99,7 @@ import { cn, formatDate } from "../../lib/utils";
 
 /* Amendment prices are stored in sen (1/100 MYR). The amendment detail has no
    currency of its own, so the SO's home currency (MYR) is the honest default. */
-const fmtSen = (sen: number | null | undefined): string => fmtMoneyCenti(sen);
+const fmtSen = (sen: number | null | undefined): string => fmtMoneySen(sen);
 
 /* change_type -> plain label (parity with the desktop AmendmentDiffModal +
    mobile AmendmentDiffSheet). */
@@ -390,6 +390,13 @@ function DiffCard({ line }: { line: AmendmentLine }) {
                   “{old.remark}”
                 </div>
               )}
+              {/* mig 0317 — the discount before the request. Shown only when the
+                  request touches it, same rule as the remark above. */}
+              {changed.discount && (
+                <div className={wasCls(true, "mt-1 font-money text-[11.5px]")}>
+                  Discount {fmtSen(old.discountSen ?? 0)}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -427,6 +434,17 @@ function DiffCard({ line }: { line: AmendmentLine }) {
               {changed.remark && (
                 <div className={nowCls(true, "mt-1.5 text-[11px] italic")}>
                   {(line.new_remark ?? "").trim() ? `“${line.new_remark}”` : "Remark cleared"}
+                </div>
+              )}
+              {/* mig 0317 — the REQUESTED discount. On a delivery-fee line this
+                  number IS the request (unit stays derived; the discount is the
+                  sanctioned reduction), so an approver who cannot see it is
+                  signing a money change blind. 0 = a request to clear it. */}
+              {changed.discount && (
+                <div className={nowCls(true, "mt-1 font-money text-[11.5px]")}>
+                  {Math.round(line.new_discount_sen ?? 0) > 0
+                    ? `Discount ${fmtSen(line.new_discount_sen ?? 0)}`
+                    : "Discount cleared"}
                 </div>
               )}
             </>

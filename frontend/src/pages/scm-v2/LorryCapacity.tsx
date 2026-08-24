@@ -19,13 +19,13 @@
 // Style: app design system (2026-07-16 reskin) — shared <PageHeader>, <StatCard>
 // KPI tiles and Tailwind "Ink & Petrol" tokens; only the dense metric table
 // keeps a CSS module. Utilisation is tinted (low → red-ish, healthy → green-ish),
-// like Houzs. Money is integer cents from the API → fmtCenti for the RM display.
+// like Houzs. Money is integer cents from the API → fmtSen for the RM display.
 // Every number is rounded.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { fmtCenti, fmtDate } from '@2990s/shared';
+import { fmtSen, fmtDate } from '@2990s/shared';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
@@ -39,6 +39,7 @@ import {
 } from '../../vendor/scm/lib/lorry-capacity-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './LorryCapacity.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 /* Custom-range date field — the design-system input slab. */
 const DATE_INPUT =
@@ -127,7 +128,7 @@ function pctOrDash(frac: number | null | undefined): string {
 }
 function centiOrDash(centi: number | null | undefined): string {
   if (centi == null) return dash;
-  return fmtCenti(centi);
+  return fmtSen(centi);
 }
 
 /* Utilisation tint class — low (<60%) red, mid (<90%) burnt, else green. */
@@ -258,9 +259,9 @@ export const LorryCapacity = () => {
     { key: 'setup_dismantle', label: 'Setup/Dismantle', align: 'right', getValue: (l) => l.setup_dismantle, render: (l) => numOrDash(l.setup_dismantle) },
     { key: 'pickups', label: 'Pickups', align: 'right', getValue: (l) => l.pickups, render: (l) => numOrDash(l.pickups) },
     { key: 'services', label: 'Services', align: 'right', getValue: (l) => l.services, render: (l) => numOrDash(l.services) },
-    { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_centi)}</span> },
-    { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_centi)}</span> },
-    { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_centi)}</span> },
+    { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
+    { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
+    { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_sen)}</span> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [toggleInHouse, setRepair, from, to, notify]);
 
@@ -283,15 +284,9 @@ export const LorryCapacity = () => {
             />
             {activePreset === 'custom' && (
               <div className="inline-flex items-center gap-1.5">
-                <input
-                  type="date" className={DATE_INPUT} value={customFrom}
-                  max={customTo} onChange={(e) => setCustom('from', e.target.value)}
-                />
+                <DateField fullWidth className={DATE_INPUT} value={customFrom} max={customTo} onChange={(iso) => setCustom('from', iso)}/>
                 <span className="text-[12px] text-ink-muted">–</span>
-                <input
-                  type="date" className={DATE_INPUT} value={customTo}
-                  min={customFrom} onChange={(e) => setCustom('to', e.target.value)}
-                />
+                <DateField fullWidth className={DATE_INPUT} value={customTo} min={customFrom} onChange={(iso) => setCustom('to', iso)}/>
               </div>
             )}
             {/* Fleet segment */}
@@ -319,9 +314,9 @@ export const LorryCapacity = () => {
         <StatCard label="Available Days" value={numOrDash(totals?.available_days)} />
         <StatCard label="Utilisation" value={pctOrDash(totals?.utilisation)} />
         <StatCard label="Orders/Delivery Trip" value={numOrDash(totals?.orders_per_delivery_trip, 2)} />
-        <StatCard label="Delivery Revenue" value={centiOrDash(totals?.delivery_revenue_centi)} />
-        <StatCard label="Revenue/Order" value={centiOrDash(totals?.revenue_per_order_centi)} />
-        <StatCard label="Revenue/Trip" value={centiOrDash(totals?.revenue_per_trip_centi)} />
+        <StatCard label="Delivery Revenue" value={centiOrDash(totals?.delivery_revenue_sen)} />
+        <StatCard label="Revenue/Order" value={centiOrDash(totals?.revenue_per_order_sen)} />
+        <StatCard label="Revenue/Trip" value={centiOrDash(totals?.revenue_per_trip_sen)} />
       </div>
 
       {/* Per-lorry metric table — the shared DataTable (owner 2026-07-25:

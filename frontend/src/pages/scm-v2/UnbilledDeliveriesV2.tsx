@@ -36,9 +36,10 @@ import { Badge } from "../../components/Badge";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { cn } from "../../lib/utils";
-import { fmtCenti } from "../../vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
+import { fmtDate } from "../../vendor/shared/format";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 
@@ -55,10 +56,10 @@ type UnbilledRow = {
   debtor_name: string | null;
   phone: string | null;
   salesperson: string | null;
-  delivered_centi: number;
-  invoiced_centi: number;
-  returned_centi: number;
-  unbilled_centi: number;
+  delivered_sen: number;
+  invoiced_sen: number;
+  returned_sen: number;
+  unbilled_sen: number;
   lines_total: number;
   lines_pending: number;
   partly_invoiced: boolean;
@@ -67,22 +68,17 @@ type UnbilledRow = {
 type UnbilledResponse = {
   as_of: string;
   rows: UnbilledRow[];
-  buckets: Array<{ key: string; label: string; rows: number; unbilled_centi: number }>;
+  buckets: Array<{ key: string; label: string; rows: number; unbilled_sen: number }>;
   totals: {
     rows: number;
-    unbilled_centi: number;
-    over_365: { rows: number; unbilled_centi: number };
-    partly_invoiced: { rows: number; unbilled_centi: number };
+    unbilled_sen: number;
+    over_365: { rows: number; unbilled_sen: number };
+    partly_invoiced: { rows: number; unbilled_sen: number };
   };
 };
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (centi: number | null | undefined): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
+const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
 
 /* Age → tone. Nothing under 3 months is coloured: it is not yet a finding, and
    colouring it would spend the reader's alarm on normal billing lag. */
@@ -179,7 +175,7 @@ function CardsGrid({ rows, onOpen }: { rows: UnbilledRow[]; onOpen: (r: Unbilled
             </div>
             <div className="text-right">
               <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Not billed</div>
-              <div className="mt-0.5 font-money text-[15px] font-bold text-err">{fmtRm(r.unbilled_centi)}</div>
+              <div className="mt-0.5 font-money text-[15px] font-bold text-err">{fmtRm(r.unbilled_sen)}</div>
             </div>
           </div>
         </button>
@@ -234,7 +230,7 @@ export function UnbilledDeliveriesV2() {
      with the list under it — except "Over 12 months", which is deliberately
      absolute (it is THE number, and it should not move when he filters). */
   const stats = useMemo(() => {
-    const unbilled = filtered.reduce((s, r) => s + r.unbilled_centi, 0);
+    const unbilled = filtered.reduce((s, r) => s + r.unbilled_sen, 0);
     const oldest = filtered.reduce((m, r) => Math.max(m, r.age_days), 0);
     const partly = filtered.filter((r) => r.partly_invoiced);
     return {
@@ -242,9 +238,9 @@ export function UnbilledDeliveriesV2() {
       unbilled,
       oldest,
       partlyCount: partly.length,
-      partlyValue: partly.reduce((s, r) => s + r.unbilled_centi, 0),
+      partlyValue: partly.reduce((s, r) => s + r.unbilled_sen, 0),
       over365Count: data?.totals.over_365.rows ?? 0,
-      over365Value: data?.totals.over_365.unbilled_centi ?? 0,
+      over365Value: data?.totals.over_365.unbilled_sen ?? 0,
     };
   }, [filtered, data]);
 
@@ -349,14 +345,14 @@ export function UnbilledDeliveriesV2() {
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.so_doc_no ?? "—"}</span>,
     },
     {
-      key: "unbilled_centi",
+      key: "unbilled_sen",
       label: "Not billed",
       width: "158px",
       align: "right",
-      getValue: (r) => r.unbilled_centi,
+      getValue: (r) => r.unbilled_sen,
       render: (r) => (
         <div className="flex flex-col items-end gap-1">
-          <span className="font-money text-[13px] font-bold text-err">{fmtRm(r.unbilled_centi)}</span>
+          <span className="font-money text-[13px] font-bold text-err">{fmtRm(r.unbilled_sen)}</span>
           {/* The expensive case, and the one a header-status report cannot see:
               part of this DO was billed and the rest was quietly left behind. */}
           {r.partly_invoiced && <Badge tone="warning" size="xs">{r.lines_pending} of {r.lines_total} lines</Badge>}
@@ -364,22 +360,22 @@ export function UnbilledDeliveriesV2() {
       ),
     },
     {
-      key: "delivered_centi",
+      key: "delivered_sen",
       label: "Delivered value",
       width: "140px",
       align: "right",
       defaultHidden: true,
-      getValue: (r) => r.delivered_centi,
-      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.delivered_centi)}</span>,
+      getValue: (r) => r.delivered_sen,
+      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.delivered_sen)}</span>,
     },
     {
-      key: "invoiced_centi",
+      key: "invoiced_sen",
       label: "Already billed",
       width: "140px",
       align: "right",
       defaultHidden: true,
-      getValue: (r) => r.invoiced_centi,
-      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.invoiced_centi)}</span>,
+      getValue: (r) => r.invoiced_sen,
+      render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.invoiced_sen)}</span>,
     },
     {
       key: "status",

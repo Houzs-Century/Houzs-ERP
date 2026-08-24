@@ -38,7 +38,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import {
   COMPLIANCE_KINDS,
   COMPLIANCE_LABEL,
@@ -53,6 +53,8 @@ import {
 } from '../../vendor/shared/lorry-compliance';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -236,7 +238,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
     warehouseId: lorry.warehouse_id ?? '',
     threeplCompanyId: lorry.threepl_company_id ?? '',
     maxSets: lorry.max_sets != null ? String(lorry.max_sets) : '',
-    maxRevenueRm: lorry.max_revenue_centi != null ? String(lorry.max_revenue_centi / 100) : '',
+    maxRevenueRm: lorry.max_revenue_sen != null ? String(lorry.max_revenue_sen / 100) : '',
     layer: (lorry.capacity_layer ?? 'SETS') as CapacityLayer,
     lengthFt: lorry.length_ft != null ? String(lorry.length_ft) : '',
     widthFt: lorry.width_ft != null ? String(lorry.width_ft) : '',
@@ -246,7 +248,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
 
   const whName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const w of warehouses.data ?? []) m.set(w.id, w.code || w.name);
+    for (const w of warehouses.data ?? []) m.set(w.id, warehouseLabel(w) ?? '');
     return m;
   }, [warehouses.data]);
   const coName = useMemo(() => {
@@ -272,7 +274,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
       warehouseId: form.warehouseId || null,
       threeplCompanyId: form.threeplCompanyId || null,
       maxSets: setsStr ? Math.round(Number(setsStr)) : null,
-      maxRevenueCenti: revStr ? Math.round(Number(revStr) * 100) : null,
+      maxRevenueSen: revStr ? Math.round(Number(revStr) * 100) : null,
       capacityLayer: form.layer,
       lengthFt: numOrNull(form.lengthFt),
       widthFt: numOrNull(form.widthFt),
@@ -300,7 +302,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           <Fact label="Box (L x W x H)" value={box} />
           <Fact label="Capacity (m3)" value={viewM3 != null ? `${viewM3} m3` : '—'} />
           <Fact label="Max sets / trip" value={lorry.max_sets != null ? String(lorry.max_sets) : 'default (10)'} />
-          <Fact label="Max revenue / trip" value={lorry.max_revenue_centi != null ? fmtCenti(lorry.max_revenue_centi) : 'default (RM30k)'} />
+          <Fact label="Max revenue / trip" value={lorry.max_revenue_sen != null ? fmtSen(lorry.max_revenue_sen) : 'default (RM30k)'} />
           <Fact label="Ceiling layer" value={CAPACITY_LAYER_LABEL[(lorry.capacity_layer ?? 'SETS') as CapacityLayer]} />
         </dl>
       </section>
@@ -317,7 +319,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           <span className={styles.fieldLabel}>Region (home warehouse)</span>
           <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
             <option value="">Any region (unpinned)</option>
-            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{w.code || w.name}</option>))}
+            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{warehouseLabel(w)}</option>))}
           </select>
         </label>
         <label className={styles.field}>
@@ -367,7 +369,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     registrationDate: (lorry as Record<string, unknown>).registration_date as string ?? '',
     inServiceDate: (lorry as Record<string, unknown>).in_service_date as string ?? '',
     purchaseDate: lorry.purchase_date ?? '',
-    price: lorry.purchase_price_centi != null ? String(lorry.purchase_price_centi / 100) : '',
+    price: lorry.purchase_price_sen != null ? String(lorry.purchase_price_sen / 100) : '',
     roadTaxExpiry: lorry.road_tax_expiry ?? '',
     insuranceExpiry: lorry.insurance_expiry ?? '',
     puspakomExpiry: lorry.puspakom_expiry ?? '',
@@ -387,7 +389,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       purchaseDate: form.purchaseDate || null,
       // RM → cents. Math.round because 1234.56 * 100 is 123455.99999 in binary
       // floating point and a truncation would quietly lose a sen per lorry.
-      purchasePriceCenti: rm ? Math.round(Number(rm) * 100) : null,
+      purchasePriceSen: rm ? Math.round(Number(rm) * 100) : null,
       roadTaxExpiry: form.roadTaxExpiry || null,
       insuranceExpiry: form.insuranceExpiry || null,
       puspakomExpiry: form.puspakomExpiry || null,
@@ -410,7 +412,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
           <Fact label="Registered" value={fmtDateField(lorry, 'registration_date')} />
           <Fact label="In service" value={fmtDateField(lorry, 'in_service_date')} />
           <Fact label="Purchased" value={lorry.purchase_date ? formatDate(lorry.purchase_date) : '—'} />
-          <Fact label="Purchase price" value={lorry.purchase_price_centi != null ? fmtCenti(lorry.purchase_price_centi) : '—'} />
+          <Fact label="Purchase price" value={lorry.purchase_price_sen != null ? fmtSen(lorry.purchase_price_sen) : '—'} />
         </dl>
       </section>
     );
@@ -499,7 +501,7 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
           ) : null}
         </div>
         <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-          <div style={{ fontSize: 'var(--fs-13)', fontWeight: 700 }}>{fmtCenti(record.cost_centi)}</div>
+          <div style={{ fontSize: 'var(--fs-13)', fontWeight: 700 }}>{fmtSen(record.cost_sen)}</div>
         </div>
       </div>
 
@@ -561,7 +563,7 @@ const AddServiceRecord = ({ lorryId, onClose }: { lorryId: string; onClose: () =
       serviceDate: form.serviceDate,
       description: form.description.trim(),
       workshop: form.workshop.trim() || null,
-      costCenti: cost ? Math.round(Number(cost) * 100) : 0,
+      costSen: cost ? Math.round(Number(cost) * 100) : 0,
       odometerKm: form.odometerKm.trim() ? Math.round(Number(form.odometerKm)) : null,
       nextServiceDate: form.nextServiceDate || null,
       nextServiceKm: form.nextServiceKm.trim() ? Math.round(Number(form.nextServiceKm)) : null,
@@ -617,7 +619,15 @@ const Field = ({
 }) => (
   <label className={styles.field}>
     <span className={styles.fieldLabel}>{label}</span>
-    <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type ?? 'text'}
-      onChange={(e) => onChange(e.target.value)} />
+    {/* type="date" routes to DateField, not to a native date input: the native
+           one renders in the OPERATING SYSTEM's locale, so the same field read
+           DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
+           in and out. */}
+    {type === 'date' ? (
+      <DateField className={styles.fieldInput} value={value} placeholder={placeholder} onChange={onChange} fullWidth/>
+    ) : (
+      <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type ?? 'text'}
+        onChange={(e) => onChange(e.target.value)} />
+    )}
   </label>
 );

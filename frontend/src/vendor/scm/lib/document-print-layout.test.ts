@@ -117,8 +117,8 @@ const HEADER = {
 };
 
 const ITEMS = [
-  { item_code: 'XAM-L', description: 'SOFA XAMMAR L(LHF)', qty: 1, m3_milli: 0, unit_price_centi: 0 },
-  { item_code: 'XAM-R', description: 'SOFA XAMMAR 2A(RHF)', qty: 1, m3_milli: 0, unit_price_centi: 0 },
+  { item_code: 'XAM-L', description: 'SOFA XAMMAR L(LHF)', qty: 1, m3_milli: 0, unit_price_sen: 0 },
+  { item_code: 'XAM-R', description: 'SOFA XAMMAR 2A(RHF)', qty: 1, m3_milli: 0, unit_price_sen: 0 },
 ];
 
 afterEach(() => {
@@ -218,7 +218,7 @@ describe('the seven shared-template documents print no fills', () => {
         debtor_code: 'C-001',
         debtor_name: 'Jackal',
         reason: 'Damaged in transit',
-        refund_centi: 0,
+        refund_sen: 0,
         notes: null,
         delivery_order_id: null,
         sales_invoice_id: null,
@@ -229,8 +229,8 @@ describe('the seven shared-template documents print no fills', () => {
           description: 'SOFA XAMMAR L(LHF)',
           qty_returned: 1,
           condition: 'Damaged',
-          unit_price_centi: 0,
-          refund_centi: 0,
+          unit_price_sen: 0,
+          refund_sen: 0,
         },
       ] as never,
     );

@@ -119,6 +119,20 @@ export function RolesTab({
                     permission{r.permissions.length === 1 ? "" : "s"}
                   </span>
                 </div>
+                {/* A stored key this build does not declare is DROPPED at
+                    session hydration and grants nothing. Without this line the
+                    role reads as clean and nobody can tell. */}
+                {r.unknown_permissions && r.unknown_permissions.length > 0 && (
+                  <p
+                    className="mt-2 text-[11px] text-warning-text"
+                    title={r.unknown_permissions.join(", ")}
+                  >
+                    {r.unknown_permissions.length} stored key
+                    {r.unknown_permissions.length === 1 ? "" : "s"} this build does not
+                    recognise, so {r.unknown_permissions.length === 1 ? "it grants" : "they grant"}{" "}
+                    nothing: {r.unknown_permissions.join(", ")}
+                  </p>
+                )}
               </div>
               {canManage && !r.is_system && (
                 <button

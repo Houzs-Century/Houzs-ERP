@@ -7,7 +7,7 @@
 > 5. outstanding-so-items is a pooled stock-aware MRP shortage view (:665-694); qty−po_qty_picked>0 is only the degraded fallback.
 > 6. /from-sos buckets by (warehouseId, supplierId) + per-category rules in po-grouping.ts (sofa/bedframe per-SO; mattress merges only within a Monday-anchored 7-day window) — same supplier routinely emits several POs.
 > 7. A second revision engine exists: applyPoAmendment (po-revision.ts:98-341) driven by the standalone PO-amendments router; po_amendments tables appear nowhere in this guide.
-> 8. On the create paths the matrix/combo cost is written into unit_price_centi, not unit_cost_centi (:1229-1260, :2352-2385; autoCostCenti → unitPriceCenti :2164-2173).
+> 8. On the create paths the matrix/combo cost is written into unit_price_sen, not unit_cost_sen (:1229-1260, :2352-2385; autoCostCenti → unitPriceCenti :2164-2173).
 > 9. §9's “no second read” is false: after GRN enrichment the list runs a second Promise.all wave — resolvePoSoCoverageForPos (computeMrp inside) + resolveDeliveredDosForPos (:572-576); §3.4 already describes them.
 
 # Module: Purchase Order (SCM)
@@ -134,6 +134,59 @@ that forgets its gate will not typecheck.
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.
 
+**The "Purchase Location" column shows the warehouse CODE (2026-08-21).** It
+printed `purchase_location?.name || purchase_location?.code`, so the grid
+truncated the full name to `BALAKONG WAREHO…` while this same page's PDF export
+already printed the code. The one display rule is `warehouseLabel` — code first,
+then name — and it now has a FRONTEND home to import:
+`frontend/src/vendor/scm/lib/warehouse-label.ts`, a byte-identical mirror of
+`backend/src/scm/lib/warehouse-label.ts`. Never hand-write the order again; see
+`docs/modules/warehouses.md` for the mirror and its referee. The GRN-from-PO
+picker's Warehouse column reads through the same rule.
+
+### `item_group` is the SKU's, and it decides where the stock lands (2026-08-22)
+
+A PO line's `item_group` is not a label. It is an **input to the stock bucket**:
+`computeVariantKey(item_group, variants)` composes a sofa's fabric / seat / leg
+into the key **only** for a sofa or bedframe group — for null or `others` it
+returns `''` by design (`shared/variant-key.ts`, "Accessory / Others / Service —
+product code only").
+
+So a PO line that lost its group produces a GRN that lost it (`grns.ts:1897`
+copies the PO line), and `postGrnAndRollup` writes the receipt's inventory
+movement under the EMPTY key. The goods are then in the warehouse, at the right
+value, with their `variants` jsonb fully intact — and invisible to every sofa
+order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
+
+**The variants are never the thing that goes missing.** `description2` is built
+from the jsonb alone and prints correctly the whole time, which is exactly why
+this reads as impossible from the screen: the specs are right there on the PO.
+Only the one word that says *how to read them* was blank. Owner 2026-08-22:
+「我们的 PO 没有规格 generate 不出的啊？所以应该不可能没有规格？」 — the specs
+were there; the category was not.
+
+**The server resolves it from the product, not from the request.**
+`POST /mfg-purchase-orders` reads `mfg_products.category` for every
+`mfg_product` line's code — company-scoped, because `code` is shared between the
+two organisations (the reason `grns.ts:287` gives) — and uses it in preference
+to `it.itemGroup`. The caller's value survives only as the fallback for a
+raw-material line, which has no product row. `description2` is built from the
+SAME resolved group, so the printed text and the stock key cannot describe
+different things.
+
+That server rule is the load-bearing half. The desktop From-SO mapper also stops
+re-deriving the group (it now uses the pick's own `itemGroup`, which the picker
+already renders as the row's Category chip) — but fixing only the browser would
+leave the next client free to lose it again. Trace:
+`docs/bugs/0514-the-so-to-po-hop-lost-the-category-so-received-sofa-stock-wa.md`.
+
+**The variant summary on the transfer pickers is labelled "Description 2"
+(2026-08-21).** `VariantDescription` (the shared component GRN ← PO and the nine
+other Convert-From pickers render that column through) exports
+`DESCRIPTION_2_LABEL` and prints it above the summary. The word is the system's
+existing one — the SO line editor's column header and
+`pages/scm-v2/so-audit-labels.ts` — not a new name for the string.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/suppliers-queries.ts` — the PO hook block was
 vendored into the Suppliers slice, **not** a `purchase-order-queries.ts` (see the
@@ -173,6 +226,10 @@ PO-specific facts:
    entry's own comment names the bug this paragraph used to describe.
 
 ---
+
+> **Right-click on a list row** opens the same actions — see
+> `docs/modules/document-conversion.md` §8a for the shape, the table of what
+> every list offers, and the two absences that are deliberate.
 
 ## 2. API surface
 
@@ -226,6 +283,59 @@ they are the only thing preventing a headerless orphan).
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
 UUID**; use `houzsUser.id` for the public bigint.
 
+### CAN a Sales Order be converted to a PO right now? The eligibility chain, in order
+
+> Added 2026-08-16 after the owner reported *"my new SO cannot be converted"*.
+> Read this before concluding a line is "not convertible": four independent
+> filters run, three of them SILENT, and the empty state asserts the opposite of
+> what is happening.
+
+`GET /outstanding-so-items` is the only source the desktop picker
+(`pages/scm-v2/PurchaseOrderFromSo.tsx`) and the mobile wizard
+(`mobile/MobileConvertWizard.tsx`) read. A line must survive all four:
+
+| # | Filter | Silent? | What survives |
+|---|---|---|---|
+| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
+| 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
+| 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
+
+**Filter 3 is where lines vanish for a reason nobody can see.** The picker asks
+`computeMrp` for each line's shortage and keeps only `> 0`. That is correct by
+design — a line already covered by stock or an open PO should not be re-ordered.
+But the lookup is `?? 0`, so **a line MRP never planned at all is
+indistinguishable from a line MRP planned and found fully covered.** Both read
+as shortage 0. Both disappear.
+
+And MRP does not plan most lines. `computeMrp`'s demand read is capped at the
+PostgREST server ceiling with a truncation guard that cannot fire, so on
+production company 1 it planned **1,000 of 13,918 demand lines (7.2%)** — an
+arbitrary slice, because the read orders by a uuid. Full trace and the measuring
+run in `docs/modules/mrp.md` §5. So:
+
+- roughly 93% of otherwise-eligible SO lines are absent from the picker;
+- the loss is invisible — no error, no warning, no partial-results banner;
+- `pooledOk` does NOT rescue it. That flag only flips when `computeMrp`
+  **throws**; a truncated-but-successful compute keeps `pooledOk = true`, so the
+  documented fallback (`qty - po_qty_picked > 0`) never engages.
+
+**What the operator sees when nothing is offered** — the grid's `emptyMessage`:
+
+> *"No outstanding SO lines — every line has been converted (or there are no
+> SOs)."*
+
+That sentence is a positive assertion that the work is done, and under filter 3
+it is false. (The picker gets the READ-FAILED case right: `itemsQ.isError`
+renders a different, correct sentence saying the list is incomplete. Truncation
+is not an error, so it takes the wrong branch.)
+
+**Verdict, as of 2026-08-16:** an SO *can* be converted to a PO — the mechanism
+works and is multi-select at line level — but only for a line that is
+(a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
+~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
+**none merged**.
+
 ---
 
 ## 3. Backend
@@ -233,14 +343,14 @@ UUID**; use `houzsUser.id` for the public bigint.
 ### The list handler — `mfgPurchaseOrders.get('/')` (`:374-520`)
 
 1. **Select** (`:387`) — one PostgREST query with three embeds:
-   `supplier:suppliers(...)`, `items:purchase_order_items(material_code, material_name, qty)`
+   `supplier:suppliers(...)`, `items:purchase_order_items(item_code, material_name, qty)`
    (the per-row item summary), and `purchase_location:warehouses!purchase_location_id(...)`.
 2. **Two paths, chosen by the presence of `page`** (`:394-395`).
    - Legacy (`:404-419`): `order po_date desc, created_at desc`, `.limit(500)`,
      `status` matched against `VALID_STATUSES` (`:285`), optional `supplierId`,
      `scopeToCompany`.
    - Paginated (`:420-483`): `pageSize` clamped to 1..100 (default 50), sort
-     whitelist `po_date | po_number | status | total_centi` (`:426`) with
+     whitelist `po_date | po_number | status | total_sen` (`:426`) with
      `po_number` as the unique tiebreaker (`:433`), bucket resolution via
      `PO_STATUS_BUCKETS` (`:292-298`), `q` ilike over `po_number` + `notes` only
      (`:448` — supplier name is an embedded resource and cannot be `ilike`d),
@@ -249,6 +359,11 @@ UUID**; use `houzsUser.id` for the public bigint.
      (`:467-474`), over the same company + supplier filter but **without** status,
      search or paging. (Seven, not six: the `outstanding` roll-up is counted
      separately rather than derived, so the pill and the filter share one source.)
+     A count that cannot be READ is now `500 { error: 'status_counts_failed' }`
+     naming the bucket (`lib/status-counts.ts`, 2026-08-17) — it used to fall
+     through `count ?? 0` and show a broken bucket as an empty one. A
+     legitimately empty bucket still answers 0. Same guard on the PI, SI, GRN and
+     DO lists.
 3. **Enrichment — TWO waves.** First one GRN query (`:496-512`): all
    non-cancelled GRNs for the listed PO ids, carrying `id` + `grn_number`. It
    powers both `has_children` (the downstream lock) and the "GRN No" column, so
@@ -307,9 +422,19 @@ UUID**; use `houzsUser.id` for the public bigint.
   A drop-ship DO ships against the PO's *expected* batch before receipt; cancelling
   the PO would strand that OUT with no incoming batch. Best-effort: a read error
   or a missing `batch_no` column returns `null` (no block).
-- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD}` (`:312`) — a PO line
-  sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
+- `SO_UNORDERABLE_STATUSES = {DRAFT, CANCELLED, ON_HOLD, CLOSED}` (`:312`) — a PO
+  line sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
   A purely manual line with no SO link skips the check entirely.
+  **This is a threshold on the SALES order, not on this document's own status.**
+  It must stay EQUAL to the delivery side's `SO_UNDELIVERABLE_STATUSES`
+  (`backend/src/scm/shared/so-deliverable-states.ts`), and
+  `backend/tests/duplicatedDecisionPins.test.ts` PIN 2 fails if the two drift:
+  a threshold one write path enforces and the other does not means a document
+  type can be built from an order the other refuses. `CLOSED` joined both on
+  2026-08-22 — on a Sales Order it means **stop chasing the remainder**, so
+  nothing more ships against the order and nothing more is bought for it. The
+  PURCHASE ORDER'S OWN `CLOSED` is a separate question and is not built; see
+  `docs/modules/document-status-vocabulary.md` §1b.
 
 ### Binding a PO line to its source SO line (`so_item_id`)
 
@@ -330,8 +455,16 @@ it, but a hand-typed line never could.
   re-counted so quota moves with the link.
 - Both writes go through `soLinkTargetRefusal` — the SO line must exist **in the
   active company**, must not be cancelled, and its `item_code` must equal the PO
-  line's `material_code`. Otherwise `404 so_line_not_found`,
+  line's `item_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **`POST /` (bare create) is company-scoped too (2026-08-19).** The desktop
+  "New PO from SO" / MRP-convert path feeds SO-sourced lines through this generic
+  create. It now reads each line's `soItemId` **scoped to the active company** and
+  refuses any that resolves to nothing — `404 so_line_not_found` — before the line
+  is linked (`so_item_id`), its `photo_urls` copied, or `recomputeSoPicked` rolls
+  `po_qty_picked` forward. Previously the read carried no company predicate (the
+  service-role client bypasses RLS), so a foreign `soItemId` re-parented another
+  company's SO line onto this company's PO. `BUG-HISTORY.md` 2026-08-19.
 - **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
   proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
   line paths take an operator-supplied qty, and until this landed neither capped
@@ -375,7 +508,7 @@ revisions included):
   (`line_qty_below_allocated`).
 - an SO target passes the SAME `soLinkTargetRefusal` gate as the line-level
   bind (company-owned, not cancelled, `item_code` = the line's
-  `material_code`).
+  `item_code`).
 - `seq` is auto-assigned dense 1..n; DELETE resequences survivors (ascending,
   so the UNIQUE `(item, seq)` can never collide mid-move).
 
@@ -424,7 +557,7 @@ linked and its SO lines as taken:
 | Tier | Evidence | What it proves |
 |---|---|---|
 | 1 | **Delivered chain.** A DO consumed a lot stamped `batch_no` = this PO number (or its OUT movement carries it); the SO comes from the DO's real `so_item_id`. | A record of what happened, not an inference. |
-| 2 | **Note names exactly ONE SO.** The `From SOs:` note written at raise time resolves to one valid, company-owned Sales Order. | With one order there is no question which it served. |
+| 2 | **Note names exactly ONE SO.** The provenance note written at raise time (`Transfer from Sales Order: …`, and the legacy `From SOs:` / `From SO:` — all three are accepted forever) resolves to one valid, company-owned Sales Order. | With one order there is no question which it served. |
 | 3 | **Consolidated PO — code unique across the NAMED SET.** The note names several SOs (one supplier order covering several customers, routine for mattresses). Every free line of every named SO is pooled, then the same 1:1 test runs against the pool. | If exactly one unlinked PO line and one free SO line in the whole set carry the code, no other named order could have absorbed it. |
 
 All three apply the *same* rule from `backend/scripts/lib/po-so-line-pairing.mjs`
@@ -543,6 +676,30 @@ throughout — it logs and skips, because the primary write already committed.
 
 ---
 
+### The Main Supplier column, and the convert's `missing_bindings`
+
+Both read `supplier_material_bindings` for every code in the picker, and both
+now go through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) rather than their own query —
+`backend/src/scm/routes/mfg-purchase-orders.ts` at the SO->PO picker, the
+convert body and the append-to-PO pricing path, plus `reviseBoundPo` in
+`backend/src/scm/lib/so-revision.ts`.
+
+The two failures are not the same size. On the picker a binding that does not
+arrive is a blank **"— none —"** cell. In the convert body it is a **400**: the
+SKU comes back as `missing_bindings`, i.e. the operator is told a bound SKU
+"isn't bound to a supplier yet" and cannot raise the order at all. The shared
+reader chunks the IN-list by URL bytes, pages past PostgREST's 1,000-row
+response cap, and orders totally (`is_main_supplier DESC, item_code, id`) — the
+last of which is what decides which alternate wins when a code is bound to
+several suppliers.
+
+A supplier's own detail page (`suppliers.get('/:id')`,
+`backend/src/scm/routes/suppliers.ts`) had no `.range()` at all and is now paged
+by `paginateAll` for the same reason: production carries 2,660 bindings across
+43 suppliers, so a large supplier could show a subset of its own SKUs and report
+nothing.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL: `backend/scripts/scm-schema/2990s-full-schema.sql:1150`
@@ -553,12 +710,12 @@ those are what the route actually selects.
 
 | Table | Role |
 |-------|------|
-| `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
+| `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
+| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
 | `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
-| `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
+| `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:861`, `:991`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
 | `scm.grns` | Downstream. `purchase_order_id` is the lock's join column. |
 
@@ -629,11 +786,57 @@ caller-supplied array would let any PO line reference any R2 object),
 `POST /:id/convert-from-so`, and the SO-amendment path `reviseBoundPo`
 (`backend/src/scm/lib/so-revision.ts`).
 
+> **`reviseBoundPo`'s own signature is unchanged (2026-08-16).** Its file-mate
+> `applySoAmendment` gained a required `approval: SoAmendmentApproval | null`
+> and turned `c` / `concurrency` into required-with-an-explicit-empty-value, so
+> that an approved SO amendment can persist the unit price it approved instead
+> of re-pricing to the catalogue — see
+> `docs/modules/sales-order.md`, *What an approved amendment does to the LINE
+> PRICE*. Nothing on the PO side reads that flag: the bound PO's line cost is
+> still derived by `deriveMfgPoUnitCost`, never copied from the SO's selling
+> price.
+
 **Read-only on the PO side.** Photos are authored on the Sales Order (or by the
 importer); there is no PO upload or delete route to drift from the SO's
 lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
+
+> **THE HOLD IS A MARKER NOW, NOT A STATUS — 2026-08-22, mig 0324.** Owner:
+> 「我们的hold是给我们知道一个 order hold这的」. `scm.purchase_orders` carries
+> `on_hold` / `hold_reason` / `held_at` / `held_by`, and `PATCH /:id/hold` is the
+> control — **the PO's first working hold of any kind**, because the status added
+> on 2026-08-21 had no writer anywhere in `frontend/src`. A held
+> `PARTIALLY_RECEIVED` order is still partially received; the list shows the real
+> pill plus a Hold chip, and the **On Hold** tab reads the flag.
+>
+> **THE FREE BLOCK STOPPED BEING FREE, and this is the paragraph to read before
+> touching the receive path.** The note below said a held PO was excluded from
+> `RECEIVABLE_PO_STATUSES` "without a line of new code". That was true only while
+> the hold OVERWROTE the status. A held PO now reads `SUBMITTED` and sails
+> through an allow-list of `SUBMITTED / PARTIALLY_RECEIVED` — so the predicate is
+> now `isReceivablePo(po)` in `grns.ts`, which reads the marker off the ROW.
+> Getting this wrong writes stock IN against a purchase order somebody
+> deliberately stopped.
+>
+> **`recomputePoReceived` deliberately did NOT gain a flag term.** It excluded
+> `ON_HOLD` only because re-deriving the status would have erased a hold living
+> in that column. It cannot any more, and freezing a held PO's received counts
+> would be the same lossiness the marker removes. It keeps the `ON_HOLD` literal
+> for a LEGACY row, whose hold is in the status column and nowhere else.
+
+> **`ON_HOLD` added 2026-08-21 (mig 0318, owner: 「PO 加 hold」).** The purchase
+> side never had a reversible stop — only `CANCELLED`, which is final and which
+> the ERP pushes to AutoCount where it cannot be un-cancelled. The LABEL stays in
+> `scm.po_status` for ever (Postgres has no `DROP VALUE`) and every pill map
+> keeps rendering it; nothing writes it.
+>
+> **Three display maps move with it**, two of them on the detail page:
+> `status-pill.ts`'s PO map, `PurchaseOrderDetailV2`'s `STAGE_LABEL`, and that
+> page's `effectiveOf` — whose fall-through answered **`cancelled`**, so a held
+> order would have told the buyer it was cancelled.
+
+
 
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
 Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw
@@ -697,7 +900,7 @@ the same 409 — and, for the first time, a unit test. See
 
 **Amendment path — yes.** The PO is revised **in place** with a bumped `revision`
 column, and the prior version is snapshotted into `scm.po_revisions`. The engine
-is `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:725`), driven by the
+is `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:991`), driven by the
 SO-amendment approve-PO gate; `GET /:id/revisions` (`:896`) feeds the Revisions
 tab. There is no "Revised" badge: the revision rides the DOC NUMBER itself —
 `poDisplayNumber()` (`vendor/scm/lib/po-status.ts:37-44`) renders
@@ -712,11 +915,11 @@ columns at all.
 
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
-| `unit_price_centi` | line | Live — operator-editable until the PO locks. This is the agreed supplier price. |
-| `discount_centi` | line | Live. Clamped so `line_total_centi = max(0, qty*unit - discount)` (`:2432`). |
-| `line_total_centi` | line | Derived on every line write; rolls into the header. |
-| `unit_cost_centi` | line | Written by the **SO→PO convert paths only** — `computeMfgPoUnitCost` (`shared/mfg-pricing`) plus the supplier sofa-combo spread (`loadSupplierSofaCombos`, `:78`). Plain `POST /` writes no `unit_cost_centi` at all, and add-line / line-edit store whatever `unitCostCenti` the client sends, unvalidated. |
-| `subtotal_centi`, `tax_centi`, `total_centi` | header | Derived from lines. |
+| `unit_price_sen` | line | Live — operator-editable until the PO locks. This is the agreed supplier price. |
+| `discount_sen` | line | Live. Clamped so `line_total_sen = max(0, qty*unit - discount)` (`:2432`). |
+| `line_total_sen` | line | Derived on every line write; rolls into the header. |
+| `unit_cost_sen` | line | Written by the **SO→PO convert paths only** — `computeMfgPoUnitCost` (`shared/mfg-pricing`) plus the supplier sofa-combo spread (`loadSupplierSofaCombos`, `:78`). Plain `POST /` writes no `unit_cost_sen` at all, and add-line / line-edit store whatever `unitCostCenti` the client sends, unvalidated. |
+| `subtotal_sen`, `tax_sen`, `total_sen` | header | Derived from lines. |
 | `currency` | header | MYR / RMB / USD / SGD (`VALID_CURRENCIES`, `:299`). **The PO carries no `exchange_rate`** — FX→MYR conversion happens at the GRN, using the GRN's own rate (`grns.ts:400`). |
 | `received_qty` | line | Not money, but the column the money chain hangs off: written only by `recomputePoReceived` (`grns.ts:672`). |
 
@@ -794,8 +997,10 @@ inventory: `docs/generated/`.
 
 ## `so_item_id` on a MIGRATED purchase-order line (2026-08-11)
 
-`backfill-po-so-item-links.mjs` resolves this link from the PO's `From SOs:`
-note, written at raise time by the SO -> PO convert. A migrated PO has no such
+`backfill-po-so-item-links.mjs` resolves this link from the PO's PROVENANCE
+note, written at raise time by the SO -> PO convert (`Transfer from Sales
+Order: …` since 2026-08-18; the legacy `From SOs:` / `From SO:` spellings are
+accepted permanently — see document-conversion.md §10). A migrated PO has no such
 note — measured, not assumed: of the 181 company-1 sofa/bedframe PO lines with
 a NULL `so_item_id`, the notes of **zero** name a sales order. That script's
 three tiers are structurally blind to the cutover corpus.
@@ -820,3 +1025,75 @@ Three things it will not do, and the reasons are the rule rather than caution:
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+---
+
+## When the accounts will not take the order, the buyer is told at save
+
+Owner 2026-08-19. The rule and the block-or-warn reasoning live in
+`docs/modules/autocount-writeback.md` §6b; the sentences in
+`backend/src/scm/lib/ac-preflight.ts`.
+
+`ac-preflight.ts` carries a SECOND verdict from 2026-08-20, and it is not this
+one. `AC_NOT_SENT` means *the accounts do not have this document*;
+`AC_SENT_INCOMPLETE` (`acNotCarriedProblems`) means *they DO have it, and a
+field on it did not come with it* — the case that only arises on the four
+TRANSFERRED documents, whose route applies a strictly narrower header than an
+edit does. Two codes and not one, because filing the second under the first
+would tell an operator their goods receipt is ERP-only when the book already
+holds it, which sends them to raise it twice. Nothing on a sales order or a
+purchase order raises `AC_SENT_INCOMPLETE`; it is named here only so the two
+are not confused when reading that module.
+See `docs/modules/autocount-writeback.md` §7c5.
+
+
+All three PO create anchors — `POST /` (`createMfgPurchaseOrderHandler`),
+`POST /from-sos` (per created PO), and `PATCH /:id/confirm` — now return
+`acNotSent: SaveProblem[]` when the AutoCount composer refused the order. The key
+is ABSENT when the order composed cleanly. `POST /from-sos` carries it per PO
+inside `created[]`, because that route raises several and which one was refused
+is the whole point.
+
+**It never refuses the save**, and that is a decision, not an omission. Every live
+cause on this side needs master data a buyer does not own:
+
+| Cause | What the buyer is told to do |
+|---|---|
+| The ERP code maps to several AutoCount items and this order's supplier owns none of them | raise the order against the supplier the product is actually bought from, or ask for the duplicate AutoCount item to be retired |
+| `scm.suppliers.code` is empty — no AutoCount creditor | ask accounts to give the supplier its creditor code, then re-raise |
+| **Added 2026-08-20** — the order was raised FROM a sales order and one of its sofa builds does not line up with how the accounts already hold that build (`AcSoToPoAlignmentError`) | ask for that build's line keys to be checked, then re-raise |
+
+That third cause has the same shape as the first two — master data a buyer does
+not own — and it is the only one whose refusal is about the SO-to-PO transfer
+rather than the order's own contents. `docs/modules/autocount-writeback.md`
+§7c3b-i has what "does not line up" means and which sofa build reaches it.
+
+**A refusal is surfaced TWICE and the two lists must agree**: `noteReadFailure`
+(the durable outbox row, for an engineer) and `acNotSentProblems` (the sentence,
+for the buyer) are two `instanceof` chains someone has to remember to extend, and
+both were short of the same class on the day it was added. They are now pinned
+against each other in `backend/src/scm/lib/ac-preflight.test.ts`, which reads the
+two sources and names whichever side is missing a class.
+
+Blocking any of them would stop procurement over an accounting-map defect and blame
+the person who cannot fix it. Measured against the compiled cutover map: 117
+ambiguous ERP codes, all 117 refused under a creditor that owns none of their
+candidates — this is the purchase side's problem alone, because a sales order
+names no supplier and resolves to the ERP's own code.
+
+Surfaced on `frontend/src/pages/scm-v2/PurchaseOrderNew.tsx`, before the
+navigation so the page change cannot swallow it. `PurchaseOrderFromSo.tsx` is
+NOT wired yet and still saves in silence.
+
+## Right-click Print, for the whole chain (owner ruling, 2026-08-22)
+
+**The list's right-click Print prints the chain (2026-08-23).** A PO row offers
+`Print`, `Print Sales Order <no>` for each order its supply is BOUND to, and
+`Print Goods Received <no>` for each GRN it was received into — in place, no
+navigation. The row already carries `assigned_sos` and `transfer_to_grns`, so no
+payload change was required.
+
+Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
+builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
+neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
+no address. `document-conversion.md` §8b has both.

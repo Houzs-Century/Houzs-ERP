@@ -39,7 +39,7 @@ export const soCreatePaymentSchema = z.object({
      rule, and this file was extracted from the router just as main introduced
      it, so the two arrived together and only look independent. */
   method:            z.enum(PAYMENT_METHOD_CODES),
-  amountCenti:       z.number().int().positive(),
+  amountSen:       z.number().int().positive(),
   approvalCode:      z.string().optional().nullable(),
   merchantProvider:  z.string().trim().min(1).optional().nullable(),
   installmentMonths: z.number().int().min(0).max(60).optional().nullable(),

@@ -1,0 +1,59 @@
+name: probe-undated-demand
+
+# How much LIVE sales-order demand carries no delivery date — the half of the
+# book the MRP page hides by default — and what shape that population has.
+#
+# Owner, 2026-08-16: "明明这个东西没有 ready,可是我的 MRP 却 show 不出来."
+# Measured by hand against production that day for company 2 (2990): 82 of 163
+# live SO-item ids in the default view, 8 of 68 short sofa sets, and 36 of 84
+# live orders with no delivery date at all. Company 1 (HOUZS) — the larger book,
+# ~2,700 orders — has never been measured.
+#
+# The page's silence is fixed in the same PR. THIS answers the root-cause
+# question the owner asked to be reported and NOT fixed here: is the field
+# optional at create, cleared by an import, or never filled by the POS?
+# Whether to make it required is his decision, and it needs the shape first.
+#
+# Reports BOTH companies in one run — no company input, deliberately: a
+# one-company answer to a two-company question is exactly how a partial
+# measurement gets quoted as the whole picture.
+#
+# Read-only: every statement is a SELECT, no DDL, no writes, no transaction.
+# See backend/scripts/probe-undated-demand.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: probe-undated-demand
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count undated live demand, both companies
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-undated-demand.mjs | tee undated-demand.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-undated-demand
+          path: backend/undated-demand.txt
+          retention-days: 14

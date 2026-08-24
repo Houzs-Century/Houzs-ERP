@@ -82,7 +82,7 @@ try {
      cannot see, which is the lesson from the delivery-side incident. */
   const rows = await pg`
     SELECT po.po_number, po.status AS po_status, po.company_id AS po_co,
-           pi.id AS po_item_id, pi.material_code, pi.qty AS po_qty,
+           pi.id AS po_item_id, pi.item_code, pi.qty AS po_qty,
            pi.so_item_id,
            si.id AS so_item_exists, si.doc_no, si.item_code, si.qty AS so_qty,
            COALESCE(si.cancelled, false) AS so_line_cancelled,
@@ -99,21 +99,21 @@ try {
   for (const r of rows) {
     if (!r.so_item_exists) { dangling.push(r); continue; }
     if (r.so_line_cancelled === true || String(r.so_status).toUpperCase() === "CANCELLED") cancelled.push(r);
-    if (codeKey(r.material_code) !== codeKey(r.item_code)) mismatch.push(r);
+    if (codeKey(r.item_code) !== codeKey(r.item_code)) mismatch.push(r);
     if (r.po_co != null && r.so_co != null && r.po_co !== r.so_co) crossCo.push(r);
   }
 
   section("1. DANGLING — so_item_id points at an SO line that no longer exists", dangling,
-    (r) => `${pad(r.po_number, 22)} ${pad(r.material_code, 30)} qty ${rpad(num(r.po_qty), 5)}  so_item_id=${r.so_item_id}`,
+    (r) => `${pad(r.po_number, 22)} ${pad(r.item_code, 30)} qty ${rpad(num(r.po_qty), 5)}  so_item_id=${r.so_item_id}`,
     "The PO believes it is for an order the system cannot find. The FK is ON DELETE SET NULL,\n" +
     "so a surviving non-null value pointing at nothing means the row went another way.");
 
   section("2. CANCELLED — the PO line is still linked to a cancelled SO line or SO", cancelled,
-    (r) => `${pad(r.po_number, 22)} ${pad(r.material_code, 30)} -> ${pad(r.doc_no, 22)} ${r.so_line_cancelled ? "line cancelled" : `SO ${r.so_status}`}`,
+    (r) => `${pad(r.po_number, 22)} ${pad(r.item_code, 30)} -> ${pad(r.doc_no, 22)} ${r.so_line_cancelled ? "line cancelled" : `SO ${r.so_status}`}`,
     "The goods are still on order against demand that no longer exists.");
 
   section("3. MISMATCH — the PO line and its SO line name DIFFERENT items", mismatch,
-    (r) => `${pad(r.po_number, 22)} PO="${r.material_code}"  vs  ${pad(r.doc_no, 22)} SO="${r.item_code}"`,
+    (r) => `${pad(r.po_number, 22)} PO="${r.item_code}"  vs  ${pad(r.doc_no, 22)} SO="${r.item_code}"`,
     "The link says these are the same goods and the codes say they are not. Whichever screen\n" +
     "you read, one of them is showing the wrong assignment.");
 

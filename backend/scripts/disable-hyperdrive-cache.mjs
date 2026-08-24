@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot prod config change and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It flipped Hyperdrive query caching off on the production connection. The current setting is whatever was last set; this script only knows how to set one value.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // One-shot: disable Hyperdrive query caching on the prod config so the ERP is
 // read-your-writes (fixes the "changed but the list still shows the old value"
 // bug class — Hyperdrive otherwise caches every SELECT ~60s and writes don't

@@ -1,0 +1,60 @@
+name: probe-misbucketed-stock
+
+# 有多少库存因为「类别空掉」而进错桶，又有多少沙发因为没有批号而永远动不了？
+#
+# 老板 2026-08-22，实机走完一次流程之后：几分钟前才收进来的沙发，库存 1、可用 0、
+# 规格写着 "Standard"，送货单还说短缺。追出来的原因（docs/bugs/0514）是 item_group
+# 决定库存放进哪一个桶 —— 类别空掉，钥匙就只剩料号，货进了「没分类」那一格。
+#
+# 写入的路径已经修好了。已经写进去的那些没有，而老板讲得很清楚：先量，他再决定。
+# 这支就是那个量测，它不搬任何东西。
+#
+# 它问的是唯一能决定事情的那个问题：这一行如果类别是对的，钥匙会不会不一样？
+# 两边都用 src/ 里真正的 computeVariantKey 算，不是把规则再抄一遍 —— 自己抄一份规则
+# 去量自己，只会量出自己想看的答案。
+#
+# 只读：只有 SELECT，没有写入、没有 DDL、没有交易、没有锁。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "要读哪一个资料库"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id（1 = HOUZS，2 = 2990，留空 = 两家）"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-misbucketed-stock
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: 数一数有多少货找不到
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          # GitHub 的 runner 没有 IPv6 出口；见 deploy-staging.yml。
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail，否则 tee 会把当掉吞掉，一份被截断的答案会读起来像成功
+        run: |
+          set -o pipefail
+          npx tsx scripts/probe-misbucketed-stock.mjs | tee misbucketed-stock.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-misbucketed-stock
+          path: backend/misbucketed-stock.txt
+          retention-days: 14

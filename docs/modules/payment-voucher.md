@@ -26,8 +26,8 @@ records cash-out, and since 2026-07-30 it is also **the document that decides a
 foreign purchase invoice's exchange rate**, which makes it a costing document as
 well as a cash one. Read §6 before changing anything in it.
 
-> Convention: money is **integer sen / centi** end-to-end (`total_centi`,
-> `amount_centi`, `applied_centi`). `exchange_rate` is `numeric(14,6)` = **MYR per 1
+> Convention: money is **integer sen / centi** end-to-end (`total_sen`,
+> `amount_sen`, `applied_sen`). `exchange_rate` is `numeric(14,6)` = **MYR per 1
 > unit of the document's currency**; MYR is always 1, a byte-for-byte no-op. Dates
 > stored UTC, displayed DD/MM/YYYY. All reads/writes through `/api/scm/*`.
 
@@ -36,6 +36,43 @@ only arrow that points backwards (its rate reaches back to the PI, and through t
 PI to the GRN's inventory).
 
 ---
+
+## 0a. A HELD invoice is not payable (mig 0320, owner 2026-08-21)
+
+`ON_HOLD` arrived on `scm.purchase_invoice_status` for the disputed supplier bill
+that must not go out while it is being queried.
+
+**This is the ONE hold of the three that needed a written guard, and that is the
+useful part.** A PO on hold is not receivable because `grns.ts` filters through
+an allow-list; a GRN on hold cannot be invoiced because the billable read is
+`.eq('status','POSTED')`. Both blocks came for free. **The settle path reads
+invoices BY ID and had no status gate at all**, so a held invoice would have been
+paid exactly as before.
+
+> **IT READS THE MARKER SINCE MIG 0324 (2026-08-22).** The hold left the status
+> column — owner: 「我们的hold是给我们知道一个 order hold这的」 — so a held invoice
+> arrives here reading `POSTED` or `PARTIALLY_PAID`, and the old
+> `status === 'ON_HOLD'` test would have matched nothing for ever while still
+> looking like a guard. `allocationPisOnHold` now selects `on_hold` and calls
+> `isDocumentHeld`, which checks the flag AND the retired label. Selecting the
+> column is half the fix: an unselected column reads `undefined`, which is not
+> held, which is the permissive answer.
+>
+> This is also the document where the marker earns its keep most visibly. Under
+> the old status-hold, a PARTIALLY_PAID invoice put on hold stopped saying how
+> much had been paid — on the one screen a person opens to decide whether to pay
+> the rest. It now says both.
+
+`allocationPisOnHold` refuses with **409 `allocation_on_hold`**, checked where the
+id ENTERS — beside the company guard, and for the same reason that one gives:
+nothing has been written yet, so the operator gets a straight refusal instead of
+a voucher that quietly pays a bill somebody stopped. It **fails closed** on a read
+error, because absence is what refuses here.
+
+`PurchaseInvoiceDetailV2`'s `effectiveOf` names ON_HOLD **before** its money
+checks. Those read `paid_sen`, so a partly-paid invoice later put on hold would
+have shown "Partially paid" and the hold would have been invisible on the one
+screen a person opens to decide whether to pay the rest.
 
 ## 1. Frontend
 
@@ -91,7 +128,7 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/` | area guard | `limit(500)`, company-scoped, `?status=` |
 | GET | `/:id` | area guard | header + lines + allocations (joined PI number / total / paid) |
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
-| PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`) |
+| PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
 | POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
 
@@ -142,16 +179,16 @@ leans on:
 | Lib | Role |
 |---|---|
 | `lib/pv-rate-adoption.ts` | **PURE.** The FX-rate decision table (§6) and the cancel-path retention predicate. No database. |
-| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_centi`, mig 0147) with a legacy optimistic fallback. |
+| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`, mig 0147) with a legacy optimistic fallback. |
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
-| `lib/doc-no.ts` | `nextPvNo` via `mintMonthlyDocNo` (max+1, self-healing), `nextJeNo`. |
+| `lib/doc-no.ts` | `nextPvNo` via `mintMonthlyDocNo`, and `nextJeNo`. Both claim from `scm.doc_number_counters` (mig 0316) with the live max only as a floor — a deleted document does NOT return its number, and gaps are permanent. |
 
 ### The GL entry (source_type `PV`)
-Dynamic legs, unlike the PI's fixed Dr 1200 / Cr 2000:
+Dynamic legs, unlike the PI's fixed Dr INVENTORY / Cr AP (resolved by role):
 ```
-Dr each line.debit_account_code   round(amount_centi * exchange_rate)   -- MYR
+Dr each line.debit_account_code   round(amount_sen * exchange_rate)   -- MYR
 Cr header.credit_account_code     = Σ of those rounded Dr legs          -- MYR
 ```
 The credit leg is the **sum of the rounded debit legs**, so the JE balances
@@ -170,13 +207,13 @@ JE for the same `pv_number`; a cancel's contra is keyed on the original JE's
 | Table | Notes |
 |---|---|
 | `scm.payment_vouchers` | header. `currency` + `exchange_rate numeric(14,6)` since mig **0081**; `purpose` since **0202**. |
-| `scm.payment_voucher_lines` | description + `debit_account_code` + `amount_centi`. |
-| `scm.pv_allocations` | mig **0202**. `pv_id`, `pi_id`, `amount_centi` (requested), `applied_centi` (what actually landed). **No `po_id`, and there is no deposit / prepayment concept anywhere in `backend/src`** — a PV settles invoices, never orders. |
-| `scm.purchase_invoices` | `paid_centi` / `status` moved by the settle; `exchange_rate` written by the rate adoption (§6). |
+| `scm.payment_voucher_lines` | description + `debit_account_code` + `amount_sen`. |
+| `scm.pv_allocations` | mig **0202**. `pv_id`, `pi_id`, `amount_sen` (requested), `applied_sen` (what actually landed). **No `po_id`, and there is no deposit / prepayment concept anywhere in `backend/src`** — a PV settles invoices, never orders. |
+| `scm.purchase_invoices` | `paid_sen` / `status` moved by the settle; `exchange_rate` written by the rate adoption (§6). |
 | `scm.journal_entries` / `_lines` | `source_type` `PV` and `PV_REVERSAL`. |
 | `scm.entity_audit_log` | `PAYMENT_VOUCHER` and — for the rate adoption — `PURCHASE_INVOICE` rows. |
 
-`applied_centi` is the one to respect: **record what the database applied, never what
+`applied_sen` is the one to respect: **record what the database applied, never what
 the allocation asked for.** A cancel reverses that exact figure, so storing the
 request after a clamp shrank it would un-apply money that never moved.
 
@@ -190,17 +227,17 @@ post the GL and touch no invoice — and therefore never adopt a rate.
 
 For each `pv_allocations` row on a POSTED `SUPPLIER_PAYMENT` voucher:
 
-1. `settlePiPaidCenti(sb, pi_id, amount_centi)` — the **database** evaluates the clamp
+1. `settlePiPaidCenti(sb, pi_id, amount_sen)` — the **database** evaluates the clamp
    (`GREATEST(paid, LEAST(total, paid + delta))`) under a row lock, at write time.
    It returns `appliedCenti` and `clampedCenti`.
-2. `pv_allocations.applied_centi` is set to `appliedCenti`.
+2. `pv_allocations.applied_sen` is set to `appliedCenti`.
 3. A non-zero `clampedCenti` is logged and pushed onto `overAllocated`. The voucher
    stays POSTED — the GL entry is correct and the money did leave; what is in question
    is only how much of it this invoice absorbed.
 4. **The FX rate step, §6.**
 
-Cancel walks the same allocations and settles `-applied_centi`, clearing
-`applied_centi` only when the reversal actually landed.
+Cancel walks the same allocations and settles `-applied_sen`, clearing
+`applied_sen` only when the reversal actually landed.
 
 Do NOT re-introduce a caller-side cap. The pre-0147 code read the PI, computed
 `outstanding = total - paid`, capped the allocation and then wrote — a cap that was
@@ -298,6 +335,38 @@ the rate is retained and inventory is not re-costed back.
 
 ## 7. The write-path guards this depends on
 
+### `voucher_date` is REQUIRED on edit, and defaulted on create (2026-08-18)
+
+`PATCH /:id` refuses a blank Voucher Date with **400 `voucher_date_required`**
+(`backend/src/scm/routes/payment-vouchers.ts`), alongside the `payee_name` and
+`credit_account_code` refusals it already carried. That is a field which starts
+being required on edit, so it belongs here rather than being re-derived by the next
+reader.
+
+Why a refusal and not a coercion to NULL. `scm.payment_vouchers.voucher_date` is
+`date NOT NULL DEFAULT current_date`
+(`backend/src/db/migrations-pg/0081_scm_payment_vouchers.sql`). The handler used to
+assign `updates.voucher_date = body.voucherDate` straight through, and
+`PaymentVoucherDetail` sends `voucherDate` on every save while its date field emits
+`""` once cleared — so Postgres received a blank and answered 500
+`invalid input syntax for type date: ""`, losing the whole save. NULL is not the fix
+either: the column is NOT NULL, so it would trade an invalid-syntax 500 for a
+not-null 500. A named 400 is the only answer that reaches the operator.
+
+**Create and edit deliberately disagree.** `POST /` still accepts a missing or blank
+`voucherDate` and defaults to today, which is exactly what the column's own
+`DEFAULT current_date` says a new voucher with no date typed means. An edit that
+CLEARS the field is a different request: a date is already stored, the user is asking
+to remove it, and the column cannot hold "no date". So create defaults and edit
+refuses; do not "harmonise" them without changing the column.
+
+Proved by `backend/src/scm/routes/pvBlankVoucherDate.test.ts` (the real PATCH driven
+through the router), and held for the whole class by
+`backend/tests/dateWriteCoercion.test.ts`, which fails on any request-supplied value
+reaching a date/timestamptz column uncoerced anywhere in `backend/src`.
+
+### Foreign-rate guards
+
 `backend/src/scm/lib/fx-guard.ts` stops NEW documents entering the state §6 exists to
 heal. It is not a PV surface, but the PV's 422 message points at it and the two must
 stay consistent.
@@ -329,8 +398,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 | File | What it proves |
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
-| `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases) |
-| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_centi` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
+| `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases). Its supabase stub is hand-rolled, so it must model `.schema()` — the JE-number prefix reads `public.companies` from a client pinned to `scm` (`docs/bugs/0522`), and a stub without it 500s the whole post. |
+| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
@@ -346,7 +415,7 @@ not that the adopted rate reached the inventory basis.
 
 ## 9. Traps
 
-- **`applied_centi`, not `amount_centi`, is what a cancel reverses.** Getting this
+- **`applied_sen`, not `amount_sen`, is what a cancel reverses.** Getting this
   backwards swaps an over-payment for an under-payment.
 - **Never cap an allocation in the caller** (§5).
 - **Never overwrite a PI rate that is not 1** (§6 row 7).
