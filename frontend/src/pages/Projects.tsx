@@ -2054,12 +2054,13 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Status filter (owner 2026-08-14: "all section word change to status,
-            remove current status dropdown"). One section-level dropdown; each
-            option carries how many tasks that section holds. The old task-title
-            "Status" dropdown that used to sit beside it is gone. */}
+        {/* Task filter — the tasklist-section dropdown; each option carries how
+            many tasks that section holds. Labelled "Status" on 2026-08-14, then
+            "Task" on 2026-08-19 (owner: "the left one change word status to
+            task") because the real project-status chip sits two along and two
+            chips reading "status" was the confusion this rename removes. */}
         <MultiSelectFilter
-          placeholder="Status"
+          placeholder="Task"
           title="Filter by tasklist section"
           summary={(n) => `${n} sections`}
           selected={sectionList}
