@@ -183,10 +183,17 @@ and AEON pays net like any acquirer (他不理顾客是不是分期，他会进�
   已经没有什么问题了. Do not reopen it without a reason from him.
 - **Bank statement reconciliation** — he has run AEON through it end to end and
   it was correct to the sen. MBB, PBB, HLB and GHL not yet clicked through.
-- **PBB payment advice — BUILT 2026-08-24, HIS PASS STILL TO COME.** He
-  answered the open question with 继续 PBB 的界面, so both halves landed:
-  the screen and the matcher wiring. What remains is his click-through on
-  his real files.
+- **PBB payment advice — BUILT 2026-08-24, AND HE PASSED THE SCREEN THE SAME
+  DAY.** He answered the open question with 继续 PBB 的界面, both halves
+  landed (screen + matcher wiring), and he then clicked it with HIS REAL
+  FILES on the rig: uploaded HOUZSCENTURY_IBG_20260810, saw 08-09 agree to
+  the sen (RM 99,148.27) against his real report and the two missing days
+  named by the blocker sentence, and accepted it — 可以了，没有问题就行.
+  Do not re-ask him about this screen. STILL OPEN if he wants the full
+  three-day green: fetch the 08-07 and 08-08 CSVs from the PBB portal,
+  reconcile them, and the same advice card flips Ready by itself (it
+  re-checks live); then his real MBB statement's RM 188,955.86 credit books
+  across the three reports from the advice.
 
 ### The payment advice, as built (2026-08-24)
 
@@ -264,6 +271,11 @@ sale in the ERP" and there is nothing to watch match:
 ```
 node scripts/demo-seed-from.mjs PBB "…/HOUZSCENTURY_CSV_20260809 （PBB）.csv"
 ```
+
+**重来一次 wipes the seeding.** The reset button restores the INVENTED demo
+payments, so real files uploaded after it read as 31× "no sale in the ERP" —
+which looks like broken matching and is not (it bit the owner on 2026-08-24).
+After any reset, run demo-seed-from.mjs again before uploading real files.
 
 His real files live in `Desktop/Houzs - ERP/` — `Merchant Report/` and
 `Bank Statement/`. **They are not in the repo and must not be**: 225 live bank
