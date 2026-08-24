@@ -171,11 +171,84 @@ in `docs/acquirer-statement-formats.md`: MBB's split credit is the BANK's
 presentation, not a fourth fee shape (偶尔会在 bank statement 显示进全额然后扣),
 and AEON pays net like any acquirer (他不理顾客是不是分期，他会进扣了手续费的钱给我).
 
-**Still to do on layer 4:** the PDF path (Hong Leong sends `acs_*.pdf`;
-`acc/settlement-pdf.ts` already decrypts and de-obfuscates Maybank's PDFs and
-is the machinery to reuse), and a maintenance screen for
-`acc_bank_statement_config` — today a bank account is configured by inserting a
-row.
+## CHECKPOINT 2026-08-21 — READ THIS FIRST
+
+73 commits on `feat/acc-settlement`, worktree `.claude/worktrees/accounting`.
+**No PR, no merge.** His gate, unchanged since the start: 最好到时我在本地测试
+确定没问题才上.
+
+### Where testing stands
+
+- **Merchant reconciliation — HE HAS PASSED IT.** 2026-08-20: 卡机那边的 recon
+  已经没有什么问题了. Do not reopen it without a reason from him.
+- **Bank statement reconciliation** — he has run AEON through it end to end and
+  it was correct to the sen. MBB, PBB, HLB and GHL not yet clicked through.
+- **PBB payment advice — BACKEND ONLY, NO SCREEN.** This is the one thing he
+  asked for that he cannot yet test. See below.
+
+### THE NEXT PIECE OF WORK, and it is a screen
+
+`POST /accounting/settlement/payouts` and `GET /accounting/settlement/payouts`
+work and are proven on his own files, but nothing in the UI calls them. He was
+asked whether to build the screen and the session ended before he answered, so
+**ask before building** — he may want to click the bank side first.
+
+What the screen has to do (the API already returns all of it):
+
+- upload a PDF — note it goes up as `contentBase64`, not text like the CSVs;
+- show the advice: total, payee bank + account, advice date;
+- show its days, each `AGREES` / `DIFFERS` / `REPORT_MISSING` /
+  `REPORT_NOT_RECONCILED`, and the one-sentence `blockedBy`;
+- once `readyToReceive`, the bank credit of that total books against those
+  reports. **The bank matcher does not read payouts yet** — today it still
+  searches for a combination and caps at four, which is the very limit the
+  advice exists to remove. That wiring is the second half of this job.
+
+### Still to do on layer 4 beyond that
+
+- Hong Leong's own bank statement arrives as `acs_*.pdf`; `acc/bank-parse` reads
+  CSV only, and `acc/settlement-pdf` is the machinery to reuse.
+- A maintenance screen for `acc_bank_statement_config` — today a bank account is
+  configured by inserting a row.
+- **2990's `BANK_DEFAULT` role.** For Houzs it is right (he confirmed: only
+  Maybank receives customer transfers). 2990 has no `acc_account_roles` row, so
+  it falls back to 330-0000 Maybank; if 2990 takes transfers into Hong Leong,
+  that row must be set or its bank reconciliation can never balance.
+
+### Things he decided in this session (do not re-ask)
+
+| His words | What it settled |
+|---|---|
+| 多张 so 那边放的 approval code 都一样…你不能自动核对吗 | Payments sharing a reference that sum to the line auto-match |
+| 这个情况当他对的上卡机报告的数额也不应该出现不是？ | An exact-summing SUBSET is enough; the odd one out stays open and shows on the watchlist |
+| 他可能不止两张单加起来，可能超过两张 | No ceiling by reference (exhaustive to 14); amount-only path bounded at 6 |
+| for houzs 实际只有 maybank 在收 | The BANK_DEFAULT hardcode is correct for Houzs; leave it |
+| 支票…很少甚至一个月都没有 | No uncleared-cheque account; the bank rec surfaces them |
+| 一定会开 [Sales Invoice] | Revenue always reaches the P&L; deposits sit in AR briefly — do NOT move them to 410-0000 |
+| 要 [a list of payments that never reached the ledger] | Built, on the Self-check tab |
+| 当我重新上传他应该是 ignore 已经 recon 了的 transaction | A DUPLICATE bank movement arrives IGNORED |
+| for pbb 就是几份 excel 对一份 pdf | The payout-advice model |
+
+### The test rig (how to get back to it)
+
+```
+backend:  npx tsx scripts/settlement-demo-server.ts        (port 8788)
+frontend: npm run dev:settlement-demo                      (port 5173)
+          http://localhost:5173/demo-settlement.html
+```
+
+`POST /api/scm/demo/reset` clears it. To test against a REAL file, give the rig
+the ERP side of it first — otherwise every transaction correctly reads as "no
+sale in the ERP" and there is nothing to watch match:
+
+```
+node scripts/demo-seed-from.mjs PBB "…/HOUZSCENTURY_CSV_20260809 （PBB）.csv"
+```
+
+His real files live in `Desktop/Houzs - ERP/` — `Merchant Report/` and
+`Bank Statement/`. **They are not in the repo and must not be**: 225 live bank
+transactions with customer names do not belong in git history. The fixtures in
+`demo-statements/` are synthetic copies of their SHAPES.
 
 ## NEXT UP after this branch merges
 
