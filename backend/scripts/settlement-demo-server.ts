@@ -18,6 +18,7 @@ import { createServer } from 'node:http';
 import { Hono } from 'hono';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { postSoPayment, postSiPayment } from '../src/acc/payments';
+import { parseStatement } from '../src/acc/settlement-parse';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
@@ -399,6 +400,86 @@ app.post('/api/scm/demo/reset', async (c) => {
   tables = seed();
   await bookTheTakings();
   return c.json({ ok: true });
+});
+
+/* POST /api/scm/demo/seed-from-statement — the ERP side of a REAL report.
+ *
+ * The owner, on his own Public Bank file: 我测试pbb的，但会比较难试是因为pbb太多
+ * transaction了. The difficulty was never PBB — it was that the rig's fake ERP
+ * holds a dozen invented payments, so all 31 of his real transactions correctly
+ * read as "no sale in the ERP" and there is nothing to watch match.
+ *
+ * So this reads a real merchant report with the REAL parser and writes the
+ * payments that should be behind it: one sale per line, its own date, its own
+ * amount, its own approval code, booked through the REAL posting engine so
+ * settlement-in-transit rises exactly as a fortnight of swiping would.
+ *
+ * `imperfect` leaves the interesting cases in on purpose, because a file where
+ * everything matches proves only the easy path:
+ *   · the LAST line gets no payment at all      -> "no sale in the ERP"
+ *   · the FIRST line's approval code is mistyped -> falls to amount+date, and
+ *     the screen offers it pre-ticked for a human
+ * DEV ONLY, like the rest of this file. */
+app.post('/api/scm/demo/seed-from-statement', async (c) => {
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+  const acquirerCode = String((body as Record<string, unknown>).acquirerCode ?? '').trim();
+  const content = String((body as Record<string, unknown>).content ?? '');
+  const imperfect = (body as Record<string, unknown>).imperfect !== false;
+  if (!acquirerCode || !content.trim()) return c.json({ error: 'acquirerCode and content are required' }, 400);
+
+  const acq = ACQUIRER_CONFIG.find((a) => a.code === acquirerCode);
+  if (!acq) return c.json({ error: `unknown acquirer ${acquirerCode}` }, 400);
+
+  const parsed = parseStatement({
+    code: String(acq.code),
+    statement_format: (acq.statement_format ?? null) as string | null,
+    fee_method: (acq.fee_method ?? null) as string | null,
+    column_map: (acq.column_map ?? null) as never,
+    statementMonth: String((body as Record<string, unknown>).statementMonth ?? '') || null,
+    total_net_label: (acq.total_net_label ?? null) as string | null,
+    summary_totals: (acq.summary_totals ?? null) as never,
+  }, content);
+  if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
+
+  const NAMES = ['Tan Wei Ming', 'Siti Nurhaliza', 'Lim Guan Hoe', 'Priya Raman', 'Chong Ai Ling',
+    'Abdul Rahman', 'Ng Poh Choo', 'Kumar Selvam', 'Wong Li Fen', 'Faridah Omar'];
+  const stamp = tables.mfg_sales_order_payments.length;
+  const made: Array<Record<string, unknown>> = [];
+
+  parsed.rows.forEach((row, i) => {
+    const last = i === parsed.rows.length - 1;
+    if (imperfect && last) return;                       // -> no sale in the ERP
+    const docNo = `SO-DEMO-${String(stamp + i + 1).padStart(4, '0')}`;
+    tables.mfg_sales_orders.push({
+      doc_no: docNo, customer_name: NAMES[i % NAMES.length], customer_phone: null, company_id: CO,
+    });
+    const payment: Row = {
+      id: `seed-${stamp + i + 1}`,
+      so_doc_no: docNo,
+      paid_at: `${row.txnDate}T12:00:00`,
+      amount_centi: row.grossSen,
+      /* The mistyped code: the till captured it wrong, which the owner says he
+         cannot rule out (我没办法确定 authorised code salesperson 一定填对). */
+      approval_code: imperfect && i === 0 ? `${row.ref ?? '000000'}9` : row.ref,
+      method: 'merchant',
+      merchant_provider: acquirerCode,
+      company_id: CO,
+    };
+    tables.mfg_sales_order_payments.push(payment);
+    made.push(payment);
+  });
+
+  const sb = client();
+  for (const p of made) await postSoPayment(sb, p as never);
+
+  return c.json({
+    ok: true,
+    linesInFile: parsed.rows.length,
+    paymentsCreated: made.length,
+    ...(imperfect
+      ? { leftOut: 1, mistypedCode: 1, note: 'one line has no payment, and one payment carries a mistyped code — on purpose' }
+      : {}),
+  });
 });
 
 /* ── node:http bridge (no extra dependency; Hono speaks fetch) ─────────────── */
