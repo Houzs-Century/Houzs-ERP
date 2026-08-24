@@ -10,6 +10,7 @@ import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 import type { TeamMember, Department, Position, Role } from "../../types";
 import { defaultRoleId, deriveDeptLead, divisionOf, Eyebrow, FIELD_SELECT_CLS } from "./teamShared";
+import { showsPosPinCard } from "./posPinEligibility";
 
 /* Invite Member — design handoff screen 03. One centered modal: person &
  * email, an assignment summary prefilled from the Directory's current
@@ -71,6 +72,7 @@ export function TeamInviteModal({
   const [editingAssignment, setEditingAssignment] = useState(false);
   const [withPassword, setWithPassword] = useState(false);
   const [password, setPassword] = useState("");
+  const [posPin, setPosPin] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SendResult | null>(null);
 
@@ -88,6 +90,7 @@ export function TeamInviteModal({
     setCompanyIds(companies.length ? [companies[0].id] : []);
     setWithPassword(false);
     setPassword("");
+    setPosPin("");
     setSent(null);
     setEditingAssignment(false);
     const dept = presetDeptId != null ? presetDeptId : null;
@@ -106,6 +109,16 @@ export function TeamInviteModal({
     [positions, deptId],
   );
   const position = positions.find((p) => p.id === positionId) ?? null;
+  /* POS Access — a 2990's Home salesperson signs into the showroom tablet with
+     a 6-digit PIN. Offered at invite time so the credential goes out with the
+     account rather than being remembered later; the backend refuses a PIN on
+     any non-sales position, so the same rule decides whether the box appears. */
+  const showPosPin = showsPosPinCard({
+    companyIds,
+    companies,
+    positionSlug: position?.slug ?? null,
+  });
+  const posPinInvalid = showPosPin && posPin.length > 0 && posPin.length !== 6;
   const divisionSuggestions = useMemo(() => {
     const set = new Set<string>();
     for (const m of members) {
@@ -116,7 +129,7 @@ export function TeamInviteModal({
     return [...set].sort();
   }, [members, deptId]);
 
-  const canSend = email.trim().includes("@") && !sending;
+  const canSend = email.trim().includes("@") && !sending && !posPinInvalid;
 
   async function send() {
     if (!canSend) return;
@@ -140,6 +153,7 @@ export function TeamInviteModal({
         ...(roleId != null ? { role_id: roleId } : {}),
         ...(multiCompany && companyIds.length ? { company_ids: companyIds } : {}),
         ...(withPassword && password ? { password } : {}),
+        ...(showPosPin && posPin.length === 6 ? { pos_pin: posPin } : {}),
       });
       // Division isn't part of the invite payload — set it on the placeholder
       // user row the invite just created, so the member lands in their team.
@@ -474,6 +488,35 @@ export function TeamInviteModal({
               )}
             </p>
           </div>
+
+          {showPosPin && (
+            <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">
+              <div className="text-[12.5px] font-medium text-ink">
+                POS PIN &middot; 2990&rsquo;s Home
+              </div>
+              <p className="mb-0 text-[11.5px] leading-relaxed text-ink-secondary">
+                The showroom tablet signs a salesperson in with a 6-digit PIN, not a
+                password. Leave it blank to set one later from their profile.
+              </p>
+              <input
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label="6-digit POS PIN"
+                value={posPin}
+                onChange={(e) => setPosPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="------"
+                className={cn(
+                  inputCls,
+                  "max-w-[132px] text-center font-mono text-[15px] tracking-[0.35em]",
+                )}
+              />
+              {posPinInvalid && (
+                <div className="text-[11.5px] text-err">
+                  A POS PIN is exactly 6 digits — finish it or clear the box.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Optional direct-create: set a password now → active account. */}
           <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-143 route modules (43 in `backend/src/routes`, 100 in `backend/src/scm/routes`), 1060 endpoint registrations.
+143 route modules (43 in `backend/src/routes`, 100 in `backend/src/scm/routes`), 1061 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -42,7 +42,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos.ts` | 8 | 423 |
+| `backend/src/routes/pos.ts` | 9 | 444 |
 | `backend/src/routes/position-capabilities.ts` | 3 | 218 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
@@ -178,7 +178,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1717 files, 631777 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1721 files, 632528 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -365,7 +365,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/scm-v2` | 124 |
 | `frontend/src/pages/scm-v2/products` | 1 |
-| `frontend/src/pages/team` | 9 |
+| `frontend/src/pages/team` | 10 |
 
 ## 5. Mobile screen inventory
 

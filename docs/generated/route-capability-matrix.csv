@@ -232,6 +232,7 @@ GET,/api/portal/case/attachments/:attId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPA
 POST,/api/portal/case/attachments/:attId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments/:actId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
+GET,/api/pos/admin-pin-status/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,NO,DECLARED_GATE,backend/src/routes/pos.ts
 POST,/api/pos/admin-reset-pin/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/pos.ts
 POST,/api/pos/admin-set-pin/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/pos.ts
 POST,/api/pos/exchange-web-session,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/pos.ts

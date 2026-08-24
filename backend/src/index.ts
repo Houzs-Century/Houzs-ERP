@@ -273,7 +273,8 @@ app.route("/api/sync/customer-mirror", customerMirror);
 app.route("/api/sync/staff-mirror", staffMirror);
 app.route("/api/sync/warehouse-mirror", warehouseMirror);
 // POS auth — pin-login + sales-staff are PRE-AUTH (before the /api/* gate);
-// set-pin/verify-pin/sales-stats re-apply `auth` inside the router.
+// every OTHER route in the router re-applies `auth` on itself (set-pin,
+// verify-pin, sales-stats and the three admin-*-pin doors).
 app.route("/api/pos", pos);
 
 // Google Form intake webhook — PRE-AUTH like mail-inbound: called by
