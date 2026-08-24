@@ -564,3 +564,39 @@ describe('uploading an overlapping period again', () => {
     expect(again.kinds.DUPLICATE).toBeUndefined();
   });
 });
+
+/* 不确定 maybank 对其他的卡机 (owner, 2026-08-20) — and he was right to doubt it.
+   A payout was booked to the acquirer's CONFIGURED bank, whatever statement it
+   actually appeared on. PBB set up to pay into Hong Leong, its credit turning
+   up on the Maybank statement, booked to Hong Leong: Maybank's reconciliation
+   permanently short by that amount and Hong Leong permanently over.
+
+   The statement is evidence. The configuration is a guess made before the
+   money moved, and it loses. */
+describe('which bank a payout is booked to', () => {
+  const elsewhere = () => harness({
+    /* Configured to pay into Hong Leong… */
+    acc_acquirers: [{ ...ACQ, bank_account_code: '331-0000' }],
+    acc_settlement_batches: [BATCH],
+    acc_settlement_rows: [CONFIRMED_ROW],
+  });
+
+  test('follows the statement the credit is on, not the acquirer setup', async () => {
+    const { app, sb } = elsewhere();
+    /* …but the credit arrives on the 330-0000 statement. */
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
+    const res = await post(app, `/bank/lines/${payout.id}/receipt`, {
+      allocations: [{ batchId: payout.matched_batch_id, amountSen: payout.amount_sen }],
+    });
+    expect(res.status).toBe(200);
+
+    const lines = (sb.tables.journal_entry_lines as Row[]).filter((l) => Number(l.debit_sen ?? 0) > 0);
+    expect(lines.map((l) => l.account_code)).toContain('330-0000');
+    expect(lines.map((l) => l.account_code)).not.toContain('331-0000');
+  });
+
+  /* The fallback — a credit typed in by hand, with no statement to read —
+     is pinned where postBatchReceipt itself is tested: src/acc/settlement.test.ts. */
+});

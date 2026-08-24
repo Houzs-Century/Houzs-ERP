@@ -18,7 +18,9 @@ import {
   postStatementCharge, postBatchReceipt, undoBatchReceipt,
 } from './settlement';
 
-const CHART: Row[] = ['320-0000', '330-0000', '930-0000'].map((code) => ({
+/* Two banks, because the interesting question is which one a payout lands in
+   when the acquirer's configuration and the bank statement disagree. */
+const CHART: Row[] = ['320-0000', '330-0000', '331-0000', '930-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
 }));
 
@@ -296,6 +298,27 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
     const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: null }] });
     expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' })).toMatchObject({ ok: true });
     expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '330-0000' });
+  });
+
+  /* WHICH BANK, when the two sources disagree. Owner, 2026-08-20: 不确定 maybank
+     对其他的卡机 — and he was right to doubt it. An acquirer configured to pay
+     into Hong Leong whose credit turns up on the MAYBANK statement is money in
+     Maybank, and booking it to Hong Leong leaves Maybank's reconciliation
+     permanently short by that amount. The statement is evidence; the config is
+     a guess made before the money moved. */
+  it('a bank named by the caller beats the acquirer configuration', async () => {
+    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '331-0000' }] });
+    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', bankAccountCode: '330-0000' }))
+      .toMatchObject({ ok: true });
+    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '330-0000' });
+  });
+
+  /* And with nobody naming one — the type-it-in-by-hand path, which has no
+     statement to read — the configuration is still what carries it. */
+  it('the configured bank still carries a credit nobody named a bank for', async () => {
+    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '331-0000' }] });
+    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' })).toMatchObject({ ok: true });
+    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '331-0000' });
   });
 
   /* A credit keyed against the wrong statement, or on the wrong day. The way

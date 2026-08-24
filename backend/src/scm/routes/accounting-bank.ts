@@ -397,7 +397,7 @@ export const bankLineReceipt = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
-    .select('id, booked_on, amount_sen, state, kind, acquirer_code, reference')
+    .select('id, booked_on, amount_sen, state, kind, acquirer_code, reference, statement_id')
     .eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
@@ -455,9 +455,21 @@ export const bankLineReceipt = guard(async (c) => {
   const bankRef = line.reference ?? null;
   const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number }> = [];
 
+  /* WHICH BANK the money is in — the statement's own account, not the
+     acquirer's configured one. The owner asked exactly this: 不确定 maybank 对
+     其他的卡机. An acquirer set up to pay into Hong Leong whose credit turns up
+     on the Maybank statement really is money in Maybank, and booking it to Hong
+     Leong would leave Maybank's reconciliation permanently short by that
+     amount. The statement is evidence; the configuration is a guess made before
+     the money moved. */
+  const { data: stmtRaw, error: stmtRdErr } = await sb.from('acc_bank_statements')
+    .select('account_code').eq('id', line.statement_id).eq('company_id', co.companyId).maybeSingle();
+  if (stmtRdErr) return c.json({ error: 'load_failed', reason: stmtRdErr.message }, 500);
+  const bankAccountCode = (stmtRaw as { account_code?: string } | null)?.account_code ?? null;
+
   for (const a of allocations) {
     const r = await postBatchReceipt(sb, co.companyId, a.batchId, {
-      receivedOn, amountSen: a.amountSen, bankRef, userName: userName(c),
+      receivedOn, amountSen: a.amountSen, bankRef, bankAccountCode, userName: userName(c),
     });
     if (!r.ok) {
       /* A refusal partway through must not leave half a payout booked. Every

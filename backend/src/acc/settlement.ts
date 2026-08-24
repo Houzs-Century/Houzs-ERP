@@ -434,6 +434,16 @@ export type ReceiptInput = {
   bankRef?: string | null;
   note?: string | null;
   userName?: string | null;
+  /** WHICH BANK ACCOUNT the money is actually in.
+      Set when the credit is being booked off a bank statement, and it WINS over
+      the acquirer's configured bank — the statement is evidence, the config is
+      a guess made before the money moved. Without this, an acquirer configured
+      to pay into Hong Leong whose credit turns up on the Maybank statement
+      books to Hong Leong, and Maybank's reconciliation can never balance
+      (owner, 2026-08-20: 不确定 maybank 对其他的卡机).
+      Left unset by the type-it-in-by-hand path, which has no statement to
+      read and must fall back to the configuration. */
+  bankAccountCode?: string | null;
 };
 
 /** Every credit recorded against a batch, oldest first, with what is left. */
@@ -514,11 +524,18 @@ export async function postBatchReceipt(
   const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  /* Which bank the payout lands in is 决定4 information. Until the owner
-     supplies it the company's default bank carries it — and says so, every
-     time, rather than silently choosing. */
+  /* WHICH BANK. Three sources, in order of how much they know:
+       1. the STATEMENT this credit is being booked from — an observed fact,
+          and it beats any configuration. An acquirer set up to pay into Hong
+          Leong whose credit appears on the Maybank statement really is money
+          in Maybank, and booking it to Hong Leong leaves Maybank's
+          reconciliation permanently short by that amount;
+       2. the acquirer's configured receiving bank, for the manual path where
+          nobody is holding a statement;
+       3. the company default, which says so loudly rather than choosing in
+          silence. */
   const roles = await resolveRoles(sb, companyId);
-  let bankAccount = acq.acquirer.bank_account_code;
+  let bankAccount = input.bankAccountCode || acq.acquirer.bank_account_code;
   if (!bankAccount) {
     bankAccount = roles.BANK_DEFAULT;
     /* eslint-disable-next-line no-console */
