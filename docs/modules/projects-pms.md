@@ -542,6 +542,14 @@ Two things happen here that are easy to miss:
    newest-first dashboard default — it is a work queue. A completed,
    N/A'd, or submitted-for-review task drops its row server-side the
    moment it changes state; nothing "done" ever lingers in My Pending.
+   Two project-level gates sit on the whole OR-block, so every lane for
+   every user inherits them: cancelled/'pending'-status events never
+   surface (owner 2026-08-17), and neither does any event that ENDED
+   before `MY_PENDING_EPOCH` = 2026-08-01 (owner 2026-08-24: the legacy
+   backlog is deliberately incomplete — "just start bulan ni and onward
+   saja"). The epoch is FIXED, not a rolling month, so a just-ended
+   event's post-event tasks survive the month turn; it is a constant in
+   `services/projects.ts` beside `DUE_GATE`.
 6. **Defect items are a TWO-STAGE workflow** (owner 2026-08-07). Each defect
    photo on a "Defect Item Setup/Dismantle" task carries the append-only
    `project_checklist_attachment_actions` timeline, whose statuses are now

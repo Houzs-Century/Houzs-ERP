@@ -1473,6 +1473,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // lane's own binds.
   const dueToday = todayMyt();
   const DUE_GATE = `substr(COALESCE(pc.due_date, p.start_date), 1, 10) <= ?`;
+  // Interpolated (like APPROVER_BRAND_GATE) so the fixed bind order of the
+  // lanes below is untouched; a compile-time date literal, never user input.
+  const MY_PENDING_EPOCH = "2026-08-01";
   // A caller's "My Pending" can have SEVERAL sources; a project qualifies if
   // ANY match, so the lanes below OR together (each caller sets only a few).
   const pendingOr: string[] = [];
@@ -1711,6 +1714,16 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // whole OR-block so every lane — role, title, approver, logistic,
     // director, defect — inherits it; NULL/legacy status still shows.
     where.push(`COALESCE(p.status, 'confirmed') NOT IN ('cancelled', 'pending')`);
+    // Legacy events never surface (owner 2026-08-24: "event yg lama semua
+    // jangan bagi keluar dekat my pending task ... just start bulan ni and
+    // onward saja / apply to all user"). Events that ENDED before Aug 2026
+    // carry years of deliberately-incomplete checklists (641 overdue items at
+    // the time of the report, oldest from Feb 2025), so every lane skips them.
+    // A FIXED epoch, not a rolling month: rolling would silently drop a
+    // just-ended event's post-event tasks (Filled Floorplan T+3d, Event
+    // Complete T+7d) at every month turn. end_date over start_date so an
+    // event still running into August stays visible.
+    where.push(`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= '${MY_PENDING_EPOCH}'`);
     where.push(`(${pendingOr.join("\n      OR ")})`);
     binds.push(...pendingBinds);
   }
