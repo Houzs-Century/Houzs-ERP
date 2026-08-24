@@ -118,11 +118,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import type { AcDocType, AcOp } from '../../services/autocount-writeback';
 import {
-  dispatchOne, enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
+  dispatchOne, enqueueAcOp, enqueueConvert, enqueuePoCreate, enqueueSoCreate,
   MAX_ATTEMPTS,
   type AcDocRef, type AcOutboxPayload, type AcOutboxRow,
 } from './autocount-outbox';
 import { claimOutboxRow } from './autocount-claim';
+import { reresolveConvertSource } from './convert-parent';
 import { AC_TRANSFER_OPS, REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 
@@ -168,6 +169,18 @@ export type RequeueOutcome =
    * two happened.
    */
   | 'requeued-as-recorded'
+  /**
+   * APPLY, on a TRANSFER recorded as PARENTLESS: the document was re-read, its
+   * lines DO name a parent, and a real conversion was composed and queued.
+   *
+   * A third code because it is a third promise. `requeued-as-recorded` re-sends
+   * a stored instruction; this one had no instruction to store — the row was
+   * "there is no earlier document to carry across" — so the parent was resolved
+   * afresh from the child's lines and the conversion built from that. The
+   * operator is being told his receipt is going across AS a conversion of a
+   * purchase order, which is a different claim from "we tried again".
+   */
+  | 'requeued-with-parent'
   /** The composer refuses it again. `detail` is the reason AS IT STANDS NOW. */
   | 'still-refused'
   /** A skip this tool deliberately does not re-attempt (edit, conversion). */
@@ -247,6 +260,8 @@ export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
     'This one cannot be sent again from here. The reason shown says what to do instead.',
   'already-in-autocount':
     'This document is already in AutoCount. Sending it again would put a second copy in the account book.',
+  'requeued-with-parent':
+    'This one was recorded as having no earlier document, and that was wrong \u2014 its lines do come from one. It has been sent across as a proper conversion, and the earlier document went first if it was not already in the book.',
   'already-queued':
     'There is already a live attempt for this document. Nothing to add.',
   'already-requeued':
@@ -299,7 +314,7 @@ export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
  * queued when nothing was written.
  */
 export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = [
-  'requeued', 'requeued-as-recorded',
+  'requeued', 'requeued-as-recorded', 'requeued-with-parent',
   /* SENT NOW IS STRONGER THAN QUEUED, not weaker: the other two mean the sweep
      will take it, this one means the account book already has it. It belongs
      here because every reader of this list is asking "is the document on its
@@ -603,6 +618,96 @@ interface Verdict {
  * create path's dry run execute the real composer rather than predict it, and a
  * predicate that reads three columns has nothing to predict.
  */
+/** Where a re-resolved conversion writes its AutoCount number back. */
+const RESOLVED_TARGET: Record<string, { table: 'grns' | 'purchase_invoices' }> = {
+  po_to_gr: { table: 'grns' },
+  gr_to_pi: { table: 'purchase_invoices' },
+};
+
+/**
+ * A row recorded as parentless whose document turns out to HAVE a parent:
+ * compose the conversion the create should have composed and queue it.
+ *
+ * Returns null when the claim was true after all — the caller then gives the
+ * refusal it always gave, which is the right answer for a document genuinely
+ * keyed in by hand. Every guard the failed-row path applies is applied here
+ * too, in the same order and for the same reasons: a document already in the
+ * book must not be transferred twice, and a live row for the same operation
+ * must not be doubled.
+ */
+async function parentedAfterAll(
+  sb: Sb,
+  raw: SkippedRow,
+  apply: boolean,
+): Promise<Verdict | null> {
+  const spec = RESOLVED_TARGET[raw.op];
+  if (!spec) return null;
+
+  const src = await reresolveConvertSource(sb, raw.op, raw.doc_id);
+  if (!src) return null;
+
+  /* THE DUPLICATE GUARD, on the same column the drain writes on success — read
+     straight from the target table, because a parentless row stores no
+     writeback descriptor for readTransferTarget to follow. */
+  const { data: tgt, error } = await sb.from(spec.table)
+    .select('id, linked_ac_docno').eq('id', String(raw.doc_id)).maybeSingle();
+  if (error || !tgt) {
+    return { outcome: 'document-gone', detail: 'the ERP document this row is about could not be read. Nothing to re-queue.' };
+  }
+  const linked = (tgt as { linked_ac_docno: string | null }).linked_ac_docno ?? null;
+  if (linked) {
+    return {
+      outcome: 'already-in-autocount',
+      detail: `it already carries linked_ac_docno ${linked}. Transferring it again would `
+        + 'duplicate the document in the live account book.',
+    };
+  }
+
+  const live = await liveRowOtherThan(sb, raw);
+  if (live) {
+    return {
+      outcome: 'already-queued',
+      detail: `a ${live.status} ${raw.op} row for this document already exists. Nothing to add.`,
+    };
+  }
+
+  if (!apply) {
+    return {
+      outcome: 'would-requeue',
+      detail: `APPLY would compose a real ${raw.op} from ${src.ids.length} source `
+        + `${src.table} row(s) and queue it. The row's "no earlier document" is wrong.`,
+    };
+  }
+
+  /* enqueueConvert, NOT enqueueAcOp with a stored payload — there is no stored
+     payload, and going through the create path's own composer is what keeps one
+     definition of a conversion rather than a second one written here. */
+  const queued = await enqueueConvert(sb, {
+    companyId: Number(raw.company_id),
+    op: raw.op as 'po_to_gr' | 'gr_to_pi',
+    docType: raw.doc_type as 'GR' | 'PI',
+    docNo: raw.doc_no,
+    docId: raw.doc_id,
+    from: src.ids.map((id) => ({ table: src.table, keyCol: 'id' as const, key: id })),
+    to: { table: spec.table, keyCol: 'id', key: String(raw.doc_id) },
+  });
+  if (!queued) {
+    return {
+      outcome: 'declined',
+      detail: 'the conversion composed but the queue refused the row. Either another run queued this '
+        + 'document first, or the write-back switch went off in between.',
+    };
+  }
+  const newRowId = await findQueuedRowId(sb, raw);
+  await annotate(sb, raw, newRowId);
+  return {
+    outcome: 'requeued-with-parent',
+    detail: `composed a real ${raw.op} from ${src.ids.length} source ${src.table} row(s) and queued it`
+      + `${newRowId ? ` (outbox ${newRowId})` : ''}. The recorded "no earlier document" was wrong.`,
+    newRowId,
+  };
+}
+
 async function transferVerdict(
   sb: Sb,
   raw: SkippedRow,
@@ -615,6 +720,15 @@ async function transferVerdict(
      the document. All three unrecoverable shapes land the other side of this
      line, because recordConvertSkipped hard-codes `status: 'skipped'`. */
   if (status !== 'failed') {
+    /* THE ROW SAID PARENTLESS. ASK THE DOCUMENT. Owner 2026-08-24: 「我的 GR PO
+       所有文件都要有 Send Now 的 button」. Eight production receipts and supplier
+       invoices carry "there is no earlier document to carry across" and their
+       lines name a purchase order anyway — the create path did not look
+       (docs/bugs/0524). Replaying that answer is replaying a false statement, so
+       the parent is resolved afresh from the child's own lines. Only when the
+       document really has none does the old refusal stand. */
+    const revived = await parentedAfterAll(sb, raw, apply);
+    if (revived) return revived;
     return { outcome: 'not-recoverable', detail: reasonFor(raw.op) };
   }
 

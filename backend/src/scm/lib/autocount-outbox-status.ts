@@ -477,8 +477,26 @@ export function acRowIsRequeueable(
   if ((AC_REQUEUEABLE_OPS as readonly string[]).includes(op)) {
     return state === 'failed' || state === 'skipped';
   }
-  /* FAILED ONLY. A skipped transfer never left the building, so the service has
-     never seen it and its refusal cannot be a service refusal. */
-  if ((AC_TRANSFER_OPS as readonly string[]).includes(op)) return state === 'failed';
+  /* EVERY DOCUMENT GETS THE BUTTON. Owner 2026-08-24: 「我的 GR PO 所有文件都要
+     有 Send Now 的 button」.
+
+     This used to be FAILED ONLY, on the reasoning that "a skipped transfer never
+     left the building, so the service has never seen it and its refusal cannot
+     be a service refusal". That reasoning is about the OLD row and it is true
+     about the old row. It is the wrong question. The right one is whether the
+     DOCUMENT can go now — and for the skip that matters most, "there is no
+     earlier document to carry across", the answer changed underneath the row:
+     the receipt or invoice always had a parent on its lines, the create path
+     just failed to name it (docs/bugs/0524). Eight documents on production sat
+     with no button for exactly that reason.
+
+     So a skipped transfer is offered too, and the SEND re-resolves the parent
+     from the document instead of replaying the stored refusal — requeueOutboxRow
+     is where that happens. A row whose document genuinely has no parent gets the
+     same refusal back, now with a sentence, which is a better answer than a
+     greyed-out button that explains nothing. */
+  if ((AC_TRANSFER_OPS as readonly string[]).includes(op)) {
+    return state === 'failed' || state === 'skipped';
+  }
   return false;
 }

@@ -590,16 +590,31 @@ describe('the outcome vocabulary is complete and matches its catalogue', () => {
     expect(acRowIsRequeueable('create_so', 'pending', null)).toBe(false);
     expect(acRowIsRequeueable('create_so', 'skipped', marker)).toBe(false);
     expect(acRowIsRequeueable('edit', 'skipped', 'refused, nothing sent (KeylessLineError): x')).toBe(false);
-    expect(acRowIsRequeueable('so_to_do', 'skipped', 'no source document to transfer from')).toBe(false);
+    /* A skipped CONVERSION is no longer on this list. Owner 2026-08-24:
+       「我的 GR PO 所有文件都要有 Send Now 的 button」— the button is offered and
+       the SEND re-resolves the parent (parentedAfterAll), because "there is no
+       earlier document" was a false claim on eight production documents. The
+       three structural noes above are unchanged: they are about the ROW, and
+       re-reading the document cannot make a sent row unsent. */
+    expect(acRowIsRequeueable('so_to_do', 'skipped', 'no source document to transfer from')).toBe(true);
     /* And the two it MUST offer, or the button never appears at all. */
     expect(acRowIsRequeueable('create_so', 'skipped', 'refused, nothing sent (ItemCodeError): x')).toBe(true);
     expect(acRowIsRequeueable('create_po', 'failed', 'Foreign Key Error (Constraint Name=FK_PO_Creditor)')).toBe(true);
   });
 
-  test('a conversion gets a button when the SERVICE refused it, and never when the ERP did', () => {
-    /* The whole rule in six lines. `failed` is the service's answer and is
-       offered; `skipped` is the document's own shape and never is, whatever the
-       reason says. A conversion has no other state a button could be on. */
+  test('every conversion gets a button, refused or held back alike', () => {
+    /* THE RULE CHANGED, AND THIS IS THE RULE. Owner 2026-08-24: 「我的 GR PO
+       所有文件都要有 Send Now 的 button」and 「不是摆设品」.
+
+       It used to read "`failed` is the service's answer and is offered;
+       `skipped` is the document's own shape and never is". The second half was
+       answering the wrong question. `skipped` is what the CREATE PATH concluded
+       about the document, and for the commonest skip — "no source document to
+       transfer from" — the create path was simply not looking at the lines
+       (docs/bugs/0524). Withholding the button made that mistake permanent and
+       invisible. Now the button is offered and the send re-asks the question;
+       a document that really has no parent gets the refusal, in a sentence,
+       which is more than a greyed-out row ever told anyone. */
     expect(acRowIsRequeueable('so_to_do', 'failed', 'Invalid transfer item.')).toBe(true);
     expect(acRowIsRequeueable('po_to_gr', 'failed', 'AutoCount login failed')).toBe(true);
     expect(acRowIsRequeueable('do_to_iv', 'failed', 'Gave up after 6 attempts. Last error: fetch failed')).toBe(true);
@@ -610,7 +625,7 @@ describe('the outcome vocabulary is complete and matches its catalogue', () => {
       'AutoCount transfers from ONE source document',
       'this SO -> DO transfers only 2 of the source document\'s lines, and 1 of them carry no AutoCount DtlKey',
     ]) {
-      expect(acRowIsRequeueable('so_to_do', 'skipped', reason), reason).toBe(false);
+      expect(acRowIsRequeueable('so_to_do', 'skipped', reason), reason).toBe(true);
     }
     /* And a re-queued failed conversion is history, like every other. */
     expect(acRowIsRequeueable('so_to_do', 'failed',
@@ -988,5 +1003,92 @@ describe('the ladder itself refuses a document AutoCount already has', () => {
       apply: true, resendingThisRow: true,
     });
     expect(r.outcome).toBe('already-sent');
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   THE PARENTLESS ROW THAT WAS NEVER PARENTLESS.
+
+   Owner 2026-08-24: 「我的 GR PO 所有文件都要有 Send Now 的 button」and 「点击
+   Send Now 的话，如果它之前上面的 documentation 没有进去，它就要补调进去」.
+
+   Eight production receipts and supplier invoices carried "there is no earlier
+   document to carry across" while their lines named a purchase order — the
+   create path did not look (docs/bugs/0524). The claim being false is what
+   makes withholding the button wrong, so these tests are about the DOCUMENT,
+   not about the row: one receipt that really does come from a purchase order,
+   and one that really was keyed in by hand.
+   ------------------------------------------------------------------------ */
+describe('a conversion recorded as parentless is re-read, not replayed', () => {
+  const grnRow = (over: Partial<Row> = {}): Row => ({
+    id: 'grn-1', company_id: 1, grn_number: 'HC-GRN-2608-002', linked_ac_docno: null, ...over,
+  });
+  const parentlessSkip = (over: Partial<Row> = {}): Row => ({
+    id: 'skip-gr', company_id: 1, op: 'po_to_gr', doc_type: 'GR',
+    doc_no: 'HC-GRN-2608-002', doc_id: 'grn-1', status: 'skipped',
+    dedupe_key: 'po_to_gr:grn-1', attempts: 0,
+    payload: { body: {} },
+    last_error: 'created with no source Purchase Order to transfer from.',
+    ...over,
+  });
+  /** A receipt whose lines DO come from a purchase order. */
+  const parented = (outbox: Row[] = [parentlessSkip()], grn: Row = grnRow()) => fakeSb({
+    app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+    autocount_outbox: outbox,
+    grns: [grn],
+    grn_items: [{ id: 'gi-1', grn_id: 'grn-1', purchase_order_item_id: 'poi-1' }],
+    purchase_order_items: [{ id: 'poi-1', purchase_order_id: 'po-1' }],
+    purchase_orders: [{ id: 'po-1', company_id: 1, po_number: 'HC-PO-2608-002' }],
+  }, {}, DEDUPE_IDX);
+  /** The same receipt with nothing above it — genuinely hand-entered. */
+  const handEntered = () => fakeSb({
+    app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+    autocount_outbox: [parentlessSkip()],
+    grns: [grnRow()],
+    grn_items: [{ id: 'gi-1', grn_id: 'grn-1', purchase_order_item_id: null }],
+    purchase_order_items: [],
+    purchase_orders: [],
+  }, {}, DEDUPE_IDX);
+
+  test('it gets a real conversion queued, and the old skip is annotated', async () => {
+    const sb = parented();
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-gr', companyId: 1 });
+    expect(r.outcome).toBe('requeued-with-parent');
+    expect(acRequeueAccepted(r.outcome)).toBe(true);
+    /* THE POINT OF THE WHOLE CHANGE: the new row is a po_to_gr with a source,
+       not another parentless record. A test that only checked the outcome
+       string would pass on a row that still said "no earlier document". */
+    const queued = pending(sb);
+    expect(queued).toHaveLength(1);
+    expect(queued[0].op).toBe('po_to_gr');
+    expect(JSON.stringify(queued[0].payload)).toContain('po-1');
+    expect(rows(sb).find((x) => x.id === 'skip-gr')?.last_error).toContain(REQUEUE_NOTE_PREFIX);
+  });
+
+  test('a receipt that really was keyed in by hand keeps the refusal', async () => {
+    const sb = handEntered();
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-gr', companyId: 1 });
+    expect(r.outcome).toBe('not-recoverable');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('a receipt ALREADY in the account book is refused, not transferred twice', async () => {
+    /* The guard that matters most: re-reading the parent must not become a way
+       around the duplicate check. AutoCount has no duplicate guard on the ERP
+       document number and an accepted document cannot simply be deleted. */
+    const sb = parented([parentlessSkip()], grnRow({ linked_ac_docno: 'GR-00123' }));
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-gr', companyId: 1 });
+    expect(r.outcome).toBe('already-in-autocount');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('a live row for the same receipt stops a second one being added', async () => {
+    const sb = parented([
+      parentlessSkip(),
+      parentlessSkip({ id: 'live-gr', status: 'pending', last_error: null }),
+    ]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-gr', companyId: 1 });
+    expect(r.outcome).toBe('already-queued');
+    expect(pending(sb)).toHaveLength(1);
   });
 });
