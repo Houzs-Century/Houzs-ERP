@@ -67,10 +67,12 @@ vi.mock('./settlement-queries', () => ({
   ] }, isLoading: false }),
 }));
 
-/* Layer 4 owns the first tab now; this file is about the other two, so the
+/* Layer 4 owns the first tab now; this file is about the money views, so the
    bank-statement screen is stubbed rather than exercised here. Its own contract
-   is BankStatementTab.test.tsx. */
+   is BankStatementTab.test.tsx — and the payment-advice tab likewise has its
+   own file, PayoutAdviceTab.test.tsx. */
 vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
+vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
 
 import { BankRecon } from './BankRecon';
 
@@ -82,6 +84,16 @@ const draw = () => {
   fireEvent.click(screen.getByText('Money to come in'));
   return r;
 };
+
+describe('the tab strip', () => {
+  /* The advice is where a Public Bank payout starts, so its tab has to be on
+     this screen — one press from the statement it will match. */
+  test('carries the payment advice beside the bank statement', () => {
+    render(<MemoryRouter><BankRecon /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Payment advice'));
+    expect(screen.getByText('payment advice tab')).toBeTruthy();
+  });
+});
 
 describe('the statements waiting for money', () => {
   test('lists what is still owed, and hides the settled ones until asked', () => {

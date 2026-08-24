@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 538,
     "@typescript-eslint/no-floating-promises": 787,
-    "@typescript-eslint/no-unnecessary-condition": 1808,
+    "@typescript-eslint/no-unnecessary-condition": 1807,
     "no-restricted-syntax": 140
   },
   "files": {
@@ -408,7 +408,7 @@
     "src/pages/Projects.tsx": {
       "@typescript-eslint/no-explicit-any": 87,
       "@typescript-eslint/no-floating-promises": 17,
-      "@typescript-eslint/no-unnecessary-condition": 80
+      "@typescript-eslint/no-unnecessary-condition": 79
     },
     "src/pages/ResetPassword.tsx": {
       "@typescript-eslint/no-explicit-any": 1

@@ -45,6 +45,9 @@ export type SettlementCandidate = {
   paidOn: string;
   amountSen: number;
   approvalCode: string | null;
+  /** Who paid — on the batch-detail candidates (the matcher carries it); the
+      watchlist's do not, so a reader has to ask. */
+  customerName?: string | null;
 };
 
 export type SettlementLink = {
@@ -359,6 +362,74 @@ export const useUndoReceipt = () => {
       ),
     onSuccess: () => invalidateAfterPosting(qc),
     onError: writeFailedAs('Credit not removed'),
+  });
+};
+
+/* ── The payment advice: the payer's own answer sheet ────────────────────────
+   Public Bank sends one IBG advice when it pays: this much money, these
+   settlement days, into this account. Uploading it here is what lets the bank
+   matcher allocate one credit across however many reports the advice names —
+   without it the matcher searches for a combination and stops at four. */
+
+export type PayoutDayState = 'AGREES' | 'DIFFERS' | 'REPORT_MISSING' | 'REPORT_NOT_RECONCILED';
+
+/** One settlement date of an advice, against the report for that date. */
+export type PayoutDay = {
+  settledOn: string;
+  /** What the advice says that day came to. */
+  adviceNetSen: number;
+  batchId: number | null;
+  fileName: string | null;
+  /** What the uploaded report itself nets, when there is one. */
+  reportNetSen: number | null;
+  /** report − advice. Zero is agreement; anything else is the finding. */
+  differenceSen: number | null;
+  reportOpenLines: number | null;
+  state: PayoutDayState;
+};
+
+export type PayoutStatus = {
+  netSen: number;
+  days: PayoutDay[];
+  /** Every day has a report, they all agree, and every report is reconciled. */
+  readyToReceive: boolean;
+  /** One sentence saying what is in the way, or null when nothing is. */
+  blockedBy: string | null;
+};
+
+export type Payout = {
+  id: number;
+  acquirer_code: string;
+  file_name: string;
+  advice_date: string | null;
+  payee_bank: string | null;
+  payee_account_no: string | null;
+  gross_sen: number;
+  commission_sen: number;
+  net_sen: number;
+  uploaded_by: string | null;
+  /** Re-checked against TODAY'S reports on every read, not stored. */
+  status: PayoutStatus;
+};
+
+export const usePayouts = () => useQuery({
+  queryKey: ['settlement-payouts'],
+  queryFn: () => authedFetch<{ payouts: Payout[] }>(`/accounting/settlement/payouts`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useUploadPayoutAdvice = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { acquirerCode: string; fileName: string; contentBase64: string }) =>
+      authedFetch<{ ok: boolean; payoutId: number; status: PayoutStatus }>(`/accounting/settlement/payouts`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-payouts'] }); },
+    /* No writeFailedAs: an unreadable advice is the MESSAGE, and the page shows
+       the server's sentence verbatim (§2.14). */
   });
 };
 

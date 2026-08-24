@@ -25,7 +25,7 @@ const LINE: BankLine = {
   description: 'CR/CARD SALES MN 32409997 DATED 14082026', reference: '99970814',
   amount_sen: 227700, charge_sen: 0, kind: 'PAYOUT',
   acquirer_code: 'MBB', trading_date: '2026-08-14', merchant_no: '32409997',
-  matched_batch_id: 7, state: 'OPEN', posted_je_no: null, note: null, matches: [],
+  matched_batch_id: 7, split: null, state: 'OPEN', posted_je_no: null, note: null, matches: [],
   candidates: [
     { id: 3, acquirerCode: 'MBB', fileName: 'other.csv', periodFrom: '2026-08-01', periodTo: '2026-08-01', payableSen: 374304, outstandingSen: 374304 },
     { id: 7, acquirerCode: 'MBB', fileName: 'mbb-credit.csv', periodFrom: '2026-08-14', periodTo: '2026-08-14', payableSen: 227700, outstandingSen: 227700 },

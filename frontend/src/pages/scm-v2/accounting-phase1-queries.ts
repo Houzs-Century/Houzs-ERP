@@ -51,9 +51,21 @@ export type ControlCheckRow =
   | { role: string; accountCode: string; glBalanceSen: number; driftDocs: ControlDrift[]; foreignLines: ControlForeign[]; ok: boolean }
   | { role: string; accountCode: string; error: string };
 
+/** Money recorded on a document that never reached the ledger (acc/payments'
+    unbookedPayments). `since` is the derived boundary — the first day this
+    company ever booked one — and null means there is no period to check. */
+export type UnbookedPayments = {
+  since: string | null;
+  rows: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string }>;
+  totalSen: number;
+  ok: boolean;
+  /** Only when the check itself could not run. */
+  error?: string;
+};
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
-  queryFn: () => authedFetch<{ checks: ControlCheckRow[] }>(`/accounting/control-check`),
+  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments }>(`/accounting/control-check`),
   staleTime: 30_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
