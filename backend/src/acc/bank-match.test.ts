@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
-  type BankRecognitionRule, type PayableBatch,
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
 } from './bank-match';
 import type { BankLine } from './bank-parse';
 
@@ -324,5 +324,169 @@ describe('a credit that pays more than one statement', () => {
     expect(d.kind).toBe('PAYOUT');
     expect(d.batchId).toBe(9);
     expect(d.split).toEqual([]);
+  });
+});
+
+/* ── The payment advice: the payer's own answer ───────────────────────────────
+   Public Bank sends ONE IBG advice naming the settlement days a credit pays
+   (acc/payout-advice). Where an uploaded advice answers for a credit, nothing
+   is searched or inferred — and nothing is CAPPED: the combination search stops
+   at four statements, which is the very limit the advice exists to remove. */
+
+describe('a credit the payment advice answers for', () => {
+  const owed = (id: number, sen: number, day: string): PayableBatch => ({
+    id, acquirerCode: 'PBB', fileName: `pbb-${day}.csv`,
+    periodFrom: day, periodTo: day, payableSen: sen, outstandingSen: sen,
+  });
+
+  /* Six days, six reports — beyond exactCombination's reach on purpose. */
+  const SIX_DAYS = ['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07', '2026-08-08'];
+  const sixBatches = SIX_DAYS.map((day, i) => owed(i + 1, 100000 + i, day));
+  const advice = (over: Partial<PayoutAdviceForMatch> = {}): PayoutAdviceForMatch => ({
+    id: 51, acquirerCode: 'PBB', fileName: 'HOUZSCENTURY_IBG_100826.pdf',
+    adviceDate: '2026-08-10',
+    netSen: SIX_DAYS.reduce((s, _d, i) => s + 100000 + i, 0),
+    days: SIX_DAYS.map((settledOn, i) => ({ settledOn, netSen: 100000 + i })),
+    ...over,
+  });
+  const pbbCredit = (amountSen: number, bookedOn = '2026-08-10') =>
+    line({ amountSen, bookedOn, description: '03999061714 PBB-PBCS AC 3', reference: '20260810000145' });
+
+  it('allocates a payout across MORE reports than the search would ever try', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(advice().netSen)]),
+      rules: RULES, batches: sixBatches, payouts: [advice()],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual(SIX_DAYS.map((_day, i) => ({ batchId: i + 1, amountSen: 100000 + i })));
+    expect(d.clue).toMatch(/PBB's payment advice of 2026-08-10 says/);
+    expect(d.clue).toMatch(/pays 6 reports/);
+  });
+
+  it('claims a single report by the advice, and says the advice said so', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(100000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],
+      payouts: [advice({ netSen: 100000, days: [{ settledOn: '2026-08-07', netSen: 100000 }] })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(1);
+    expect(d.clue).toMatch(/payment advice of 2026-08-10 says this RM 1,000\.00 credit pays pbb-2026-08-07\.csv/);
+  });
+
+  /* One report can span two of the advice's days; its shares are summed, not
+     offered twice — the same report booked twice would double the money. */
+  it('adds up the advice days that fall inside one report', () => {
+    const spanning: PayableBatch = {
+      id: 4, acquirerCode: 'PBB', fileName: 'pbb-weekend.csv',
+      periodFrom: '2026-08-07', periodTo: '2026-08-08', payableSen: 350000, outstandingSen: 350000,
+    };
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES, batches: [spanning],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(4);
+  });
+
+  /* The advice outranks the amount coincidence: a lone report owed exactly the
+     credit must not beat the payer's own written allocation. */
+  it('believes the advice over a single report owed the same amount', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [owed(9, 350000, '2026-08-10'), owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 1, amountSen: 100000 }, { batchId: 2, amountSen: 250000 }]);
+    expect(d.clue).toMatch(/payment advice/);
+  });
+
+  /* An advice naming a day with no reconciled report is HISTORY, not an answer
+     — the ordinary outcome says what a person has to do first. */
+  it('falls back to the search when a day the advice names has no report waiting', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],   // the 08-08 report is not reconciled yet
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.clue).toMatch(/no single report/);
+  });
+
+  /* A report partly paid since the advice was written no longer answers to it:
+     booking the advice's figure would book money that already arrived. */
+  it('falls back when a report has been partly paid since the advice was written', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [
+        { ...owed(1, 100000, '2026-08-07'), outstandingSen: 60000 },
+        owed(2, 250000, '2026-08-08'),
+      ],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+  });
+
+  it('ignores another acquirer’s advice, whatever its amount', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(100000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],
+      payouts: [advice({ acquirerCode: 'MBB', netSen: 100000, days: [{ settledOn: '2026-08-07', netSen: 100000 }] })],
+    })[0]!;
+    /* Still matched — by the ordinary exact-amount path, not the advice. */
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.clue).not.toMatch(/advice/);
+  });
+
+  /* Two advices for the same amount: the credit's own day picks one, and when
+     it cannot, nothing does — "some advice or other" is not an answer. */
+  it('tells two same-amount advices apart by the day the credit landed', () => {
+    const twoOfEach = [
+      owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'),
+      owed(3, 100000, '2026-09-07'), owed(4, 250000, '2026-09-08'),
+    ];
+    const august = advice({
+      id: 51, adviceDate: '2026-08-10', netSen: 350000,
+      days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+    });
+    const september = advice({
+      id: 52, adviceDate: '2026-09-10', netSen: 350000,
+      days: [{ settledOn: '2026-09-07', netSen: 100000 }, { settledOn: '2026-09-08', netSen: 250000 }],
+    });
+
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000, '2026-09-10')]),
+      rules: RULES, batches: twoOfEach, payouts: [august, september],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 3, amountSen: 100000 }, { batchId: 4, amountSen: 250000 }]);
+
+    /* A credit on a day NEITHER advice names decides nothing. Both sets of
+       reports also add up, so the combination search is ambiguous too, and the
+       whole thing lands with a person — which is the honest outcome. */
+    const undecided = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000, '2026-09-12')]),
+      rules: RULES, batches: twoOfEach, payouts: [august, september],
+    })[0]!;
+    expect(undecided.kind).toBe('PAYOUT_UNSURE');
   });
 });

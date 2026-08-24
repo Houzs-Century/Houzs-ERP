@@ -26,7 +26,7 @@ import { groupBankMovements, matchBankMovements } from '../../acc/bank-match';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
-  loadRecognitionRules, loadPayableBatches, loadAccountLedger,
+  loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
 } from '../../acc/bank';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
 
@@ -121,12 +121,17 @@ export const bankUpload = guard(async (c) => {
   );
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
-  const [rules, batches] = await Promise.all([loadRecognitionRules(sb), loadPayableBatches(sb, co.companyId)]);
+  const [rules, batches, payouts] = await Promise.all([
+    loadRecognitionRules(sb), loadPayableBatches(sb, co.companyId), loadPayoutAdvices(sb, co.companyId),
+  ]);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+  if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
 
   const movements = groupBankMovements(parsed.lines);
-  const decisions = matchBankMovements({ movements, rules: rules.rules, batches: batches.batches });
+  const decisions = matchBankMovements({
+    movements, rules: rules.rules, batches: batches.batches, payouts: payouts.payouts,
+  });
 
   /* MOVEMENTS THIS ACCOUNT HAS ALREADY DEALT WITH.
      The owner: 这个 statement 如果我同一个月 submit 多次，他会想要重新 check 过？

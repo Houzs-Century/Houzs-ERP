@@ -190,6 +190,19 @@ export type PayableBatch = {
   outstandingSen: number;
 };
 
+/** An uploaded payment advice, as matching needs it: the acquirer's own written
+    list of which settlement days one credit pays (acc/payout-advice). */
+export type PayoutAdviceForMatch = {
+  id: number;
+  acquirerCode: string;
+  fileName: string | null;
+  /** The advice's own date — usually the day the credit appears. */
+  adviceDate: string | null;
+  /** What the bank statement will show as ONE credit. */
+  netSen: number;
+  days: Array<{ settledOn: string; netSen: number }>;
+};
+
 export type BankMatchKind =
   /** One statement, exactly this amount. A button. */
   | 'PAYOUT'
@@ -275,18 +288,55 @@ export function exactCombination(batches: PayableBatch[], targetSen: number): Pa
 }
 
 /**
+ * The statements one advice pays, resolved against the statements still owed
+ * money — or null when the advice does not answer for this credit.
+ *
+ * The advice is trusted only when everything lines up: every day it names is
+ * covered by a reconciled statement, each statement's outstanding is exactly
+ * the advice's figure for its day(s), and the parts reach the advice's own
+ * total. Anything less means the books have moved since the advice was written
+ * — a report re-opened, a partial credit recorded — and then the advice is
+ * history, not an answer, and the search below takes over.
+ */
+function adviceAllocation(
+  advice: PayoutAdviceForMatch, payable: PayableBatch[],
+): Array<{ batch: PayableBatch; amountSen: number }> | null {
+  const perBatch = new Map<number, { batch: PayableBatch; amountSen: number }>();
+  for (const day of advice.days) {
+    const batch = payable.find((b) => covers(b, day.settledOn));
+    if (!batch) return null;
+    const at = perBatch.get(batch.id);
+    if (at) at.amountSen += day.netSen;
+    else perBatch.set(batch.id, { batch, amountSen: day.netSen });
+  }
+  const parts = [...perBatch.values()];
+  if (parts.length === 0) return null;
+  if (parts.some((p) => p.amountSen !== p.batch.outstandingSen)) return null;
+  /* Day rows that do not reach the advice's own total are a partial record —
+     an allocation built from them would book less than the credit. */
+  if (parts.reduce((s, p) => s + p.amountSen, 0) !== advice.netSen) return null;
+  /* Oldest first, the way an advice pays. */
+  return parts.sort((a, b) => a.batch.periodFrom.localeCompare(b.batch.periodFrom));
+}
+
+/**
  * Decide every movement.
  *
  * The order of the tests is the point: a statement is claimed only when ONE
  * candidate can be, and every other outcome says what a person has to look at
- * rather than picking the nearest number. Money is not matched by proximity.
+ * rather than picking the nearest number. Money is not matched by proximity —
+ * and where the acquirer has WRITTEN DOWN what a credit pays (the payment
+ * advice), that answer outranks every inference here.
  */
 export function matchBankMovements(input: {
   movements: BankMovement[];
   rules: BankRecognitionRule[];
   batches: PayableBatch[];
+  /** Uploaded payment advices — the payer's own answers. Optional because only
+      Public Bank sends one; every other acquirer is matched by inference. */
+  payouts?: PayoutAdviceForMatch[];
 }): BankDecision[] {
-  const { movements, rules, batches } = input;
+  const { movements, rules, batches, payouts } = input;
 
   return movements.map((movement): BankDecision => {
     const base = {
@@ -312,6 +362,41 @@ export function matchBankMovements(input: {
         clue: `${seen.acquirerCode} paid ${rm(movement.amountSen)}`
           + (seen.tradingDate ? ` for ${seen.tradingDate}` : '')
           + ', and no reconciled report of theirs is waiting for money. Reconcile the merchant report first.',
+      };
+    }
+
+    /* THE ADVICE, before any inference. Public Bank writes down which days one
+       credit pays; when an uploaded advice names this exact amount and its days
+       resolve cleanly onto waiting statements, that IS the answer — written by
+       the party paying. It is also the only path with no ceiling: a payout
+       spanning ten reports needs no combination search, because nobody is
+       searching. Two advices for the same amount is the one ambiguity left, and
+       the credit's own day settles it or nobody does. */
+    const usable = (payouts ?? [])
+      .filter((p) => p.acquirerCode === seen.acquirerCode && p.netSen === movement.amountSen)
+      .map((p) => ({ advice: p, parts: adviceAllocation(p, mine) }))
+      .filter((x): x is { advice: PayoutAdviceForMatch; parts: Array<{ batch: PayableBatch; amountSen: number }> } =>
+        x.parts !== null);
+    const onAdviceDay = usable.filter((x) => x.advice.adviceDate === movement.bookedOn);
+    const answered = usable.length === 1 ? usable[0]! : onAdviceDay.length === 1 ? onAdviceDay[0]! : null;
+    if (answered) {
+      const { advice, parts } = answered;
+      const saying = `${seen.acquirerCode}'s payment advice${advice.adviceDate ? ` of ${advice.adviceDate}` : ''}`;
+      if (parts.length === 1) {
+        const b = parts[0]!.batch;
+        return {
+          ...named, kind: 'PAYOUT', batchId: b.id, candidates: [b],
+          clue: `${saying} says this ${rm(movement.amountSen)} credit pays ${b.fileName ?? `report ${b.id}`}.`,
+        };
+      }
+      return {
+        ...named,
+        kind: 'PAYOUT_SPLIT',
+        candidates: parts.map((p) => p.batch),
+        split: parts.map((p) => ({ batchId: p.batch.id, amountSen: p.amountSen })),
+        clue: `${saying} says this ${rm(movement.amountSen)} credit pays ${parts.length} reports — `
+          + `${parts.map((p) => `${p.batch.fileName ?? `report ${p.batch.id}`} ${rm(p.amountSen)}`).join(' + ')}.`
+          + ' Check them and record it.',
       };
     }
 

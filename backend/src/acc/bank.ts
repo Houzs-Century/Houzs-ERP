@@ -15,7 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
-import type { BankRecognitionRule, PayableBatch } from './bank-match';
+import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
 
 export type BankStatementConfig = {
@@ -153,6 +153,51 @@ export async function loadPayableBatches(
     });
   }
   return { ok: true, batches };
+}
+
+/**
+ * Every payment advice uploaded for this company — the acquirer's own written
+ * answer to "which days does one credit pay" (acc/payout-advice).
+ *
+ * Handed to the matcher RAW, all of them: whether an advice still answers for
+ * today's books is decided there, against the same payable statements it would
+ * offer — one already paid, or re-opened, simply fails to resolve and the
+ * ordinary search takes over. Filtering here would be a second copy of that
+ * rule, one refactor away from disagreeing with it.
+ */
+export async function loadPayoutAdvices(
+  sb: any, companyId: number,
+): Promise<{ ok: true; payouts: PayoutAdviceForMatch[] } | Fail> {
+  const [payoutRes, dayRes] = await Promise.all([
+    sb.from('acc_settlement_payouts')
+      .select('id, acquirer_code, file_name, advice_date, net_sen')
+      .eq('company_id', companyId),
+    sb.from('acc_settlement_payout_batches')
+      .select('payout_id, settled_on, net_sen')
+      .eq('company_id', companyId),
+  ]);
+  if (payoutRes.error) return { ok: false, reason: payoutRes.error.message };
+  if (dayRes.error) return { ok: false, reason: dayRes.error.message };
+
+  const daysByPayout = new Map<number, Array<{ settledOn: string; netSen: number }>>();
+  for (const d of (dayRes.data ?? []) as Array<Record<string, any>>) {
+    const id = Number(d.payout_id);
+    const at = daysByPayout.get(id) ?? [];
+    at.push({ settledOn: String(d.settled_on).slice(0, 10), netSen: Number(d.net_sen ?? 0) });
+    daysByPayout.set(id, at);
+  }
+
+  return {
+    ok: true,
+    payouts: ((payoutRes.data ?? []) as Array<Record<string, any>>).map((p) => ({
+      id: Number(p.id),
+      acquirerCode: String(p.acquirer_code),
+      fileName: p.file_name == null ? null : String(p.file_name),
+      adviceDate: p.advice_date == null ? null : String(p.advice_date).slice(0, 10),
+      netSen: Number(p.net_sen ?? 0),
+      days: daysByPayout.get(Number(p.id)) ?? [],
+    })),
+  };
 }
 
 /**
