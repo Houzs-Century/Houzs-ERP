@@ -3333,6 +3333,37 @@ all. The operator is told which of the two happened: the outcome code is
 `requeued-as-recorded`, not `requeued`, and its sentence says a change made since
 the refusal is not included.
 
+**A HELD-BACK CONVERSION IS OFFERED TOO, AND ITS SEND RE-READS THE DOCUMENT**
+(2026-08-24). Owner: 「我的 GR PO 所有文件都要有 Send Now 的 button」and 「点击
+Send Now 的话，如果它之前上面的 documentation 没有进去，它就要补调进去」.
+
+`acRowIsRequeueable` used to answer FAILED ONLY for a transfer, on the reasoning
+that a `skipped` row never left the building so its refusal cannot be a service
+refusal. True about the ROW, and the wrong question. `skipped` is what the CREATE
+PATH concluded about the document, and for the commonest skip — "there is no
+earlier document to carry across" — the create path was not looking at the lines
+(§0524). Eight production documents (`HC-GRN-2608-002..005`,
+`HC-PI-2608-002..005`) carried that sentence with a parent on every line, and no
+button meant the wrong claim was permanent and invisible.
+
+So a skipped transfer is offered, and `parentedAfterAll` re-resolves the parent
+from the child's own lines through `reresolveConvertSource` — the SAME resolver
+`POST /grns` and `POST /purchase-invoices` use, so there is one definition of
+"has a parent" rather than a second one that can disagree with it. When it
+answers, `enqueueConvert` composes a real conversion and the outcome is
+`requeued-with-parent`, a third code because it is a third promise: not "we tried
+again" but "this is going across AS a conversion of the document above it". When
+it answers nothing, the old refusal stands — a document genuinely keyed in by
+hand gets the same sentence it always did, which is more than a greyed-out row
+ever told anyone.
+
+Every duplicate guard the failed-row path applies is applied here in the same
+order: a target carrying `linked_ac_docno` is refused, and a live row for the
+same operation is refused. The ancestor cascade needed no change and now works
+through this, because `sendAncestorsFirst` routes every missing ancestor through
+`requeueOutboxRow` — so `PI -> GR -> PO` composes even when the GR's own row was
+itself recorded parentless.
+
 **The DRY RUN is not a prediction.** `captureWrites` hands the real enqueue the
 real client for reads and a recorder for writes, so the dry run executes the
 identical code path and simply does not let the row land. An insert of a

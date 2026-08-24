@@ -769,6 +769,13 @@ describe('POST /autocount-outbox/:id/requeue — the answer it gives', () => {
     });
     const { body } = await get(app);
     const byId = Object.fromEntries(rowsOf(body).map((r) => [String(r.id), r.can_requeue]));
-    expect(byId).toEqual({ a: true, b: false, c: false });
+    /* `c` FLIPPED TO TRUE on 2026-08-24. Owner: 「我的 GR PO 所有文件都要有 Send
+       Now 的 button」. A held-back conversion is offered now, and the send
+       re-reads whether the document really has no parent instead of replaying
+       the create path's claim that it hasn't — which was false on eight
+       production documents (docs/bugs/0524). `b` stays false and always will:
+       a SENT row must never be offered, because AutoCount has no duplicate
+       guard on the ERP document number. */
+    expect(byId).toEqual({ a: true, b: false, c: true });
   });
 });
