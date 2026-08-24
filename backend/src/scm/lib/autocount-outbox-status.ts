@@ -161,6 +161,18 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy:
       'the ERP could not read its own document while composing — a read fault, not a refusal',
   },
+  /* BEFORE `masters-not-opened`, ON PURPOSE. The masters step is where the
+     unreachable-host failure surfaces — the ERP calls ensure_masters first, so
+     a dead host is recorded as "masters not opened, document not sent: <the
+     transport's words>". Matching the transport's words FIRST is what stops a
+     stopped Windows service reading as an AutoCount data problem, which is
+     exactly the wrong place to send whoever investigates (2026-08-23: a day
+     spent on AutoCount logins for a service that was not running). */
+  {
+    kind: 'host-unreachable',
+    needle: 'the AutoCount host did not answer',
+    remedy: 'the request never reached the machine — the sync service on that host is not answering',
+  },
   {
     kind: 'masters-not-opened',
     needle: 'masters not opened',

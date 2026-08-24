@@ -101,6 +101,17 @@ export const AC_SKIP_KINDS = [
     remedy:
       'the ERP could not read its own document while composing — a read fault, not a refusal',
   },
+  /* BEFORE `masters-not-opened`, ON PURPOSE — the masters step is where an
+     unreachable host surfaces, so the stored sentence carries BOTH needles and
+     the transport one has to win. A stopped Windows service reading as bad
+     master data sends whoever investigates to the wrong subsystem; that cost a
+     day on 2026-08-23. Mirrors AC_SKIP_KINDS in
+     src/scm/lib/autocount-outbox-status.ts — order included. */
+  {
+    kind: 'host-unreachable',
+    needle: 'the AutoCount host did not answer',
+    remedy: 'the request never reached the machine — the sync service on that host is not answering',
+  },
   {
     kind: 'masters-not-opened',
     needle: 'masters not opened',

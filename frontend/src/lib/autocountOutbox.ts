@@ -779,6 +779,18 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     toFix:
       "Use Send again — this often clears by itself. If the same thing happens twice, it needs somebody to look at it.",
   },
+  /* THE MACHINE DID NOT ANSWER — and this is deliberately NOT worded as a
+     refusal. AutoCount refused nothing; the request never arrived. It reached
+     the operator as "masters not opened" for a day (2026-08-23) because the
+     transport's own error text was pasted into that sentence, and it sent the
+     investigation at AutoCount logins while a Windows service sat stopped. */
+  "host-unreachable": {
+    headline: "The AutoCount computer did not answer",
+    explain:
+      "The document never left the ERP — nothing was sent, nothing was refused, and nothing is wrong in the account book. The computer that runs the AutoCount link is not responding.",
+    toFix:
+      "Someone needs to check that machine: the sync service has to be running on it. Once it is, use Send again — the document is still here and nothing was lost.",
+  },
   "masters-not-opened": {
     headline: "A customer, item or salesperson is not set up in AutoCount",
     explain:

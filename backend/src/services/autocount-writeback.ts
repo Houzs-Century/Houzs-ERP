@@ -1738,7 +1738,31 @@ export async function callAcService(
       retryable: false,
     };
   }
-  const error = body.error ?? (text || `AutoCount service responded ${res.status}`);
+  /* THE HOST DID NOT ANSWER — say THAT, and do not dress it as a refusal.
+   *
+   * When the response is not JSON, `body.error` is undefined and the RAW BODY
+   * used to become the error string. Cloudflare's edge answers an unreachable
+   * origin with `text/plain` containing exactly `error code: 502`, so that
+   * string travelled all the way to the operator's screen inside the sentence
+   * "masters not opened, document not sent: error code: 502".
+   *
+   * That sentence is a claim we never checked. The ERP did not ask AutoCount to
+   * open anything — the request never reached the machine. Measured 2026-08-23:
+   * `curl https://autocount.houzscentury.com/health` returned HTTP 502 with a
+   * 16-byte `error code: 502` body in 0.06s, from `server: cloudflare`. It cost
+   * a day of looking at AutoCount logins for a fault that was a stopped service
+   * behind the tunnel.
+   *
+   * A GATEWAY status with a non-JSON body means exactly one thing and the
+   * message now says it. A gateway status WITH a JSON `error` is the service
+   * itself speaking and keeps its own words. */
+  const GATEWAY = new Set([502, 503, 504]);
+  const unreachable = body.error === undefined && GATEWAY.has(res.status);
+  const error = unreachable
+    ? `the AutoCount host did not answer (HTTP ${res.status}) — the request never reached it, `
+      + 'so nothing was refused and nothing was opened. Check that the sync service is running '
+      + 'on that machine; https://autocount.houzscentury.com/health answers 200 when it is.'
+    : (body.error ?? (text || `AutoCount service responded ${res.status}`));
   return {
     ok: false,
     status: res.status,
