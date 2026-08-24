@@ -14,6 +14,8 @@ import { Avatar } from "../../components/Avatar";
 import { Button } from "../../components/Button";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { managerOptions } from "./orgChartPickers";
+import { PosPinCard } from "./PosPinCard";
+import { showsPosPinCard } from "./posPinEligibility";
 import type { TeamMember, Department, Position, Role } from "../../types";
 import { empCode, statusBadgeProps, divisionOf, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
 
@@ -94,6 +96,29 @@ export function TeamMemberProfile({
   const role = roles.find((r) => r.id === member.role_id) ?? null;
   const status = statusBadgeProps(member.status);
 
+  /* POS Access. The 2990 tablet needs a 6-digit PIN, and the combination that
+     calls for one — 2990's Home + a Sales title — is decided by the two fields
+     directly above this card, so the DRAFT drives whether it shows and the
+     SAVED row drives whether the PIN endpoints will accept a write. */
+  const draftPositionSlug =
+    positions.find((p) => p.id === draft.position_id)?.slug ?? null;
+  const savedPositionSlug =
+    positions.find((p) => p.id === member.position_id)?.slug ?? null;
+  const showPosPin = showsPosPinCard({
+    companyIds: draft.company_ids,
+    companies,
+    positionSlug: draftPositionSlug,
+  });
+  const posPinSaved = showsPosPinCard({
+    companyIds: member.company_ids ?? [],
+    companies,
+    positionSlug: savedPositionSlug,
+  });
+  /* Set by a save that turned POS eligibility ON — the card then opens its own
+     entry box, which is what makes the PIN impossible to miss the first time a
+     salesperson is given 2990 access. */
+  const [pinPrompt, setPinPrompt] = useState(false);
+
   const deptPositions = useMemo(
     () =>
       positions.filter(
@@ -139,6 +164,9 @@ export function TeamMemberProfile({
         patch.company_ids = draft.company_ids;
       await api.patch(`/api/users/${member.id}`, patch);
       toast.success("Assignment saved");
+      // Eligibility that was NOT there before this save is the moment an admin
+      // needs the PIN box — anything else would leave it to them to remember.
+      if (showPosPin && !posPinSaved) setPinPrompt(true);
       onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not save changes");
@@ -424,6 +452,16 @@ export function TeamMemberProfile({
                 </Field>
               </div>
             </div>
+          )}
+
+          {tab === "details" && showPosPin && (
+            <PosPinCard
+              userId={member.id}
+              memberName={member.name || member.email}
+              canManage={canManage}
+              pendingSave={!posPinSaved}
+              autoOpen={pinPrompt}
+            />
           )}
 
           {tab === "permissions" && (

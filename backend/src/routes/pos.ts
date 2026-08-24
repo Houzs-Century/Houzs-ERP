@@ -2,13 +2,16 @@
 // /api/pos — POS auth on Houzs (Phase 1 of the 2990-backend replacement).
 //
 // Lets the 2990 POS log into HOUZS (session auth) so it can stop using Supabase
-// Auth. Mounted BEFORE the global /api/* auth gate; the two write endpoints
-// re-apply `auth` per-route.
+// Auth. Mounted BEFORE the global /api/* auth gate; every route below the two
+// PRE-AUTH ones re-applies `auth` per-route.
 //   POST /pin-login   {staffId, pin}  -> mints a Houzs session      (PRE-AUTH)
 //   GET  /sales-staff                 -> PIN-login picker list        (PRE-AUTH)
 //   POST /set-pin      {pin}          -> set the caller's own PIN      (authed)
 //   POST /verify-pin   {pin}          -> re-verify for sensitive ops   (authed)
 //   GET  /sales-stats                 -> caller's MTD KPI tiles        (authed)
+//   POST /admin-set-pin/:userId       -> issue a member's PIN   (users.manage)
+//   POST /admin-reset-pin/:userId     -> clear a member's PIN   (users.manage)
+//   GET  /admin-pin-status/:userId    -> has-PIN + tablet readiness    (  ~   )
 //
 // staffId = an scm.staff uuid (from /sales-staff). scm.staff.user_id links to the
 // public.users integer (migration 0066); we mint the session for THAT user.
@@ -27,7 +30,7 @@ import {
   hashPassword,
   SESSION_ORIGIN_POS,
 } from "../services/auth";
-import { setPosPinForUser } from "../services/posPin";
+import { posPinWriteRefusal, readPosPinStatus, setPosPinForUser } from "../services/posPin";
 
 /* No `sessionOrigin` here on purpose. This router does not READ the origin of
    the caller's session anywhere — /exchange-web-session used to, and the ruling
@@ -170,9 +173,27 @@ pos.post("/admin-set-pin/:userId", auth, requirePermission("users.manage"), asyn
   let body: { pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
   if (!isPin(body.pin)) return c.json({ error: "pin_invalid" }, 400);
+  // The SALES-position rule, which this door was missing while /api/users/invite
+  // had it. Without it an admin could store a PIN against a non-sales member and
+  // hear nothing: /pin-login then refuses that session with `not_pos_role`, which
+  // the tablet renders as a wrong PIN, so the member is read as forgetful when in
+  // fact the credential can never work. Refuse the write and say which half is
+  // wrong.
+  const refusal = posPinWriteRefusal(await readPosPinStatus(c.env, userId));
+  if (refusal) return c.json(refusal, 409);
   const written = await setPosPinForUser(c.env, userId, body.pin!);
   if (!written) return c.json({ error: "no_staff_row", message: "This member has no sales profile yet." }, 409);
   return c.json({ ok: true });
+});
+
+// ── ADMIN: is this member ready for the tablet, and do they already hold a PIN?
+// The Team profile asks before it offers a PIN box, so an admin can see "PIN set"
+// / "no PIN yet" instead of having to send someone to a tablet to find out.
+// Read-only, users.manage-gated like its two siblings. Never returns the hash.
+pos.get("/admin-pin-status/:userId", auth, requirePermission("users.manage"), async (c) => {
+  const userId = Number(c.req.param("userId"));
+  if (!Number.isInteger(userId) || userId <= 0) return c.json({ error: "bad_user" }, 400);
+  return c.json(await readPosPinStatus(c.env, userId));
 });
 pos.post("/admin-reset-pin/:userId", auth, requirePermission("users.manage"), async (c) => {
   const userId = Number(c.req.param("userId"));

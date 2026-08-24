@@ -40,3 +40,69 @@ export async function setPosPinForUser(
     .run();
   return true;
 }
+
+/** What the Team profile needs to know before it offers a PIN box: does this
+ *  member have a sales profile at all, is it still active, and is a PIN
+ *  already on file. Four conditions decide whether the tablet's picker will
+ *  ever list them (routes/pos.ts /sales-staff) and only these three are
+ *  per-member — the fourth, company membership, the profile screen already
+ *  holds. scm.staff(user_id) is UNIQUE (mig 0066), so the join is 1:1. */
+export type PosPinStatus = {
+  hasStaffRow: boolean;
+  staffActive: boolean;
+  positionSlug: string | null;
+  positionEligible: boolean;
+  hasPin: boolean;
+  updatedAt: string | null;
+};
+
+export async function readPosPinStatus(env: Env, userId: number): Promise<PosPinStatus> {
+  const row = await env.DB.prepare(
+    `SELECT s.id AS staff_id, s.active AS staff_active, pn.slug AS position_slug,
+            (p.staff_id IS NOT NULL) AS has_pin, p.updated_at
+       FROM public.users u
+       LEFT JOIN scm.staff s ON s.user_id = u.id
+       LEFT JOIN public.positions pn ON pn.id = u.position_id
+       LEFT JOIN scm.pos_pins p ON p.staff_id = s.id
+      WHERE u.id = ?`,
+  )
+    .bind(userId)
+    .first<{
+      staff_id: string | null;
+      staff_active: boolean | null;
+      position_slug: string | null;
+      has_pin: boolean | null;
+      updated_at: string | null;
+    }>();
+  const slug = row?.position_slug ?? null;
+  return {
+    hasStaffRow: !!row?.staff_id,
+    staffActive: row?.staff_active === true,
+    positionSlug: slug,
+    positionEligible: isPosPinPosition(slug),
+    hasPin: row?.has_pin === true,
+    updatedAt: row?.updated_at ?? null,
+  };
+}
+
+/** The refusal, if any, for issuing a PIN to this member — EXPORTED AND PURE so
+ *  a test EXECUTES the decision instead of matching the handler's spelling.
+ *  `null` means the write may proceed.
+ *
+ *  Both refusals matter for the same reason: a stored PIN that /pin-login will
+ *  never accept is indistinguishable, at the tablet, from a member who mistyped
+ *  their number. The admin has to be told at the moment they issue it. */
+export function posPinWriteRefusal(
+  status: Pick<PosPinStatus, "hasStaffRow" | "positionEligible">,
+): { error: string; message: string } | null {
+  if (!status.hasStaffRow) {
+    return { error: "no_staff_row", message: "This member has no sales profile yet." };
+  }
+  if (!status.positionEligible) {
+    return {
+      error: "not_pos_role",
+      message: "A POS PIN only works for a Sales position — change the title first.",
+    };
+  }
+  return null;
+}

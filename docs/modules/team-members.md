@@ -270,6 +270,63 @@ which made "send a link" a state change:
 Rate-limited on the TARGET, because an admin button that sends mail to a
 colleague is also a way to spam that colleague.
 
+## 6. POS Access — the 2990 tablet PIN is issued from the member profile (2026-08-24)
+
+A 2990's Home salesperson does not sign into the showroom tablet with a
+password. The tablet shows a name picker and a 6-digit keypad, so **the PIN IS
+the credential**, and until it exists that member cannot start a shift no matter
+how correct the rest of their account is.
+
+**Where it lives on screen.** A POS Access card on the redesigned member profile
+(`frontend/src/pages/team/PosPinCard.tsx`), rendered inside *Details &
+Assignment* and **only** when the assignment currently on screen satisfies both
+halves of `showsPosPinCard` (`frontend/src/pages/team/posPinEligibility.ts`):
+
+* the member holds the company whose code is `2990` (mig 0083 seeds that code;
+  the id differs between prod and a fresh database, so the rule matches on CODE
+  and a hard-coded id is a bug), **and**
+* their position slug starts with `sales` — `sales_executive` is the common one.
+
+The same module gates the 6-digit field on `TeamInviteModal.tsx`, so the two
+screens cannot drift apart. The card also opens its own entry box straight after
+the save that FIRST made a member eligible: the classic screen had a working
+"Set PIN" button that nobody knew to press, which is how a salesperson with
+2990 access and no credential reached the owner as a bug report.
+
+**The four conditions the tablet actually applies.** `GET /api/pos/sales-staff`
+lists a member only when all of these hold, and the profile can see only the
+first two — the other two come from `GET /api/pos/admin-pin-status/:userId`:
+
+| condition | who knows it |
+| --- | --- |
+| member holds the tablet's company (`public.user_companies`) | the profile |
+| position slug `LIKE 'sales%'` | the profile |
+| an `scm.staff` row exists for the user (`uq_staff_user_id`, mig 0066) | the status endpoint |
+| that row is `active` | the status endpoint |
+
+**API surface** (`backend/src/routes/pos.ts`, all three `users.manage`):
+
+| route | does |
+| --- | --- |
+| `POST /api/pos/admin-set-pin/:userId` | issue or replace the PIN (hashed server-side) |
+| `POST /api/pos/admin-reset-pin/:userId` | clear it |
+| `GET /api/pos/admin-pin-status/:userId` | has-PIN + readiness. **Never returns the hash** |
+
+**Traps this section exists for.**
+
+1. **A PIN on a non-sales title is a credential that can never sign in.**
+   `/pin-login` refuses it with `not_pos_role` (403), which the tablet renders as
+   a wrong PIN — so the member looks forgetful and nobody looks at the title.
+   Both writers refuse it up front now (`posPinWriteRefusal` in
+   `backend/src/services/posPin.ts`); `admin-set-pin` did not until 2026-08-24.
+2. **A failed status READ must never render as "no PIN".** That would invite an
+   admin to overwrite a working credential they could not see. The card says the
+   check failed and offers no box.
+3. **Eligibility is read off the DRAFT, the write off the SAVED row.** The PIN
+   endpoints key on `public.users.id` and resolve `scm.staff` server-side, so a
+   combination that exists only in an unsaved draft cannot take a PIN — the card
+   says so rather than failing a write the admin cannot diagnose.
+
 ## Staff pickers are company-scoped, and there are THREE of them (2026-08-18)
 
 `scm.staff` has no `company_id` (mig 0089 lists it as shared reference data), so
