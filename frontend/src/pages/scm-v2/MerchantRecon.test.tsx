@@ -306,7 +306,7 @@ describe('confirming a pile of reports', () => {
     draw();
 
     /* The mocked batch: 1 matched by reference, 1 to choose, 1 with no sale. */
-    const button = screen.getByText('Confirm all 1 matched');
+    const button = screen.getByText(/Confirm all 1 matched, across 1 report/);
     expect(screen.getByText(/the 2 line\(s\) needing you are left alone/)).toBeTruthy();
 
     fireEvent.click(button);
@@ -320,7 +320,7 @@ describe('confirming a pile of reports', () => {
     });
     draw();
 
-    fireEvent.click(screen.getByText('Confirm all 1 matched'));
+    fireEvent.click(screen.getByText(/Confirm all 1 matched, across 1 report/));
     expect(screen.getByText(/Posted 4\./)).toBeTruthy();
     expect(screen.getByText(/1 could not be/)).toBeTruthy();
     confirmMatchedMutate.mockReset();

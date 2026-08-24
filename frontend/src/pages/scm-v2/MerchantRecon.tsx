@@ -265,10 +265,13 @@ const ReconcileTab = () => {
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
               onClick={() => bulk.run(open)}>
-              <CheckCheck {...ICON} /> {bulk.busy ? 'Posting…' : `Confirm all ${readyToConfirm} matched`}
+              {/* Says its scope too: one press here covers every open report,
+                  and the button inside a report covers only that one. */}
+              <CheckCheck {...ICON} /> {bulk.busy ? 'Posting…'
+                : `Confirm all ${readyToConfirm} matched, across ${open.length} report${open.length === 1 ? '' : 's'}`}
             </button>
             <span style={softText}>
-              Across {open.length} report{open.length === 1 ? '' : 's'}. Books each line&rsquo;s fee;
+              Books each line&rsquo;s fee;
               {stillToDecide > 0 ? ` the ${stillToDecide} line(s) needing you are left alone.` : ' nothing else is touched.'}
             </span>
           </div>
@@ -771,7 +774,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         {unconfirmedMatched > 0 && (
           <button type="button" style={btn(true, confirmAll.isPending)} disabled={confirmAll.isPending}
             onClick={() => confirmAll.mutate(batchId)}>
-            <CheckCheck {...ICON} /> Confirm the {unconfirmedMatched} matched by reference
+            {/* SAY THE SCOPE. The list screen has a button of its own that
+                clears every report at once, and seeing two identically-worded
+                buttons on two screens reads as two steps — the owner: 我不是很
+                明白为什么会要按两个 confirm? Either one is enough; they differ
+                only in how much they cover, so each says how much. */}
+            <CheckCheck {...ICON} /> Confirm the {unconfirmedMatched} matched on this report
           </button>
         )}
         {doneRows.length > 0 && (
