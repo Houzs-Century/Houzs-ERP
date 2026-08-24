@@ -1,5 +1,3 @@
-// @vitest-project light
-//
 // The admin PIN door used to be LOOSER than the invite door, and the gap was
 // silent. `POST /api/users/invite` refused a `pos_pin` on a non-sales position
 // with a message; `POST /api/pos/admin-set-pin/:userId` stored it. A PIN issued
