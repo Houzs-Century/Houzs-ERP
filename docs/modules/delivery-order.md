@@ -442,6 +442,24 @@ holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test
 > company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
 > failed count now returns `500 status_counts_failed` instead of a zero.
 
+> **FIXED 2026-08-24, and it is the SAME SHAPE seven days later.** The `on_hold`
+> tab and its overlay count were passing `document-hold.ts`'s shared
+> `HELD_OR_TERM` (`on_hold.is.true,status.eq.ON_HOLD`). That term's legacy arm
+> is right on the four documents whose enums carry `ON_HOLD` permanently, and
+> poisonous here: `do_status` never had the label, so the count read answered
+> **400 `22P02`**, and — because a failed count is now correctly reported rather
+> than zeroed (the 08-17 fix above) — the route returned `500
+> status_counts_failed` for the WHOLE page. `/scm/delivery-orders` was dead in
+> both companies from 2026-08-22 to 2026-08-24: "Failed to load — on_hold count
+> failed: unknown error".
+>
+> **The rule this leaves behind: nothing but a `do_status` MEMBER may be
+> compared against `status` on this table.** Hold is a marker here and is read
+> as `.eq('on_hold', true)` — never through the shared term, which the other
+> four documents keep. Pinned by `backend/tests/doListOnHoldEnumSafe.test.ts`
+> as a source scan, since a plain string cannot be typechecked and every one of
+> the five tables does have the `on_hold` column. See `docs/bugs/0530-*`.
+
 ### The list shows ONE TAB PER STATUS (owner ruling, 2026-08-21)
 
 Until this date the list had **four tabs over eight statuses** — Open, In

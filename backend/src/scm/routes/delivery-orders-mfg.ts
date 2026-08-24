@@ -15,7 +15,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
-import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
@@ -2746,10 +2746,10 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
        'all'/empty → no filter; otherwise treat it as a raw DB status. */
     const status = c.req.query('status');
-    /* The `on_hold` tab reads the MARKER (mig 0324) — on this document the only
-       thing it can read, since scm.do_status has no ON_HOLD label. */
+    /* The `on_hold` tab reads the MARKER (mig 0324) ONLY — never HELD_OR_TERM,
+       whose `status.eq.ON_HOLD` arm 22P02s a do_status that has no such label. */
     if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
+      if (status === 'on_hold') q = q.eq('on_hold', true);
       else if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
       else q = q.eq('status', status);
     }
@@ -2793,7 +2793,7 @@ deliveryOrdersMfg.get('/', async (c) => {
        under its real status too, so these do not sum to `all`. */
     const [allC, heldC, ...bucketC] = await Promise.all([
       countBase(),
-      countBase().or(HELD_OR_TERM),
+      countBase().eq('on_hold', true), // marker only — see the tab filter above
       ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
     ]);
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
