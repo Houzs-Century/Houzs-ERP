@@ -173,9 +173,14 @@ and AEON pays net like any acquirer (他不理顾客是不是分期，他会进�
 
 ## CHECKPOINT 2026-08-21 — READ THIS FIRST
 
-73 commits on `feat/acc-settlement`, worktree `.claude/worktrees/accounting`.
-**No PR, no merge.** His gate, unchanged since the start: 最好到时我在本地测试
-确定没问题才上.
+`feat/acc-settlement`, worktree `.claude/worktrees/accounting`.
+**HIS GATE OPENED 2026-08-24** — mbb, pbb都没有问题。大致都可以了。可以try
+push 上去了 — so the branch is pushed and **PR #2694 is open**, carrying
+origin/main merged in (418 commits, including the scm `_centi`→`_sen` rename
+and `fmtCenti`→`fmtSen`, both swept through this branch's files by hand — the
+fakeSb suite passes either way and cannot catch that drift; check against
+origin/main file-by-file, not the suite). The gate's history, for whoever
+reads this next: 最好到时我在本地测试确定没问题才上 — and he did.
 
 ### Where testing stands
 
