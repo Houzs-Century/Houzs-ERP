@@ -194,6 +194,37 @@ try {
     );
   }
 
+  /* ── DOES THE ERP DOCUMENT STILL EXIST? ────────────────────────────────
+     The FAILED heading says "each is a document that is in the ERP and NOT in
+     AutoCount". After a go-live wipe that sentence goes FALSE without anything
+     changing in this table: the export log is deliberately KEPT (it is the
+     ERP's only memory of what it told the book) while the documents it names
+     are deleted. Measured 2026-08-24, minutes after golive-wipe-hc apply: one
+     failed row, HC-DO-2608-003, whose delivery order no longer exists. Left
+     alone the daily watchdog would have alarmed on it every morning forever —
+     the exact "CI noise nobody reads" this workflow's header refused.
+
+     So a failed row whose document is gone is history, not backlog. It is still
+     PRINTED, under its own heading, because the row is the record of what was
+     attempted and deleting the document does not unsay it. It is simply not
+     counted as something a person can act on, because there is nothing left to
+     act on.
+
+     One query, six document types, keyed the way the outbox keys them. */
+  const liveDocs = failed.length
+    ? await pg`
+        SELECT 'SO' AS doc_type, doc_no          AS doc_no FROM scm.mfg_sales_orders
+        UNION ALL SELECT 'PO', po_number              FROM scm.purchase_orders
+        UNION ALL SELECT 'DO', do_number              FROM scm.delivery_orders
+        UNION ALL SELECT 'IV', invoice_number         FROM scm.sales_invoices
+        UNION ALL SELECT 'GR', grn_number             FROM scm.grns
+        UNION ALL SELECT 'PI', invoice_number         FROM scm.purchase_invoices`
+    : [];
+  const liveKeys = new Set(liveDocs.map((r) => `${r.doc_type}:${r.doc_no}`));
+  const stillInErp = (r) => liveKeys.has(`${r.doc_type}:${r.doc_no}`);
+  const failedLive = failed.filter(stillInErp);
+  const failedGone = failed.filter((r) => !stillInErp(r));
+
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const byRequeued = Object.fromEntries(counts.map((r) => [r.status, r.requeued]));
   const total = counts.reduce((a, r) => a + r.n, 0);
@@ -203,7 +234,7 @@ try {
   /* THE ALARM READS THE SAME TWO NUMBERS THE REPORT DOES, not its own query.
      A watchdog that asks a different question from the report it is attached to
      is a watchdog that can disagree with the page a human then opens. */
-  alarm.failedOutstanding = failedOutstanding;
+  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedGone.length);
   alarm.pending = oldest.map((r) => ({
     docType: r.doc_type, docNo: r.doc_no, op: r.op,
     ageS: Number(r.age_s ?? 0), age: String(r.age ?? ''),
@@ -292,9 +323,25 @@ try {
   /* FAILED is the one that means a document diverged — the OUTSTANDING ones.
      A re-queued failure is history and is listed under RE-QUEUED below. */
   if (failedOutstanding > 0) {
-    notice(`FAILED: ${failedOutstanding} — each is a document that is in the ERP and NOT in AutoCount.`);
-    for (const r of failed) {
-      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
+    if (failedLive.length) {
+      notice(`FAILED: ${failedLive.length} — each is a document that is in the ERP and NOT in AutoCount.`);
+      for (const r of failedLive) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
+      }
+    } else {
+      notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
+    }
+    /* SEPARATE HEADING, not a footnote on the one above, because the remedy is
+       the opposite: there is none, and none is needed. */
+    if (failedGone.length) {
+      notice(
+        `FAILED — DOCUMENT DELETED SINCE: ${failedGone.length}. The ERP document no longer exists ` +
+          '(a wipe, or someone deleted it), so this row is the record of an attempt and not ' +
+          'something to send again. Nothing to do.',
+      );
+      for (const r of failedGone) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): gone from the ERP`);
+      }
     }
   } else {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
