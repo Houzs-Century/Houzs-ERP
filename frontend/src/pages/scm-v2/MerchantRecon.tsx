@@ -724,6 +724,13 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
   const toConfirm = openRows.filter((r) => r.linked.length > 0).length;
   const toDecide = openRows.length - toConfirm;
   const shown = showDone ? [...openRows, ...doneRows] : openRows;
+  /* A CARD IS A DECISION, a table row is information. A line that already
+     claimed its payment asks nothing of a person — the button at the top books
+     every one of them — so it belongs in the table, and only the lines that
+     genuinely need choosing get a card. Anything already decided is
+     information too. */
+  const needChoice = shown.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED' && r.linked.length === 0);
+  const noChoice = shown.filter((r) => !needChoice.includes(r));
 
   const exportCsv = () => {
     downloadCSV(`merchant-report-${batchId}.csv`, toCSV(rows, [
@@ -801,7 +808,63 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       {batch && <HandOff batch={batch} toConfirm={toConfirm} toDecide={toDecide} />}
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the report…</div>}
-      {shown.map((r) => <SettlementLine key={r.id} row={r} />)}
+
+      {/* A CARD IS A DECISION. A line already matched by its reference asks
+          nothing — the button at the top books all of them at once — so giving
+          it the same fat card as a line needing a choice buried the choices
+          among them. The owner, on 27 identical cards under one button that
+          would have cleared all 27: 这个是什么?
+
+          So the ones that only need the button are a table, and the ones that
+          need a person are cards. */}
+      {noChoice.length > 0 && (
+        <table className={grid.grid}>
+          <thead>
+            <tr>
+              <th>Date</th><th>Reference</th>
+              <th className={grid.num}>Gross</th><th className={grid.num}>Fee</th><th className={grid.num}>Net</th>
+              <th className={grid.seam}>Matched to</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {noChoice.map((r) => (
+              <tr key={r.id}>
+                <td>{r.txn_date}<div className={grid.sub}>line {r.line_no}</div></td>
+                <td>{r.ref ? <b>{r.ref}</b> : <span className={grid.sub}>—</span>}</td>
+                <td className={grid.num}>{fmt(r.gross_sen)}</td>
+                <td className={grid.num}>{fmt(r.fee_sen)}</td>
+                <td className={grid.num}>{fmt(r.net_sen)}</td>
+                <td className={grid.seam}>
+                  {r.linked.map((l) => (
+                    <div key={l.payment_id}>
+                      <b>{l.doc_no ?? l.payment_id}</b>
+                      {l.customer_name ? <span className={grid.sub}> · {l.customer_name}</span> : null}
+                    </div>
+                  ))}
+                </td>
+                <td>
+                  {r.confirmed_at
+                    ? <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                    : r.bucket === 'IGNORED'
+                      ? <span style={softText}>set aside</span>
+                      : <span className={grid.good}>matched — the button above books it</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Said ONCE. It used to sit under every line — 27 copies of the same
+          paragraph on this report alone. */}
+      {needChoice.length > 0 && (
+        <div style={softText}>
+          &ldquo;Set aside&rdquo; just moves a line out of the working list — it books nothing and the
+          money stays in settlement-in-transit. Use it for a line you have looked at and decided to
+          deal with another way; you can put it back at any time.
+        </div>
+      )}
+      {needChoice.map((r) => <SettlementLine key={r.id} row={r} />)}
     </section>
   );
 };
@@ -961,13 +1024,6 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         </div>
       )}
 
-      {!row.confirmed_at && (
-        <div style={softText}>
-          &ldquo;Set aside&rdquo; just moves this line out of the working list — it books nothing and the
-          money stays in settlement-in-transit. Use it for a line you have looked at and decided to
-          deal with another way; you can put it back at any time.
-        </div>
-      )}
 
       {confirm.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>

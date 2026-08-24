@@ -251,9 +251,12 @@ describe('the reconcile tab', () => {
     // and the counts are still stated, so nothing is hidden
     expect(screen.getByText('1 done · 0 set aside')).toBeTruthy();
     // the finished line is not on screen until he asks for it
-    expect(screen.queryByText('JE-2608-0011')).toBeNull();
+    expect(screen.queryByText(/JE-2608-0011/)).toBeNull();
     fireEvent.click(screen.getByLabelText('Show lines already decided'));
-    expect(screen.getByText('JE-2608-0011')).toBeTruthy();
+    /* It comes back as a TABLE row now, not a card: a line already decided
+       asks nothing of anybody, so it is information, and the journal number
+       reads inside its status cell. */
+    expect(screen.getByText(/done · JE-2608-0011/)).toBeTruthy();
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date
@@ -418,5 +421,38 @@ describe('the two bands', () => {
     expect(cells).toContain('SO-2608-050');
     expect(cells).toContain('114220');
     expect(cells).toContain('2026-08-03');
+  });
+});
+
+/* 这个是什么? (owner, 2026-08-20) — asked of 27 identical cards sitting under a
+   button that would have cleared all 27 at once, each repeating the same
+   paragraph about "Set aside". A card is a DECISION; a line already matched by
+   its reference asks nothing of anybody. */
+describe('inside one report', () => {
+  const open = () => { draw(); fireEvent.click(screen.getByText('Reconcile')); };
+
+  test('a matched line is a table row, not a card', () => {
+    open();
+    /* MATCHED_ROW claimed SO-2608-043 by its reference — no choice to make. */
+    const row = screen.getByText('969745').closest('tr') as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(within(row).getByText('SO-2608-043')).toBeTruthy();
+    expect(within(row).getByText(/the button above books it/)).toBeTruthy();
+    /* And it has no confirm button of its own — the one at the top does it. */
+    expect(within(row).queryByText('Confirm and post')).toBeNull();
+  });
+
+  test('a line that needs choosing keeps its card', () => {
+    open();
+    /* ROW has candidates and no link: a person has to pick. */
+    const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(within(card).getByText('Confirm and post')).toBeTruthy();
+  });
+
+  /* It used to sit under EVERY line — 27 copies on his Public Bank report. */
+  test('the "set aside" explanation is said once', () => {
+    open();
+    expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
   });
 });
