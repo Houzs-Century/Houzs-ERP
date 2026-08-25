@@ -2466,6 +2466,28 @@ same contract as the Processing-Date gates), all reasons at once:
 | `salesperson_required` | `salesperson_id` OR the legacy `agent` text set (HC-SO-2607-008 confirmed as "Unassigned") |
 | `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
 
+> **`venue_required` is only satisfiable on a surface that HAS a Venue field
+> (2026-08-25).** "When it resolves nothing, confirm demands a human pick" is
+> true of the desktop and the phone — `SalesOrderNew.tsx:1911` renders a Venue
+> dropdown over the 92 `project_venues` rows (owner 2026-06-22, *"houzs 的 venue
+> 是 manually 選的"*). The 2990 POS handover had no such field and sent no venue,
+> so its users hit this problem AFTER the customer had signed with nothing on
+> screen that could answer it.
+>
+> Measured the same day (`probe-so-venue-gate`, runs 32827817087 / 32826133061):
+> **0** PMS projects were running, **83 of 90** active staff resolved no venue
+> from any source, and exactly **one** warehouse in the system carries a
+> `venue_name` (`PJ SHOWROOM`, company 2). Between exhibitions this gate is
+> unsatisfiable by resolution alone for almost everyone — the picker is the
+> answer, not the resolver. Fixed POS-side in `wenwei4046/2990s#774`; full trace
+> in `docs/bugs/0539-the-confirm-gate-demanded-a-venue-the-pos-screen-had-nowhere.md`.
+>
+> **A confirm can pass this gate and still store NO venue.** The rule reads
+> `venue` OR `venue_id`, but `venue_id` is a uuid column and `project_venues` ids
+> are INTEGERS, so `venueIdUuidOrNull` (`mfg-sales-orders.ts:746`) nulls any id a
+> client sends. A payload carrying only `venueId` is accepted and lands blank,
+> silently. Any new client must send the venue TEXT.
+
 > **CORRECTED 2026-08-14 — the confirm gate no longer checks variants.** This
 > table carried a fourth row, `variants_incomplete`, "every goods line's required
 > axes via `missingConfirmVariantAxes`". Commit `16d94ab4` (#2072, 2026-08-13)
