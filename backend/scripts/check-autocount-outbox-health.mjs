@@ -85,7 +85,7 @@ if (!url) {
    one hand-keyed receipt is exactly the noise the header refused. */
 const alarm = { failedOutstanding: 0, pending: [] };
 
-const notice = (msg) =
+const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
 /* The reason strings the ERP writes when it declines to send live in
