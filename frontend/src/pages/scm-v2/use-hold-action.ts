@@ -17,14 +17,15 @@
    screens are at or over `scripts/file-size-ceilings.json`, and this repo's rule
    is that new code moves into a module rather than a ceiling moving up.
 
-   `window.confirm` RATHER THAN THE DIALOG SERVICE, and it is not laziness: it is
-   what the neighbouring destructive actions on these same lists already use
-   (`doCancel` on the PO and GRN lists). One page's Hold prompt looking different
-   from its own Cancel prompt would be the odd thing. The Sales Order list is the
-   exception and keeps its own `askConfirm`, because every other action on that
-   screen uses it.
+   THE IN-APP `useConfirm`, NOT `window.confirm`. This file used the native
+   confirm while its neighbours (`doCancel` on the PO and GRN lists) did too;
+   since the 2026-08-24 sweep every operator-facing prompt in the SCM tree is the
+   styled in-app dialog (Commander's "no 裸奔" rule — the ConfirmProvider is
+   mounted by Scm2990Shell on every /scm/* route), and the lint gate in
+   frontend/eslint.config.mjs now refuses a native prompt here outright.
    ---------------------------------------------------------------------------- */
 
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useSetDocumentHold, type HoldDocType } from "../../vendor/scm/lib/document-hold-queries";
 
 /** How the document is named to the operator, and the field holding its number. */
@@ -50,20 +51,18 @@ const PROMPTS: Record<HoldDocType, HoldPrompt> = {
  */
 export function useHoldAction(docType: HoldDocType) {
   const setHold = useSetDocumentHold(docType);
+  const askConfirm = useConfirm();
   const { noun } = PROMPTS[docType];
-  return (key: string, docNumber: string, onHold: boolean) => {
-    const message = onHold
-      ? `Put ${noun} ${docNumber} on hold? It keeps its current status and is marked so everyone can see it is paused.`
-      : `Take ${noun} ${docNumber} off hold? It was never moved, so it carries on from where it is.`;
-    if (!window.confirm(message)) return;
+  return async (key: string, docNumber: string, onHold: boolean) => {
+    if (!(await askConfirm(holdPrompt(`${noun} ${docNumber}`, onHold)))) return;
     setHold.mutate({ key, onHold });
   };
 }
 
-/** The confirm-dialog copy for a hold, for a caller that runs its own dialog
- *  (the Sales Order list uses `askConfirm`, as every other action on that
- *  screen does). Same words as the `window.confirm` path above — the sentence
- *  that matters is "it keeps its current status", and it must not drift. */
+/** The confirm-dialog copy for a hold — used by useHoldAction above and by any
+ *  caller that runs its own dialog (the Sales Order list calls `askConfirm`
+ *  directly). ONE copy of the words: the sentence that matters is "it keeps its
+ *  current status", and it must not drift. */
 export const holdPrompt = (docNumber: string, onHold: boolean) => ({
   title: onHold ? `Put ${docNumber} on hold?` : `Take ${docNumber} off hold?`,
   body: onHold

@@ -67,6 +67,7 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useDrRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
@@ -482,6 +483,7 @@ export function DeliveryReturnDetailV2() {
   const updateStatus = useUpdateDeliveryReturnStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
+  const askConfirm = useConfirm();
 
   const deliveryReturn =
     (detail.data as { deliveryReturn?: DrHeader } | undefined)?.deliveryReturn ??
@@ -519,13 +521,14 @@ export function DeliveryReturnDetailV2() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/delivery-returns"));
   const goEdit = () => id && navigate(`/scm/delivery-returns/${id}?edit=1`);
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!deliveryReturn) return;
-    if (
-      window.confirm(
-        `Cancel return ${deliveryReturn.return_number}? The stock added on create will be reversed via a negative ADJUSTMENT.`
-      )
-    ) {
+    if (await askConfirm({
+      title: `Cancel return ${deliveryReturn.return_number}?`,
+      body: "The stock added on create will be reversed via a negative ADJUSTMENT.",
+      confirmLabel: "Cancel return",
+      danger: true,
+    })) {
       updateStatus.mutate({ id: deliveryReturn.id, status: "CANCELLED" });
     }
   };

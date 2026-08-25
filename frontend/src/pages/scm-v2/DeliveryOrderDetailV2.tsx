@@ -66,6 +66,7 @@ import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
@@ -697,6 +698,7 @@ export function DeliveryOrderDetailV2() {
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
+  const askConfirm = useConfirm();
   const { user, can, pageAccess } = useAuth();
   // showCustomerPo + node click handling now live inside useDoRelationshipMap.
   // Mutation gate — a salesperson opens this DO read-only via the sales inherit
@@ -776,13 +778,14 @@ export function DeliveryOrderDetailV2() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/delivery-orders"));
   const goEdit = () => id && navigate(`/scm/delivery-orders/new?edit=${id}`);
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!deliveryOrder) return;
-    if (
-      window.confirm(
-        `Cancel delivery order ${deliveryOrder.do_number}? Stock allocated to this DO will be released back to the SO.`
-      )
-    ) {
+    if (await askConfirm({
+      title: `Cancel delivery order ${deliveryOrder.do_number}?`,
+      body: "Stock allocated to this DO will be released back to the SO.",
+      confirmLabel: "Cancel DO",
+      danger: true,
+    })) {
       updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
   };
