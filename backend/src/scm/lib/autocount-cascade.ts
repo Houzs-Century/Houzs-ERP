@@ -162,13 +162,35 @@ export async function newestOutboxRowFor(
   companyId: number | null | undefined,
   docNo: string,
 ): Promise<string | null> {
+  return (await newestOutboxRowWithStatus(sb, companyId, docNo))?.id ?? null;
+}
+
+/**
+ * The same row, WITH its status — because what to do with an ancestor depends
+ * on it and the caller cannot tell from an id alone.
+ *
+ * A `pending` ancestor must be SENT, not re-queued. `requeueOutboxRow` refuses
+ * a pending row outright (`row-pending`, and rightly: the sweep is already
+ * going to take it), so a cascade that only ever re-queues silently does
+ * NOTHING for the one shape it meets most — a chain where every document is
+ * waiting on the one above it. Owner, 2026-08-26: 「如果顺着点完…就没问题。但如果
+ * 我想走捷径，直接去点 Sales Invoice…就不行」. Pressing each row in order worked
+ * because that sends each pending row directly, which is exactly what the
+ * cascade was failing to do.
+ */
+export async function newestOutboxRowWithStatus(
+  sb: Sb,
+  companyId: number | null | undefined,
+  docNo: string,
+): Promise<{ id: string; status: string } | null> {
   if (!docNo) return null;
-  let q = sb.from('autocount_outbox').select('id')
+  let q = sb.from('autocount_outbox').select('id, status')
     .eq('doc_no', docNo).order('created_at', { ascending: false }).limit(1);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
   if (error || !data?.length) return null;
-  return String((data as Array<{ id: string }>)[0].id);
+  const r = (data as Array<{ id: string; status?: string }>)[0];
+  return { id: String(r.id), status: String(r.status ?? '') };
 }
 
 /**
