@@ -1139,15 +1139,15 @@ fleet row with no link to `public.users`. (2) A `user_id` link on
 `scm.drivers` / `scm.helpers` that `resolveDeliveryScope` reads
 (`backend/src/scm/lib/deliveryScope.ts:131-132`) to decide row scope.
 
-> **Unverified / gap.** The `user_id` link columns and the "internal staff →
-> fleet row" sync that `deliveryScope.ts:24-28` describes are **not created by
-> any migration in this repo** — thirteen migration files now mention `drivers`,
-> and NONE adds `user_id` to `scm.drivers` or `scm.helpers`; `0066_scm_staff_user_sync.sql:9,22`
-> refers to a "migration 0060" that is an unrelated file locally. The sync
-> therefore lives outside this repo (the 2990 full-schema import; see the note
-> at `drivers.ts:9`). On any database built from this repo's migrations alone,
-> `resolveDeliveryScope` fails open to `mode: 'all'` (`deliveryScope.ts:146`).
-> I could not verify the production state of those columns from the repo.
+> **Resolved 2026-08-25.** The `user_id` link columns exist in production
+> (hand-applied, WITH supporting indexes, both verified read-only on the live
+> DB) and are now tracked by `backend/src/db/migrations-pg/0327_scm_fleet_user_link.sql`
+> (idempotent `ADD COLUMN IF NOT EXISTS` — a no-op on prod, so a database built
+> from this repo's migrations now has the columns too). The "internal staff →
+> fleet row" sync still lives outside this repo (the 2990 full-schema import;
+> see the note at `drivers.ts:9`) — that part is unchanged. All five active
+> in-house drivers were confirmed linked, so `resolveDeliveryScope` returns a
+> `self` scope for them today.
 
 
 Separately, `backend/src/routes/fleet.ts:25-29` (`GET /api/fleet/staff`, gate
@@ -1278,11 +1278,23 @@ a caller only when **both** signals agree:
 2. **Identity** — at least one `scm.drivers` / `scm.helpers` row resolves via
    `user_id` (`:129-136`).
 
-Every other outcome **fails open to `mode: 'all'`** — wildcard, non-restricted
-position, unresolvable identity, lookup error (`:110-146`). The rationale is in
-the file header: this change can only ever reduce exposure, never lock a driver
-out of their own jobs. An unassigned job never matches a `self` scope
-(`scopeMatchesAssignment` `:157-165`), so it stays visible to ops only.
+Outcomes split by whether the caller is FLEET personnel (2026-08-25, owner
+"只能看到分配给自己的" — `backend/src/services/positionPolicy.ts` `isFleetPosition`):
+- **wildcard / non-restricted / no id / lookup error** → `mode: 'all'` (a DB
+  fault must never lock a driver out mid-shift).
+- **Driver / Helper with no fleet link** → **fails CLOSED**: an EMPTY `self`
+  scope, which matches no assignment, so an unlinked driver sees an empty board
+  rather than the whole fleet's jobs. Fixing the link is an admin action.
+- **Storekeeper / Storekeeper Supervisor with no fleet link** → `mode: 'all'`:
+  the board is a coordination surface for the warehouse, not a per-person run
+  sheet, so they are not narrowed.
+- **any caller with a resolved fleet identity** → `self` scoped to their ids.
+
+The `scm.drivers.user_id` / `scm.helpers.user_id` link columns are tracked by
+`backend/src/db/migrations-pg/0327_scm_fleet_user_link.sql` (idempotent — they
+were hand-applied in production before the migration existed). An unassigned job
+never matches a `self` scope (`scopeMatchesAssignment`), so it stays visible to
+ops only. Pinned by `backend/tests/deliveryScope.test.ts`.
 
 Where it is enforced:
 
