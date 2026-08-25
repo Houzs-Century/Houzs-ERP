@@ -3342,6 +3342,26 @@ by hand worked because that sends its own pending row directly, which is
 precisely what the cascade omitted. Failed and skipped ancestors still take the
 re-queue path.
 
+**A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
+(2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on
+whether the sales-order lines carry an AutoCount DtlKey — and that key is
+written back only when the sales order reaches the book. A purchase order raised
+in the same minute sees NULL keys, so "the account book has no key for these
+lines" was read as permanent. Measured: HC-PO-2608-007 from HC-SO-2608-008 went
+as `create_po` at 16:55 on 2026-08-25 and the book holds no link between them;
+the five before it transferred, because they were raised long enough afterwards.
+A race, not a rule — and a create is the one answer that cannot be taken back.
+
+A third shape, `wait`: keyless AND the source sales order is not in the book yet
+→ queued as `so_to_po` with `fromDoc` on that sales order, which the drain
+already holds until the parent has its number, and the keys are filled at drain
+by `lib/autocount-so-to-po-keys.ts` — the same shape as the CreditorCode, DocNo
+and DebtorCode backfills, and for the same reason. Keyless while the sales order
+IS in the book stays a create; so does for-stock, and so does a purchase order
+drawing on two sales orders, which has no single anchor to wait on. The backfill
+is all-or-nothing: a partial set would send a purchase order that looks complete
+and is short some lines.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,
