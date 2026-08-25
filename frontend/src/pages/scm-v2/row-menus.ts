@@ -269,7 +269,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
    `Confirm` is the DRAFT rung and only that: it is `doAdvanceStep`'s single
    step, the same one the detail page and the drawer already offer.
 
-   AND THREE MANUAL STATUS MOVES — Mark Shipped / In Transit / Delivered — which
+   AND THREE MANUAL STATUS MOVES — Mark Loaded / In Transit / Delivered — which
    are a NAMED, DATED EXCEPTION to the rule the Sales Order menu above states: a
    status a MACHINE derives is never offered to a person
    (docs/modules/document-status-vocabulary.md §1b). Read that section before
@@ -289,12 +289,23 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
    by asking whether a MACHINE derives the status from a fact. For these three,
    TODAY, none does:
 
-     Shipped     (DISPATCHED)  the storekeeper QR scan that will write it does
-                               not exist. The DO print's existing QR lands on
-                               DoLoadScan, which writes LOADED (Confirmed).
-     In transit  (IN_TRANSIT)  the driver trip flow (MobileDeliveryPlanning) is
-                               its only writer and has never written a row — no
-                               delivery order has ever held this status.
+     Loaded      (DISPATCHED)  THIS SENTENCE CHANGED ON 2026-08-26 and the entry
+                               did not. It read "the storekeeper QR scan that
+                               will write it does not exist"; the owner's
+                               three-scan flow built it, so DoLoadScan now offers
+                               DRAFT→LOADED, LOADED→DISPATCHED, DISPATCHED→
+                               IN_TRANSIT and IN_TRANSIT→DELIVERED, one rung at a
+                               time. The machine EXISTS. By this block's own rule
+                               ("each entry retires itself the day its machine
+                               goes into use") the first two entries are now
+                               candidates for removal — but EXISTING is not IN
+                               USE, and whether the storekeepers actually scan is
+                               the owner's fact to give, not one this file may
+                               assume. Left standing, and said out loud, rather
+                               than removed on a guess.
+     In transit  (IN_TRANSIT)  two writers now: the driver trip flow
+                               (MobileDeliveryPlanning), which has never written
+                               a row, and the driver's second scan on DoLoadScan.
      Delivered   (DELIVERED)   the driver's Proof-of-Delivery screen (MobilePOD)
                                DOES write it, the one machine of the three — but
                                asked directly whether drivers use that app, the
@@ -364,7 +375,7 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
         h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
         /* The status the row already carries is left out: re-writing it is a
            no-op the operator would read as a real choice. */
-        canMark && s !== "DISPATCHED" && { label: "Mark Shipped", onClick: () => h.setStatus(r, "DISPATCHED") },
+        canMark && s !== "DISPATCHED" && { label: "Mark Loaded", onClick: () => h.setStatus(r, "DISPATCHED") },
         canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
         canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
         ...holdEntries(r, h.setHold),
