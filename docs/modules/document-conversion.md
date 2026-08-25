@@ -774,6 +774,24 @@ not a thirteenth spelling.
 now read their batch-export bundles from `printDocumentPdf.ts` too, so the row
 menu's print and the list's "Export PDF (N)" cannot drift apart.
 
+**The `do` branch fetches a SECOND thing, and it is the only branch that does
+(2026-08-26).** After reading the delivery order it calls `armDoScanToken`
+(`frontend/src/vendor/scm/lib/do-scan-token-arm.ts`), which asks the authed
+`GET /delivery-orders-mfg/:id/scan-token` for the 64-hex token the printed QR
+encodes, and stamps it on the header as `scanToken`. It replaced `loadScanId`,
+which carried the delivery order's row id — the QR pointed at
+`/scm/do-load?id=…`, behind the staff sign-in, so the code printed for the
+storekeeper and the driver showed them a login screen (`docs/bugs/0543`). It now
+encodes `/d/<token>`, which opens with no login.
+
+A FAILED MINT PRINTS THE DOCUMENT WITH NO QR — it never falls back to the old
+authed link. A paper carrying a link only office staff can open is worse than a
+paper carrying none, because the storekeeper finds out at the lorry. This is
+also why the token is fetched HERE rather than at each print call site: the
+three surfaces that print a delivery order all reach the QR through one helper,
+so none of them has to remember to arm it. Details in
+`docs/modules/delivery-order.md`.
+
 ---
 
 ## 9. Vocabulary — is it "Convert to/from" or "Transfer to/from"?
