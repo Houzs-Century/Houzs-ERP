@@ -45,7 +45,10 @@ type DoHeader = {
      /scm/do-load?id=<this>. EXPLICIT opt-in by name, not a generic id: the
      Consignment Note print reuses this renderer, and a CN must never grow a
      control that flips a DELIVERY ORDER's status. Only the DO surfaces set it. */
-  loadScanId?: string | null;
+  /* The PUBLIC scan token (64 hex), stamped by armDoScanToken. Not a row id:
+     the QR encodes /d/<token>, which opens with no login, because a driver has
+     no account (owner: 「就跟hookka一样」). Absent = print no QR. */
+  scanToken?: string | null;
   do_date: string;
   so_doc_no: string | null;
   debtor_code: string | null;
@@ -236,21 +239,33 @@ function drawDoHeader(
 
   let rightBottom = issuedBaseline + 1.2;
 
-  /* "Scan to mark loaded" (2026-08-21): the warehouse scans the paper that
-     travels with the goods; the link lands on /scm/do-load which flips
-     DRAFT → LOADED through the ordinary status PATCH (audited, guarded).
-     Right column only — the header rule clears whichever column ran longer,
-     so growing this column is layout-safe by construction. */
-  if (header.loadScanId && typeof window !== 'undefined') {
+  /* THE SCAN QR. It points at the PUBLIC page now (2026-08-26): the driver has
+     no account, so the link must open without one — the owner's call,
+     「就跟hookka一样」 — and the 64-hex token in it is the only credential. It
+     used to encode /scm/do-load?id=<uuid>, which only signed-in office staff
+     could open.
+
+     THE CAPTION CHANGED WITH IT, and had to. "SCAN · MARK LOADED" was written
+     when the code did exactly one thing (DRAFT -> LOADED). Since the three-scan
+     ladder it does four — confirm loading, confirm loaded onto the lorry,
+     confirm departure, confirm delivered — so a caption naming one of them is
+     wrong on three of the four papers a storekeeper picks up, and the one it
+     names is the rung most papers never see. "SCAN AT EACH STEP" is what is
+     true of every rung, and it tells the person holding the paper the thing the
+     old caption did not: that this code is scanned more than once.
+
+     Right column only — the header rule clears whichever column ran longer, so
+     growing this column is layout-safe by construction. */
+  if (header.scanToken && typeof window !== 'undefined') {
     const QR = 16;
     const qrTop = rightBottom + 2.5;
-    const url = `${window.location.origin}/scm/do-load?id=${encodeURIComponent(header.loadScanId)}`;
+    const url = `${window.location.origin}/d/${encodeURIComponent(header.scanToken)}`;
     drawQrIntoPdf(doc, url, rightEdge - QR, qrTop, QR);
     doc.setFont(SANS, 'normal');
     doc.setFontSize(6.5);
     setInk(doc, T.inkMuted);
     const labelBaseline = baselineOf(qrTop + QR + 0.8, 6.5);
-    doc.text('SCAN · MARK LOADED', rightEdge, labelBaseline, { align: 'right', charSpace: charSpace(6.5, 0.08) });
+    doc.text('SCAN AT EACH STEP', rightEdge, labelBaseline, { align: 'right', charSpace: charSpace(6.5, 0.08) });
     rightW = Math.max(rightW, QR);
     rightBottom = labelBaseline + 0.8;
   }

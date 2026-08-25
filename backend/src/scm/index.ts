@@ -44,6 +44,7 @@ import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
+import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { salesInvoices } from "./routes/sales-invoices";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
@@ -342,6 +343,11 @@ scm.use(
     },
   }),
 );
+/* Two routers on one prefix, like /grns and /purchase-invoices above. The
+   scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
+   its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
+   route is matched before the main router's /:id patterns can shadow it. */
+scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
