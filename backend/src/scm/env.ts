@@ -43,7 +43,17 @@ export interface Variables {
     department_name?: string | null;
     permissions?: string[];
     permissions_set?: Set<string>;
+    /** Operational-capability grants (position_capabilities, mig 0322) mirrored
+     *  from the AuthUser so SCM handlers can gate a verb on the REAL caller —
+     *  e.g. the DO status endpoint admits scan-to-LOADED on scm.do.load. */
+    position_capabilities?: string[];
   } | undefined;
+  /** Set true by scmAreaGuard when a WRITE was admitted via its capability
+   *  writeBypass (the caller lacks the area level but holds an operational
+   *  capability). The handler MUST then enforce the exact capability verb —
+   *  the guard only proved the caller holds SOME qualifying capability, not
+   *  that this specific transition is theirs. Absent/false = normal access. */
+  scmWriteBypassed?: boolean;
   // The DOOR this request's session was minted at (mig 0120) — 'pos' when it
   // came from the POS PIN login, undefined otherwise. Set by the GLOBAL
   // middleware/auth (which runs before this sub-app) and, unlike `user`, NOT

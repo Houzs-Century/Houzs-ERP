@@ -26,6 +26,7 @@ import {
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
+import { hasPositionCapability } from '../../services/positionCapabilities';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -5317,6 +5318,32 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       error: 'invalid_status',
       reason: `"${body.status}" is not a valid Delivery Order status.`,
     }, 400);
+  }
+
+  /* Capability gate for a caller admitted via the area guard's writeBypass —
+     a position holding scm.do.load / scm.do.dispatch but WITHOUT scm.sales.
+     delivery edit (a storekeeper, a driver). The guard proved they hold ONE of
+     the two verbs; here we bind it to the exact transition: LOADED needs
+     scm.do.load (the warehouse scan-confirm — the stock OUT), DISPATCHED needs
+     scm.do.dispatch (truck departs). A bypassed caller may do NOTHING else on
+     this endpoint (cancel, POD/DELIVERED, etc. stay with real delivery access
+     — Driver POD lands with the isolation PR). A caller with real access is
+     unflagged and skips this entirely, so nothing existing changes. */
+  if (c.get('scmWriteBypassed')) {
+    const hu = c.get('houzsUser');
+    const need = toStatus === 'LOADED' ? 'scm.do.load'
+      : toStatus === 'DISPATCHED' ? 'scm.do.dispatch'
+      : null;
+    if (!need || !hasPositionCapability(hu, need)) {
+      return c.json({
+        error: 'capability_required',
+        reason: toStatus === 'LOADED'
+          ? 'Confirming loading needs the Load permission for your position.'
+          : toStatus === 'DISPATCHED'
+            ? 'Dispatching needs the Dispatch permission for your position.'
+            : 'Your position can only confirm loading or dispatch a delivery order here.',
+      }, 403);
+    }
   }
 
   /* Scoped load. Every guard this handler already had — the status whitelist,

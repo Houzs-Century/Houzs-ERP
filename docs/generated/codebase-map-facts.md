@@ -75,7 +75,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5575 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5602 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -178,7 +178,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1721 files, 632528 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1721 files, 632632 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -188,7 +188,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5680 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5575 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5602 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
 | `backend/src/routes/projects.ts` | 5052 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |

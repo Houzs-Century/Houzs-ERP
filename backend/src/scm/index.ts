@@ -99,6 +99,7 @@ import { quotes } from "./routes/quotes";
 import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
+import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -320,7 +321,27 @@ scm.route("/state-warehouse-mappings", stateWarehouseMappings);
 // readInheritsFrom scm.sales.orders — a salesperson may READ the DOs generated
 // from their OWN Sales Orders (row-scoped own+downline by the route, cost/margin
 // stripped for non-finance). Writes still require edit on scm.sales.delivery.
-scm.use("/delivery-orders-mfg/*", scmAreaGuard("scm.sales.delivery", { readInheritsFrom: "scm.sales.orders" }));
+// writeBypass — a position holding scm.do.load / scm.do.dispatch (the editable
+// Roles & Permissions matrix, mig 0322) may reach PATCH /:id/status WITHOUT
+// scm.sales.delivery edit, so a storekeeper can scan-confirm (→LOADED) and a
+// driver can dispatch (→DISPATCHED). Narrow on purpose: only the status PATCH,
+// only a holder of one of those two verbs. The HANDLER then enforces the exact
+// transition per verb (LOADED needs load, DISPATCHED needs dispatch, nothing
+// else) — the guard only proves the caller holds SOME qualifying capability.
+scm.use(
+  "/delivery-orders-mfg/*",
+  scmAreaGuard("scm.sales.delivery", {
+    readInheritsFrom: "scm.sales.orders",
+    writeBypass: (c) => {
+      if (c.req.method !== "PATCH" || !c.req.path.endsWith("/status")) return false;
+      const u = c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0];
+      return (
+        hasPositionCapability(u, "scm.do.load") ||
+        hasPositionCapability(u, "scm.do.dispatch")
+      );
+    },
+  }),
+);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +

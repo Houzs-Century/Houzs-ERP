@@ -246,6 +246,22 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
 (`:256`) — a salesperson may READ the DOs generated from their own SOs; writes
 still need `edit` on `scm.sales.delivery`.
 
+> **Per-position capability gate on `PATCH /:id/status` (2026-08-25).** The
+> mount also carries a `writeBypass` (area-guard) so a position holding the
+> operational capability `scm.do.load` or `scm.do.dispatch` (the editable Roles
+> & Permissions matrix, `position_capabilities`, mig 0322) reaches the status
+> endpoint WITHOUT `scm.sales.delivery` edit — a storekeeper scan-confirms
+> (→`LOADED`, the stock OUT) and a driver dispatches (→`DISPATCHED`). The guard
+> only proves the caller holds one of the two verbs; `patchDeliveryOrderStatusHandler`
+> then binds the verb to the transition (`LOADED`⇒`scm.do.load`,
+> `DISPATCHED`⇒`scm.do.dispatch`, everything else 403 `capability_required`) via
+> `c.get('scmWriteBypassed')` + `hasPositionCapability(c.get('houzsUser'), …)`.
+> A caller with real delivery access is unflagged and skips the gate — nothing
+> existing changes. The scan page `/scm/do-load` mirrors this on the client
+> (`ScmGuard … allowCapability="scm.do.load"`); the endpoint is the boundary.
+> Driver POD/DELIVERED still needs real access — that lands with the driver
+> isolation change. Pinned by `backend/tests/doStatusCapabilityGate.test.ts`.
+
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:2188` | List. `?page=` opts into pagination + `statusCounts`. |
