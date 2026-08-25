@@ -119,7 +119,7 @@ type PublicDoSummary = {
   doNumber: string;
   customerName: string;
   area: string;
-  itemCount: number;
+  itemCount: number | null;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
@@ -134,13 +134,18 @@ type PublicDoSummary = {
  * on scm.delivery_order_items (mig 0083), so the predicate cannot silently drop
  * a legitimate line.
  */
-async function countDoLines(sb: any, id: string, companyId: number): Promise<number> {
-  const { count } = await scopeToCompanyId(
+async function countDoLines(sb: any, id: string, companyId: number): Promise<number | null> {
+  const { count, error } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('id', { count: 'exact', head: true })
       .eq('delivery_order_id', id),
     companyId,
   );
-  return typeof count === 'number' ? count : 0;
+  /* `null`, NEVER 0, when the read did not answer. supabase-js does not throw,
+     so an unbound error reads as an empty document — and "0 lines" on a paper
+     with goods behind it is a claim about the load, not a report of what we
+     hold. The page renders a dash. */
+  if (error) return null;
+  return typeof count === 'number' ? count : null;
 }
 
 async function buildSummary(sb: any, r: ResolvedDoScan): Promise<PublicDoSummary> {

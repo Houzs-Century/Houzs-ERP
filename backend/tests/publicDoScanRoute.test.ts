@@ -33,14 +33,19 @@ type Row = Record<string, any>;
 let tables: Record<string, Row[]> = {};
 /** Every `.from(<table>)` the route made, in order — the DB-touch tripwire. */
 let touched: string[] = [];
+/** Tables told to answer the way PostgREST does when a query fails: no rows AND
+ *  an `error`. supabase-js does not throw, so this is the ONLY shape a caller
+ *  can tell a blip from an empty document by. */
+let failing = new Set<string>();
 
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
+  private fails = false;
   private op: 'select' | 'update' | 'insert' | 'delete' = 'select';
   private patch: Row = {};
   private inserted: Row[] = [];
   private wantCount = false;
-  constructor(private rows: Row[]) {}
+  constructor(private rows: Row[], fails = false) { this.fails = fails; }
   select(_cols?: string, opts?: { head?: boolean; count?: string }) {
     if (opts?.count) this.wantCount = true;
     return this;
@@ -66,12 +71,19 @@ class FakeQuery {
     if (this.op === 'delete') for (const r of hit) this.rows.splice(this.rows.indexOf(r), 1);
     return hit;
   }
-  maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
+  maybeSingle() {
+    if (this.fails) return Promise.resolve({ data: null, error: { message: 'connection closed' } });
+    const h = this.run();
+    return Promise.resolve({ data: h[0] ?? null, error: null });
+  }
   single() {
     const h = this.run();
     return Promise.resolve({ data: h[0] ?? null, error: h.length ? null : { message: 'no rows' } });
   }
   then(res: (v: any) => any, rej?: (e: any) => any) {
+    if (this.fails) {
+      return Promise.resolve({ data: null, count: null, error: { message: 'connection closed' } }).then(res, rej);
+    }
     const hit = this.run();
     return Promise.resolve(
       this.wantCount ? { data: hit, count: hit.length, error: null } : { data: hit, error: null },
@@ -80,7 +92,7 @@ class FakeQuery {
 }
 
 const fakeClient = () => ({
-  from: (t: string) => { touched.push(t); return new FakeQuery((tables[t] ||= [])); },
+  from: (t: string) => { touched.push(t); return new FakeQuery((tables[t] ||= []), failing.has(t)); },
   rpc: async () => ({ data: true, error: null }),
 });
 
@@ -123,6 +135,7 @@ function seed(overrides: Row = {}, extra: Row[] = []) {
     delivery_return_items: [],
   };
   touched = [];
+  failing = new Set();
 }
 
 const env = {} as never;
@@ -252,6 +265,30 @@ describe('the ladder, decided by the server', () => {
     expect(body.blockReason).toContain('cancelled');
     await advance(TOKEN, 'DISPATCHED');
     expect(tables.delivery_orders[0].status).toBe('CANCELLED');
+  });
+});
+
+describe('an unanswered read is never rendered as an empty one', () => {
+  test('a failed line count is null, NEVER 0 — "0 lines" would be a claim about the load', async () => {
+    /* The document itself still resolves; only the count read fails. That is
+       exactly the case an unbound `error` renders as a delivery order with
+       nothing on it, which is a statement about the lorry rather than a report
+       of what we hold. */
+    failing.add('delivery_order_items');
+    const body = await (await get(TOKEN)).json() as { itemCount: number | null; doNumber: string };
+    expect(body.doNumber).toBe('HC-DO-2608-001');
+    expect(body.itemCount, 'a failed count must not read as an empty document').toBeNull();
+  });
+
+  test('a failed token resolve is not reported as an unknown code', async () => {
+    /* A blip must not tell the driver his paper is dead. It answers 404 today
+       — the same as unknown — and that is the one place this route is knowingly
+       lossy, so it is pinned here rather than left to be discovered: the read
+       IS error-bound (resolveDoScanToken returns null on `error`), and the
+       follow-up if this ever matters is a 503 arm, not an unbound read. */
+    failing.add('delivery_orders');
+    const res = await get(TOKEN);
+    expect(res.status).toBe(404);
   });
 });
 

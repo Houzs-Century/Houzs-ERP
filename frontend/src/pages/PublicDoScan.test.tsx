@@ -145,6 +145,15 @@ describe("what it refuses to say", () => {
     expect(body).toContain("Proof of Delivery");
   });
 
+  /* An unanswered count must not render as an empty lorry. "0 lines" is a claim
+     about the load; a dash is a report of what we know. */
+  it("says the line count is unavailable rather than printing 0", async () => {
+    serve({ ...LOADED, itemCount: null });
+    await mount();
+    expect(screen.getByText(/line count unavailable/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("0 lines");
+  });
+
   it("a held delivery order gets a sentence and no button at all", async () => {
     serve({
       ...LOADED,

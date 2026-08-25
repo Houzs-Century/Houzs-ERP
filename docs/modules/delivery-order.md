@@ -307,7 +307,10 @@ on the paper IS the credential. He accepted ONE addition, a kill switch
 while Houzs already runs that pattern (mig 0126, `case_track_tokens`).
 
 **What the response contains:** delivery order number, customer name, delivery
-area (city + state), line count, status, and the next rung's label + note.
+area (city + state), line count, status, and the next rung's label + note. The
+line count is `null` — never 0 — when that read did not answer, and the page
+prints "line count unavailable": zero is a claim about the load, and supabase-js
+does not throw, so an unbound error would render a blip as an empty lorry.
 **What it never contains:** any price, the street address, the postcode, any
 phone number or email. `backend/tests/publicDoScanSurface.test.ts` fails the
 build if the route file so much as MENTIONS one of those column names.

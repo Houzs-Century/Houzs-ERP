@@ -89,12 +89,26 @@ re-running:
 | the company predicate on the line count | `the five fields, the next rung, and nothing else` — the count read the other company's line |
 | the company taken from the resolved row | `the company comes from the resolved ROW` — the write missed our row |
 | a rung pointed backwards | `every rung lands strictly further along than where it started` |
+| the line count's bound `error` | `a failed line count is null, NEVER 0` — a blip rendered as a delivery order with nothing on it |
 
 Pinned by `backend/tests/publicDoScanRoute.test.ts` (behaviour, through the real
 handler), `backend/tests/publicDoScanSurface.test.ts` (mount order, per-statement
 scope, banned field names, rate limits), `backend/tests/doScanLadder.test.ts`
 (forward-only as a property, plus the mirror) and
 `frontend/src/pages/PublicDoScan.test.tsx` (the mounted page).
+
+**One thing the repo's own gate caught mid-review, and it was right.**
+`audit:swallowed-reads` failed the first push: two reads in the token library
+were destructured as `const { data }` with no `error`. supabase-js does not
+throw, so on this route a five-second database blip would have been
+indistinguishable from "that delivery order is not in your books" — the printer
+would have told an operator their document does not exist. `getOrCreateDoScanToken`
+now answers with THREE states (`ok` / `not_found` / `read_failed`), the mint
+endpoint answers 503 rather than 404 on the third, and a failed claim is told
+apart from a lost race (both come back with no row). The public line count got
+the same treatment: it is `null` on a failed read and the page prints "line count
+unavailable", because "0 lines" is a claim about the load rather than a report of
+what we hold.
 
 **What this does NOT do, said plainly.** `Confirm Delivered` still writes
 DELIVERED and captures no signature, no photo and no location — bugs 0480 and

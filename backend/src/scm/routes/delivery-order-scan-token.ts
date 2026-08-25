@@ -37,7 +37,17 @@ deliveryOrderScanToken.get('/:id/scan-token', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  const token = await getOrCreateDoScanToken(sb, id, co.companyId);
-  if (!token) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ scanToken: token });
+  const minted = await getOrCreateDoScanToken(sb, id, co.companyId);
+  /* A FAILED READ IS NOT A MISSING DOCUMENT. supabase-js does not throw, so the
+     two arrive identically unless the error is bound — and answering 404 to a
+     database blip sends the operator hunting for a delivery order that is right
+     in front of them. 503 says what actually happened: try again. */
+  if (minted.status === 'read_failed') {
+    return c.json({
+      error: 'scan_token_unavailable',
+      message: "We couldn't reach the delivery order just now. Try printing again in a moment.",
+    }, 503);
+  }
+  if (minted.status === 'not_found') return c.json(NOT_THIS_COMPANY, 404);
+  return c.json({ scanToken: minted.token });
 });

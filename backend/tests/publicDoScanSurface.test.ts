@@ -62,6 +62,11 @@ describe('minting stays behind the session', () => {
 
   test('the authed route is the only minter, and it scopes to the session company', () => {
     expect(MINT_ROUTE).toContain('getOrCreateDoScanToken(sb, id, co.companyId)');
+    /* A FAILED READ IS NOT A MISSING DOCUMENT — the two are told apart, and a
+       blip answers 503 rather than sending the operator hunting for a delivery
+       order that is right in front of them. */
+    expect(MINT_ROUTE).toContain("minted.status === 'read_failed'");
+    expect(MINT_ROUTE).toContain("minted.status === 'not_found'");
     expect(MINT_ROUTE).toContain('requireActiveCompanyId(c)');
     expect(MINT_ROUTE).toContain("deliveryOrderScanToken.use('*', supabaseAuth)");
   });
@@ -73,11 +78,15 @@ describe('minting stays behind the session', () => {
   });
 
   test('the mint is claimed ATOMICALLY, and the claim carries the company too', () => {
-    const claim = TOKEN_LIB.slice(TOKEN_LIB.indexOf('const { data: claimed }'));
+    const claim = TOKEN_LIB.slice(TOKEN_LIB.indexOf('const { data: claimed, error: claimErr }'));
     expect(claim).toContain(".update({ qr_token: fresh })");
     expect(claim).toContain(".is('qr_token', null)");
     expect(claim, 'the write itself must carry the company predicate, not just the read')
       .toContain(".eq('company_id', companyId)");
+    /* A FAILED CLAIM IS NOT A LOST RACE. Both come back with no row; only the
+       bound error tells them apart, and reading them alike would report a
+       printable delivery order as somebody else's. */
+    expect(claim).toContain("if (claimErr) return { status: 'read_failed' }");
   });
 });
 
@@ -103,6 +112,11 @@ describe('the tenant boundary, statement by statement', () => {
     // The two mint statements both carry the company; the resolve is the one
     // that cannot, and mig 0328's UNIQUE index is what makes that safe.
     expect((code.match(/\.eq\('company_id', companyId\)/g) ?? []).length).toBe(2);
+    /* And every one of the three binds its `error`. supabase-js does not throw,
+       so an unbound read cannot tell "the query failed" from "there is nothing
+       here" — which on THIS route would answer 404 to a blip and tell whoever
+       holds the paper their code is dead. */
+    expect((code.match(/\berror(?::\s*\w+)?\s*[,}]/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(code).toContain(".eq('qr_token', token)");
     expect(MIG).toContain('CREATE UNIQUE INDEX IF NOT EXISTS ux_delivery_orders_qr_token');
   });

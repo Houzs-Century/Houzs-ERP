@@ -116,6 +116,19 @@ export async function resolveDoScanToken(
 }
 
 /**
+ * THREE ANSWERS, NEVER TWO. `not_found` and `read_failed` are different facts
+ * and the caller must be able to tell them apart: supabase-js does not throw, so
+ * a five-second database blip destructured as `const { data }` is
+ * indistinguishable from "that delivery order is not in your books" — and the
+ * honest answer to a blip is "try again", not a 404 that sends the operator
+ * looking for a document that is right there.
+ */
+export type MintedDoScanToken =
+  | { status: 'ok'; token: string }
+  | { status: 'not_found' }
+  | { status: 'read_failed' };
+
+/**
  * Create-if-missing, claimed atomically. AUTHENTICATED CALLERS ONLY — the
  * public route must never reach this function, and a test asserts it does not
  * import it.
@@ -125,28 +138,34 @@ export async function resolveDoScanToken(
  * forgotten: minting a token for a document is a write, and a write that cannot
  * say whose books it is in is the shape of bug 0497.
  *
- * Returns `null` when the delivery order is not this company's — the same
- * answer as "no such delivery order", for the reason NOT_THIS_COMPANY states.
+ * `not_found` also covers "not this company's" — the same answer as "no such
+ * delivery order", for the reason NOT_THIS_COMPANY states.
  */
 export async function getOrCreateDoScanToken(
   sb: any,
   id: string,
   companyId: number,
-): Promise<string | null> {
-  const read = async (): Promise<string | null | undefined> => {
-    const { data } = await sb
+): Promise<MintedDoScanToken> {
+  type ReadResult =
+    | { status: 'ok'; token: string | null }
+    | { status: 'not_found' }
+    | { status: 'read_failed' };
+
+  const read = async (): Promise<ReadResult> => {
+    const { data, error } = await sb
       .from('delivery_orders')
       .select('qr_token')
       .eq('id', id)
       .eq('company_id', companyId)
       .maybeSingle();
-    if (!data) return undefined; // no such row IN THIS COMPANY
-    return (data as { qr_token: string | null }).qr_token ?? null;
+    if (error) return { status: 'read_failed' };
+    if (!data) return { status: 'not_found' }; // no such row IN THIS COMPANY
+    return { status: 'ok', token: (data as { qr_token: string | null }).qr_token ?? null };
   };
 
   const existing = await read();
-  if (existing === undefined) return null;
-  if (existing) return existing;
+  if (existing.status !== 'ok') return existing;
+  if (existing.token) return { status: 'ok', token: existing.token };
 
   const fresh = newDoScanToken();
   /* THE CLAIM. `.is('qr_token', null)` is what makes this atomic — Postgres
@@ -156,7 +175,7 @@ export async function getOrCreateDoScanToken(
      rule (a), and the same mechanism as the double-cancel guard on the status
      handler). The company predicate rides on the write itself for the same
      reason, not only on the read above. */
-  const { data: claimed } = await sb
+  const { data: claimed, error: claimErr } = await sb
     .from('delivery_orders')
     .update({ qr_token: fresh })
     .eq('id', id)
@@ -164,9 +183,15 @@ export async function getOrCreateDoScanToken(
     .is('qr_token', null)
     .select('qr_token')
     .maybeSingle();
-  if (claimed) return (claimed as { qr_token: string }).qr_token;
+  /* A FAILED CLAIM IS NOT A LOST RACE. Both come back with no row, and reading
+     them alike would send the caller to the re-read below, where a second blip
+     answers not_found — a printable delivery order reported as somebody else's.
+     Say the write failed. */
+  if (claimErr) return { status: 'read_failed' };
+  if (claimed) return { status: 'ok', token: (claimed as { qr_token: string }).qr_token };
 
   // Lost the race (or the row moved): the winner's value is the truth.
   const after = await read();
-  return after ?? null;
+  if (after.status !== 'ok') return after;
+  return after.token ? { status: 'ok', token: after.token } : { status: 'not_found' };
 }

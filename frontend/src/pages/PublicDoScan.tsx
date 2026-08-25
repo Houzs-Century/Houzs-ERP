@@ -50,7 +50,7 @@ type Summary = {
   doNumber: string;
   customerName: string;
   area: string;
-  itemCount: number;
+  itemCount: number | null;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
@@ -178,8 +178,13 @@ export function PublicDoScan() {
         <div className="font-mono text-base font-semibold">{data.doNumber}</div>
         <div>{data.customerName || "—"}</div>
         <div className="text-ink-secondary">
-          {data.area || "—"} · {data.itemCount} line{data.itemCount === 1 ? "" : "s"} ·{" "}
-          {statusLabel("do", data.status)}
+          {/* A DASH, NOT "0 lines", when the server could not count them. Zero
+              is a claim about the load; a dash says we do not know. */}
+          {data.area || "—"} ·{" "}
+          {data.itemCount === null
+            ? "line count unavailable"
+            : `${data.itemCount} line${data.itemCount === 1 ? "" : "s"}`}{" "}
+          · {statusLabel("do", data.status)}
         </div>
       </div>
 
