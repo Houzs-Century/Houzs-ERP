@@ -3312,6 +3312,25 @@ ItemCode matters is the shape's decision), and an unresolved line is KEPT rather
 than dropped, because a short `Details` array misaligns the DtlKey zip and puts
 a wrong quantity on a live purchase order.
 
+**`GET /api/scm/autocount-outbox/host-log`** (2026-08-25, docs/bugs/0537) returns
+the last N lines of AcSyncService's own log from the office machine —
+`?lines=` (default 200, the host clamps it) and `?onlyErrors=1`. Same permission
+keys as Send again, because the log carries document numbers, account codes and
+the book's own refusals.
+
+It exists because `Invalid transfer item.` names nothing, and the sentence that
+settles such a failure — `target debtor before transfer = [...]` — is written by
+the service into a file on that machine. The host has served that file over HTTP
+since it was written; a grep on 2026-08-25 found the only file in this repo
+naming `/last-errors` was the C# that serves it, and all four read-only host
+routes were dead code from the ERP's side.
+
+It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
+`callAcService`: read routes are deliberately not `AcOp`s, and
+`autocountHostRead.test.ts` pins the two vocabularies disjoint. Every `AcOp`
+names something an outbox ROW can be — a document with a status, attempts and a
+retry policy — and a log read is none of those.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,

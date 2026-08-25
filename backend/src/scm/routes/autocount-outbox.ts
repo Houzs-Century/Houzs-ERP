@@ -58,6 +58,7 @@ import {
   acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
+import { callAcRead } from '../../services/autocount-host-read';
 import {
   AC_REQUEUE_MEANING,
   acRequeueAccepted,
@@ -554,6 +555,60 @@ export const listAutocountOutboxHandler = async (
   });
 };
 
+/**
+ * GET /host-log — the last N lines of AcSyncService's own log, from the host.
+ *
+ * WHY IT IS HERE AND NOT IN A SCRIPT. When a conversion fails with
+ * `Invalid transfer item.` the ERP records eleven words that name nothing. The
+ * sentence that settles it — `target debtor before transfer = [...]` — is
+ * written by the service into the host's own log file, and until 2026-08-25 the
+ * only way to read it was TeamViewer, Notepad, and a scrollbar through a 377 KB
+ * file. The service has served that file over HTTP since it was written;
+ * nothing in this ERP ever asked.
+ *
+ * READ-ONLY IN BOTH DIRECTIONS: it writes nothing on the host (the route opens
+ * no SDK session) and nothing here — no outbox row, no attempt, no retry. A
+ * failure is reported and dropped.
+ *
+ * THE SAME KEYS AS SEND AGAIN, deliberately. This log carries document numbers,
+ * account codes and the account book's own refusals; it is not more public than
+ * the button that writes to the book, and giving it a laxer gate would make the
+ * quiet way in the one that reads.
+ */
+export const autocountHostLogHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json(
+      {
+        error: 'forbidden',
+        message: 'The AutoCount host log carries document numbers and account codes, '
+          + `so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+      },
+      403,
+    );
+  }
+  /* A CAP, and it is the host's own. AcSyncService clamps to its MaxLogLines
+     and defaults to 60; asking for more than it will give is not an error
+     there, so the only job here is to refuse a value that is not a number. */
+  const raw = (c.req.query('lines') ?? '').trim();
+  const lines = raw ? Number(raw) : 200;
+  if (!Number.isFinite(lines) || lines <= 0) {
+    return c.json({ error: 'invalid_lines', message: '`lines` must be a positive number.' }, 400);
+  }
+  const onlyErrors = c.req.query('onlyErrors') === '1';
+
+  const r = await callAcRead(c.env, 'last_errors', { Lines: lines, OnlyErrors: onlyErrors });
+  if (!r.ok) return c.json({ ok: false, error: r.error, status: r.status }, 502);
+  return c.json({
+    ok: true,
+    path: r.body?.path ?? null,
+    exists: r.body?.exists ?? null,
+    lines: r.body?.lines ?? [],
+  });
+};
+
+autocountOutbox.get('/host-log', autocountHostLogHandler);
 autocountOutbox.get('/', listAutocountOutboxHandler);
 
 /**
