@@ -268,9 +268,10 @@ still need `edit` on `scm.sales.delivery`.
 > must match — a driver completes only their OWN job (an admin acting on behalf
 > resolves to `all` and passes), and only when the DO is ALREADY shipped
 > (`prev ∈ DO_STOCK_OUT_STATES`), so a POD never triggers a first ship / stock
-> OUT — it records arrival. Frontend: `MobileApp` POD entry + the
-> `MobileDeliveryPlanning` run-sheet steps open for `canDriverCompleteDelivery`
-> (holds `scm.do.dispatch`); Convert-to-DO stays Office-only. Pinned by
+> OUT — it records arrival. Frontend: the POD entry in
+> `frontend/src/mobile/MobileApp.tsx` + the `MobileDeliveryPlanning` run-sheet
+> steps open for `canDriverCompleteDelivery` (`frontend/src/auth/salesAccess.ts`,
+> holds `scm.do.dispatch`); Convert-to-DO stays Office-only. Pinned by
 > `backend/tests/doStatusCapabilityGate.test.ts` +
 > `backend/tests/driverPodOwnership.test.ts`.
 
