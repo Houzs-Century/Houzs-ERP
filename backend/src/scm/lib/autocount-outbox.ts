@@ -704,13 +704,14 @@ export async function enqueuePoCreate(
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
-    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
 
-    /* TRANSFER OR CREATE — po-transfer-shape.ts, which falls back on ANY doubt
-       because a create is today's behaviour and cannot be wrong. */
+    /* TRANSFER OR CREATE — po-transfer-shape.ts falls back on ANY doubt. READ
+       BEFORE COMPOSING: the shape decides whether an ItemCode is even sent
+       (docs/bugs/0541). */
     const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
-
-    const body = composeCreatePo(header, lines, { bindings });
+    const forTransfer = shape.kind === 'transfer';
+    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings, forTransfer });
+    const body = composeCreatePo(header, lines, { bindings, forTransfer });
     if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
     return { queued: await enqueueAcOp(sb, {

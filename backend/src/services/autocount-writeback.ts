@@ -509,6 +509,27 @@ export interface ComposeOptions {
    */
   requireLocation?: boolean;
   /**
+   * The composed details are for a TRANSFER, which does not send an ItemCode.
+   *
+   * `AddSOToPOTransferDetail(Int64)` takes a source line KEY and nothing else —
+   * AutoCount copies the sales line's own item into the purchase line. So
+   * `composeSoToPo` sends DtlKey, UnitPrice, Qty, Location and DeliveryDate,
+   * and throws every ItemCode away.
+   *
+   * Owner 2026-08-25: 「如果它是 by convert 的，那肯定是先跟 Sales Order 的 SKU
+   * 进行 convert … SKU 可能就不用看了」. He is right, and the code did the
+   * opposite: the transfer path composed a full CREATE payload first — which
+   * resolves every line's ItemCode and can throw ItemCodeError — and only then
+   * discarded the codes. A purchase order that needs no item code at all was
+   * being refused over one. Measured 2026-08-25, 139 bindings resolve to
+   * `ambiguous: … none belongs to supplier`; on a transfer every one of them
+   * was blocking a document over a value that would never be sent.
+   *
+   * Set ONLY on the transfer path. The create path must keep refusing, because
+   * there the ItemCode really is what opens or names an item in a licensed book.
+   */
+  forTransfer?: boolean;
+  /**
    * ERP code (uppercased) -> AutoCount ItemCode, from
    * `scm.supplier_material_bindings`. Consulted BEFORE the compiled cutover
    * map: the binding is the live record and the CSV is a 2026-08-05 snapshot,
@@ -989,14 +1010,19 @@ export function composeDetails(
       index: opts.itemIndex,
       bindings: opts.bindings ?? null,
     });
-    if (!r.ok) {
+    if (!r.ok && !opts.forTransfer) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
+    /* A TRANSFER KEEPS THE LINE. The ItemCode below is never sent — see
+       `forTransfer` — so the ERP code stands in for it, and the line survives
+       to carry the four fields the transfer DOES send. Dropping it instead
+       would silently short the Details array and break the DtlKey zip. */
+    const acItemCode = r.ok ? r.acItemCode : l.item_code;
     const raw = l.location ?? opts.defaultLocation ?? null;
     const location = bookSpellingOrOwn(raw, LOCATION_MAP);
     if (!location && opts.requireLocation) {
-      locationless.push({ index: i, itemCode: r.acItemCode });
+      locationless.push({ index: i, itemCode: acItemCode });
       return;
     }
     const desc2 = composeDescription2(l as ErpLine);
@@ -1005,11 +1031,11 @@ export function composeDetails(
        which was harmless only while Desc2 was four short attributes; a bedframe
        spec with a special order can reach it. */
     if (desc2 && desc2.length > AC_DESC2_MAX) {
-      overlong.push({ index: i, itemCode: r.acItemCode, length: desc2.length });
+      overlong.push({ index: i, itemCode: acItemCode, length: desc2.length });
       return;
     }
     const d: AcDetail = {
-      ItemCode: r.acItemCode,
+      ItemCode: acItemCode,
       Description: l.description ?? null,
       Desc2: desc2,
       Qty: Number(l.qty) || 0,
@@ -1322,6 +1348,7 @@ export function composeCreatePo(
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
+      bindings: opts.bindings,
       /* A LINE WITHOUT A WAREHOUSE INHERITS THE HEADER'S, which is the ERP's own
          precedence read the only direction it runs: `warehouse_id ?? po.purchase_location_id`
          (outstanding-po-lines.ts:382, and `poWarehouseGap` at
@@ -1333,6 +1360,12 @@ export function composeCreatePo(
          refused, because then no one has said where the goods go. */
       defaultLocation: opts.defaultLocation ?? purchaseLocation,
       requireLocation: true,
+      /* CARRIED THROUGH, because on a transfer this whole Details array is
+         discarded by composeSoToPo — refusing the document here would refuse it
+         over a value nobody sends. `bindings` was already passed this way; the
+         option that decides whether the ItemCode matters has to travel with
+         it. */
+      forTransfer: opts.forTransfer,
     }).details,
   };
 }
