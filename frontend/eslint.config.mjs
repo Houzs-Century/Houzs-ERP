@@ -72,6 +72,70 @@ export default tseslint.config(
     },
   },
   {
+    /* Native browser prompts are BANNED in the SCM tree (2026-08-24). Every
+       /scm/* route mounts ConfirmProvider / PromptProvider / NotifyProvider via
+       Scm2990Shell, so the styled in-app dialogs are always available — yet
+       operators were still getting a raw OS `window.confirm` on Cancel PO /
+       Post GRN / Cancel invoice, because thirteen V2 pages never migrated
+       (docs/bugs entry of the same date). Commander's rule is "no 裸奔": use
+       useConfirm / usePrompt / useNotify. `error` and outside the ratchet for
+       the same reason rules-of-hooks is: every violation is operator-facing on
+       its first appearance, so it must fail the build, not sit at a ceiling.
+       AST-based, so the many comments that MENTION window.confirm don't trip it
+       (the regex guards' strip-comments trap does not exist here). */
+    files: ['src/pages/scm-v2/**/*.{ts,tsx}', 'src/components/scm-v2/**/*.{ts,tsx}', 'src/vendor/scm/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use useConfirm() from vendor/scm/components/ConfirmDialog — the provider is mounted by Scm2990Shell on every /scm/* route.' },
+        { object: 'window', property: 'alert', message: 'Use useNotify() from vendor/scm/components/NotifyDialog.' },
+        { object: 'window', property: 'prompt', message: 'Use usePrompt() from vendor/scm/components/PromptDialog.' },
+      ],
+      'no-restricted-globals': ['error',
+        { name: 'confirm', message: 'Use useConfirm() from vendor/scm/components/ConfirmDialog.' },
+        { name: 'alert', message: 'Use useNotify() from vendor/scm/components/NotifyDialog.' },
+        { name: 'prompt', message: 'Use usePrompt() from vendor/scm/components/PromptDialog.' },
+      ],
+    },
+  },
+  {
+    /* dialog-service.ts IS the designed pre-mount escape hatch: its
+       serviceConfirm / serviceNotify fall back to window.confirm / window.alert
+       only before <DialogServiceBridge> registers the live dialogs, so a prompt
+       is never silently dropped. The one place the natives are the point. */
+    files: ['src/vendor/scm/lib/dialog-service.ts'],
+    rules: { 'no-restricted-properties': 'off', 'no-restricted-globals': 'off' },
+  },
+  {
+    /* The SAME BAN for the main app (2026-08-25), which the block above
+       deliberately excluded: it has its own promise-based dialogs — useDialog()
+       in src/hooks/useDialog.tsx, with DialogProvider mounted at the app root
+       in main.tsx — so a native box is never a missing-tooling gap, only an
+       unstyled regression. `error`, outside the ratchet, same shape as
+       rules-of-hooks above: a new violation must fail on first appearance.
+
+       The three SCM trees are excluded HERE because these messages would
+       misdirect there — those trees use the vendored dialog components and
+       carry the scoped block above, with the dialog-service.ts exemption. */
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: [
+      'src/pages/scm-v2/**',
+      'src/components/scm-v2/**',
+      'src/vendor/scm/**',
+    ],
+    rules: {
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use useDialog().confirm from hooks/useDialog — DialogProvider is mounted at the app root in main.tsx.' },
+        { object: 'window', property: 'alert', message: 'Use useToast() for notices or useDialog().confirm from hooks/useDialog.' },
+        { object: 'window', property: 'prompt', message: 'Use useDialog().prompt from hooks/useDialog (supports required/inputType).' },
+      ],
+      'no-restricted-globals': ['error',
+        { name: 'confirm', message: 'Use useDialog().confirm from hooks/useDialog.' },
+        { name: 'alert', message: 'Use useToast() for notices or useDialog().confirm from hooks/useDialog.' },
+        { name: 'prompt', message: 'Use useDialog().prompt from hooks/useDialog.' },
+      ],
+    },
+  },
+  {
     /* `vendor/shared/do-shipped-states.ts` IS the declaration the do-status
        selector points at — the byte-identical twin of
        backend/src/scm/shared/do-shipped-states.ts, which the backend config

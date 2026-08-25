@@ -1558,12 +1558,17 @@ async function bindingsFor(
   const rows = await readOrThrow('supplier_material_bindings', readMfgProductBindings<Record<string, unknown>>(sb, {
     codes: wanted,
     companyId,
-    select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+    select: 'item_code, supplier_id, supplier_sku, ac_item_code, is_main_supplier',
   }));
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
     const code = String(r.item_code ?? '').trim().toUpperCase();
-    const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
+    /* `ac_item_code` FIRST, `supplier_sku` only while empty (mig 0326 — the
+       column comments there say who owns which). THE FALLBACK IS NOT A SHIM:
+       ac_item_code is NULL everywhere, so dropping it stops resolving the 1,874
+       bindings that land today. Why the split exists: docs/bugs/0539. */
+    const acCode = typeof r.ac_item_code === 'string' ? r.ac_item_code.trim() : '';
+    const sku = acCode || (typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '');
     if (!code || !sku) continue;
     if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {
       bySupplier.set(code, sku);

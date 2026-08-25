@@ -877,7 +877,13 @@ function MembersTab({
   // entered into the tool by the person, not stored or defaulted by us. The
   // member can change it themselves afterwards via the POS.
   async function setPosPin(u: TeamMember) {
-    const pin = window.prompt(`Set a 6-digit POS PIN for ${u.name || u.email}.\nThey can change it themselves later.`);
+    const pin = await dialog.prompt({
+      title: `Set POS PIN for ${u.name || u.email}`,
+      message: "6 digits. They can change it themselves later.",
+      placeholder: "6-digit PIN",
+      required: true,
+      confirmLabel: "Set PIN",
+    });
     if (pin == null) return;
     if (!/^\d{6}$/.test(pin.trim())) {
       toast.error("PIN must be exactly 6 digits");

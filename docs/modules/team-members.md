@@ -291,7 +291,11 @@ The same module gates the 6-digit field on `TeamInviteModal.tsx`, so the two
 screens cannot drift apart. The card also opens its own entry box straight after
 the save that FIRST made a member eligible: the classic screen had a working
 "Set PIN" button that nobody knew to press, which is how a salesperson with
-2990 access and no credential reached the owner as a bug report.
+2990 access and no credential reached the owner as a bug report. That button
+survives on the member panel (`Team.tsx` `setPosPin`) and collects the PIN
+through the in-app `useDialog().prompt` — a naked `window.prompt` until
+2026-08-25 (`docs/bugs/0539-the-last-two-naked-prompts-2fa-disable-and-pos-pin-entry-spo.md`); the `/^\d{6}$/` check and the
+`admin-set-pin` POST are unchanged.
 
 **The four conditions the tablet actually applies.** `GET /api/pos/sales-staff`
 lists a member only when all of these hold, and the profile can see only the

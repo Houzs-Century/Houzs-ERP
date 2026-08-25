@@ -3271,6 +3271,25 @@ script dropped one character and shipped; the daily run then failed on
 opsScriptsParse.test.ts` runs `node --check` over every `scripts/*.mjs` —
 these scripts are imported by nothing, so nothing else was looking at them.
 
+**THE BOOK'S NAME FOR AN ITEM IS ITS OWN COLUMN NOW** (migration 0326,
+docs/bugs/0539). `supplier_material_bindings.supplier_sku` was read by two
+questions — the bold "Supplier Code" printed on the PO / GRN / PI, and the
+ItemCode written into the account book — and the second reader was attached to
+purchasing's column on 2026-08-11 (#2031).
+
+`scripts/ac-item-code-census.mjs` measured the cost over all 3,076 bindings with
+the real resolver: **1,874 IN BOOK, 1,063 WOULD OPEN** an item the book does not
+hold, **139 REFUSED**, every refusal `ambiguous: … none belongs to supplier`.
+The rule the working rows follow is exact — a value that IS an ItemCode the book
+holds wins outright (`index.acCodes.has(bound)`), with no supplier comparison
+and nothing opened. Hookka's 50 working bedframes carry `HOK-1019 (SK)`; the 139
+refusals carry `1007-(K)`, which the book has never held.
+
+`bindingsFor` now prefers `ac_item_code` and falls back to `supplier_sku` while
+it is empty. **The fallback is not a shim to delete**: the column starts NULL on
+every row, so removing it would stop resolving the 1,874 that land correctly
+today. Seeding the column is a separate step with its own dry run.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,

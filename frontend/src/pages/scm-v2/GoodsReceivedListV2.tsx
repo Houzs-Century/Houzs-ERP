@@ -56,6 +56,7 @@ import {
 } from "../../vendor/scm/lib/grn-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -504,6 +505,7 @@ export function GoodsReceivedListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
+  const askConfirm = useConfirm();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -721,13 +723,22 @@ export function GoodsReceivedListV2() {
     canPost: (r) => r.status.toUpperCase() === "DRAFT",
     canCancel: (r) => r.status.toUpperCase() !== "CANCELLED",
   });
-  const doPost = (r: GrnRow) => {
-    if (window.confirm(`Post GRN ${r.grn_number}? Inventory will be received into the warehouse.`)) {
+  const doPost = async (r: GrnRow) => {
+    if (await askConfirm({
+      title: `Post GRN ${r.grn_number}?`,
+      body: "Inventory will be received into the warehouse.",
+      confirmLabel: "Post GRN",
+    })) {
       postGrn.mutate(r.id, { onSuccess: () => setSelected(null) });
     }
   };
-  const doCancel = (r: GrnRow) => {
-    if (window.confirm(`Cancel GRN ${r.grn_number}? Inventory receipt will be reversed.`)) {
+  const doCancel = async (r: GrnRow) => {
+    if (await askConfirm({
+      title: `Cancel GRN ${r.grn_number}?`,
+      body: "Inventory receipt will be reversed.",
+      confirmLabel: "Cancel GRN",
+      danger: true,
+    })) {
       cancelGrn.mutate(r.id, { onSuccess: () => setSelected(null) });
     }
   };

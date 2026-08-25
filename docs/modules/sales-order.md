@@ -1683,6 +1683,15 @@ answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
 rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
 — and the split was in the backend's own allocation, not only on screen.
 
+**The PO SO-drift check resolves the same way** (`lib/so-po-drift.ts`,
+2026-08-25, bug 0539). A PO line snapshots its source SO line's warehouse at
+proceed time; the drift banner used to compare that against the SO line's RAW
+`warehouse_id`, so a NULL line warehouse — inherited from the header — read as
+"SO warehouse moved" on a line that never moved (it fired across a rebuilt SO
+whose lines all carry NULL). It now resolves the SO line's effective warehouse
+first (`so-warehouse.ts::resolveLineWarehouseId`) and flags a move only when both
+sides resolve to a real, DISTINCT warehouse (`so-warehouse.ts::warehousesDiffer`).
+
 
 **A goods line written with NO warehouse now says so** (2026-08-20).
 `lib/null-warehouse-signal.ts::signalNullWarehouseRows` is called at all three
@@ -2465,6 +2474,28 @@ same contract as the Processing-Date gates), all reasons at once:
 | `so_line_no_product` / `so_line_not_catalog` | every non-cancelled line resolves in the SO's own company catalog |
 | `salesperson_required` | `salesperson_id` OR the legacy `agent` text set (HC-SO-2607-008 confirmed as "Unassigned") |
 | `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
+
+> **`venue_required` is only satisfiable on a surface that HAS a Venue field
+> (2026-08-25).** "When it resolves nothing, confirm demands a human pick" is
+> true of the desktop and the phone — `SalesOrderNew.tsx:1911` renders a Venue
+> dropdown over the 92 `project_venues` rows (owner 2026-06-22, *"houzs 的 venue
+> 是 manually 選的"*). The 2990 POS handover had no such field and sent no venue,
+> so its users hit this problem AFTER the customer had signed with nothing on
+> screen that could answer it.
+>
+> Measured the same day (`probe-so-venue-gate`, runs 32827817087 / 32826133061):
+> **0** PMS projects were running, **83 of 90** active staff resolved no venue
+> from any source, and exactly **one** warehouse in the system carries a
+> `venue_name` (`PJ SHOWROOM`, company 2). Between exhibitions this gate is
+> unsatisfiable by resolution alone for almost everyone — the picker is the
+> answer, not the resolver. Fixed POS-side in `wenwei4046/2990s#774`; full trace
+> in `docs/bugs/0539-the-confirm-gate-demanded-a-venue-the-pos-screen-had-nowhere.md`.
+>
+> **A confirm can pass this gate and still store NO venue.** The rule reads
+> `venue` OR `venue_id`, but `venue_id` is a uuid column and `project_venues` ids
+> are INTEGERS, so `venueIdUuidOrNull` (`mfg-sales-orders.ts:746`) nulls any id a
+> client sends. A payload carrying only `venueId` is accepted and lands blank,
+> silently. Any new client must send the venue TEXT.
 
 > **CORRECTED 2026-08-14 — the confirm gate no longer checks variants.** This
 > table carried a fourth row, `variants_incomplete`, "every goods line's required
