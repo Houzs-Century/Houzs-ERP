@@ -47,6 +47,14 @@
    MODE=apply — requires CONFIRM="REWRITE HOOKKA SOFA SUPPLIER CODES". Updates
      supplier_sku only, one statement per row, inside a transaction, and
      re-reads on a fresh connection to assert every row landed.
+
+   RE-RUN: idempotent. A second plan run just re-reads and prints the same table.
+     A second apply finds every row already holding the new code, so nothing is
+     planned, the transaction updates nothing, and the fresh-connection check
+     passes trivially. It CANNOT compound: the transform reads the ERP
+     `item_code`, which this script never writes, so `9028-…` always yields
+     `5530-…` however many times it runs. A re-run after someone has hand-edited
+     one row back rewrites just that row.
    =========================================================================== */
 import postgres from 'postgres';
 import { resolveAcItemCode, acItemIndex } from '../src/services/autocount-item-code.js';
