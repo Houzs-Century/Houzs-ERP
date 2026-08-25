@@ -1683,6 +1683,15 @@ answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
 rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
 — and the split was in the backend's own allocation, not only on screen.
 
+**The PO SO-drift check resolves the same way** (`lib/so-po-drift.ts`,
+2026-08-25, bug 0539). A PO line snapshots its source SO line's warehouse at
+proceed time; the drift banner used to compare that against the SO line's RAW
+`warehouse_id`, so a NULL line warehouse — inherited from the header — read as
+"SO warehouse moved" on a line that never moved (it fired across a rebuilt SO
+whose lines all carry NULL). It now resolves the SO line's effective warehouse
+first (`so-warehouse.ts::resolveLineWarehouseId`) and flags a move only when both
+sides resolve to a real, DISTINCT warehouse (`so-warehouse.ts::warehousesDiffer`).
+
 
 **A goods line written with NO warehouse now says so** (2026-08-20).
 `lib/null-warehouse-signal.ts::signalNullWarehouseRows` is called at all three

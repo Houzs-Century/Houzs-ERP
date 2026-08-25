@@ -119,6 +119,20 @@ export function resolveLineWarehouseId(
   return lineWarehouseId ?? resolveSoWarehouseId(so, masters);
 }
 
+/** Whether two warehouses genuinely DIFFER for a drift check. Both sides must
+ *  resolve to a real, distinct warehouse: a side that is NULL is unbound (or, on
+ *  the SO side, "inherit the order's" once resolveLineWarehouseId has run) — NOT
+ *  a move. Comparing a real id against NULL with plain `!==` was the bug: it read
+ *  every never-set line warehouse as "SO warehouse moved". */
+export function warehousesDiffer(
+  aWarehouseId: string | null | undefined,
+  bWarehouseId: string | null | undefined,
+): boolean {
+  const a = aWarehouseId ?? null;
+  const b = bWarehouseId ?? null;
+  return a != null && b != null && a !== b;
+}
+
 /* ── Loaders ────────────────────────────────────────────────────────────────
    Kept apart from the rule above so callers that already hold the masters (MRP
    loads the warehouse list for its own labels) do not re-read them. `scope`
