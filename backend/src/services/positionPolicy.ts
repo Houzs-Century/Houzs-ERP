@@ -480,6 +480,23 @@ export function positionGrantsWildcard(positionName: string | null): boolean {
   return name ? GOD_POSITIONS.has(name) : false;
 }
 
+// FLEET PERSONNEL — the restricted positions who drive/ride a run sheet and so
+// must see ONLY their own delivery jobs. The wider restricted cohort also holds
+// Storekeeper / Storekeeper Supervisor, who are NOT fleet: the delivery board
+// is a coordination surface for them, not a per-person run sheet, so they are
+// not fail-closed by resolveDeliveryScope. Exact normalised-name membership.
+const FLEET_POSITIONS: ReadonlySet<string> = new Set(
+  ["Driver", "Helper"].map(normalisePosition),
+);
+
+/** True for a fleet position (Driver / Helper) — the population resolveDelivery
+ *  Scope narrows to their OWN assignments and, when unlinked, fails CLOSED to an
+ *  empty board rather than exposing the whole fleet. Unknown/empty → false. */
+export function isFleetPosition(positionName: string | null | undefined): boolean {
+  const name = normalisePosition(positionName ?? "");
+  return name ? FLEET_POSITIONS.has(name) : false;
+}
+
 /** Plain-language reason for the 403 body — a sentence a person can act on. */
 const MONEY_DENY_REASON =
   "Posting journal entries and payment vouchers is handled by Finance. You can view this page, but ask Finance to post it.";

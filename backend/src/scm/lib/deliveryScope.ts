@@ -32,15 +32,21 @@
 // for full/ops/dispatcher". So:
 //   · policy says full but a stray fleet row exists (an ops person once entered
 //     as a driver) → NOT scoped → sees all. Ops is never narrowed by accident.
-//   · policy says restricted but no fleet link resolves (sync gap, or the link
-//     column is absent in a bare test DB, or the lookup errors) → NOT scoped →
-//     sees all. A mis-synced Driver is over-exposed exactly as they are TODAY —
-//     never LESS than today, so this change can only ever reduce exposure, never
-//     lock anyone out. In production the sync guarantees the link, so a real
-//     Driver/Helper is scoped.
-// The result: we narrow ONLY a policy-restricted caller who has a concrete fleet
-// identity — the precise population the owner named — and every other caller,
-// and every failure mode, resolves to the pre-existing whole-board view.
+//   · policy says restricted but no fleet link resolves → the answer SPLITS by
+//     whether the caller is FLEET personnel:
+//       - Driver / Helper (isFleetPosition) FAIL CLOSED to an EMPTY self scope —
+//         an unlinked driver sees an empty board, never the whole fleet's jobs
+//         (owner: 只能看到分配给自己的). Fixing the link is an admin action, not
+//         a reason to expose everyone.
+//       - Storekeeper / Storekeeper Supervisor (restricted but NOT fleet) keep
+//         the whole board — it is a coordination surface for them, not a run
+//         sheet, so nothing narrows for them.
+//     A LOOKUP ERROR (transient, or the link column absent in a bare test DB)
+//     still fails OPEN for everyone — a DB fault is not a "you are unlinked"
+//     fact and must never lock a driver out mid-shift.
+// The result: a linked Driver/Helper sees their own jobs; an UNLINKED one sees
+// nothing; every non-fleet caller and every transient failure resolves to the
+// whole-board view. In production the sync guarantees the link.
 //
 // UNASSIGNED JOBS. A board row / trip with no driver+helper assigned is NOT any
 // one driver's job. A scoped caller does not see it (empty assignment never
@@ -48,7 +54,7 @@
 // the owner ruling "a random driver no; ops/dispatcher yes".
 // ─────────────────────────────────────────────────────────────────────────
 
-import { resolvePositionPolicy } from "../../services/positionPolicy";
+import { resolvePositionPolicy, isFleetPosition } from "../../services/positionPolicy";
 
 /** The caller shape this module reads — a subset of the SCM `houzsUser`
  *  (env.ts Variables.houzsUser): the real Houzs integer user id plus the org +
@@ -141,9 +147,17 @@ export async function resolveDeliveryScope(
     return SCOPE_ALL;
   }
 
-  // A restricted caller with NO fleet identity is left unscoped (fail open — a
-  // mis-synced driver is never LESS visible than today; see header).
-  if (driverIds.size === 0 && helperIds.size === 0) return SCOPE_ALL;
+  // A restricted caller with NO fleet identity: FLEET personnel (Driver/Helper)
+  // fail CLOSED to an empty self scope — an empty self matches no assignment, so
+  // an unlinked driver sees nothing rather than the whole fleet (owner: 只能看
+  // 到分配给自己的). A restricted NON-fleet caller (Storekeeper / Supervisor)
+  // keeps the whole board. A transient lookup error already returned SCOPE_ALL
+  // above, so this branch is only the clean "no rows" case.
+  if (driverIds.size === 0 && helperIds.size === 0) {
+    return isFleetPosition(caller.position_name ?? null)
+      ? { mode: "self", driverIds, helperIds }
+      : SCOPE_ALL;
+  }
 
   return { mode: "self", driverIds, helperIds };
 }
