@@ -106,6 +106,36 @@ export default tseslint.config(
     rules: { 'no-restricted-properties': 'off', 'no-restricted-globals': 'off' },
   },
   {
+    /* The SAME BAN for the main app (2026-08-25), which the block above
+       deliberately excluded: it has its own promise-based dialogs — useDialog()
+       in src/hooks/useDialog.tsx, with DialogProvider mounted at the app root
+       in main.tsx — so a native box is never a missing-tooling gap, only an
+       unstyled regression. `error`, outside the ratchet, same shape as
+       rules-of-hooks above: a new violation must fail on first appearance.
+
+       The three SCM trees are excluded HERE because these messages would
+       misdirect there — those trees use the vendored dialog components and
+       carry the scoped block above, with the dialog-service.ts exemption. */
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: [
+      'src/pages/scm-v2/**',
+      'src/components/scm-v2/**',
+      'src/vendor/scm/**',
+    ],
+    rules: {
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use useDialog().confirm from hooks/useDialog — DialogProvider is mounted at the app root in main.tsx.' },
+        { object: 'window', property: 'alert', message: 'Use useToast() for notices or useDialog().confirm from hooks/useDialog.' },
+        { object: 'window', property: 'prompt', message: 'Use useDialog().prompt from hooks/useDialog (supports required/inputType).' },
+      ],
+      'no-restricted-globals': ['error',
+        { name: 'confirm', message: 'Use useDialog().confirm from hooks/useDialog.' },
+        { name: 'alert', message: 'Use useToast() for notices or useDialog().confirm from hooks/useDialog.' },
+        { name: 'prompt', message: 'Use useDialog().prompt from hooks/useDialog.' },
+      ],
+    },
+  },
+  {
     /* `vendor/shared/do-shipped-states.ts` IS the declaration the do-status
        selector points at — the byte-identical twin of
        backend/src/scm/shared/do-shipped-states.ts, which the backend config
