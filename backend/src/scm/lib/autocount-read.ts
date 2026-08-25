@@ -157,7 +157,7 @@ export async function readSoPaymentRefs(
 export async function readPoTransferFacts(
   sb: Sb,
   poId: string,
-): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null }>> {
+): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean }>> {
   const rows = ((await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select('id, so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
@@ -176,6 +176,7 @@ export async function readPoTransferFacts(
     .filter((v): v is string => v !== null))];
   const keyOf = new Map<string, number>();
   const docOf = new Map<string, string>();
+  const inBook = new Set<string>();
   if (soItemIds.length) {
     const soLines = ((await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
@@ -184,6 +185,30 @@ export async function readPoTransferFacts(
       if (Number.isFinite(k) && k > 0) keyOf.set(String(l.id), k);
       const dn = String(l.doc_no ?? '').trim();
       if (dn) docOf.set(String(l.id), dn);
+    }
+
+    /* IS THE SALES ORDER IN THE BOOK YET — the fact that tells a MISSING key
+       apart from an IMPOSSIBLE one.
+
+       `linked_ac_dtlkey` is written when the sales order reaches AutoCount and
+       the create hands back its line keys. A purchase order raised in the same
+       minute therefore sees NULL keys, and poTransferShape used to read that as
+       "the book has no key for these lines, so a transfer cannot address them"
+       — true at that instant, false five minutes later, and never revisited.
+       Measured on production 2026-08-25: HC-PO-2608-007 was raised from
+       HC-SO-2608-008 and went as `create_po`, so the account book holds no link
+       between them at all. Owner the next morning: 「明明我的 PO 是通过 Transfer
+       from Sales Order 来开的，可是进到 AutoCount 那边…没有建立 Transaction
+       Relationship」. The five POs before it transferred correctly — they were
+       raised long enough after their sales orders. It is a race, not a rule. */
+    const soDocNos = [...new Set([...docOf.values()])];
+    if (soDocNos.length) {
+      const sos = ((await readOrThrow('mfg_sales_orders',
+        sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno').in('doc_no', soDocNos))) ?? []) as Array<Record<string, unknown>>;
+      for (const so of sos) {
+        const dn = String(so.doc_no ?? '').trim();
+        if (dn && String(so.linked_ac_docno ?? '').trim()) inBook.add(dn);
+      }
     }
   }
 
@@ -195,6 +220,7 @@ export async function readPoTransferFacts(
       allocationCount: allocCount.get(String(r.id)) ?? 0,
       sourceAcDtlKey: soItemId ? (keyOf.get(soItemId) ?? null) : null,
       sourceSoDocNo: soItemId ? (docOf.get(soItemId) ?? null) : null,
+      sourceSoInBook: soItemId ? inBook.has(docOf.get(soItemId) ?? '') : false,
     };
   });
 }
