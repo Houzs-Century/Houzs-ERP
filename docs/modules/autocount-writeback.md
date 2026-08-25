@@ -3290,6 +3290,28 @@ it is empty. **The fallback is not a shim to delete**: the column starts NULL on
 every row, so removing it would stop resolving the 1,874 that land correctly
 today. Seeding the column is a separate step with its own dry run.
 
+**A TRANSFER SENDS NO ItemCode, AND IS NO LONGER REFUSED OVER ONE** (2026-08-25,
+docs/bugs/0541). Owner: 「如果它是 by convert 的，那肯定是先跟 Sales Order 的 SKU
+进行 convert … SKU 可能就不用看了」.
+
+`AddSOToPOTransferDetail(Int64)` takes a source line KEY and nothing else —
+AutoCount copies the sales line's own item into the purchase line — and
+`composeSoToPo` already matched that: DtlKey, UnitPrice, Qty, Location,
+DeliveryDate, every ItemCode discarded. But the enqueue composed a full CREATE
+payload first, which resolves every line's ItemCode and throws `ItemCodeError`,
+and only then threw the codes away. A purchase order that needs no item code was
+being refused over one — and 139 bindings resolve to `ambiguous: … none belongs
+to supplier`, so on a transfer every one of them blocked a document over a value
+that would never be sent.
+
+`ComposeOptions.forTransfer` stops that refusal on the transfer path and nowhere
+else: **the create path is unchanged**, because there the ItemCode really is
+sent and really does open or name an item in a licensed book. Two details are
+load-bearing — `readPoEnqueueShape` is read BEFORE `composeDetails` (whether an
+ItemCode matters is the shape's decision), and an unresolved line is KEPT rather
+than dropped, because a short `Details` array misaligns the DtlKey zip and puts
+a wrong quantity on a live purchase order.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,
