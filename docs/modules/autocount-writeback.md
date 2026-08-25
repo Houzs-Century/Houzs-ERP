@@ -3265,6 +3265,12 @@ export log is KEPT while the documents it names are deleted. Measured minutes
 after a wipe on 2026-08-24: one such row, `HC-DO-2608-003`. It is printed under
 its own heading and excluded from both the outstanding count and the alarm.
 
+**AND IT IS COVERED BY A PARSE CHECK NOW** (docs/bugs/0535). An edit to this
+script dropped one character and shipped; the daily run then failed on
+`ReferenceError` while an operator waited on the report. `backend/tests/
+opsScriptsParse.test.ts` runs `node --check` over every `scripts/*.mjs` —
+these scripts are imported by nothing, so nothing else was looking at them.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,
