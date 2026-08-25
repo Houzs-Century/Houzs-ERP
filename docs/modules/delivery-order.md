@@ -620,7 +620,7 @@ status from a child document.
 
 ### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
 
-**THE PRINTED QR IS PUBLIC SINCE 2026-08-26 — see `docs/bugs/0543`.** It carries
+**THE PRINTED QR IS PUBLIC SINCE 2026-08-26 — see `docs/bugs/0544`.** It carries
 a **"SCAN AT EACH STEP"** caption and encodes `/d/<64-hex token>`, which opens
 with NO login (`frontend/src/pages/PublicDoScan.tsx`, outside `AuthGate`). It
 encoded `/scm/do-load?id=<do uuid>` until then, and that link is behind the staff

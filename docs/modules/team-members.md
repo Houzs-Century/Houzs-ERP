@@ -238,7 +238,7 @@ on the paper is the credential. Adding a surface here means adding a way in that
 no session guards, so the list is worth reading before extending it; the backend
 half of the same decision is the mount ORDER in `backend/src/index.ts` (before
 `app.use("/api/*", auth)`). See `docs/modules/delivery-order.md` and
-`docs/bugs/0543-the-qr-printed-for-the-driver-opened-a-page-only-the-office.md`.
+`docs/bugs/0544-the-qr-printed-for-the-driver-opened-a-page-only-the-office.md`.
 
 **So the staging door does not exist at runtime**, even though
 `backend/wrangler.toml` really does set `IMPERSONATION_ENABLED="true"` for

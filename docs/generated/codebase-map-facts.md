@@ -48,7 +48,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 109 | 5052 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
-| `backend/src/routes/publicDoScan.ts` | 2 | 354 |
+| `backend/src/routes/publicDoScan.ts` | 2 | 377 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
 | `backend/src/routes/sales.ts` | 13 | 1302 |
@@ -76,7 +76,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
-| `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 43 |
+| `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5601 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
@@ -180,7 +180,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1749 files, 637581 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1750 files, 637901 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

@@ -781,7 +781,7 @@ menu's print and the list's "Export PDF (N)" cannot drift apart.
 encodes, and stamps it on the header as `scanToken`. It replaced `loadScanId`,
 which carried the delivery order's row id — the QR pointed at
 `/scm/do-load?id=…`, behind the staff sign-in, so the code printed for the
-storekeeper and the driver showed them a login screen (`docs/bugs/0543`). It now
+storekeeper and the driver showed them a login screen (`docs/bugs/0544`). It now
 encodes `/d/<token>`, which opens with no login.
 
 A FAILED MINT PRINTS THE DOCUMENT WITH NO QR — it never falls back to the old
