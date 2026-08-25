@@ -21,6 +21,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AcOp, ErpLine } from '../../services/autocount-writeback';
 import { composeDescription2 } from '../../services/autocount-writeback';
+import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { readOrThrow } from './autocount-read';
 import type { AcDocRef, AcLineTable, AcLinkTable, AcOutboxPayload } from './autocount-outbox';
 
@@ -436,7 +438,32 @@ export async function readConvertHeaderFacts(
       const w = await readOrThrow('warehouses',
         sb.from('warehouses').select('id, code, name').eq('id', h.warehouse_id).maybeSingle());
       const rec = w as { code?: string | null; name?: string | null } | null;
-      locationCode = ((rec?.code ?? rec?.name ?? '') as string).trim() || null;
+      /* THROUGH THE BOOK'S OWN SPELLING, exactly as the CREATE path does.
+         This line used to send `warehouses.code` RAW, and the create path has
+         always sent `bookSpellingOrOwn(..., LOCATION_MAP)` — two answers to
+         "what does the account book call this warehouse", from one ERP row.
+
+         The raw answer does not fail loudly. Measured on the host's own log,
+         2026-08-25, on the PO -> GR that carried KL WAREHOUSE:
+
+           set skipped: Cannot set column 'Location'. The value violates the
+                        MaxLength limit of this column.
+           set skipped: Cannot set column 'PurchaseLocation'. ...
+
+         AutoCount SKIPS the assignment and saves the document anyway, so the
+         goods received landed in a licensed book with NO warehouse on it and
+         nothing anywhere said so — not the outbox row, not the page, not the
+         ERP log. Every value in LOCATION_MAP is 8 characters or fewer
+         (`KELANA.J`, `C&C DISP`); `KL WAREHOUSE` is twelve.
+
+         Mapping here is not a truncation: LOCATION_MAP is the book's spelling
+         of each warehouse, so `KL WAREHOUSE` becomes `KL` because that is what
+         the location is CALLED there, not because it is shorter. A warehouse
+         the map does not know still travels as its own code — unchanged
+         behaviour, and `bookSpellingOrOwn`'s whole contract — so this fixes the
+         mapped ones without inventing an answer for the rest. */
+      const raw = ((rec?.code ?? rec?.name ?? '') as string).trim() || null;
+      locationCode = bookSpellingOrOwn(raw, LOCATION_MAP);
     }
     const ctx: AcHeaderCtx = { locationCode };
     return {
