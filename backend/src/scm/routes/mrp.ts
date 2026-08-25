@@ -81,6 +81,7 @@ import {
   applyCommittedSupply,
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
+import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
@@ -193,6 +194,12 @@ type DemandRow = {
   line_no: number | null;
   created_at: string | null;
   cancelled: boolean;
+  /* The sofa-set allocator's batch lock (so-stock-allocation.ts 7b): non-null
+     means ONE received batch was found covering this line's WHOLE set and the
+     DO ship-gate will only release these units to THIS order. Section 4c
+     carves those units out of the free pool so the date-greedy walk cannot
+     promise them to an earlier-delivery SO the ship-gate would then refuse. */
+  allocated_batch_no: string | null;
   so: {
     debtor_name: string | null;
     status: string;
@@ -612,7 +619,7 @@ export async function computeMrp(
   const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
-      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled,
+      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled, allocated_batch_no,
       so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
@@ -911,6 +918,34 @@ export async function computeMrp(
     poOutstandingByKey.set(e.bucketKey, (poOutstandingByKey.get(e.bucketKey) ?? 0) + e.qtyLeft);
   }
 
+  /* ── 4c. Remove what the SOFA ALLOCATOR already locked (2026-08-24) ─────────
+     The whole-set allocator stamps allocated_batch_no on every module line of
+     a set the moment ONE received batch covers the whole set, and the DO
+     ship-gate enforces that lock. Those units are still on hand — they sit in
+     inventory_balances — but they are NOT free supply: handing them to an
+     earlier-delivery SO promises units the ship-gate will refuse to release.
+     Measured on prod 2026-08-24 (SO-2607-019 vs SO-2608-006): the earlier SO's
+     RHF module read "stock" it could never ship, the claiming SO's read SHORT,
+     and the From-SO picker — which reads this same coverage — could not offer
+     the line that actually needed ordering, steering the operator into a
+     single-side PO that could never complete the earlier SO's set.
+     The carve happens per bucket in the two walks below (sections 7 and 8):
+     openBucketStock splits on-hand into the claim reserve and the free pool,
+     drawBucketStock serves each claiming line from its own reserve first. No
+     add-back leg, unlike section 4b — the demand line and its units coexist in
+     the bucket, so the fix is pairing them, not re-attributing a deduction.
+     See lib/batch-claimed-stock.ts for the rule and its edges. */
+  const batchClaims = collectBatchClaims(demand.map((d) => ({
+    soItemId: d.id,
+    bucketKey: composite(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)),
+    /* camelCase trap, same as the PO-line read above: a repair script driving
+       this through the postgres shim gets allocatedBatchNo — dual-read so the
+       carve does not silently vanish on that path. */
+    allocatedBatchNo: d.allocated_batch_no
+      ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null,
+    remainingQty: effQtyOf(d),
+  })));
+
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
   if (poSupplierIds.size > 0) {
@@ -1030,7 +1065,10 @@ export async function computeMrp(
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
 
-    let stockLeft = stockByKey.get(k) ?? 0;
+    /* On-hand split into (claim reserve, free pool) — section 4c. A line the
+       allocator batch-locked draws its own units from the reserve whatever its
+       date rank; everyone else competes for the pool minus the claims. */
+    const bucketStock = openBucketStock(stockByKey.get(k) ?? 0, batchClaims.qtyByBucket.get(k) ?? 0);
     /* Clone PO supply so the greedy walk can mutate qtyLeft without touching the
        shared map. SUPPLY IS THIS BUCKET'S OWN PO LINES AND NOTHING ELSE.
 
@@ -1080,8 +1118,7 @@ export async function computeMrp(
     for (const r of rows) {
       const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
       let need = eff;
-      const fromStock = Math.min(stockLeft, need);
-      stockLeft -= fromStock;
+      const fromStock = drawBucketStock(bucketStock, batchClaims.qtyByLine.get(r.id) ?? 0, need);
       need -= fromStock;
 
       let poNumber: string | null = null;
@@ -1224,7 +1261,12 @@ export async function computeMrp(
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
-    let stockLeft = stockByKey.get(k) ?? 0;
+    /* On-hand split into (claim reserve, free pool) — section 4c's carve, the
+       twin of section 7's. THIS is the walk where the prod contradiction lived:
+       the sofa allocator's whole-set lock is exactly an allocated_batch_no on
+       each module line, and this walk used to hand those units to whichever SO
+       delivered earlier. */
+    const bucketStock = openBucketStock(stockByKey.get(k) ?? 0, batchClaims.qtyByBucket.get(k) ?? 0);
     /* Sofa draws its OWN bucket's PO supply only — the twin of section 7, and
        removed for the same reason on the same ruling (owner 2026-08-16). The
        fallback that stood here was added by audit D2 (2026-08-01) specifically
@@ -1253,8 +1295,7 @@ export async function computeMrp(
       const setDelivery = deliveryOf(d);
 
       let need = eff;
-      const fromStock = Math.min(stockLeft, need);
-      stockLeft -= fromStock;
+      const fromStock = drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
       need -= fromStock;
       let poNumber: string | null = null;
       let poEta: string | null = null;
