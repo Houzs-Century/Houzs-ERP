@@ -5322,12 +5322,10 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }, 400);
   }
 
-  /* CAPABILITY half of the gate for a caller admitted via the area guard's
-     writeBypass (a storekeeper/driver WITHOUT scm.sales.delivery edit): does
-     the position hold the verb this transition needs — LOADED⇒do.load,
-     DISPATCHED + the POD chain⇒do.dispatch. Ownership for POD is the SECOND
-     half, checked once the DO's crew is known (below). A caller with real
-     access is unflagged and skips both. */
+  /* CAPABILITY half of the gate for a writeBypass caller (storekeeper/driver,
+     no scm.sales.delivery edit): does the position hold the verb — LOADED⇒
+     do.load, DISPATCHED + POD chain⇒do.dispatch. Ownership for POD is the
+     second half, once the DO crew is known (below). Real access skips both. */
   if (c.get('scmWriteBypassed')) {
     const capRefusal = statusCapabilityRefusal(c.get('houzsUser'), toStatus);
     if (capRefusal) return c.json(capRefusal, 403);
