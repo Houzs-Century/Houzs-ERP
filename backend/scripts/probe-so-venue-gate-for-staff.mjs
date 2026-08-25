@@ -230,6 +230,69 @@ async function main() {
       note('');
     }
   }
+
+  // -- 6. Which fairs are RUNNING today, and who can resolve a venue at all ---
+  note('--- 6. PMS projects with a venue, running TODAY ---');
+  const running = await sql`
+    SELECT p.id, p.name, p.venue, p.start_date, p.end_date, p.pic_id, p.company_id,
+           (SELECT count(*)::int FROM project_sales_attendees psa WHERE psa.project_id = p.id) AS attendees
+      FROM projects p
+     WHERE p.venue IS NOT NULL AND p.venue <> ''
+       AND p.start_date IS NOT NULL AND p.start_date::text <= ${date}
+       AND (p.end_date IS NULL OR p.end_date::text >= ${date})
+     ORDER BY p.start_date`;
+  note(`     ${running.length} project(s) running on ${date}`);
+  for (const r of running) {
+    note(`       #${r.id} co=${r.company_id ?? '-'} ${pad(r.name, 30)} venue=${show(r.venue)} ${r.start_date} -> ${r.end_date ?? '(open)'} pic=${r.pic_id ?? '-'} attendees=${r.attendees}`);
+  }
+
+  const recentlyEnded = await sql`
+    SELECT p.id, p.name, p.venue, p.start_date, p.end_date
+      FROM projects p
+     WHERE p.venue IS NOT NULL AND p.venue <> '' AND p.end_date IS NOT NULL
+       AND p.end_date::text < ${date}
+       AND p.end_date::text >= (${date}::date - INTERVAL '30 days')::text
+     ORDER BY p.end_date DESC`;
+  note(`     ${recentlyEnded.length} project(s) with a venue that ENDED in the last 30 days`);
+  for (const r of recentlyEnded) {
+    note(`       #${r.id} ${pad(r.name, 30)} venue=${show(r.venue)} ended ${r.end_date}`);
+  }
+  note('');
+
+  // Per-person: can ANYTHING resolve a venue today? This is the blocked count.
+  const everyone = await sql.unsafe(
+    'SELECT st.id, st.name, st.role, st.user_id, st.venue_id, st.showroom_warehouse_id,'
+    + ' w.venue_name AS showroom_venue, w.is_showroom'
+    + ' FROM scm.staff st LEFT JOIN scm.warehouses w ON w.id = st.showroom_warehouse_id'
+    + (stCols.has('active') ? ' WHERE st.active = true' : '')
+    + ' ORDER BY st.name');
+  const runningIds = running.map((r) => Number(r.id));
+  let onRunningFair = new Set();
+  if (runningIds.length) {
+    const teamed = await sql`
+      SELECT DISTINCT sr.user_id FROM project_sales_attendees psa
+        JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+       WHERE psa.project_id = ANY(${runningIds}) AND sr.user_id IS NOT NULL`;
+    onRunningFair = new Set(teamed.map((r) => Number(r.user_id)));
+    for (const r of running) if (r.pic_id != null) onRunningFair.add(Number(r.pic_id));
+  }
+  let blocked = 0; const blockedSales = [];
+  for (const s of everyone) {
+    const viaPms = s.user_id != null && onRunningFair.has(Number(s.user_id));
+    const viaShowroom = s.is_showroom === true && !blank(s.showroom_venue);
+    const viaHome = !blank(s.venue_id);
+    if (!viaPms && !viaShowroom && !viaHome) {
+      blocked += 1;
+      if (String(s.role ?? '').toLowerCase().includes('sales')) blockedSales.push(s.name);
+    }
+  }
+  note(`--- 7. WHO CANNOT PLACE A CONFIRMED ORDER TODAY (no venue resolves) ---`);
+  note(`     active staff rows checked          : ${everyone.length}`);
+  note(`     no venue resolves from ANY source  : ${blocked}`);
+  note(`     of those, role contains "sales"    : ${blockedSales.length}`);
+  note(`     ${blockedSales.slice(0, 60).join(', ')}`);
+  note('');
+
   note('=== END — read-only, nothing written. ===');
 }
 
