@@ -1,6 +1,6 @@
 ## The day view resolved a trip stop's delivery order with no company predicate [med]
 
-<!-- area: Delivery / TMS -->
+<!-- area: Fleet, trips, TMS -->
 
 **白话.** 罗里当天的路线画面，在把每一个停靠点对回它的送货单时，没有加「这张单是
 不是我这家公司的」这一条。一个只拿到 Houzs 权限的调度员，画面上的行程虽然已经过滤
