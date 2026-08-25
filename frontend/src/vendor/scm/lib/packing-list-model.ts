@@ -55,15 +55,20 @@ export function loadingOrder<S extends { stop_no: number }>(stops: readonly S[])
 
 /** The owner's four rungs, in his words, over the statuses scm.do_status has.
  *  DRAFT is deliberately rung 0 — it is before the ladder starts, not on it. */
-export const DO_RUNG: Readonly<Record<string, { rung: number; label: string }>> = {
-  DRAFT: { rung: 0, label: 'Draft' },
-  LOADED: { rung: 1, label: 'Confirmed' },
-  DISPATCHED: { rung: 2, label: 'Loaded' },
-  IN_TRANSIT: { rung: 3, label: 'In Transit' },
-  SIGNED: { rung: 4, label: 'Delivered' },
-  DELIVERED: { rung: 4, label: 'Delivered' },
-  INVOICED: { rung: 4, label: 'Delivered' },
-};
+/* A Map, not an object literal: `.get()` returns `| undefined`, so the miss
+   branch below is a real branch the compiler and the linter both see. An index
+   into a `Record<string, T>` types as T, which makes the guard read as dead
+   code — and deleting it is how an unlisted status would silently become
+   rung 0. */
+export const DO_RUNG: ReadonlyMap<string, { rung: number; label: string }> = new Map([
+  ['DRAFT', { rung: 0, label: 'Draft' }],
+  ['LOADED', { rung: 1, label: 'Confirmed' }],
+  ['DISPATCHED', { rung: 2, label: 'Loaded' }],
+  ['IN_TRANSIT', { rung: 3, label: 'In Transit' }],
+  ['SIGNED', { rung: 4, label: 'Delivered' }],
+  ['DELIVERED', { rung: 4, label: 'Delivered' }],
+  ['INVOICED', { rung: 4, label: 'Delivered' }],
+]);
 
 export type StatusRollup = {
   /** The furthest rung any member delivery order has reached. */
@@ -94,7 +99,7 @@ export function rollupDeliveryStatus(
   const rungs: number[] = [];
   for (const status of byDo.values()) {
     if (status === 'CANCELLED') { cancelled += 1; continue; }
-    const hit = DO_RUNG[status];
+    const hit = DO_RUNG.get(status);
     /* An unrecognised status is NOT folded into rung 0. It is a value nothing
        in this ladder can speak for, so it stays out of the numerator and the
        denominator rather than being reported as "Draft". */
@@ -103,7 +108,7 @@ export function rollupDeliveryStatus(
   if (rungs.length === 0) return null;
 
   const top = Math.max(...rungs);
-  const label = Object.values(DO_RUNG).find((r) => r.rung === top)?.label ?? 'Draft';
+  const label = [...DO_RUNG.values()].find((r) => r.rung === top)?.label ?? 'Draft';
   return {
     label,
     reached: rungs.filter((r) => r >= top).length,

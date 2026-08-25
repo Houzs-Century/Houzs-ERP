@@ -28,11 +28,9 @@ import {
   DO_RUNG,
 } from './packing-list-model';
 import { packingListsPath } from './packing-list-queries';
-
-/** scm.do_status, verbatim (mig 0053 + docs/bugs/0530's enum listing). */
-const DO_STATUS_MEMBERS = [
-  'DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED',
-];
+/* The ONE home for scm.do_status's membership. Hand-copying it is what let a
+   non-member reach the enum twice (docs/bugs/0530). */
+import { DO_STATUSES } from '../../shared/do-shipped-states';
 
 const stop = (stop_no: number, do_id: string | null, do_status: string | null) =>
   ({ stop_no, do_id, do_status });
@@ -110,7 +108,7 @@ describe('rollupDeliveryStatus — the owner ladder over the member delivery ord
   });
 
   it('names only statuses scm.do_status actually defines', () => {
-    for (const key of Object.keys(DO_RUNG)) expect(DO_STATUS_MEMBERS).toContain(key);
+    for (const key of DO_RUNG.keys()) expect(DO_STATUSES as readonly string[]).toContain(key);
   });
 });
 
