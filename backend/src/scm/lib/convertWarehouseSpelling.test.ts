@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+/* `?raw`, NOT node:fs / require — backend/tsconfig.json types Workers only, so
+   either one typechecks red even though vitest runs them fine. */
+import convertSrc from './autocount-convert-lines.ts?raw';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 
 /* ---------------------------------------------------------------------------
@@ -51,9 +54,7 @@ describe('the conversion header sends the book spelling of a warehouse', () => {
     /* Asserted on the SOURCE, because the composer needs a Supabase client and
        a warehouse row to run, and what matters is that it cannot go back to
        sending the raw code without this failing. */
-    const src = new URL('./autocount-convert-lines.ts', import.meta.url).pathname;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const body: string = require('node:fs').readFileSync(src, 'utf8');
+    const body = convertSrc as string;
     const line = body.split('\n').find((l) => l.includes('locationCode = '));
     expect(line, 'locationCode assignment not found').toBeTruthy();
     expect(line).toContain('bookSpellingOrOwn');
