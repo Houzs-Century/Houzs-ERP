@@ -247,7 +247,8 @@ Three layers as in `docs/modules/sales-order.md` §1. DO specifics:
 still need `edit` on `scm.sales.delivery`.
 
 > **Per-position capability gate on `PATCH /:id/status` (2026-08-25).** The
-> mount also carries a `writeBypass` (area-guard) so a position holding the
+> mount in `backend/src/scm/index.ts` (`backend/src/scm/middleware/area-guard.ts`)
+> also carries a `writeBypass` so a position holding the
 > operational capability `scm.do.load` or `scm.do.dispatch` (the editable Roles
 > & Permissions matrix, `position_capabilities`, mig 0322) reaches the status
 > endpoint WITHOUT `scm.sales.delivery` edit — a storekeeper scan-confirms
