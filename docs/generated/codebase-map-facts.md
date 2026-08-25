@@ -112,7 +112,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11944 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 2 | 1647 |
+| `backend/src/scm/routes/mrp.ts` | 2 | 1688 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1110 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
@@ -172,13 +172,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 150 | `151_position_page_overrides.sql` (151) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 323 | `0325_scm_so_payment_totals_view_carries_hold.sql` (0325) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 324 | `0326_supplier_binding_ac_item_code.sql` (0326) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1721 files, 632528 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1723 files, 632770 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
