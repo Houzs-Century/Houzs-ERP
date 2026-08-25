@@ -72,6 +72,40 @@ export default tseslint.config(
     },
   },
   {
+    /* Native browser prompts are BANNED in the SCM tree (2026-08-24). Every
+       /scm/* route mounts ConfirmProvider / PromptProvider / NotifyProvider via
+       Scm2990Shell, so the styled in-app dialogs are always available — yet
+       operators were still getting a raw OS `window.confirm` on Cancel PO /
+       Post GRN / Cancel invoice, because thirteen V2 pages never migrated
+       (docs/bugs entry of the same date). Commander's rule is "no 裸奔": use
+       useConfirm / usePrompt / useNotify. `error` and outside the ratchet for
+       the same reason rules-of-hooks is: every violation is operator-facing on
+       its first appearance, so it must fail the build, not sit at a ceiling.
+       AST-based, so the many comments that MENTION window.confirm don't trip it
+       (the regex guards' strip-comments trap does not exist here). */
+    files: ['src/pages/scm-v2/**/*.{ts,tsx}', 'src/components/scm-v2/**/*.{ts,tsx}', 'src/vendor/scm/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use useConfirm() from vendor/scm/components/ConfirmDialog — the provider is mounted by Scm2990Shell on every /scm/* route.' },
+        { object: 'window', property: 'alert', message: 'Use useNotify() from vendor/scm/components/NotifyDialog.' },
+        { object: 'window', property: 'prompt', message: 'Use usePrompt() from vendor/scm/components/PromptDialog.' },
+      ],
+      'no-restricted-globals': ['error',
+        { name: 'confirm', message: 'Use useConfirm() from vendor/scm/components/ConfirmDialog.' },
+        { name: 'alert', message: 'Use useNotify() from vendor/scm/components/NotifyDialog.' },
+        { name: 'prompt', message: 'Use usePrompt() from vendor/scm/components/PromptDialog.' },
+      ],
+    },
+  },
+  {
+    /* dialog-service.ts IS the designed pre-mount escape hatch: its
+       serviceConfirm / serviceNotify fall back to window.confirm / window.alert
+       only before <DialogServiceBridge> registers the live dialogs, so a prompt
+       is never silently dropped. The one place the natives are the point. */
+    files: ['src/vendor/scm/lib/dialog-service.ts'],
+    rules: { 'no-restricted-properties': 'off', 'no-restricted-globals': 'off' },
+  },
+  {
     /* `vendor/shared/do-shipped-states.ts` IS the declaration the do-status
        selector points at — the byte-identical twin of
        backend/src/scm/shared/do-shipped-states.ts, which the backend config
