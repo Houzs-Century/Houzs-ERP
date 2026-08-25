@@ -107,6 +107,14 @@ complaint, and it is confirmed.
 > *"The DO-specific 'From Sales Order' toolbar button and the SI / DR convert
 > menu entries are intentionally DROPPED — a consignment note is free-entry."*
 
+> **The CN list's status WORD changed on 2026-08-26, its conversion surface did
+> not.** `DISPATCHED` reads **Loaded** rather than "Shipped" on the CN list, and
+> the CN DETAIL page needed no edit at all — it renders the shared
+> `<StatusPill docType="do">` and inherits the canonical map, which is what that
+> layer is for. The owner's rule is that a consignment note mirrors a delivery
+> order, so the two vocabularies move together. Stored values are untouched. Full
+> reasoning: `docs/modules/document-status-vocabulary.md`.
+
 The CN list has only `New Consignment Note`, and its row menu is
 Edit / View / Cancel / Reopen. So the line-level picker
 (`ConsignmentNoteFromOrder.tsx`) is reachable **only** by entering the

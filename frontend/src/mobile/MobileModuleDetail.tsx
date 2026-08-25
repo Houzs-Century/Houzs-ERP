@@ -1031,15 +1031,16 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       /* CONFIRM LANDS ON LOADED, not DISPATCHED — corrected 2026-08-22 with the
          desktop's identical fault. This rung said `DRAFT: ["DISPATCHED",
          "Confirm"]`: labelled Confirm, writing the status every screen renders
-         as "Shipped", so the phone's Confirm skipped Confirmed exactly the way
+         as "Loaded" (it read "Shipped" until 2026-08-26), so the phone's
+         Confirm skipped Confirmed exactly the way
          the office button did. LOADED is where the stock leaves now (owner:
          「once confirmed就代表出货了 就是直接扣库存」), so this is the same
          event under its right name. The LOADED→DISPATCHED rung stays: that is a
          real, separate step — the goods actually going on the road. */
       const next: Record<string, [string, string]> = {
-        "": ["DISPATCHED", "Dispatch"],
+        "": ["DISPATCHED", "Confirm Loaded"],
         DRAFT: ["LOADED", "Confirm"],
-        LOADED: ["DISPATCHED", "Dispatch"],
+        LOADED: ["DISPATCHED", "Confirm Loaded"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
       };
       const step = next[st];

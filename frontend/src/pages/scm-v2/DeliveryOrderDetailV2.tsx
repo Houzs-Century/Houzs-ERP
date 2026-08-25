@@ -241,12 +241,18 @@ const EFFECTIVE_TONE: Record<
 };
 
 // Fine-grained stage label — kept for the sticky header Badge so ops sees
-// the exact stored status (Loaded / Dispatched / In transit / Signed / …)
+// the exact stored status (Confirmed / Loaded / In transit / Signed / …)
 // even when the effective bucket collapses to "shipped".
+//
+// DISPATCHED reads "Loaded" since 2026-08-26 (owner), matching status-pill.ts.
+// It said "Dispatched" here and "Shipped" everywhere else — the same stored
+// value under two words on two screens — and neither of them was what the step
+// means on the three-scan flow: DISPATCHED is the pallet ON the lorry, and
+// departure is IN_TRANSIT. The stored value is untouched.
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
   LOADED: "Confirmed",
-  DISPATCHED: "Dispatched",
+  DISPATCHED: "Loaded",
   IN_TRANSIT: "In transit",
   SIGNED: "Signed",
   DELIVERED: "Delivered",

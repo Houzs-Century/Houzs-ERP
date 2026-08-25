@@ -1,72 +1,110 @@
 // ----------------------------------------------------------------------------
-// DoLoadScan — the landing page behind the Delivery Order print's
-// "SCAN · MARK LOADED" QR (2026-08-21, owner: warehouse confirms loading by
-// scanning the paper that travels with the goods, instead of remembering a
-// button in a list).
+// DoLoadScan — the landing page behind the Delivery Order print's QR (2026-08-21,
+// owner: the warehouse confirms by scanning the paper that travels with the
+// goods, instead of remembering a button in a list).
 //
 // /scm/do-load?id=<delivery order uuid>
 //
-// One screen, one decision. The page reads the DO and shows exactly one of:
-//   DRAFT       → the [Confirm loading] button. Pressing it is the ordinary
-//                 status PATCH to LOADED — audited, and the transition guard
-//                 owns legality (a shipped DO can never be pulled back).
-//   LOADED      → "already loaded" (a re-scan is the EXPECTED case on a busy
-//                 dock — two people, one pallet — so it reads as confirmation,
-//                 never as an error).
-//   shipped+    → "already dispatched" — nothing to do here.
-//   CANCELLED   → says so.
+// THREE SCANS, ONE STEP EACH (owner, 2026-08-25/26). It did one step — DRAFT →
+// LOADED — until this change. His words:
 //
-// THIS SCREEN MOVES STOCK, SINCE 2026-08-22. It did not before, and the copy on
-// it said so in as many words. The owner moved the deduction to the confirm step
-// — LOADED is now a member of DO_SHIPPED_STATES — so pressing [Confirm loading]
-// writes the inventory OUT for the whole delivery order. The wording below was
-// corrected with the behaviour rather than left to age, because the person
-// reading it is standing at the dock deciding whether to press it.
+//   「(a) Storekeeper 扫码确认货物装上罗里 (b) 司机出发（IN TRANSIT）(c) 送达
+//    （DELIVERED）」
+//   「就是我状态只要一点，它基本上都只能剩最后一个状态（下一个状态）」
 //
-// A repeat scan still writes nothing: LOADED short-circuits to the confirmation
-// card above the button, and deductInventoryForDo's existence check plus the
-// uq_inv_mov_do_source_v2 unique index make a second deduction impossible even
-// if it did not.
+// So the page shows the NEXT rung and only the next rung. There is no picker, no
+// way back, and no way to skip one — not because the server forbids it (it does
+// not; forward and lateral moves are all accepted, see do-next-step.ts) but
+// because the ladder is a record of physical events and a person who can choose
+// among them is a person who can record one that did not happen.
+//
+//   the office raises the DO     -> LOADED      shown as Confirmed
+//   ① storekeeper: on the lorry  -> DISPATCHED  shown as Loaded
+//   ② driver: departs            -> IN_TRANSIT  shown as In Transit
+//   ③ driver: delivered          -> DELIVERED   shown as Delivered
+//
+// The ladder itself lives in vendor/scm/lib/do-next-step.ts, next to the
+// office's one. This file renders it and owns no status logic of its own.
+//
+// STOCK IS NOT TOUCHED BY SCANS ② OR ③ — 「只要我一开 DO，我就扣库存。In transit、
+// Delivered，这些都只是状态，看一下情况而已。」 Scan ① is a special case only
+// because a DRAFT delivery order has not deducted yet: confirming it lands
+// LOADED, which IS the deduction (owner 2026-08-22, DO_SHIPPED_STATES). Every
+// rung past that finds the stock already out and writes nothing to inventory.
+//
+// SCAN ③ IS NOT A SIGNED RECEIPT AND THE SCREEN SAYS SO. See bug 0481: a "Mark
+// Signed" button wrote a delivered-counting status and collected no signature,
+// no photo and no GPS. This page writes DELIVERED and collects none of them
+// either, so DO_SCAN_DELIVERED_EVIDENCE_NOTE is rendered beside the button
+// BEFORE it is pressed, naming the loss and naming Proof of Delivery as the
+// screen that captures a real one. Bug 0480 is why the capture was not
+// duplicated here instead.
+//
+// A REPEAT SCAN NEVER DOUBLE-WRITES. After a successful rung the page shows the
+// confirmation and no button at all until the paper is scanned again — one scan,
+// one step. A scan of a document somebody else has already advanced simply shows
+// that document's own next rung, which is the expected case on a busy dock.
 // ----------------------------------------------------------------------------
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { CheckCircle2, PackageCheck, Truck, XCircle, Loader2 } from 'lucide-react';
+import { CheckCircle2, PackageCheck, XCircle, PauseCircle, Loader2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useMfgDeliveryOrderDetail,
   useUpdateMfgDeliveryOrderStatus,
 } from '../../vendor/scm/lib/delivery-order-queries';
 import { PageHeader } from '../../components/Layout';
-import { DO_STOCK_OUT_STATES } from '../../vendor/shared/do-shipped-states';
-
-const SHIPPED = new Set<string>(DO_STOCK_OUT_STATES);
+import {
+  doScanStep,
+  doScanBlockReason,
+  doScanConfirmation,
+  type DoScanStep,
+} from '../../vendor/scm/lib/do-next-step';
 
 export const DoLoadScan = () => {
   const [params] = useSearchParams();
   const id = params.get('id');
   const detailQ = useMfgDeliveryOrderDetail(id);
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
+  /* What THIS scan wrote, held locally rather than read back off the refetched
+     row. Two reasons, and the second is the one that matters: the detail query
+     is invalidated by the mutation, so between success and refetch the row still
+     carries the OLD status and would render the same button again; and holding
+     it here is what keeps one scan to one step, since the confirmation card
+     stands until the paper is scanned afresh. */
+  const [written, setWritten] = useState<DoScanStep['status'] | null>(null);
 
   const doRow = detailQ.data?.deliveryOrder as
-    | { id: string; do_number: string; debtor_name: string | null; status: string | null; city: string | null; state: string | null }
+    | {
+        id: string; do_number: string; debtor_name: string | null; status: string | null;
+        city: string | null; state: string | null; on_hold?: boolean | null;
+      }
     | undefined;
   const lineCount = detailQ.data?.items.length ?? 0;
-  const status = (doRow?.status ?? '').toUpperCase();
-  const justLoaded = updateStatus.isSuccess;
+
+  /* `?? null`, never `?? false`: the column is nullable and a missing value is
+     not a proven "not held". doScanStep treats only an explicit `true` as held,
+     so null behaves as not-held either way — but the coercion happens where the
+     rule is written, not silently here. */
+  const onHold = doRow?.on_hold ?? null;
+  const step = doRow ? doScanStep(doRow.status, onHold) : null;
+  const blockReason = doRow ? doScanBlockReason(doRow.status, onHold) : null;
 
   const verdict = useMemo(() => {
     if (!id) return { tone: 'warn' as const, title: 'No delivery order in this link', body: 'The QR did not carry a delivery order. Re-print the DO and scan the code on the new copy.' };
     if (detailQ.isLoading) return null;
     if (detailQ.isError || !doRow) return { tone: 'warn' as const, title: 'Delivery order not found', body: 'This link does not match a delivery order in the company you are signed into. Check the company switcher, or re-print the DO.' };
-    if (justLoaded || status === 'LOADED') return { tone: 'ok' as const, title: `${doRow.do_number} is loaded`, body: justLoaded ? 'Loading confirmed and the goods are out of warehouse stock — the dispatcher can send the truck.' : 'Loading was already confirmed on this delivery order — a repeat scan writes nothing new.' };
-    if (SHIPPED.has(status)) return { tone: 'info' as const, title: `${doRow.do_number} has already been dispatched`, body: 'This delivery order was confirmed earlier and its goods are already out of warehouse stock — there is no loading step left to confirm.' };
-    if (status === 'CANCELLED') return { tone: 'warn' as const, title: `${doRow.do_number} is cancelled`, body: 'A cancelled delivery order is not loaded. Check with the dispatcher before putting anything on the truck.' };
-    return null; // DRAFT → show the action
-  }, [id, detailQ.isLoading, detailQ.isError, doRow, status, justLoaded]);
+    if (written) return { tone: 'ok' as const, title: `${doRow.do_number} updated`, body: doScanConfirmation(written) };
+    if (blockReason) {
+      const tone = onHold === true ? ('hold' as const) : ('warn' as const);
+      return { tone, title: `${doRow.do_number}`, body: blockReason };
+    }
+    return null; // a rung is available — show the action
+  }, [id, detailQ.isLoading, detailQ.isError, doRow, written, blockReason, onHold]);
 
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4">
-      <PageHeader eyebrow="Warehouse" title="Confirm loading" />
+      <PageHeader eyebrow="Delivery" title="Scan delivery order" />
       {detailQ.isLoading && (
         <div className="flex items-center gap-2 rounded-md border border-line bg-surface px-4 py-6 text-sm">
           <Loader2 size={16} className="animate-spin" /> Loading the delivery order…
@@ -81,14 +119,18 @@ export const DoLoadScan = () => {
           </div>
         </div>
       )}
+      {/* Hold shares amber with the other refusals on purpose — a hold is
+          reversible and deliberate, and red is what this system reserves for
+          cancelled (HoldChip.tsx states the same rule). Only the ICON differs,
+          so the two read apart at a glance without a second colour. */}
       {verdict && (
         <div className={`flex items-start gap-3 rounded-md border px-4 py-4 text-sm ${
-          verdict.tone === 'ok' ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-          : verdict.tone === 'info' ? 'border-sky-300 bg-sky-50 text-sky-900'
-          : 'border-amber-300 bg-amber-50 text-amber-900'
+          verdict.tone === 'ok'
+            ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+            : 'border-amber-300 bg-amber-50 text-amber-900'
         }`}>
           {verdict.tone === 'ok' ? <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
-            : verdict.tone === 'info' ? <Truck size={20} className="mt-0.5 shrink-0" />
+            : verdict.tone === 'hold' ? <PauseCircle size={20} className="mt-0.5 shrink-0" />
             : <XCircle size={20} className="mt-0.5 shrink-0" />}
           <div>
             <div className="font-semibold">{verdict.title}</div>
@@ -96,24 +138,26 @@ export const DoLoadScan = () => {
           </div>
         </div>
       )}
-      {doRow && !verdict && (
+      {doRow && step && !verdict && (
         <>
           <Button
             variant="primary"
             size="lg"
             className="w-full"
             disabled={updateStatus.isPending}
-            onClick={() => updateStatus.mutate({ id: doRow.id, status: 'LOADED' })}
+            onClick={() =>
+              updateStatus.mutate(
+                { id: doRow.id, status: step.status },
+                { onSuccess: () => setWritten(step.status) },
+              )
+            }
           >
-            <PackageCheck size={18} /> {updateStatus.isPending ? 'Confirming…' : 'Confirm loading'}
+            <PackageCheck size={18} /> {updateStatus.isPending ? 'Saving…' : step.label}
           </Button>
-          <p className="text-xs text-ink-secondary">
-            This confirms the delivery order and takes the goods out of warehouse stock. The
-            dispatcher marks it Shipped when the truck leaves.
-          </p>
+          <p className="text-xs text-ink-secondary">{step.note}</p>
           {updateStatus.isError && (
             <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-              {updateStatus.error instanceof Error ? updateStatus.error.message : 'Could not confirm loading — try again or tell the dispatcher.'}
+              {updateStatus.error instanceof Error ? updateStatus.error.message : 'Could not save — try again or tell the dispatcher.'}
             </div>
           )}
         </>

@@ -46,10 +46,94 @@ sweep them into "Confirmed" in a later tidy-up:
 
 | value | word | why it is not "Confirmed" |
 |---|---|---|
-| DO `DISPATCHED` | **Shipped** | the stock has left the building — the first entry into it writes the inventory OUT. `LOADED` is the DO's confirm step: document real, nothing moved yet |
+| DO `DISPATCHED` | **Loaded** | the goods are physically ON the lorry. `LOADED` is the DO's confirm step and reads Confirmed: document real, stock already out. See the relabel note directly below |
 | SI / PI `PARTIALLY_PAID`, `PAID` | Partially Paid, Paid | money, not commitment |
 | PO `PARTIALLY_RECEIVED`, `RECEIVED` | Partially Received, Received | progress, not commitment |
 | GRN `CLOSED` | Closed | finished, not committed |
+
+### `DISPATCHED` reads **Loaded**, not "Shipped" (owner, 2026-08-26)
+
+**His question:** 「dispatch就是出发了啊?」 — does dispatch mean it has left?
+
+**On the three-scan flow he settled the same week, no.** DISPATCHED is written by
+the STOREKEEPER when the goods go ON the lorry; DEPARTURE is the driver's next
+scan, and that is `IN_TRANSIT`. "Shipped" claimed the truck had gone, one step
+early, on every list and every pill.
+
+**The obvious word was taken.** `LOADED` is the DO's confirm step and reads
+**Confirmed** (the table above), so DISPATCHED could not simply be called by its
+own value's name — the two would collide. Hence: stored `LOADED` shows
+*Confirmed*, stored `DISPATCHED` shows *Loaded*.
+
+| stored | shown | who writes it |
+|---|---|---|
+| `LOADED` | Confirmed | the office, raising the delivery order |
+| `DISPATCHED` | **Loaded** | the storekeeper's scan — goods on the lorry |
+| `IN_TRANSIT` | In Transit | the driver's scan — the lorry leaves |
+| `DELIVERED` | Delivered | the driver's scan at the address, or Proof of Delivery |
+
+**The STORED value did not change and must not.** Postgres enum labels are
+permanent, and every report, export and AutoCount read goes to the stored value.
+Same option A as the "Confirmed" sweep above, same reasoning.
+
+**Pinned, because a hand-aligned sweep is what drifted last time.**
+`frontend/src/pages/scm-v2/doDispatchedReadsLoaded.test.ts` asserts the two label
+maps AND source-scans every `frontend/src` file for a line naming `DISPATCHED`
+beside a `Shipped` / `Dispatch`-shaped label. That scan is the half that covers a
+page nobody has written yet, and it found a site the hand-sweep had missed
+(`frontend/src/mobile/MobileModuleList.tsx`'s DO filter chip) while it was being
+written.
+
+**Deliberately untouched: the SALES ORDER's `SHIPPED`.** Different document,
+different enum, folded into Delivered separately by #2655.
+`frontend/src/mobile/MobileSalesOrders.tsx` still lists a Shipped chip — stale for
+its own reasons, and a separate item.
+
+### The delivery order's three scans (owner, 2026-08-25/26)
+
+**His words:** 「(a) Storekeeper 扫码确认货物装上罗里 (b) 司机出发（IN TRANSIT）
+(c) 送达（DELIVERED）」 and 「就是我状态只要一点，它基本上都只能剩最后一个状态（下
+一个状态）」.
+
+One QR on the delivery order print, scanned three times, each scan moving the
+document exactly one rung. `frontend/src/pages/scm-v2/DoLoadScan.tsx` shows the
+next rung and only the next rung — no picker, no skipping, no way back.
+
+| the document is | the button | it writes |
+|---|---|---|
+| `DRAFT` | Confirm loading | `LOADED` |
+| `LOADED` (shows Confirmed) | Confirm Loaded | `DISPATCHED` |
+| `DISPATCHED` (shows Loaded) | Confirm Departure | `IN_TRANSIT` |
+| `IN_TRANSIT` | Confirm Delivered | `DELIVERED` |
+| `SIGNED` / `DELIVERED` / `INVOICED` | none — "Nothing left to do on this document." | — |
+| `CANCELLED` | none — a refusal telling them to call the office | — |
+| on hold | none — it says it is on hold | — |
+
+**Stock is not touched by any of it.** 「只要我一开 DO，我就扣库存。In transit、
+Delivered，这些都只是状态，看一下情况而已。」 The inventory OUT fires on the first
+entry into a shipped state and `LOADED` is already one, so every rung past the
+confirm finds the deduction done.
+
+**`SIGNED` is never written by this ladder, and that is enforced by the TYPE.**
+`DoScanStep['status']` is an `Extract<DoStatus, …>` over four labels, so a fifth
+target does not compile. `SIGNED` counts as delivered everywhere
+(`doCountsAsDelivered`), which is exactly why a bare button writing it was bug
+`0481`; nothing has written it since 2026-08-21 and this does not reopen it. A row
+that already holds SIGNED is answered as finished.
+
+**Scan ③ is NOT a signed receipt, and the screen says so before it is pressed.**
+It writes `DELIVERED` and collects no signature, no photo and no location. Bug
+`0481` is the record of what that costs when it is left unsaid —
+*"the status is literally named for the evidence it does not collect"* — so
+`DO_SCAN_DELIVERED_EVIDENCE_NOTE` names all three losses and names Proof of
+Delivery (`frontend/src/mobile/MobilePOD.tsx`) as the screen that captures a real
+one. Capturing a second time here was rejected on bug `0480`'s reasoning: a second
+capture path is the divergence that entry was written about.
+
+**The on-hold refusal is the SCREEN's, not the server's.** `PATCH /:id/status`
+does not read `on_hold` — mig 0324 gave the delivery order the marker columns and
+left the handler alone — so a held document can still be advanced from elsewhere.
+Worth knowing before anyone cites this screen as the guarantee.
 
 ### Where the rule is enforced, and where it ISN'T
 
@@ -94,7 +178,7 @@ recover it from, and `Take Off Hold` consequently sent EVERY released order to
 
 **On screen: the status pill AND a Hold chip, never one instead of the other.**
 `frontend/src/vendor/scm/components/HoldChip.tsx` is the one home for that chip.
-A held delivery still says Shipped — the warehouse needs that — and carries Hold
+A held delivery still says Loaded — the warehouse needs that — and carries Hold
 beside it. The chip's tone is `pending`, not `danger`: a hold is reversible and
 deliberate, and red is what this system uses for cancelled.
 
@@ -273,7 +357,7 @@ See `docs/bugs/0515-the-sales-order-right-click-let-a-person-hand-write-a-status
 
 ### EXCEPTION — the Delivery Order's three manual moves (2026-08-22, temporary)
 
-`Mark Shipped`, `Mark In Transit` and `Mark Delivered` ARE offered on the
+`Mark Loaded`, `Mark In Transit` and `Mark Delivered` ARE offered on the
 Delivery Order right-click menu (`frontend/src/pages/scm-v2/row-menus.ts`,
 `deliveryOrderRowMenu`). This is a deliberate, dated exception, and it satisfies
 the rule's own criterion rather than waiving it: **a status a machine derives is
@@ -297,8 +381,8 @@ transition out of.
 
 | status | what will write it, once built | what retires the manual entry |
 |---|---|---|
-| **Shipped** (`DISPATCHED`) | the storekeeper scanning a QR on the delivery order print | that scan flow existing. The print's existing QR is a different one — it lands on `DoLoadScan` and writes `LOADED` |
-| **In transit** (`IN_TRANSIT`) | the driver trip flow, `frontend/src/mobile/MobileDeliveryPlanning.tsx` | that flow being put into use. It has never written a row |
+| **Loaded** (`DISPATCHED`) | the storekeeper scanning the QR on the delivery order print — **BUILT 2026-08-26**, `DoLoadScan` now offers this rung | the storekeepers actually scanning. Existing is not in use, and only the owner can say which it is |
+| **In transit** (`IN_TRANSIT`) | two writers: the driver trip flow, `frontend/src/mobile/MobileDeliveryPlanning.tsx`, and the driver's second scan on `DoLoadScan` (**BUILT 2026-08-26**) | the drivers actually scanning. The trip flow has never written a row |
 | **Delivered** (`DELIVERED`) | the driver's Proof-of-Delivery signature, `frontend/src/mobile/MobilePOD.tsx` — the ONE writer that exists today | already has a machine. The manual entry is the stopgap for sites not using the driver app, and asked directly whether drivers use it the owner answered 「没有」 |
 | **Invoiced** (`INVOICED`) | **PLANNED — NOT BUILT.** Reaching Delivered would raise the Sales Invoice automatically: 「然后delivered了之后Invoice 就可以自动开了 这个之后再弄」 | that automation existing |
 
