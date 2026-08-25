@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-143 route modules (43 in `backend/src/routes`, 100 in `backend/src/scm/routes`), 1061 endpoint registrations.
+143 route modules (43 in `backend/src/routes`, 100 in `backend/src/scm/routes`), 1062 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -66,7 +66,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 3 | 796 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 4 | 851 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2331 |
@@ -75,7 +75,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5605 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5601 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -178,7 +178,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1727 files, 633369 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1731 files, 633808 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -188,7 +188,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5686 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5605 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5601 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
 | `backend/src/routes/projects.ts` | 5052 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
