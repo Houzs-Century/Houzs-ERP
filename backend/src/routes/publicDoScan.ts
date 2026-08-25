@@ -16,6 +16,36 @@
 // the rung, so this route serves it and the page cannot render the button
 // without it.
 //
+// ── TWO THINGS GET SCANNED ──────────────────────────────────────────────────
+// The spec this change was given quotes the owner: 「这三个操作都可以通过 scan DO
+// 或 scan packing list 来达成（scan packing list 会将该 list 内的货物统一全部出
+// 完）」 — every rung reachable by scanning EITHER one delivery order OR the
+// packing list, and scanning the packing list moves the WHOLE RUN at once.
+//
+// So a token resolves to one of two kinds, and the route branches on what the
+// resolver reports rather than on anything in the request:
+//
+//   kind 'do'    one delivery order      one rung, one document
+//   kind 'trip'  one packing list        the SAME rung, applied to every
+//                                        delivery order on the run, in stop_no
+//                                        order, ONE AT A TIME
+//
+// SEQUENTIALLY, NEVER IN PARALLEL, and this is bought experience rather than
+// caution. Hookka wrote the reason down after paying for it (its delivery page,
+// on the bulk transition): parallel DELIVERED batches DEADLOCKED because two
+// delivery orders frequently share one sales order and their UPDATEs took the
+// shared row in different lock order, and its auto-invoice numbering collided
+// because a read-MAX-then-+1 ran before any sibling had committed. Houzs has
+// the same shape — patchDeliveryOrderStatusHandler calls syncSoDeliveredFromDo,
+// which updates the shared sales order, on every DELIVERED hop. One at a time
+// lets each commit before the next starts.
+//
+// ONE MEMBER FAILING NEVER ABORTS THE REST. A driver holding the sheet needs to
+// know which drop did not move, so every member gets its own line in the answer
+// — done / already done / blocked / failed — and the run continues past a
+// refusal. A half-moved run reported honestly beats an all-or-nothing that
+// leaves him guessing.
+//
 // ── WHERE THE COMPANY COMES FROM ────────────────────────────────────────────
 // A public route DOES have a company. It does not come from a session and it
 // must never come from the request: it comes from `company_id` on the ONE ROW
@@ -71,8 +101,11 @@ import { SCM_SYSTEM_STAFF_ID } from '../scm/middleware/auth';
 import { scopeToCompanyId } from '../scm/lib/companyScope';
 import {
   DO_SCAN_TOKEN_RE,
-  resolveDoScanToken,
+  resolveScanToken,
+  loadTripScanMembers,
   type ResolvedDoScan,
+  type ResolvedTripScan,
+  type TripScanMember,
 } from '../scm/lib/do-scan-token';
 import {
   doScanStep,
@@ -182,6 +215,92 @@ async function buildSummary(sb: any, r: ResolvedDoScan): Promise<PublicDoSummary
   };
 }
 
+/** One drop on a packing list, as the public sheet sees it. */
+type PublicTripMember = {
+  stopNo: number;
+  /** Null for a member on another company's books — withheld on purpose. */
+  doNumber: string | null;
+  status: string | null;
+  /** The rung THIS member is ready for, or null with a reason beside it. */
+  step: { status: string; label: string; note: string } | null;
+  blockReason: string | null;
+};
+
+/** A whole run, summarised. Same minimisation rules as one delivery order. */
+type PublicTripSummary = {
+  kind: 'trip';
+  tripNo: string;
+  tripDate: string | null;
+  status: string;
+  /** The ONE rung the run as a whole is offered — see nextRunStep. */
+  step: { status: string; label: string; note: string } | null;
+  blockReason: string | null;
+  members: PublicTripMember[];
+};
+
+const FOREIGN_MEMBER_REASON =
+  'This drop is on another company\'s books, so this sheet cannot move it. Call the office.';
+
+/**
+ * The ONE rung a whole run is offered.
+ *
+ * A run is a pile of documents that are usually, but not always, on the same
+ * rung — one drop may have been advanced by its own delivery-order QR. Offering
+ * the rung the FURTHEST-BEHIND movable member is ready for is what makes the
+ * sheet's single button honest: press it and everything that can take that step
+ * takes it, and everything already past it reports "already done" rather than
+ * being dragged forward a second time.
+ *
+ * Deliberately NOT the majority rung and NOT the first member's: both would skip
+ * a straggler, and a skipped drop on a delivery run is a customer who does not
+ * get their goods logged.
+ */
+function nextRunStep(members: PublicTripMember[]): PublicTripMember['step'] | null {
+  let best: PublicTripMember['step'] | null = null;
+  let bestIdx = Number.POSITIVE_INFINITY;
+  for (const m of members) {
+    if (!m.step) continue;
+    const idx = doScanRungIndex(m.status);
+    if (idx >= 0 && idx < bestIdx) { bestIdx = idx; best = m.step; }
+    else if (best === null) best = m.step;
+  }
+  return best;
+}
+
+async function buildTripSummary(
+  sb: any,
+  trip: ResolvedTripScan,
+  loaded: TripScanMember[],
+): Promise<PublicTripSummary> {
+  const members: PublicTripMember[] = loaded.map((m) => {
+    if (m.foreign) {
+      return { stopNo: m.stopNo, doNumber: null, status: null, step: null, blockReason: FOREIGN_MEMBER_REASON };
+    }
+    const step = doScanStep(m.status, m.onHold);
+    return {
+      stopNo: m.stopNo,
+      doNumber: m.doNumber,
+      status: String(m.status ?? ''),
+      step: step ? { status: step.status, label: step.label, note: step.note } : null,
+      blockReason: doScanBlockReason(m.status, m.onHold),
+    };
+  });
+  const step = nextRunStep(members);
+  return {
+    kind: 'trip',
+    tripNo: trip.tripNo,
+    tripDate: trip.tripDate,
+    status: String(trip.status ?? ''),
+    step,
+    blockReason: step
+      ? null
+      : members.length === 0
+        ? 'There is nothing on this packing list yet. Call the office.'
+        : 'Nothing on this run is waiting for a scan right now.',
+    members,
+  };
+}
+
 // ── GET /:token ─────────────────────────────────────────────────────────────
 publicDoScan.get('/:token', async (c) => {
   const token = (c.req.param('token') || '').trim();
@@ -194,10 +313,15 @@ publicDoScan.get('/:token', async (c) => {
   if (limited) return limited;
 
   const sb = getSupabaseService(c.env);
-  const found = await resolveDoScanToken(sb, token);
+  const found = await resolveScanToken(sb, token);
   if (found.status === 'read_failed') return readFailed(c);
   if (found.status === 'unknown') return unknownToken(c);
-  return c.json(await buildSummary(sb, found.row));
+  if (found.kind === 'trip') {
+    const loaded = await loadTripScanMembers(sb, found.row);
+    if (loaded.status === 'read_failed') return readFailed(c);
+    return c.json(await buildTripSummary(sb, found.row, loaded.members));
+  }
+  return c.json({ kind: 'do', ...(await buildSummary(sb, found.row)) });
 });
 
 // ── POST /:token/advance ────────────────────────────────────────────────────
@@ -227,9 +351,16 @@ publicDoScan.post('/:token/advance', async (c) => {
   }
 
   const sb = getSupabaseService(c.env);
-  const found = await resolveDoScanToken(sb, token);
+  const found = await resolveScanToken(sb, token);
   if (found.status === 'read_failed') return readFailed(c);
   if (found.status === 'unknown') return unknownToken(c);
+
+  if (found.kind === 'trip') {
+    const loaded = await loadTripScanMembers(sb, found.row);
+    if (loaded.status === 'read_failed') return readFailed(c);
+    return c.json(await advanceWholeRun(c, sb, found.row, loaded.members, wanted));
+  }
+
   const resolved = found.row;
 
   const from = String(resolved.status ?? '');
@@ -374,4 +505,153 @@ async function advanceThroughOfficeWriter(
     return { ok: false, status: res.status, code: String(res.body?.error ?? 'refused') };
   }
   return { ok: true };
+}
+
+/** What happened to ONE drop when the whole run was advanced. */
+type MemberOutcome = {
+  stopNo: number;
+  /** Null for a foreign member — withheld, never printed on a public page. */
+  doNumber: string | null;
+  outcome: 'DONE' | 'ALREADY_DONE' | 'BLOCKED' | 'FAILED';
+  from: string | null;
+  to?: string;
+  message: string;
+};
+
+/**
+ * Apply ONE rung to every delivery order on a packing list.
+ *
+ * THREE PROPERTIES, each of which is the answer to a specific way this could go
+ * wrong on a dock:
+ *
+ *  1. SEQUENTIAL. `for … await`, never Promise.all. Two drops on one run
+ *     frequently share a sales order, and patchDeliveryOrderStatusHandler
+ *     updates it (syncSoDeliveredFromDo) on the delivered hop — run them
+ *     together and they take the shared row in different lock order and
+ *     deadlock. Hookka's bulk transition carries the same rule and the incident
+ *     that bought it.
+ *  2. ONE REFUSAL NEVER ABORTS THE REST. Every member is attempted and every
+ *     member gets a line. The driver needs to know WHICH drop did not move; an
+ *     all-or-nothing tells him nothing and leaves the run half-recorded anyway
+ *     the moment anything is already done.
+ *  3. THE STRANGER IS REFUSED BEFORE IT IS TOUCHED. A foreign member is
+ *     `BLOCKED` without a write and without its document number. Everything else
+ *     is written scoped to THE RUN'S company, which is where
+ *     advanceThroughOfficeWriter takes it from.
+ */
+async function advanceWholeRun(
+  c: Context<{ Bindings: Env }>,
+  sb: unknown,
+  trip: ResolvedTripScan,
+  members: TripScanMember[],
+  wanted: string,
+): Promise<{
+  kind: 'trip'; tripNo: string; outcome: 'DONE' | 'PARTIAL' | 'NOTHING';
+  to: string; message: string; members: MemberOutcome[];
+}> {
+  const results: MemberOutcome[] = [];
+
+  for (const m of members) {
+    if (m.foreign) {
+      results.push({
+        stopNo: m.stopNo, doNumber: null, outcome: 'BLOCKED', from: null,
+        message: FOREIGN_MEMBER_REASON,
+      });
+      continue;
+    }
+    const from = String(m.status ?? '');
+    const wantedIdx = doScanRungIndex(wanted);
+    const currentIdx = doScanRungIndex(from);
+
+    /* Already at or past this rung — an ANSWER, not an error, and checked first
+       so a second scan of the sheet cannot drag a drop that already moved on to
+       the NEXT rung. This is the property that makes re-scanning a run safe. */
+    if (wantedIdx >= 0 && currentIdx >= wantedIdx) {
+      results.push({
+        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'ALREADY_DONE', from,
+        message: doScanConfirmation(wanted as DoScanStep['status']),
+      });
+      continue;
+    }
+
+    const step = doScanStep(m.status, m.onHold);
+    if (!step) {
+      results.push({
+        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
+        message: doScanBlockReason(m.status, m.onHold) ?? '',
+      });
+      continue;
+    }
+    /* This drop is on a different rung from the one the sheet asked for — it is
+       behind or ahead of its neighbours. Not moved, and said so, rather than
+       being pushed onto a rung the ladder did not compute for it. */
+    if (step.status !== wanted) {
+      results.push({
+        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
+        message: 'This drop is at a different step from the rest of the run. Scan its own delivery order to move it.',
+      });
+      continue;
+    }
+    if (!(wantedIdx > currentIdx)) {
+      results.push({
+        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
+        message: 'This step would move the delivery order backwards, so it was not recorded.',
+      });
+      continue;
+    }
+
+    /* THE COMPANY IS THE RUN'S, taken from the trip row the token resolved to.
+       A member that did not match it never reaches this line. */
+    const written = await advanceThroughOfficeWriter(
+      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, step.status,
+    );
+    if (!written.ok) {
+      console.warn('[public-do-scan] run member refused', {
+        tripNo: trip.tripNo, stopNo: m.stopNo, status: written.status, code: written.code,
+      });
+      results.push({
+        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'FAILED', from,
+        message: 'The office system would not record this drop. Call the office and quote this delivery order number.',
+      });
+      continue;
+    }
+    results.push({
+      stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'DONE', from, to: step.status,
+      message: doScanConfirmation(step.status),
+    });
+  }
+
+  const moved = results.filter((r) => r.outcome === 'DONE').length;
+  const stuck = results.filter((r) => r.outcome === 'BLOCKED' || r.outcome === 'FAILED').length;
+  /* The headline is about what the DRIVER has to do next, so "some of it did not
+     move" outranks "most of it did". A run with even one refusal is PARTIAL. */
+  const outcome = stuck > 0 ? 'PARTIAL' as const : moved > 0 ? 'DONE' as const : 'NOTHING' as const;
+  const message =
+    outcome === 'DONE'
+      ? `All ${moved} ${moved === 1 ? 'drop' : 'drops'} recorded.`
+      : outcome === 'PARTIAL'
+        ? `${moved} recorded, ${stuck} not moved — check the list below and call the office about those.`
+        : 'Nothing on this run needed this step.';
+  return { kind: 'trip', tripNo: trip.tripNo, outcome, to: wanted, message, members: results };
+}
+
+/**
+ * A run member, in the shape the single-document writer already takes.
+ *
+ * `companyId` is overwritten by the caller with the RUN's — never this member's
+ * own — so the write cannot follow a row that turned out to be somewhere else
+ * between the read and the write. The other fields carry no weight past the
+ * writer's `id`.
+ */
+function memberAsDo(m: TripScanMember): ResolvedDoScan {
+  return {
+    id: m.doId,
+    companyId: 0, // replaced by the caller; never used from here
+    doNumber: m.doNumber ?? '',
+    customerName: null,
+    city: null,
+    state: null,
+    status: m.status,
+    onHold: m.onHold,
+  };
 }

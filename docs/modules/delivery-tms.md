@@ -562,6 +562,15 @@ rather than needing a schema: 「如果今天出 3 辆罗里，就会有 3 个 p
 Three trips on a date = three packing lists. Mixed companies work by
 construction, because each stop's DO carries its own `company_id`.
 
+> **"No table" is NOT "not a row", and reading it that way cost a release.**
+> `scm.trips` has a uuid primary key and carries `company_id bigint NOT NULL`
+> from mig 0083 — the same migration, with the same treatment, that gave
+> `scm.delivery_orders` the column its public token's tenant scope rests on. PR
+> #2722 read the sentence above as "a packing list is not a row" and shipped the
+> delivery-order scan without the packing-list half on that basis. See
+> `docs/bugs/0545-…`. The rule in this paragraph is about not creating a
+> redundant TABLE; it says nothing about whether a packing list has an identity.
+
 It hangs off **Last Mile Delivery**, not off the Delivery Order —
 「packing list 不是跟着 delivery order 走的，应该挂在 transportation 的
 last-mile delivery 模块下。因为我们还有我们的 delivery 那一边，可能掺杂了不一样
@@ -607,10 +616,89 @@ carry a rack per component, which is why its sheet reads "HB: Rack 19 / Divan:
 Rack 19, 20" — and Houzs has no piece layer to read. Inventing one would be a
 sheet that says more than the data does.
 
-**The QR points at an AUTHED route.** `/scm/fleet-day?date=&trip=<id>` — Last
-Mile Delivery, this day, this trip — which sits behind
-`ScmGuard area="scm.transportation.drivers"`. A public no-login scan target is a
-separate change with its own security review.
+### The sheet's QR is PUBLIC, and one scan moves the whole run (2026-08-26)
+
+> **CORRECTED.** This section used to end: *"The QR points at an AUTHED route.
+> `/scm/fleet-day?date=&trip=<id>` … A public no-login scan target is a separate
+> change with its own security review."* It is public now, and the paragraph
+> above it — "There is no `packing_lists` table and there must not be one" —
+> was read as *"a packing list is not a row"* and used to justify skipping this.
+> **That inference is wrong: a packing list is a trip, and a trip IS a row.** See
+> `docs/bugs/0545-…`. The no-table rule stands; it was never a statement about
+> rows.
+
+The printed sheet's QR encodes **`/d/<64-hex token>`** and is captioned **`SCAN
+AT EACH STEP`** — the same words as the delivery-order print, because it is the
+same act. It opens `frontend/src/pages/PublicDoScan.tsx` with **no login**: the
+driver carrying the sheet has no account, and the token is the credential.
+
+**One scan moves the whole run.** The spec quotes the owner: 「这三个操作都可以
+通过 scan DO 或 scan packing list 来达成（scan packing list 会将该 list 内的货物
+统一全部出完）」. `POST /api/public/do-scan/:token/advance` applies the rung to
+every delivery order on the run.
+
+| what | where |
+| --- | --- |
+| the column pair | `scm.trips.qr_token` + `qr_revoked_at`, **mig 0329** (UNIQUE partial index on the token; no index on revoked_at) |
+| minting | `GET /api/scm/trips/:id/scan-token` — authed, lazy, atomic claim, `backend/src/scm/routes/trip-scan-token.ts` |
+| resolving + members | `resolveScanToken` / `loadTripScanMembers`, `backend/src/scm/lib/do-scan-token.ts` |
+| the fan-out | `advanceWholeRun`, `backend/src/routes/publicDoScan.ts` |
+| arming the print | `armPackingScanToken`, `frontend/src/vendor/scm/lib/packing-scan-token-arm.ts` |
+
+**Four properties, each bought by a specific failure mode:**
+
+1. **`stop_no` order.** The sequence the dispatcher built.
+2. **Sequential, never parallel.** Two drops on one run frequently share a sales
+   order, and the status writer updates it (`syncSoDeliveredFromDo`) on the
+   delivered hop; run them together and they take that shared row in different
+   lock order. Hookka wrote the deadlock down after paying for it, along with
+   invoice numbers colliding on a read-MAX-then-+1. The test **counts writes in
+   flight**, so a `Promise.all` added later fails it.
+3. **One refusal never aborts the rest.** Every drop is attempted and every drop
+   gets a line: `{ stopNo, doNumber, outcome, from, to?, message }` with
+   `outcome ∈ DONE | ALREADY_DONE | BLOCKED | FAILED`, under a run headline of
+   `DONE | PARTIAL | NOTHING`. "3 of 5 recorded" without naming the two is worse
+   than silence — the driver has to re-scan the run to find out which.
+4. **A re-scan drags nothing on.** Each drop's "already at or past this rung" is
+   checked before the ladder, so a second scan of the sheet reports already-done
+   per drop instead of walking everything to the NEXT rung.
+
+**A DROP ON ANOTHER COMPANY'S BOOKS IS REFUSED — and this is the sharp edge.**
+Trips is a **cross-company** module by design; `routes/trips.ts`'s own header
+says *"a trip is raised from whichever company you are in; it may still reference
+the other company's DOs"*, and the paragraph above says mixed companies work by
+construction. On an authed dispatcher's screen that is a feature. Reached from a
+printed sheet with **nobody logged in**, it is a lever that moves another
+company's books — `docs/bugs/0497` with a QR code in front of it. So:
+
+- the run's company comes from the **trip row** the token resolved to;
+- each member DO is read **by id**, returning its **own** `company_id` —
+  deliberately NOT scoped to the run's company, because a scoped read would make
+  a stranger **vanish** from the sheet rather than be reported, and a drop that
+  silently disappears is one the driver loads anyway;
+- the **comparison** is the guard: mismatch ⇒ `BLOCKED`, never written;
+- a foreign drop is named by its **stop number only** — no document number, no
+  customer name. Printing the other company's document number on a page anyone
+  holding the sheet can open is the leak, not the fix;
+- every **write** is scoped to the run's company regardless.
+
+> **AN OPEN DECISION FOR THE OWNER — nobody has ruled on this.** On a
+> *deliberately* mixed run the scan now moves this company's drops and refuses
+> the other company's, telling the driver which. That is the SAFE direction; it
+> is not obviously the WANTED one, and the choice is a business call rather than
+> a routing detail.
+>
+> | option | what it costs | what it means to live with |
+> | --- | --- | --- |
+> | **(a) keep the refusal** *(shipped)* | a mixed run needs a second scan — the other company's delivery orders scanned individually | safest: a public sheet can never move books it does not belong to. A driver on a mixed run does extra work |
+> | **(b) let one scan move both** | the token would have to authorise every company the trip legitimately touches, which widens what one piece of paper can do | most convenient; the blast radius of a lost sheet grows to both companies |
+> | **(c) stop trips carrying another company's DOs at all** | a planning-side change, and it contradicts the cross-company design the TMS was built on | cleanest tenancy story, biggest change, and it removes a capability dispatch may be using |
+>
+> **Recommended: (a) now, and ask whether mixed runs actually happen before
+> spending anything on (b) or (c).** How common a mixed run is has NOT been
+> measured — no production query was made for this change — and that number
+> should decide it. A read-only probe is the way to get it (CLAUDE.md: never ask
+> the owner to run a query, build the check).
 
 ### Data hooks
 

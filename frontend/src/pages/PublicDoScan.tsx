@@ -46,7 +46,44 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
+type Member = {
+  stopNo: number;
+  doNumber: string | null;
+  status: string | null;
+  step: { status: string; label: string; note: string } | null;
+  blockReason: string | null;
+};
+
+type TripSummary = {
+  kind: "trip";
+  tripNo: string;
+  tripDate: string | null;
+  status: string;
+  step: { status: string; label: string; note: string } | null;
+  blockReason: string | null;
+  members: Member[];
+};
+
+type MemberOutcome = {
+  stopNo: number;
+  doNumber: string | null;
+  outcome: "DONE" | "ALREADY_DONE" | "BLOCKED" | "FAILED";
+  from: string | null;
+  to?: string;
+  message: string;
+};
+
+type RunResult = {
+  kind: "trip";
+  tripNo: string;
+  outcome: "DONE" | "PARTIAL" | "NOTHING";
+  to: string;
+  message: string;
+  members: MemberOutcome[];
+};
+
 type Summary = {
+  kind?: "do";
   doNumber: string;
   customerName: string;
   area: string;
@@ -57,6 +94,7 @@ type Summary = {
 };
 
 type AdvanceResult = {
+  kind?: "do";
   outcome: "DONE" | "ALREADY_DONE" | "BLOCKED" | "FAILED";
   doNumber: string;
   from: string;
@@ -80,7 +118,7 @@ export function PublicDoScan() {
      any <Routes> exists (main.tsx renders it straight, the way SurveyPublic is
      rendered), so there is no param to read. */
   const token = window.location.pathname.split("/")[2] || "";
-  const [data, setData] = useState<Summary | null>(null);
+  const [data, setData] = useState<Summary | TripSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -88,7 +126,7 @@ export function PublicDoScan() {
      the same reason DoLoadScan holds it: the confirmation card must stand until
      the paper is scanned again, which is the physical shape of "one scan, one
      step". */
-  const [done, setDone] = useState<AdvanceResult | null>(null);
+  const [done, setDone] = useState<AdvanceResult | RunResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,7 +141,7 @@ export function PublicDoScan() {
           requestIdFromResponse(res),
         );
       }
-      setData(await consumeCorrelated(res, () => res.json() as Promise<Summary>));
+      setData(await consumeCorrelated(res, () => res.json() as Promise<Summary | TripSummary>));
     } catch (e) {
       setError(errorText(e) || "Could not load this delivery order.");
     } finally {
@@ -141,7 +179,7 @@ export function PublicDoScan() {
           requestIdFromResponse(res),
         );
       }
-      setDone(await consumeCorrelated(res, () => res.json() as Promise<AdvanceResult>));
+      setDone(await consumeCorrelated(res, () => res.json() as Promise<AdvanceResult | RunResult>));
     } catch (e) {
       setError(errorText(e) || "Could not record this step. Try again, or call the office.");
     } finally {
@@ -177,34 +215,73 @@ export function PublicDoScan() {
   }
 
   const step = done ? null : data.step;
+  const isRun = data.kind === "trip";
 
   return (
     <Frame>
-      <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
-        <div className="font-mono text-base font-semibold">{data.doNumber}</div>
-        <div>{data.customerName || "—"}</div>
-        <div className="text-ink-secondary">
-          {/* A DASH, NOT "0 lines", when the server could not count them. Zero
-              is a claim about the load; a dash says we do not know. */}
-          {data.area || "—"} ·{" "}
-          {data.itemCount === null
-            ? "line count unavailable"
-            : `${data.itemCount} line${data.itemCount === 1 ? "" : "s"}`}{" "}
-          · {statusLabel("do", data.status)}
+      {isRun ? (
+        <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
+          <div className="font-mono text-base font-semibold">{(data as TripSummary).tripNo}</div>
+          <div className="text-ink-secondary">
+            {(data as TripSummary).tripDate ?? "—"} ·{" "}
+            {(data as TripSummary).members.length} drop
+            {(data as TripSummary).members.length === 1 ? "" : "s"} on this run
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
+          <div className="font-mono text-base font-semibold">{(data as Summary).doNumber}</div>
+          <div>{(data as Summary).customerName || "—"}</div>
+          <div className="text-ink-secondary">
+            {/* A DASH, NOT "0 lines", when the server could not count them. Zero
+                is a claim about the load; a dash says we do not know. */}
+            {(data as Summary).area || "—"} ·{" "}
+            {(data as Summary).itemCount === null
+              ? "line count unavailable"
+              : `${(data as Summary).itemCount} line${(data as Summary).itemCount === 1 ? "" : "s"}`}{" "}
+            · {statusLabel("do", (data as Summary).status)}
+          </div>
+        </div>
+      )}
 
-      {done && (
+      {done && done.kind === "trip" && (
+        <>
+          <Notice
+            tone={(done as RunResult).outcome === "PARTIAL" ? "warn" : "ok"}
+            title={(done as RunResult).tripNo}
+          >
+            {(done as RunResult).message}
+          </Notice>
+          {/* EVERY DROP GETS A LINE. A driver who is told "3 of 5 recorded" and
+              not WHICH two is worse off than one told nothing, because he has to
+              re-scan the whole run to find out. */}
+          <RunList
+            rows={(done as RunResult).members.map((m) => ({
+              stopNo: m.stopNo,
+              doNumber: m.doNumber,
+              tone: m.outcome === "DONE" || m.outcome === "ALREADY_DONE" ? "ok" : "warn",
+              text: m.message,
+            }))}
+          />
+        </>
+      )}
+
+      {done && done.kind !== "trip" && (
         <Notice
-          tone={done.outcome === "DONE" || done.outcome === "ALREADY_DONE" ? "ok" : "warn"}
-          title={`${done.doNumber}`}
+          tone={
+            (done as AdvanceResult).outcome === "DONE" ||
+            (done as AdvanceResult).outcome === "ALREADY_DONE"
+              ? "ok"
+              : "warn"
+          }
+          title={(done as AdvanceResult).doNumber}
         >
-          {done.message}
+          {(done as AdvanceResult).message}
         </Notice>
       )}
 
       {!done && data.blockReason && (
-        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={data.doNumber}>
+        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={isRun ? (data as TripSummary).tripNo : (data as Summary).doNumber}>
           {data.blockReason}
         </Notice>
       )}
@@ -223,7 +300,26 @@ export function PublicDoScan() {
               rung this is the sentence that names the signature, photo and
               location this scan does NOT capture (bug 0481). */}
           <p className="text-xs text-ink-secondary">{step.note}</p>
+          {isRun && (
+            <p className="text-xs text-ink-secondary">
+              This records the step for every drop on this run that is ready for it. Anything already done, on
+              hold, or on another company&apos;s books is left alone and listed back to you.
+            </p>
+          )}
         </>
+      )}
+
+      {/* BEFORE the press, the run shows what it is about to touch — the driver
+          should not have to press to find out a drop is held or foreign. */}
+      {isRun && !done && (
+        <RunList
+          rows={(data as TripSummary).members.map((m) => ({
+            stopNo: m.stopNo,
+            doNumber: m.doNumber,
+            tone: m.blockReason ? "warn" : "ok",
+            text: m.blockReason ?? `${statusLabel("do", m.status)} — ${m.step ? m.step.label : "no step"}`,
+          }))}
+        />
       )}
 
       {error && (
@@ -232,6 +328,41 @@ export function PublicDoScan() {
         </div>
       )}
     </Frame>
+  );
+}
+
+/**
+ * The run, drop by drop.
+ *
+ * A member with no document number is one on another company's books: it is
+ * named by its STOP NUMBER and nothing else, deliberately — printing the other
+ * company's document number on a page anyone holding the sheet can open is the
+ * leak, not the fix.
+ */
+function RunList({
+  rows,
+}: {
+  rows: Array<{ stopNo: number; doNumber: string | null; tone: "ok" | "warn"; text: string }>;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm text-ink-secondary">
+        There is nothing on this packing list yet. Call the office.
+      </div>
+    );
+  }
+  return (
+    <ul className="divide-y divide-line rounded-md border border-line bg-surface text-sm">
+      {rows.map((r) => (
+        <li key={`${r.stopNo}-${r.doNumber ?? "x"}`} className="flex items-start gap-3 px-4 py-3">
+          <span className="mt-0.5 shrink-0 font-mono text-xs text-ink-secondary">#{r.stopNo}</span>
+          <div className="min-w-0">
+            <div className="font-mono font-semibold">{r.doNumber ?? "Not on this run's account"}</div>
+            <div className={r.tone === "ok" ? "text-ink-secondary" : "text-amber-800"}>{r.text}</div>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

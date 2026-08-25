@@ -332,6 +332,20 @@ Its caller identity is `SCM_SYSTEM_STAFF_ID`, the same pinned `scm.staff` row
 every authenticated SCM write already carries; `houzsUser` is left UNDEFINED
 because there is no person, and no fake user id is minted to fill the hole.
 
+**A TOKEN RESOLVES TO EITHER KIND (2026-08-26).** The same two endpoints serve a
+delivery order and a **packing list** — the spec quotes the owner: 「这三个操作都
+可以通过 scan DO 或 scan packing list 来达成（scan packing list 会将该 list 内的
+货物统一全部出完）」. A packing list is a TRIP, and a trip is a row
+(`scm.trips`, mig 0053, `company_id` NOT NULL from mig 0083), so it carries the
+same column pair (mig 0329), the same atomic claim and the same resolver —
+deliberately ONE mechanism, because two would be a second place to forget the
+revocation check. The response carries `kind: 'do' | 'trip'` and the page
+branches on what the server reports, never on the token, which is identical for
+both by design. The run half — stop order, the sequential rule, per-drop results
+and how another company's drop is refused — is documented in
+`docs/modules/delivery-tms.md`, and why it was missed the first time is
+`docs/bugs/0545-the-packing-list-was-left-unscannable-because-a-trip-was-mis.md`.
+
 **Rate limits** (`checkRateLimit`, the KV limiter every other public surface
 uses): 30/900s per IP on the read (matching `survey_read`), 20/900s per IP on
 the advance (matching `survey_submit` / `track`), plus 10/900s per TOKEN — a cap

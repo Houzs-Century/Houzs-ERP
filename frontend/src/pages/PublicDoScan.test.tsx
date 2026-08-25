@@ -54,6 +54,7 @@ function serve(summary: Record<string, unknown>, advanceBody?: Record<string, un
 }
 
 const LOADED = {
+  kind: "do",
   doNumber: "HC-DO-2608-001",
   customerName: "A Customer",
   area: "Klang, Selangor",
@@ -181,5 +182,81 @@ describe("what it refuses to say", () => {
     expect(body).not.toMatch(/RM\s?\d/);
     expect(body).not.toMatch(/\+?60\d{6,}/);
     expect(body).not.toMatch(/\b\d{5}\b/); // a Malaysian postcode
+  });
+});
+
+/* THE PACKING LIST — one sheet, the whole run.
+ *
+ * The page must show the driver, BEFORE he presses, what the scan is about to
+ * touch and what it cannot; and AFTER he presses, what happened to each drop.
+ * "3 of 5 recorded" without naming the two is worse than saying nothing,
+ * because he has to re-scan the run to find out which. */
+const RUN = {
+  kind: "trip",
+  tripNo: "TRIP-2608-001",
+  tripDate: "2026-08-26",
+  status: "PLANNED",
+  step: { status: "DISPATCHED", label: "Confirm Loaded", note: "Press this once every item is on the lorry." },
+  blockReason: null,
+  members: [
+    { stopNo: 1, doNumber: "HC-DO-2608-101", status: "LOADED", step: { status: "DISPATCHED", label: "Confirm Loaded", note: "n" }, blockReason: null },
+    { stopNo: 2, doNumber: null, status: null, step: null, blockReason: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+  ],
+};
+
+describe("the packing-list sheet", () => {
+  it("reads as a run: trip number, drop count, and one button for all of it", async () => {
+    serve(RUN);
+    await mount();
+    expect(screen.getByText("TRIP-2608-001")).toBeTruthy();
+    expect(screen.getByText(/2 drops on this run/)).toBeTruthy();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button").textContent).toContain("Confirm Loaded");
+  });
+
+  it("shows the foreign drop BEFORE the press, by stop number and with no document number", async () => {
+    serve(RUN);
+    await mount();
+    expect(screen.getByText("#2")).toBeTruthy();
+    expect(screen.getByText("Not on this run's account")).toBeTruthy();
+    /* getAllBy, not getBy: the sentence under the button also names the
+       other-company case, and that is deliberate — the driver is told both
+       before he presses and beside the drop itself. */
+    expect(screen.getAllByText(/another company's books/).length).toBeGreaterThan(0);
+    /* The other company's document number must not be anywhere on the page. */
+    expect(document.body.textContent).not.toContain("HC-DO-2608-102");
+  });
+
+  it("lists what happened to EVERY drop after the press", async () => {
+    serve(RUN, {
+      kind: "trip", tripNo: "TRIP-2608-001", outcome: "PARTIAL", to: "DISPATCHED",
+      message: "1 recorded, 1 not moved — check the list below and call the office about those.",
+      members: [
+        { stopNo: 1, doNumber: "HC-DO-2608-101", outcome: "DONE", from: "LOADED", to: "DISPATCHED", message: "Recorded as loaded onto the lorry." },
+        { stopNo: 2, doNumber: null, outcome: "BLOCKED", from: null, message: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+      ],
+    });
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
+    expect(screen.getByText(/1 recorded, 1 not moved/)).toBeTruthy();
+    expect(screen.getByText(/Recorded as loaded onto the lorry/)).toBeTruthy();
+    expect(screen.getAllByText(/another company's books/).length).toBeGreaterThan(0);
+    expect(screen.getByText("#1")).toBeTruthy();
+    expect(screen.getByText("#2")).toBeTruthy();
+  });
+
+  it("says the button moves the whole run, and what it will leave alone", async () => {
+    serve(RUN);
+    await mount();
+    expect(screen.getByText(/every drop on this run that is ready for it/)).toBeTruthy();
+    expect(screen.getByText(/already done, on hold, or on another company/)).toBeTruthy();
+  });
+
+  it("an empty run says so instead of offering a button", async () => {
+    serve({ ...RUN, step: null, members: [], blockReason: "There is nothing on this packing list yet. Call the office." });
+    await mount();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getAllByText(/nothing on this packing list yet/).length).toBeGreaterThan(0);
   });
 });
