@@ -114,7 +114,10 @@ function PackingRow(props: {
   const rollup = rollupDeliveryStatus(list.stops);
   const label = rollupLabel(rollup);
   const volume = fmtM3(list.m3_milli);
-  const runUrl = origin ? packingRunUrl(origin, list, date) : '';
+  /* The QR row explains the code WITHOUT minting one: minting is a write, and
+     opening a disclosure panel must not create a public credential. The sheet
+     itself arms the token when it is printed. */
+  const runOrigin = origin ? `${origin.replace(/\/+$/, '')}/d/…` : '';
 
   return (
     <>
@@ -157,8 +160,9 @@ function PackingRow(props: {
         <tr className="border-b border-border">
           <td colSpan={10} className="py-2 pr-2 text-[11.5px] text-ink-secondary">
             The printed sheet carries a scannable code for this run. It opens{' '}
-            <span className="break-all font-mono">{runUrl}</span> — a signed-in page, so whoever scans it has to be
-            logged in.
+            <span className="break-all font-mono">{runOrigin}</span> — a PUBLIC page: anyone holding the
+            printed sheet can open it without signing in, and scanning it records the next step for every drop on
+            this run. Treat the sheet like the goods. If one goes astray, ask the office to revoke its code.
           </td>
         </tr>
       )}

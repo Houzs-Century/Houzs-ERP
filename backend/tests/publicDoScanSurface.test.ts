@@ -30,6 +30,9 @@ const read = (p: string) => readFileSync(resolve(__dirname, '..', p), 'utf8');
 const ROUTE = read('src/routes/publicDoScan.ts');
 const TOKEN_LIB = read('src/scm/lib/do-scan-token.ts');
 const MINT_ROUTE = read('src/scm/routes/delivery-order-scan-token.ts');
+const TRIP_MINT = read('src/scm/routes/trip-scan-token.ts');
+const MIG_TRIP = read('src/db/migrations-pg/0329_scm_trip_public_scan_token.sql');
+const SCM_INDEX = read('src/scm/index.ts');
 const INDEX = read('src/index.ts');
 const MIG = read('src/db/migrations-pg/0328_scm_do_public_scan_token.sql');
 
@@ -97,7 +100,8 @@ describe('the tenant boundary, statement by statement', () => {
   test('every query in the public route is scoped, bar the named token resolve', () => {
     const code = codeOf(ROUTE);
     const froms = code.match(/\bsb\s*\n?\s*\.from\(|\bsb\.from\(/g) ?? [];
-    /* One `.from(` in this file: the line count. The token resolve lives in the
+    /* One `.from(` in this file: the line count. Every other query — the token
+       resolve, the run's stops and its member delivery orders — lives in the
        token library, which this test checks separately below. */
     expect(froms.length, 'a new query appeared in the public route — scope it').toBe(1);
     expect(code).toContain('scopeToCompanyId(');
@@ -111,10 +115,13 @@ describe('the tenant boundary, statement by statement', () => {
   test('the token library has exactly one unscoped query, and it is the resolve', () => {
     const code = codeOf(TOKEN_LIB);
     const froms = code.match(/\.from\('delivery_orders'\)/g) ?? [];
-    expect(froms.length).toBe(3); // resolve + read + claim
+    /* resolve + the run's member read. The mint's two statements moved to
+       `.from(table)` when the trip learned the same mechanism. */
+    expect(froms.length).toBe(2);
     // The two mint statements both carry the company; the resolve is the one
     // that cannot, and mig 0328's UNIQUE index is what makes that safe.
     expect((code.match(/\.eq\('company_id', companyId\)/g) ?? []).length).toBe(2);
+    expect((code.match(/\.from\(table\)/g) ?? []).length, 'the mint must serve both tables through one path').toBe(2);
     /* And every one of the three binds its `error`. supabase-js does not throw,
        so an unbound read cannot tell "the query failed" from "there is nothing
        here" — which on THIS route would answer 404 to a blip and tell whoever
@@ -175,5 +182,70 @@ describe('rate limiting', () => {
     expect(code).toContain('const WRITE_MAX = 20;');
     // The extra one nothing else has: a per-DOCUMENT cap, keyed by the token.
     expect(code).toContain("checkRateLimit(c, 'do_scan_doc', token, PER_TOKEN_MAX, WINDOW_SEC)");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// THE PACKING-LIST HALF — same mechanism, and the properties that prove it is
+// the same one rather than a second.
+// ────────────────────────────────────────────────────────────────────────────
+describe('the trip token is the SAME mechanism, not a second one', () => {
+  test('mig 0329 gives scm.trips the same column pair and a UNIQUE partial index', () => {
+    expect(MIG_TRIP).toContain('ALTER TABLE scm.trips ADD COLUMN IF NOT EXISTS qr_token text');
+    expect(MIG_TRIP).toContain('ALTER TABLE scm.trips ADD COLUMN IF NOT EXISTS qr_revoked_at timestamptz');
+    expect(MIG_TRIP).toContain('CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_qr_token');
+    expect(MIG_TRIP).toContain('WHERE qr_token IS NOT NULL');
+    expect(MIG_TRIP).toContain('-- REVERSAL:');
+    /* revoked_at gets NO index, for mig 0126's reason — a flag read only after
+       the row has been found. */
+    expect(MIG_TRIP).not.toMatch(/INDEX[^\n]*qr_revoked_at/);
+  });
+
+  test('the trip mint reuses the shared claim, scoped to the session company', () => {
+    expect(TRIP_MINT).toContain("getOrCreateScanToken(sb, 'trips', id, co.companyId)");
+    expect(TRIP_MINT).toContain('requireActiveCompanyId(c)');
+    expect(TRIP_MINT).toContain("tripScanToken.use('*', supabaseAuth)");
+    /* The public route must never reach a minter, for either kind. */
+    expect(codeOf(ROUTE)).not.toContain('getOrCreateScanToken');
+  });
+
+  test('the trip mint is mounted BEFORE the main trips router', () => {
+    const first = SCM_INDEX.indexOf('scm.route("/trips", tripScanToken)');
+    const main = SCM_INDEX.indexOf('scm.route("/trips", trips)');
+    expect(first).toBeGreaterThan(-1);
+    expect(first).toBeLessThan(main);
+  });
+});
+
+describe('a run cannot move another company\'s goods', () => {
+  test('the member comparison is against the RUN\'s company, per member', () => {
+    const code = codeOf(TOKEN_LIB);
+    expect(code).toContain('const foreign = Number(row.company_id) !== trip.companyId;');
+    /* A foreign member is withheld, not merely flagged: no document number, no
+       status. Printing the other company's document number on a public page is
+       the leak rather than the fix. */
+    expect(code).toContain('doNumber: foreign ? null :');
+    expect(code).toContain('status: foreign ? null :');
+  });
+
+  test('the run write takes the TRIP\'s company, never the member\'s', () => {
+    const code = codeOf(ROUTE);
+    expect(code).toContain('{ ...memberAsDo(m), companyId: trip.companyId }');
+    /* memberAsDo must not smuggle a company through — it hands over a zero that
+       the caller replaces, so a forgotten override cannot silently widen. */
+    expect(code).toContain('companyId: 0,');
+  });
+
+  test('the members are read in stop order', () => {
+    expect(codeOf(TOKEN_LIB)).toContain(".order('stop_no', { ascending: true })");
+  });
+});
+
+describe('the run is applied sequentially', () => {
+  test('a for-await loop, and no Promise.all over the members', () => {
+    const run = codeOf(ROUTE).slice(codeOf(ROUTE).indexOf('async function advanceWholeRun'));
+    expect(run).toMatch(/for \(const m of members\) \{/);
+    expect(run, 'the run must not be fired in parallel').not.toContain('Promise.all');
+    expect(run).not.toContain('members.map(async');
   });
 });

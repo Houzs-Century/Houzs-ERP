@@ -43,27 +43,31 @@ const qty = (n: number): string => (Number.isInteger(n) ? String(n) : String(n))
 const unitsLabel = (n: number): string => `${qty(n)} ${n === 1 ? 'unit' : 'units'}`;
 
 /**
- * Where the QR points. The EXISTING authed app route for the run — Last Mile
- * Delivery, on this day, focused on this trip. It requires a login by
- * construction (`ScmGuard area="scm.transportation.drivers"` in App.tsx).
+ * Where the QR points: the PUBLIC scan page for this run, /d/<token>, which
+ * opens with NO login.
  *
- * RE-CHECKED 2026-08-26, when the DELIVERY ORDER's printed QR did go public
- * (`/d/<token>`, no login — the owner's call, 「就跟hookka一样」). This one stays
- * authed, and the reason is structural rather than a deferral: the public token
- * is a column on `scm.delivery_orders`, minted per DOCUMENT, and it resolves to
- * exactly one row — which is what supplies the company scope and what makes the
- * forward-only one-rung ladder meaningful. A packing list is not a row. There is
- * no `packing_lists` table at all (backend/src/scm/lib/packing-list-view.ts: "A
- * PACKING LIST IS A TRIP, RENDERED"), so there is nothing here to hang a token
- * on, and this sheet is a run OVERVIEW rather than a scan target — it advances
- * nothing. Giving a trip its own public token is a separate change with its own
- * decision to take, and it is still not this one.
+ * IT POINTED AT THE AUTHED PAGE UNTIL 2026-08-26, and the comment that stood
+ * here gave the reason — that a packing list "is not a row", so there was
+ * nothing to hang a public token on. That was wrong, and it is worth recording
+ * why rather than quietly deleting it: A PACKING LIST IS A TRIP, AND A TRIP IS A
+ * ROW. scm.trips has a uuid primary key (mig 0053) and carries company_id NOT
+ * NULL from mig 0083 — the same migration, with the same treatment, that gave
+ * scm.delivery_orders the column the delivery-order token's tenant scope rests
+ * on. Every property the DO token needed was here all along; mig 0329 adds the
+ * column pair and the sheet now carries a real scan target.
+ *
+ * ONE SCAN MOVES THE WHOLE RUN. The spec quotes the owner: 「scan packing list
+ * 会将该 list 内的货物统一全部出完」. The public route applies the rung to every
+ * delivery order on the run, in stop order, one at a time, and reports what
+ * happened to each.
+ *
+ * `token` is null until the sheet has been armed (armPackingScanToken), and a
+ * null token draws NO QR rather than falling back to the authed link — a sheet
+ * carrying a link only office staff can open is worse than one carrying none,
+ * because the driver finds out at the lorry.
  */
-export function packingRunUrl(origin: string, list: PackingListRow, date: string): string {
-  const p = new URLSearchParams();
-  p.set('date', list.trip_date ?? date);
-  p.set('trip', list.trip_id);
-  return `${origin}/scm/fleet-day?${p.toString()}`;
+export function packingRunUrl(origin: string, token: string | null): string | null {
+  return token ? `${origin.replace(/\/+$/, '')}/d/${encodeURIComponent(token)}` : null;
 }
 
 /** Draw ONE trip's packing list into `doc`. Split out so a whole-day export can
@@ -133,7 +137,7 @@ export async function renderPackingListInto(
     if (ty + QR_MM + 6 > 282) { doc.addPage(); ty = MARGIN; }
     drawQrIntoPdf(doc, opts.runUrl, rightEdge - QR_MM, ty, QR_MM);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(110);
-    doc.text('SCAN · OPEN THIS RUN', rightEdge, ty + QR_MM + 3, { align: 'right' });
+    doc.text('SCAN AT EACH STEP', rightEdge, ty + QR_MM + 3, { align: 'right' });
     doc.setTextColor(0);
   }
 
@@ -249,7 +253,12 @@ export async function generatePackingListPdf(
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const runUrl = typeof window !== 'undefined' ? packingRunUrl(window.location.origin, list, opts.date) : null;
+  /* The token is fetched here, in the one place that renders a whole sheet, so
+     no print call site has to remember to arm it. */
+  const { armPackingScanToken } = await import('./packing-scan-token-arm');
+  const runUrl = typeof window !== 'undefined'
+    ? packingRunUrl(window.location.origin, await armPackingScanToken(list.trip_id))
+    : null;
   await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl });
   const name = [list.trip_no ?? 'packing-list', list.lorry_plate].filter(Boolean).join('-');
   deliverPdf(doc, `${safeName(name)}.pdf`, opts.action);

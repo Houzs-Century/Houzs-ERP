@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 /* The packing list sheet — what it DRAWS, and in what order.
  *
  * A PDF generator that compiles is not a sheet that says the right thing, and
@@ -198,25 +200,54 @@ describe('the packing list sheet', () => {
     expect(renamed.some((d) => d.text === DEFAULT_BRANDING.companyName)).toBe(false);
   });
 
+  /* THE CAPTION MOVED WITH THE LINK (2026-08-26). It read "SCAN · OPEN THIS
+     RUN" while the code opened an authed page nobody holding the sheet could
+     reach. The code is public now and it RECORDS a step rather than opening a
+     view, so the caption says what the DO print's does — the same words on both
+     papers, because it is the same act. */
   test('draws the run QR and captions it, only when a URL was supplied', async () => {
-    const url = 'https://erp.example.test/scm/fleet-day?date=2026-08-26&trip=trip-1';
+    const url = `https://erp.example.test/d/${'a'.repeat(64)}`;
     const withQr = await render(LIST, url);
-    expect(withQr.some((d) => d.text === 'SCAN · OPEN THIS RUN')).toBe(true);
+    expect(withQr.some((d) => d.text === 'SCAN AT EACH STEP')).toBe(true);
     const withoutQr = await render(LIST, null);
+    expect(withoutQr.some((d) => d.text === 'SCAN AT EACH STEP')).toBe(false);
     expect(withoutQr.some((d) => d.text === 'SCAN · OPEN THIS RUN')).toBe(false);
   });
 });
 
 describe('packingRunUrl', () => {
-  test('points at the authed Last Mile Delivery route for THIS run', async () => {
+  /* IT POINTED AT THE AUTHED PAGE UNTIL 2026-08-26. The sheet is carried by a
+     driver with no account, so the link has to open without one; the token is
+     the credential (mig 0329). The old assertions are rewritten rather than
+     deleted, because the property underneath them survives: the sheet's QR
+     addresses THIS run and nothing else. */
+  test('points at the PUBLIC scan page for this run', async () => {
     const { packingRunUrl } = await import('./packing-list-pdf');
-    expect(packingRunUrl('https://erp.example.test', LIST, '2026-08-26'))
-      .toBe('https://erp.example.test/scm/fleet-day?date=2026-08-26&trip=trip-1');
+    const token = 'b'.repeat(64);
+    expect(packingRunUrl('https://erp.example.test', token))
+      .toBe(`https://erp.example.test/d/${token}`);
   });
 
-  test('falls back to the page date when the trip carries none', async () => {
+  test('a trailing slash on the origin does not double up', async () => {
     const { packingRunUrl } = await import('./packing-list-pdf');
-    expect(packingRunUrl('https://erp.example.test', { ...LIST, trip_date: null }, '2026-08-27'))
-      .toBe('https://erp.example.test/scm/fleet-day?date=2026-08-27&trip=trip-1');
+    const token = 'c'.repeat(64);
+    expect(packingRunUrl('https://erp.example.test/', token))
+      .toBe(`https://erp.example.test/d/${token}`);
+  });
+
+  /* NO TOKEN DRAWS NO QR — never a fallback to the authed link. A sheet
+     carrying a link only office staff can open is worse than one carrying
+     none, because the driver finds out at the lorry. */
+  test('an unarmed sheet gets no URL at all', async () => {
+    const { packingRunUrl } = await import('./packing-list-pdf');
+    expect(packingRunUrl('https://erp.example.test', null)).toBeNull();
+    expect(packingRunUrl('https://erp.example.test', '')).toBeNull();
+  });
+
+  test('the authed run URL is gone from the print path', async () => {
+    const src = readFileSync(resolve(__dirname, 'packing-list-pdf.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(src).not.toContain('/scm/fleet-day');
   });
 });

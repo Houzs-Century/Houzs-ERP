@@ -86,6 +86,7 @@ import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
+import { tripScanToken } from "./routes/trip-scan-token";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
 import { arReconciliation } from "./routes/ar-reconciliation";
@@ -589,6 +590,10 @@ scm.route("/delivery-rate-cards", deliveryRateCards);
 scm.use("/driver-leave/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/driver-leave", driverLeave);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
+/* Two routers on one prefix, like /delivery-orders-mfg above. The packing
+   list's public scan-token mint is a NEW FILE so the large trips router does
+   not grow; '/:id/scan-token' is two segments and cannot shadow '/packing'. */
+scm.route("/trips", tripScanToken);
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/dp-orders", dpOrders);
