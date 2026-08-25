@@ -72,6 +72,7 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
       department_name?: string | null;
       permissions?: string[];
       permissions_set?: Set<string>;
+      position_capabilities?: string[];
     } | undefined;
     // Stash the real Houzs user (integer id) for per-user PUBLIC-schema lookups
     // (the next line overwrites `user` with the scm.staff system identity).
@@ -92,6 +93,12 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
             department_name: hu.department_name ?? null,
             permissions: hu.permissions,
             permissions_set: hu.permissions_set,
+            // Operational-capability grants (position_capabilities, mig 0322)
+            // carried through so SCM handlers can gate on them against the REAL
+            // caller — e.g. the DO status endpoint admits a storekeeper's
+            // scan-to-LOADED on scm.do.load. hasPositionCapability fails closed
+            // when this is absent, so an older cached session simply can't.
+            position_capabilities: hu.position_capabilities,
           }
         : undefined,
     );
