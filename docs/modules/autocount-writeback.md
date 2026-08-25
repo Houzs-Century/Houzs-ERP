@@ -3331,6 +3331,17 @@ It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
 names something an outbox ROW can be — a document with a status, attempts and a
 retry policy — and a log read is none of those.
 
+**A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
+`sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
+pending row outright — `row-pending`, and rightly, since the sweep is already
+going to take it. So on the shape the cascade meets most, a chain where every
+document waits on the one above it, every ancestor came back `row-pending` and
+nothing was sent: the button did exactly what the operator could see, nothing.
+Owner: 「顺着点完…就没问题。但…直接去点 Sales Invoice…就不行」— pressing each row
+by hand worked because that sends its own pending row directly, which is
+precisely what the cascade omitted. Failed and skipped ancestors still take the
+re-queue path.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,

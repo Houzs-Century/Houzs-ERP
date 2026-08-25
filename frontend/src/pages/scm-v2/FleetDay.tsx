@@ -93,6 +93,7 @@ import { useUpdateTrip } from '../../vendor/scm/lib/trips-queries';
 import { useDriverLeave } from '../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel } from '../../vendor/shared/crew-leave';
 import { AssignSelect, OverflowSection } from './delivery-propose-ui';
+import { PackingListsSection } from '../../vendor/scm/components/PackingListsSection';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
 
@@ -716,6 +717,13 @@ export function FleetDay() {
         </DeliveryMapPanel>
       )}
       </div>{/* /split */}
+
+      {/* PACKING LISTS — owner 2026-08-25: the packing list hangs off Last Mile
+          Delivery, not off a delivery order, because one run can carry both
+          companies' DOs. One row per trip of this day; the printed sheet is the
+          run in LOADING order. Full width, under the split, because it is about
+          the whole day rather than about the board or the map. */}
+      <PackingListsSection date={date} warehouseId={warehouseId || null} />
 
       <p className="flex items-center gap-1.5 text-[11px] text-ink-muted">
         <Truck size={12} strokeWidth={1.75} />
