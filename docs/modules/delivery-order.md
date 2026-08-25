@@ -253,15 +253,27 @@ still need `edit` on `scm.sales.delivery`.
 > & Permissions matrix, `position_capabilities`, mig 0322) reaches the status
 > endpoint WITHOUT `scm.sales.delivery` edit — a storekeeper scan-confirms
 > (→`LOADED`, the stock OUT) and a driver dispatches (→`DISPATCHED`). The guard
-> only proves the caller holds one of the two verbs; `patchDeliveryOrderStatusHandler`
-> then binds the verb to the transition (`LOADED`⇒`scm.do.load`,
-> `DISPATCHED`⇒`scm.do.dispatch`, everything else 403 `capability_required`) via
-> `c.get('scmWriteBypassed')` + `hasPositionCapability(c.get('houzsUser'), …)`.
-> A caller with real delivery access is unflagged and skips the gate — nothing
-> existing changes. The scan page `/scm/do-load` mirrors this on the client
-> (`ScmGuard … allowCapability="scm.do.load"`); the endpoint is the boundary.
-> Driver POD/DELIVERED still needs real access — that lands with the driver
-> isolation change. Pinned by `backend/tests/doStatusCapabilityGate.test.ts`.
+> only proves the caller holds one of the verbs; `patchDeliveryOrderStatusHandler`
+> then binds it via `statusCapabilityRefusal` (`backend/src/scm/lib/do-status-capability.ts`):
+> `LOADED`⇒`scm.do.load`, `DISPATCHED` **and the POD chain (`IN_TRANSIT` /
+> `SIGNED` / `DELIVERED`)**⇒`scm.do.dispatch`, everything else 403
+> `capability_required`. A caller with real delivery access is unflagged and
+> skips the gate — nothing existing changes. The scan page `/scm/do-load`
+> mirrors the load half (`ScmGuard … allowCapability="scm.do.load"`); the
+> endpoint is the boundary.
+>
+> **Driver POD (2026-08-25).** The POD chain additionally requires OWNERSHIP,
+> checked once the DO's crew is known: `resolveDeliveryScope` self-scopes a
+> linked driver and `scopeMatchesAssignment(scope, fetchDoCrewAssignment(id))`
+> must match — a driver completes only their OWN job (an admin acting on behalf
+> resolves to `all` and passes), and only when the DO is ALREADY shipped
+> (`prev ∈ DO_STOCK_OUT_STATES`), so a POD never triggers a first ship / stock
+> OUT — it records arrival. Frontend: the POD entry in
+> `frontend/src/mobile/MobileApp.tsx` + the `MobileDeliveryPlanning` run-sheet
+> steps open for `canDriverCompleteDelivery` (`frontend/src/auth/salesAccess.ts`,
+> holds `scm.do.dispatch`); Convert-to-DO stays Office-only. Pinned by
+> `backend/tests/doStatusCapabilityGate.test.ts` +
+> `backend/tests/driverPodOwnership.test.ts`.
 
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|

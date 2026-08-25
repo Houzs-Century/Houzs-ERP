@@ -234,6 +234,22 @@ export function canOperateSalesInvoices(
 }
 
 /**
+ * May this user COMPLETE their own delivery — the driver POD chain (On the way /
+ * Arrived / Proof of Delivery)? A driver holds no scm.sales.delivery edit, so
+ * canOperateDeliveryOrders is false for them; this admits a position holding the
+ * scm.do.dispatch operational capability (the editable Roles & Permissions
+ * matrix). The SERVER is the boundary — it additionally enforces that the DO is
+ * the caller's OWN, already-dispatched job — so this only decides whether the
+ * button SHOWS. Deliberately NOT folded into canOperateDeliveryOrders, which
+ * also gates office-only actions (Convert-to-DO).
+ */
+export function canDriverCompleteDelivery(
+  user: AuthUser | null | undefined,
+): boolean {
+  return (user?.position_capabilities ?? []).includes("scm.do.dispatch");
+}
+
+/**
  * PROCUREMENT OPERATE gate — "may this user CREATE or CHANGE a PO / GRN".
  *
  * Same job as {@link canOperateScmSalesDoc} for the two supply-chain areas, and
