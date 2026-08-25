@@ -88,11 +88,6 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // per-device layout preference the user can toggle off (and any explicit
   // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
   { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
-  // MRP "Sales Orders" column toggle (2026-08-25): whether the bedframe/mattress/
-  // accessory tabs expand every row to its SO breakdown — a per-device layout
-  // preference the operator flips from the Columns menu. No identity/company
-  // data (the value is '0'/'1'); same class as dmap-compact.
-  { id: "mrp-show-so-column", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "mrp:show-so", matches: exact("mrp:show-so") },
   {
     id: "grid-and-panel-layout",
     classification: "DEVICE_PREF",
@@ -184,7 +179,6 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
-  "pages/scm-v2/Mrp.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

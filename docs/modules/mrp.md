@@ -583,17 +583,3 @@ the page showing "as of &lt;time&gt;".
   + `POST /regenerate`), `src/index.ts` (cron branch), `wrangler.toml` (cron),
   `frontend/src/vendor/scm/lib/mrp-queries.ts` (`useRegenerateMrp` + `stored` /
   `computedAt`), `frontend/src/pages/scm-v2/Mrp.tsx` (Regenerate button + "as of").
-
-## 10. "Sales Orders" columns toggle (owner 2026-08-25)
-
-The MRP toolbar carries a **Columns** menu (mirroring the Sales-Order list's
-control) with one toggle, **Sales Orders**, OFF by default and persisted to
-`localStorage['mrp:show-so']`. The bedframe / mattress / accessory tabs group by
-SKU (a SKU can serve several SOs, so the order breakdown lives one drill-down
-level below the SKU row); turning the toggle on expands **every** row to its SO
-breakdown at once, so the operator sees which orders need each SKU without
-opening rows one by one. It is implemented as `forceOpen` threaded into
-`ModelRows` (`modelOpen`/`vOpen` read `showSo || …`), so it reuses the existing
-child-row rendering rather than adding a new one. The sofa tab already lists SOs
-per row (`SofaSoTable`), so the toggle is a no-op there. Files:
-`frontend/src/pages/scm-v2/Mrp.tsx` (`ColumnsMenu`, `showSo` state, `forceOpen`).
