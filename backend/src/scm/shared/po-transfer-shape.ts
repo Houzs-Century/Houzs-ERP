@@ -51,10 +51,30 @@ export interface PoLineShape {
    * Ref names them all.
    */
   sourceSoDocNo: string | null;
+  /**
+   * Is the source sales order already in the account book?
+   *
+   * Read from `mfg_sales_orders.linked_ac_docno`. It is what tells a key that
+   * does not exist YET from one that never will — see the `wait` shape.
+   */
+  sourceSoInBook: boolean;
 }
 
 export type PoTransferShape =
   | { kind: 'transfer'; dtlKeys: number[]; fromSoDocNo: string }
+  /**
+   * The sales order is not in the account book YET, so its line keys do not
+   * exist yet either. This is a transfer that cannot be addressed at this
+   * instant — NOT a document that can never be one.
+   *
+   * The distinction is the whole point. `create` used to swallow this case, and
+   * a purchase order raised in the same minute as its sales order silently
+   * became a create with no link to it in the book. Measured on production
+   * 2026-08-25: HC-PO-2608-007 from HC-SO-2608-008. The five before it
+   * transferred correctly — they were raised long enough afterwards. A race,
+   * not a rule, and a create is the one answer that cannot be taken back.
+   */
+  | { kind: 'wait'; fromSoDocNo: string; reason: string }
   | { kind: 'create'; reason: string };
 
 /**
@@ -88,12 +108,30 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
     };
   }
 
-  const keyless = lines.filter((l) => l.sourceAcDtlKey == null).length;
-  if (keyless) {
+  const keylessLines = lines.filter((l) => l.sourceAcDtlKey == null);
+  if (keylessLines.length) {
+    /* NOT YET vs NEVER. A line whose sales order is not in the book yet has no
+       key because nothing has issued one — waiting produces the key. A line
+       whose sales order IS in the book and still has no key is a real gap, and
+       a create is the honest answer there. */
+    const waitingOn = [...new Set(keylessLines
+      .filter((l) => l.so_item_id != null && !l.sourceSoInBook)
+      .map((l) => String(l.sourceSoDocNo ?? '').trim())
+      .filter((v) => v !== ''))];
+    if (waitingOn.length === 1 && keylessLines.every((l) => l.so_item_id != null && !l.sourceSoInBook)) {
+      return {
+        kind: 'wait',
+        fromSoDocNo: waitingOn[0],
+        reason:
+          `${keylessLines.length} line(s) come from ${waitingOn[0]}, which is not in the account `
+          + 'book yet, so its line keys do not exist yet either. The transfer waits for it rather '
+          + 'than becoming a create that could never be linked back.',
+      };
+    }
     return {
       kind: 'create',
       reason:
-        `${keyless} line(s) name a sales-order line the account book has no key for, so the `
+        `${keylessLines.length} line(s) name a sales-order line the account book has no key for, so the `
         + 'transfer cannot address them',
     };
   }
