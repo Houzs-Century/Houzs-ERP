@@ -11,11 +11,11 @@ import { useToast } from "../hooks/useToast";
  * too — see `lib/totpEnrollment.ts` for why an auth flow must not exist twice.
  *
  * THE DISABLE GATE IS THE DESKTOP'S GATE. Desktop asks for a current 6-digit
- * code (or a backup code) in a `window.prompt` and posts it to
- * /api/totp/disable. Here it is an inline field instead of a prompt — a browser
- * prompt is unusable inside an installed PWA / native shell and several webviews
- * suppress it entirely, which would have left the DISABLE path as unreachable on
- * the phone as it was before. The REQUIREMENT is identical and unrelaxed: a code
+ * code (or a backup code) in the in-app prompt dialog (hooks/useDialog) and
+ * posts it to /api/totp/disable. Here it is an inline field instead of a
+ * dialog — a browser prompt is unusable inside an installed PWA / native shell
+ * and several webviews suppress it entirely, which would have left the DISABLE
+ * path as unreachable on the phone as it was before. The REQUIREMENT is identical and unrelaxed: a code
  * must be typed, it travels to the server, and the server verifies it. Revealing
  * the field posts nothing. There is no code-less path off this card.
  *

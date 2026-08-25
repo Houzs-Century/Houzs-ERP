@@ -78,9 +78,12 @@ this module was created to record.
 
 **1. Disabling 2FA is gated identically on both surfaces, and the gate is the
 server's.** A code must be supplied and posted to `/api/totp/disable`. The two
-surfaces differ ONLY in how they collect it: desktop uses `window.prompt`, mobile
+surfaces differ ONLY in how they collect it: desktop uses the in-app prompt
+dialog (`useDialog().prompt` from `hooks/useDialog`, danger-toned, required —
+a naked `window.prompt` until 2026-08-25, which an installed PWA suppresses, so
+the desktop disable path could silently no-op there; `docs/bugs/0539-the-last-two-naked-prompts-2fa-disable-and-pos-pin-entry-spo.md`), mobile
 uses an inline field, because a browser prompt is suppressed in several webviews
-and unusable in an installed PWA — porting the prompt verbatim would have shipped
+and unusable in an installed PWA — porting a prompt verbatim would have shipped
 a disable path that still did not work on a phone. Revealing the mobile field
 posts nothing. **A Disable control that does not carry a code is a downgrade, not
 a simplification.**

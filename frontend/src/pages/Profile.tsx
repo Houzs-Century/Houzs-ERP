@@ -6,6 +6,7 @@ import { StatusDot } from "../components/StatusDot";
 import { Avatar } from "../components/Avatar";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../hooks/useToast";
+import { useDialog } from "../hooks/useDialog";
 import { api } from "../api/client";
 import { useProfilePicture } from "../lib/profilePicture";
 import { useTotpEnrollment } from "../lib/totpEnrollment";
@@ -474,6 +475,7 @@ function PasswordSection() {
 // the desktop's markup over that hook and nothing else.
 function TwoFactorSection() {
   const toast = useToast();
+  const dialog = useDialog();
   const totp = useTotpEnrollment();
   const [code, setCode] = useState("");
 
@@ -493,13 +495,17 @@ function TwoFactorSection() {
 
   /* THE DISABLE GATE, unchanged: a current 6-digit code or a backup code, which
      the server verifies. The phone asks for exactly the same thing through an
-     inline field rather than a prompt — window.prompt is unusable inside an
-     installed PWA and suppressed in several webviews, which would have left the
-     disable path as unreachable on a phone as it was before. */
+     inline field (mobile/MobileTwoFactorCard) — a modal prompt is unusable
+     inside an installed PWA and suppressed in several webviews. */
   async function disable() {
-    const entered = window.prompt(
-      "Enter a current 6-digit code (or a backup code) to turn off two-factor:",
-    );
+    const entered = await dialog.prompt({
+      title: "Turn off two-factor authentication?",
+      message: "Enter a current 6-digit code (or a backup code) to confirm.",
+      placeholder: "6-digit code or backup code",
+      required: true,
+      danger: true,
+      confirmLabel: "Turn off",
+    });
     if (!entered) return;
     if (await totp.disable(entered)) {
       toast.success("Two-factor authentication disabled");
