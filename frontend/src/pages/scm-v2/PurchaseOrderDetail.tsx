@@ -852,7 +852,7 @@ export const PurchaseOrderDetail = () => {
                 <StatusPill docType="po" status={po.status} />
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
-                <span className="font-mono font-semibold text-primary-ink">
+                <span className="font-mono font-semibold text-primary-ink text-[15px]">
                   {poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
                 </span>
                 <span>·</span>
