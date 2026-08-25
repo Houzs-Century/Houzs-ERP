@@ -52,6 +52,8 @@ import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { loadSoWarehouseMasters, type SoWarehouseMasters, type SoWarehouseSource } from '../lib/so-warehouse';
+import { computeSoDrift, type DriftLine } from '../lib/so-po-drift';
 import {
   loadLeadTimeBase,
   resolveLeadDays,
@@ -914,6 +916,11 @@ mfgPurchaseOrders.get('/:id', async (c) => {
      (same helper both sides) so a formatter change can't false-trip it. */
   type SoSnap = { item_code: string; item_group: string | null; description: string | null; variants: Record<string, unknown> | null; warehouse_id: string | null };
   const soLineById = new Map<string, SoSnap>();
+  /* Source-SO header warehouse + masters, so the drift check resolves a NULL SO
+     line warehouse to the order's own before comparing (bug 0539). Best-effort,
+     loaded beside the snapshot below. */
+  const soHeaderByDoc = new Map<string, SoWarehouseSource>();
+  let whMasters: SoWarehouseMasters = { warehouses: [], stateMappings: [] };
   /* Perf (go-live) — the per-line receipts fetch and the SO-drift snapshot
      fetch both depend only on `itemRows` and are independent of each other, so
      run them concurrently instead of back-to-back. The SO-drift leg keeps its
@@ -938,6 +945,15 @@ mfgPurchaseOrders.get('/:id', async (c) => {
           for (const r of (soLines ?? []) as Array<{ id: string; doc_no: string } & SoSnap>) {
             soDocByItem.set(r.id, r.doc_no);
             soLineById.set(r.id, { item_code: r.item_code, item_group: r.item_group, description: r.description, variants: r.variants, warehouse_id: r.warehouse_id });
+          }
+          const driftDocNos = [...new Set([...soDocByItem.values()].filter(Boolean))];
+          if (driftDocNos.length > 0) {
+            const [hdrRes, masters] = await Promise.all([
+              supabase.from('mfg_sales_orders').select('doc_no, sales_location, customer_state').in('doc_no', driftDocNos),
+              loadSoWarehouseMasters(supabase, (q) => scopeToCompany(q, c)),
+            ]);
+            for (const h of ((hdrRes.data ?? []) as Array<{ doc_no: string } & SoWarehouseSource>)) soHeaderByDoc.set(h.doc_no, { sales_location: h.sales_location, customer_state: h.customer_state });
+            whMasters = masters;
           }
         }
       } catch { /* leave so_doc_no / drift null */ }
@@ -981,30 +997,12 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   const items = itemRows.map((it) => {
     const soId = it.so_item_id as string | null;
     const so = soId ? soLineById.get(soId) ?? null : null;
-    /* Drift = the live SO line no longer matches this PO line's snapshot. Item
-       code change = a product swap on the SO (a different SKU → maybe a
-       different supplier), flagged separately so the purchaser redoes the PO
-       rather than just re-printing it. Warehouse change (staff #12) = the SO
-       line's ship-from warehouse moved after the PO was raised → the PO points
-       at the wrong warehouse; carried so the UI can offer a one-click rebind to
-       the SO's current warehouse. */
-    let so_drift: null | {
-      specPo: string; specSo: string; itemPo: string; itemSo: string; itemChanged: boolean;
-      warehouseChanged: boolean; warehousePoId: string | null; warehouseSoId: string | null;
-    } = null;
-    if (so) {
-      const specPo = buildVariantSummary(String(it.item_group ?? ''), (it.variants as Record<string, unknown> | null) ?? null);
-      const specSo = buildVariantSummary(String(so.item_group ?? ''), so.variants ?? null);
-      const itemPo = String(it.item_code ?? '');
-      const itemSo = String(so.item_code ?? '');
-      const itemChanged = itemPo !== itemSo;
-      const warehousePoId = (it.warehouse_id as string | null) ?? null;
-      const warehouseSoId = so.warehouse_id ?? null;
-      const warehouseChanged = warehousePoId !== warehouseSoId;
-      if (specPo !== specSo || itemChanged || warehouseChanged) {
-        so_drift = { specPo, specSo, itemPo, itemSo, itemChanged, warehouseChanged, warehousePoId, warehouseSoId };
-      }
-    }
+    /* SO→PO drift (spec / item swap / warehouse), extracted to lib/so-po-drift.
+       Its warehouse arm resolves a NULL SO-line warehouse to the order header
+       before comparing, so an inherited warehouse no longer reads as "moved"
+       (bug 0539). */
+    const soHdr = soId ? soHeaderByDoc.get(soDocByItem.get(soId) ?? '') ?? null : null;
+    const so_drift = so ? computeSoDrift(it as DriftLine, so as DriftLine, soHdr, whMasters) : null;
     return {
       ...it,
       receipts: receiptsMap.get(it.id) ?? [],
