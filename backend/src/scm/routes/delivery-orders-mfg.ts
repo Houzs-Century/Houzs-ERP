@@ -5347,13 +5347,11 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
 
-  /* OWNERSHIP half of the capability gate — POD/completion by a bypassed driver.
-     A driver may sign off ONLY their OWN, already-dispatched delivery (owner:
-     只能看到分配给自己的). resolveDeliveryScope self-scopes a linked driver; an
-     admin acting on behalf resolves to 'all' and passes (owner: admin 可以代为
-     操作). prev MUST already be stock-out, so a POD never triggers a first ship /
-     inventory OUT — it only records arrival. Never reached by a real-access
-     caller (they are unflagged). */
+  /* OWNERSHIP half of the capability gate — POD by a bypassed driver may sign
+     off ONLY their OWN, already-dispatched delivery (self scope must match the
+     DO crew; an admin on behalf resolves to 'all'). prev MUST be stock-out, so
+     a POD records arrival and never triggers a first ship. See do-status-
+     capability.ts + deliveryScope.ts. Never reached by a real-access caller. */
   if (c.get('scmWriteBypassed') && POD_STATES.has(toStatus)) {
     if (!(DO_STOCK_OUT_STATES as readonly string[]).includes((prevStatus ?? '').toUpperCase()))
       return c.json({ error: 'illegal_status_transition', reason: 'A delivery can only be completed after it has been dispatched.' }, 409);
