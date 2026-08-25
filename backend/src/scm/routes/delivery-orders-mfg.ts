@@ -26,7 +26,9 @@ import {
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
-import { hasPositionCapability } from '../../services/positionCapabilities';
+import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
+import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
+import { fetchDoCrewAssignment } from './delivery-planning';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -5320,30 +5322,15 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }, 400);
   }
 
-  /* Capability gate for a caller admitted via the area guard's writeBypass —
-     a position holding scm.do.load / scm.do.dispatch but WITHOUT scm.sales.
-     delivery edit (a storekeeper, a driver). The guard proved they hold ONE of
-     the two verbs; here we bind it to the exact transition: LOADED needs
-     scm.do.load (the warehouse scan-confirm — the stock OUT), DISPATCHED needs
-     scm.do.dispatch (truck departs). A bypassed caller may do NOTHING else on
-     this endpoint (cancel, POD/DELIVERED, etc. stay with real delivery access
-     — Driver POD lands with the isolation PR). A caller with real access is
-     unflagged and skips this entirely, so nothing existing changes. */
+  /* CAPABILITY half of the gate for a caller admitted via the area guard's
+     writeBypass (a storekeeper/driver WITHOUT scm.sales.delivery edit): does
+     the position hold the verb this transition needs — LOADED⇒do.load,
+     DISPATCHED + the POD chain⇒do.dispatch. Ownership for POD is the SECOND
+     half, checked once the DO's crew is known (below). A caller with real
+     access is unflagged and skips both. */
   if (c.get('scmWriteBypassed')) {
-    const hu = c.get('houzsUser');
-    const need = toStatus === 'LOADED' ? 'scm.do.load'
-      : toStatus === 'DISPATCHED' ? 'scm.do.dispatch'
-      : null;
-    if (!need || !hasPositionCapability(hu, need)) {
-      return c.json({
-        error: 'capability_required',
-        reason: toStatus === 'LOADED'
-          ? 'Confirming loading needs the Load permission for your position.'
-          : toStatus === 'DISPATCHED'
-            ? 'Dispatching needs the Dispatch permission for your position.'
-            : 'Your position can only confirm loading or dispatch a delivery order here.',
-      }, 403);
-    }
+    const capRefusal = statusCapabilityRefusal(c.get('houzsUser'), toStatus);
+    if (capRefusal) return c.json(capRefusal, 403);
   }
 
   /* Scoped load. Every guard this handler already had — the status whitelist,
@@ -5359,6 +5346,22 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
+
+  /* OWNERSHIP half of the capability gate — POD/completion by a bypassed driver.
+     A driver may sign off ONLY their OWN, already-dispatched delivery (owner:
+     只能看到分配给自己的). resolveDeliveryScope self-scopes a linked driver; an
+     admin acting on behalf resolves to 'all' and passes (owner: admin 可以代为
+     操作). prev MUST already be stock-out, so a POD never triggers a first ship /
+     inventory OUT — it only records arrival. Never reached by a real-access
+     caller (they are unflagged). */
+  if (c.get('scmWriteBypassed') && POD_STATES.has(toStatus)) {
+    if (!(DO_STOCK_OUT_STATES as readonly string[]).includes((prevStatus ?? '').toUpperCase()))
+      return c.json({ error: 'illegal_status_transition', reason: 'A delivery can only be completed after it has been dispatched.' }, 409);
+    const podScope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+    if (podScope.mode !== 'all' && !scopeMatchesAssignment(podScope, await fetchDoCrewAssignment(sb, id)))
+      return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
+  }
+
   // Already cancelled → echo back without re-reversing (would double-credit).
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryOrder: { id, status: 'CANCELLED' } });
