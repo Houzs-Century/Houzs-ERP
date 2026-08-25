@@ -7,11 +7,15 @@ import {
 // Kept as its own set because these are the transitions that need an OWNERSHIP
 // check (the caller may only complete THEIR OWN delivery), unlike LOADED /
 // DISPATCHED which are warehouse / fleet actions the capability alone admits.
-export const POD_STATES: ReadonlySet<string> = new Set([
-  "IN_TRANSIT",
-  "SIGNED",
-  "DELIVERED",
-]);
+// A DELIBERATELY DIFFERENT PARTITION, not a copy of a shared set: the post-
+// dispatch delivery-COMPLETION states a driver signs off. It is DO_STOCK_OUT_
+// STATES minus the warehouse/dispatch/finance rungs (LOADED, DISPATCHED,
+// INVOICED) — no shared export names this subset, and it must stay a subset
+// even if the shared set gains a member, so it is stated here on purpose.
+export const POD_STATES: ReadonlySet<string> = new Set(
+  // eslint-disable-next-line no-restricted-syntax -- POD subset, see above
+  ["IN_TRANSIT", "SIGNED", "DELIVERED"],
+);
 
 /**
  * The operational capability a caller admitted via the area-guard writeBypass
