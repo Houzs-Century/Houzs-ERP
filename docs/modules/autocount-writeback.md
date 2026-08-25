@@ -3241,6 +3241,36 @@ unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
 
+**IT RUNS EVERY DAY NOW, AND IT IS SILENT UNLESS SOMETHING IS STUCK**
+(2026-08-24, docs/bugs/0534). The workflow was manual-only and its header refused
+a cron in as many words; that paragraph is kept verbatim above the schedule
+because it is the reason the schedule is shaped this way. Both its conditions
+changed: the write-back went live, and on 2026-08-21 the shop-floor service
+stopped answering — 13 documents piled up over two days and the owner found out
+by noticing the account book was short.
+
+`ALARM=1` (set only on the schedule) makes the run exit non-zero for exactly two
+things: an OUTSTANDING failed row, and a pending row older than
+`ALARM_PENDING_MINUTES` (default 60, twelve times the drain interval). Everything
+else passes silently, so a quiet day sends no mail. The failure e-mail GitHub
+sends is the alarm; the `::error::` line it quotes names the document and the
+remedy. A `skipped` row deliberately does not alarm — it is a statement about the
+document's shape, it does not change on its own, and firing daily forever on one
+hand-keyed receipt is the noise the header refused.
+
+**A failed row whose ERP document no longer exists is history, not backlog.** The
+FAILED heading claims each row is "a document that is in the ERP and NOT in
+AutoCount", and a go-live wipe makes that false without touching this table: the
+export log is KEPT while the documents it names are deleted. Measured minutes
+after a wipe on 2026-08-24: one such row, `HC-DO-2608-003`. It is printed under
+its own heading and excluded from both the outstanding count and the alarm.
+
+**AND IT IS COVERED BY A PARSE CHECK NOW** (docs/bugs/0535). An edit to this
+script dropped one character and shipped; the daily run then failed on
+`ReferenceError` while an operator waited on the report. `backend/tests/
+opsScriptsParse.test.ts` runs `node --check` over every `scripts/*.mjs` —
+these scripts are imported by nothing, so nothing else was looking at them.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,
